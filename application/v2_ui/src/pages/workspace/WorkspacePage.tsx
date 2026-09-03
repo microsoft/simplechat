@@ -65,6 +65,11 @@ export function WorkspacePage() {
         : null;
     const showOverview = !requestedSection;
 
+    // A full-bleed section manages its own width, height and scrolling. Wrapping one in the
+    // page's centred, page-scrolling container would give it a second scrollbar and squeeze
+    // a three-pane layout into a reading measure.
+    const fullBleed = !showOverview && activeEntry?.enabled && activeEntry.section.layout === 'full';
+
     const renderBody = () => {
         if (showOverview) {
             return <OverviewSection resolved={resolved} />;
@@ -139,8 +144,17 @@ export function WorkspacePage() {
                     ))}
                 </nav>
 
-                <div className="min-w-0 flex-1 overflow-y-auto">
-                    <div className="mx-auto max-w-4xl pb-8">{renderBody()}</div>
+                <div
+                    className={clsx(
+                        'min-w-0 flex-1',
+                        fullBleed ? 'flex min-h-0 flex-col overflow-hidden' : 'overflow-y-auto',
+                    )}
+                >
+                    {fullBleed ? (
+                        renderBody()
+                    ) : (
+                        <div className="mx-auto max-w-4xl pb-8">{renderBody()}</div>
+                    )}
                 </div>
             </div>
         </div>

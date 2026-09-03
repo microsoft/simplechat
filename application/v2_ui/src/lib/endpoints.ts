@@ -5,7 +5,8 @@
 // route_backend_chats.py, route_backend_documents.py and functions_conversation_feed.py.
 // Keeping them in one module means a backend path change is a one-line edit here.
 
-import { api, apiUrl, uploadFile, ApiError, API_BASE } from './apiClient';
+import { api, apiUrl, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
+import { buildDocumentListParams } from './documentExplorer';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
 import type { ExportVisualAsset } from './exportVisuals';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
@@ -19,6 +20,9 @@ import type {
     ConversationFeedPage,
     ConversationMetadata,
     ConversationSummary,
+    DocumentFacets,
+    DocumentListResponse,
+    DocumentQuery,
     Json,
     PersistedThought,
     WorkspaceDocument,
@@ -836,18 +840,282 @@ export function fetchTabularPreview(
 /* Documents                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function fetchPersonalDocuments(pageSize = 1000, signal?: AbortSignal) {
-    return api.get<{ documents?: WorkspaceDocument[]; items?: WorkspaceDocument[] }>(
-        `/api/documents?page_size=${pageSize}`,
+/**
+ * List workspace documents.
+ *
+ * Paged, filtered and sorted server-side. `total_count` describes the whole filtered set,
+ * so the pager counts against it rather than against the returned array.
+ */
+export function fetchPersonalDocuments(
+    query: Partial<DocumentQuery> = {},
+    signal?: AbortSignal,
+) {
+    return api.get<DocumentListResponse>(
+        `/api/documents?${buildDocumentListParams(query)}`,
         signal,
     );
 }
 
+/** Counts for the explorer rail, over the whole workspace rather than the current page. */
+export const fetchPersonalDocumentFacets = (signal?: AbortSignal) =>
+    api.get<DocumentFacets>('/api/documents/facets', signal);
+
+export const fetchPersonalDocument = (documentId: string, signal?: AbortSignal) =>
+    api.get<WorkspaceDocument>(`/api/documents/${encodeURIComponent(documentId)}`, signal);
+
+export const fetchPersonalDocumentVersions = (documentId: string, signal?: AbortSignal) =>
+    api.get<{ document_id?: string; revision_family_id?: string; versions?: WorkspaceDocument[] }>(
+        `/api/documents/${encodeURIComponent(documentId)}/versions`,
+        signal,
+    );
+
+export type DocumentDeleteMode = 'all_versions' | 'current_only';
+
+export function deletePersonalDocument(
+    documentId: string,
+    options: {
+        deleteMode?: DocumentDeleteMode;
+        conversationLinkedDeleteConfirmed?: boolean;
+        fileSyncDeleteAction?: string | null;
+    } = {},
+) {
+    const params = new URLSearchParams();
+    params.set('delete_mode', options.deleteMode ?? 'all_versions');
+    if (options.conversationLinkedDeleteConfirmed) {
+        params.set('conversation_linked_delete_confirmed', 'true');
+    }
+    if (options.fileSyncDeleteAction) {
+        params.set('file_sync_delete_action', options.fileSyncDeleteAction);
+    }
+    return api.delete<Json>(
+        `/api/documents/${encodeURIComponent(documentId)}?${params.toString()}`,
+    );
+}
+
+/** One entry per document the batch could not delete. */
+export interface BulkDeleteError {
+    document_id: string;
+    error?: string;
+    message?: string;
+    /** True when the caller may retry with the matching confirmation set. */
+    needs_confirmation?: boolean;
+    conversation?: { id?: string; title?: string; url?: string };
+    [key: string]: unknown;
+}
+
+export interface BulkDeleteResponse {
+    message?: string;
+    deleted?: { document_id: string }[];
+    errors?: BulkDeleteError[];
+    deleted_count?: number;
+    error_count?: number;
+}
+
+/**
+ * Delete several documents in one request.
+ *
+ * Reports per document rather than failing the batch, because a document uploaded through
+ * chat or managed by file sync is guarded individually and would otherwise block the
+ * deletion of everything selected with it.
+ */
+export function bulkDeletePersonalDocuments(
+    documentIds: string[],
+    options: {
+        deleteMode?: DocumentDeleteMode;
+        conversationLinkedDeleteConfirmed?: boolean;
+        fileSyncDeleteAction?: string | null;
+    } = {},
+) {
+    return api.post<BulkDeleteResponse>('/api/documents/bulk-delete', {
+        document_ids: documentIds,
+        delete_mode: options.deleteMode ?? 'all_versions',
+        conversation_linked_delete_confirmed: Boolean(
+            options.conversationLinkedDeleteConfirmed,
+        ),
+        file_sync_delete_action: options.fileSyncDeleteAction ?? null,
+    });
+}
+
+/** Editable metadata. Only the supplied fields are written. */
+export interface DocumentMetadataUpdate {
+    title?: string;
+    abstract?: string;
+    keywords?: string[];
+    publication_date?: string;
+    document_classification?: string;
+    authors?: string[];
+    tags?: string[];
+}
+
+export const updatePersonalDocumentMetadata = (
+    documentId: string,
+    metadata: DocumentMetadataUpdate,
+) =>
+    api.patch<Json>(
+        `/api/documents/${encodeURIComponent(documentId)}`,
+        metadata as unknown as Json,
+    );
+
+export const extractPersonalDocumentMetadata = (documentIds: string[]) =>
+    api.post<{ message?: string; queued?: string[]; errors?: unknown[] }>(
+        '/api/documents/extract_metadata',
+        { document_ids: documentIds },
+    );
+
+/** `read` is the standard extraction, `layout` the enhanced one. */
+export type ExtractionMode = 'read' | 'layout';
+
+export const reprocessPersonalDocumentExtraction = (
+    documentIds: string[],
+    extractionMode: ExtractionMode,
+) =>
+    api.post<{ message?: string; queued?: string[]; errors?: unknown[] }>(
+        '/api/documents/reprocess_extraction',
+        { document_ids: documentIds, extraction_mode: extractionMode },
+    );
+
+/* --- Tags ---------------------------------------------------------------- */
+
 export const fetchPersonalDocumentTags = (signal?: AbortSignal) =>
     api.get<{ tags?: WorkspaceTag[] }>('/api/documents/tags', signal);
 
-export const deletePersonalDocument = (documentId: string) =>
-    api.delete<Json>(`/api/documents/${encodeURIComponent(documentId)}`);
+export const createPersonalDocumentTag = (name: string, color?: string | null) =>
+    api.post<{ message?: string; tag?: WorkspaceTag }>('/api/documents/tags', {
+        tag_name: name,
+        ...(color ? { color } : {}),
+    });
+
+/**
+ * Rename or recolour a tag.
+ *
+ * A rename cascades to every document carrying the tag server-side, which is what makes
+ * renaming safe: the alternative would leave documents filed under a name that no longer
+ * exists in the vocabulary.
+ */
+export const updatePersonalDocumentTag = (
+    tagName: string,
+    changes: { new_name?: string; color?: string | null },
+) =>
+    api.patch<{ message?: string; documents_updated?: number; tag?: WorkspaceTag }>(
+        `/api/documents/tags/${encodeURIComponent(tagName)}`,
+        changes as unknown as Json,
+    );
+
+export const deletePersonalDocumentTag = (tagName: string) =>
+    api.delete<Json>(`/api/documents/tags/${encodeURIComponent(tagName)}`);
+
+export type BulkTagAction = 'add_tags' | 'remove_tags' | 'set_tags';
+
+export const bulkTagPersonalDocuments = (
+    documentIds: string[],
+    action: BulkTagAction,
+    tags: string[],
+) =>
+    api.post<{ success?: string[]; errors?: unknown[] }>('/api/documents/bulk-tag', {
+        document_ids: documentIds,
+        action,
+        tags,
+    });
+
+/* --- Sharing -------------------------------------------------------------- */
+
+export interface SharedDocumentUser {
+    id: string;
+    approval_status?: string;
+    displayName?: string;
+    email?: string;
+}
+
+export const fetchPersonalDocumentSharedUsers = (
+    documentId: string,
+    signal?: AbortSignal,
+) =>
+    api.get<{ shared_users?: SharedDocumentUser[] }>(
+        `/api/documents/${encodeURIComponent(documentId)}/shared-users`,
+        signal,
+    );
+
+export const sharePersonalDocument = (documentId: string, userId: string) =>
+    api.post<Json>(`/api/documents/${encodeURIComponent(documentId)}/share`, {
+        user_id: userId,
+    });
+
+export const unsharePersonalDocument = (documentId: string, userId: string) =>
+    api.delete<Json>(`/api/documents/${encodeURIComponent(documentId)}/unshare`, {
+        user_id: userId,
+    });
+
+export const approvePersonalDocumentShare = (documentId: string) =>
+    api.post<Json>(`/api/documents/${encodeURIComponent(documentId)}/approve-share`);
+
+export const removeSelfFromPersonalDocument = (documentId: string) =>
+    api.delete<Json>(`/api/documents/${encodeURIComponent(documentId)}/remove-self`);
+
+export const searchShareableUsers = (query: string, signal?: AbortSignal) =>
+    api.get<SharedDocumentUser[]>(
+        `/api/userSearch?query=${encodeURIComponent(query)}`,
+        signal,
+    );
+
+/* --- Files ---------------------------------------------------------------- */
+
+/**
+ * Download a document's original file.
+ *
+ * Fetched rather than linked so an expired session surfaces as an error the page can report,
+ * instead of navigating the tab to a sign-in redirect and losing the explorer's state.
+ */
+export async function downloadPersonalDocument(documentId: string): Promise<Blob> {
+    const response = await fetch(
+        apiUrl(`/api/documents/${encodeURIComponent(documentId)}/download`),
+        { credentials: CREDENTIALS_MODE },
+    );
+    if (!response.ok) {
+        throw new ApiError(
+            `Download failed with status ${response.status}`,
+            response.status,
+            null,
+        );
+    }
+    return response.blob();
+}
+
+/** Download several documents. The server returns a single file, or a ZIP for a batch. */
+export async function downloadPersonalDocuments(documentIds: string[]): Promise<Blob> {
+    const response = await fetch(apiUrl('/api/documents/download'), {
+        method: 'POST',
+        credentials: CREDENTIALS_MODE,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: documentIds }),
+    });
+    if (!response.ok) {
+        throw new ApiError(
+            `Download failed with status ${response.status}`,
+            response.status,
+            null,
+        );
+    }
+    return response.blob();
+}
+
+/**
+ * Upload files to the personal workspace.
+ *
+ * The route accepts several files under a single `file` field and answers 207 for a partial
+ * success, so the caller has to read `errors` even when the request itself succeeded.
+ */
+export function uploadPersonalDocuments(files: File[], signal?: AbortSignal) {
+    const formData = new FormData();
+    for (const file of files) {
+        formData.append('file', file);
+    }
+    return uploadFile<{
+        message?: string;
+        document_ids?: string[];
+        processed_filenames?: string[];
+        errors?: string[];
+    }>('/api/documents/upload', formData, signal);
+}
 
 /**
  * Upload a file. When `conversationId` is supplied the file is attached to that

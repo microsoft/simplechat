@@ -23,6 +23,10 @@ from functions_document_access_index import (
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
+# Imported explicitly rather than relying on the star imports above: several functions in
+# this module re-import these names locally, which is a sign the star-imported bindings
+# cannot be counted on to be the classes rather than the module.
+from datetime import datetime, timedelta, timezone
 import io
 import os
 import requests
@@ -354,6 +358,260 @@ def _find_accessible_citation_document(user_id, document_id, scope_name):
 
     return None
 
+
+def _load_personal_document_for_delete(user_id, document_id):
+    """Fetch a document the caller may delete, or None when there is no such document."""
+    try:
+        return get_document_record(user_id=user_id, document_id=document_id)
+    except Exception:
+        return None
+
+
+def _personal_document_delete_guard(
+    document_record,
+    document_id,
+    user_id,
+    *,
+    conversation_linked_delete_confirmed=False,
+    file_sync_delete_action=None,
+):
+    """Return the payload that blocks deleting this document, or None to proceed.
+
+    Shared by the single and the bulk delete routes so the two cannot drift. A guard added
+    to one of them alone would otherwise turn the other into a way around it, which matters
+    here because both guards exist to stop a delete that silently damages something else:
+    a conversation that still cites the document, or a file sync pairing that would simply
+    re-create it.
+    """
+    if (
+        document_record.get('created_from_chat_upload')
+        and document_record.get('conversation_id')
+        and not conversation_linked_delete_confirmed
+    ):
+        conversation_id = document_record.get('conversation_id')
+        conversation_url = (
+            document_record.get('conversation_url')
+            or f'/chats?conversation_id={conversation_id}'
+        )
+        return {
+            'error': 'conversation_linked_document_delete_requires_confirmation',
+            'message': 'This document was uploaded through chat and is part of a conversation.',
+            'conversation': {
+                'id': conversation_id,
+                'title': document_record.get('conversation_title_at_upload') or 'Conversation',
+                'url': conversation_url,
+            },
+            'document': {
+                'id': document_id,
+                'file_name': document_record.get('file_name'),
+            },
+        }
+
+    return build_synced_document_delete_guard(
+        FILE_SYNC_SCOPE_PERSONAL,
+        document_id,
+        user_id,
+        requested_action=file_sync_delete_action,
+    ) or None
+
+
+def _load_accessible_personal_documents(user_id):
+    """Every current-revision document the user can see, with no list filters applied.
+
+    Takes the same two paths as the list route: the document access index when it is ready,
+    and the source container otherwise. Kept filter-free on purpose -- the counts built from
+    this describe the whole workspace, so the navigation rail reads as a table of contents
+    instead of shifting underneath the user as they filter.
+    """
+    index_read_result = query_document_access_index_documents(
+        source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+        user_id=user_id,
+        filters={},
+    )
+    if index_read_result.get('success'):
+        return index_read_result.get('documents', []) or []
+
+    query = """
+        SELECT *
+        FROM c
+        WHERE (c.user_id = @user_id
+            OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+            OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix)))
+    """
+    parameters = [
+        {"name": "@user_id", "value": user_id},
+        {"name": "@user_id_prefix", "value": f"{user_id},"},
+    ]
+    matching_documents = list(
+        cosmos_user_documents_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+    return select_current_documents(matching_documents)
+
+
+# The standing views the workspace navigation offers, alongside the content filters. Each
+# describes the *state* of a document rather than its content.
+DOCUMENT_PLACE_FILTERS = frozenset({
+    'all',
+    'recent',
+    'shared',
+    'processing',
+    'errors',
+    'untagged',
+})
+
+DOCUMENT_RECENT_DAYS = 30
+
+
+def _document_processing_state(document_item):
+    """Classify a document as 'error', 'processing' or 'ready'.
+
+    Mirrors what the interfaces show. `status` carries the error text rather than a code, so
+    an error is detected by inspecting it; a document with no `percentage_complete` at all is
+    a legacy record that predates progress tracking and is treated as ready rather than as
+    permanently stuck.
+    """
+    status_text = str(document_item.get('status') or '').lower()
+    if 'error' in status_text or 'failed' in status_text:
+        return 'error'
+
+    percentage = document_item.get('percentage_complete')
+    if percentage is None:
+        return 'ready'
+    try:
+        return 'ready' if float(percentage) >= 100 else 'processing'
+    except (TypeError, ValueError):
+        return 'ready'
+
+
+def build_personal_document_facets(documents, user_id, recent_days=DOCUMENT_RECENT_DAYS):
+    """Count the whole accessible set along the dimensions the navigation rail offers.
+
+    Counting here rather than in the browser is what makes the rail trustworthy: the client
+    only ever holds one page, so any count it derived would describe the page rather than the
+    workspace.
+    """
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
+
+    facets = {
+        'total': 0,
+        'untagged': 0,
+        'processing': 0,
+        'errors': 0,
+        'recent': 0,
+        'shared_with_me': 0,
+        'by_tag': {},
+        'by_classification': {},
+    }
+
+    for document_item in documents or []:
+        facets['total'] += 1
+
+        tags = [
+            str(tag).strip()
+            for tag in (document_item.get('tags') or [])
+            if str(tag or '').strip()
+        ]
+        if tags:
+            for tag in tags:
+                facets['by_tag'][tag] = facets['by_tag'].get(tag, 0) + 1
+        else:
+            facets['untagged'] += 1
+
+        state = _document_processing_state(document_item)
+        if state == 'processing':
+            facets['processing'] += 1
+        elif state == 'error':
+            facets['errors'] += 1
+
+        classification = str(document_item.get('document_classification') or '').strip()
+        if classification:
+            facets['by_classification'][classification] = (
+                facets['by_classification'].get(classification, 0) + 1
+            )
+
+        if document_item.get('user_id') != user_id:
+            facets['shared_with_me'] += 1
+
+        upload_date = _parse_document_timestamp(document_item)
+        if upload_date and upload_date >= recent_cutoff:
+            facets['recent'] += 1
+
+    return facets
+
+
+def _parse_document_timestamp(document_item):
+    """Best-effort upload time as an aware datetime, or None when it cannot be read.
+
+    `_ts` is preferred because Cosmos always sets it, whereas `upload_date` is written by the
+    application and is absent on the oldest records.
+    """
+    raw_ts = document_item.get('_ts')
+    if raw_ts is not None:
+        try:
+            return datetime.fromtimestamp(float(raw_ts), tz=timezone.utc)
+        except (TypeError, ValueError, OSError):
+            pass
+
+    raw_upload_date = document_item.get('upload_date')
+    if not raw_upload_date:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw_upload_date).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def filter_documents_by_place(documents, place, user_id, recent_days=DOCUMENT_RECENT_DAYS):
+    """Narrow a document list to one standing view.
+
+    Applied after the query rather than inside it because every one of these is derived:
+    processing state is read out of free-text `status` and `percentage_complete`, "untagged"
+    is the absence of a value rather than a value, and ownership is only meaningful relative
+    to the caller. The list route already materialises and paginates in Python, so filtering
+    here costs nothing extra.
+    """
+    if place in ('', 'all', None):
+        return documents
+
+    if place == 'untagged':
+        return [
+            document_item for document_item in documents
+            if not [
+                tag for tag in (document_item.get('tags') or [])
+                if str(tag or '').strip()
+            ]
+        ]
+
+    if place == 'shared':
+        return [
+            document_item for document_item in documents
+            if document_item.get('user_id') != user_id
+        ]
+
+    if place in ('processing', 'errors'):
+        wanted_state = 'processing' if place == 'processing' else 'error'
+        return [
+            document_item for document_item in documents
+            if _document_processing_state(document_item) == wanted_state
+        ]
+
+    if place == 'recent':
+        recent_cutoff = datetime.now(timezone.utc) - timedelta(days=recent_days)
+        recent_documents = []
+        for document_item in documents:
+            uploaded_at = _parse_document_timestamp(document_item)
+            if uploaded_at and uploaded_at >= recent_cutoff:
+                recent_documents.append(document_item)
+        return recent_documents
+
+    return documents
+
+
 def register_route_backend_documents(bp):
     @bp.route('/api/get_file_content', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -678,6 +936,13 @@ def register_route_backend_documents(bp):
         keywords_filter = request.args.get('keywords', default=None, type=str)
         abstract_filter = request.args.get('abstract', default=None, type=str)
         tags_filter = request.args.get('tags', default=None, type=str)  # Comma-separated tags
+        # Which of the workspace's standing views to narrow to. These describe the *state* of
+        # a document rather than its content, so unlike the filters above they cannot be
+        # expressed in the Cosmos query -- processing state and tag emptiness are derived, and
+        # ownership is only known once the caller is compared against each document.
+        place_filter = str(request.args.get('place', default='', type=str) or '').strip().lower()
+        if place_filter not in DOCUMENT_PLACE_FILTERS:
+            place_filter = 'all'
         sort_by = request.args.get('sort_by', default='_ts', type=str)
         sort_order = request.args.get('sort_order', default='desc', type=str)
 
@@ -685,10 +950,10 @@ def register_route_backend_documents(bp):
         if page < 1: page = 1
         if page_size < 1: page_size = 10
 
-        # Validate sort parameters
-        allowed_sort_fields = {'_ts', 'file_name', 'title'}
-        if sort_by not in allowed_sort_fields:
-            sort_by = '_ts'
+        # Validate sort parameters against the shared allow-list, which also decides
+        # whether the field is compared as a number or as text.
+        if sort_by not in ALLOWED_DOCUMENT_SORT_FIELDS:
+            sort_by = DEFAULT_DOCUMENT_SORT_FIELD
         sort_order = sort_order.upper() if sort_order.lower() in ('asc', 'desc') else 'DESC'
         # Limit page size to prevent abuse? (Optional)
         # page_size = min(page_size, 100)
@@ -857,6 +1122,9 @@ def register_route_backend_documents(bp):
                     source_query_metrics=source_query_metrics,
                     context='api_get_user_documents',
                 )
+            # Narrow to the requested standing view before counting, so the total the client
+            # paginates against describes the view it is actually looking at.
+            current_docs = filter_documents_by_place(current_docs, place_filter, user_id)
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -1189,43 +1457,20 @@ def register_route_backend_documents(bp):
         if delete_mode not in {'all_versions', 'current_only'}:
             return jsonify({'error': 'Invalid delete mode'}), 400
         conversation_linked_delete_confirmed = request.args.get('conversation_linked_delete_confirmed') == 'true'
-        try:
-            document_record = get_document_record(user_id=user_id, document_id=document_id)
-        except Exception:
-            document_record = None
+        document_record = _load_personal_document_for_delete(user_id, document_id)
         if not document_record:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        if (
-            document_record.get('created_from_chat_upload')
-            and document_record.get('conversation_id')
-            and not conversation_linked_delete_confirmed
-        ):
-            conversation_id = document_record.get('conversation_id')
-            conversation_url = document_record.get('conversation_url') or f'/chats?conversation_id={conversation_id}'
-            return jsonify({
-                'error': 'conversation_linked_document_delete_requires_confirmation',
-                'message': 'This document was uploaded through chat and is part of a conversation.',
-                'conversation': {
-                    'id': conversation_id,
-                    'title': document_record.get('conversation_title_at_upload') or 'Conversation',
-                    'url': conversation_url,
-                },
-                'document': {
-                    'id': document_id,
-                    'file_name': document_record.get('file_name'),
-                },
-            }), 409
-
         file_sync_delete_action = request.args.get('file_sync_delete_action')
-        file_sync_guard = build_synced_document_delete_guard(
-            FILE_SYNC_SCOPE_PERSONAL,
+        delete_guard = _personal_document_delete_guard(
+            document_record,
             document_id,
             user_id,
-            requested_action=file_sync_delete_action,
+            conversation_linked_delete_confirmed=conversation_linked_delete_confirmed,
+            file_sync_delete_action=file_sync_delete_action,
         )
-        if file_sync_guard:
-            return jsonify(file_sync_guard), 409
+        if delete_guard:
+            return jsonify(delete_guard), 409
         
         try:
             apply_synced_document_delete_action(
@@ -1245,6 +1490,145 @@ def register_route_backend_documents(bp):
             }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
+
+    @bp.route('/api/documents/bulk-delete', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_bulk_delete_user_documents():
+        """Delete several documents in one request.
+
+        Request body:
+        {
+            "document_ids": ["doc1", "doc2", ...],
+            "delete_mode": "all_versions" | "current_only",
+            "conversation_linked_delete_confirmed": false,
+            "file_sync_delete_action": null
+        }
+
+        Reports per document instead of failing the batch, because the two delete guards
+        apply to individual documents: one document uploaded through chat would otherwise
+        block the deletion of everything selected alongside it. A guarded document comes back
+        in ``errors`` carrying the same payload the single delete answers 409 with, so the
+        client can ask about exactly those documents and resubmit them with the confirmation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        document_ids = data.get('document_ids')
+        if not isinstance(document_ids, list) or not document_ids:
+            return jsonify({'error': 'document_ids must be a non-empty array'}), 400
+
+        delete_mode = data.get('delete_mode', 'all_versions')
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
+
+        conversation_linked_delete_confirmed = bool(
+            data.get('conversation_linked_delete_confirmed')
+        )
+        file_sync_delete_action = data.get('file_sync_delete_action')
+
+        deleted = []
+        errors = []
+        seen_document_ids = set()
+
+        for raw_document_id in document_ids:
+            document_id = str(raw_document_id or '').strip()
+            if not document_id or document_id in seen_document_ids:
+                continue
+            seen_document_ids.add(document_id)
+
+            document_record = _load_personal_document_for_delete(user_id, document_id)
+            if not document_record:
+                errors.append({
+                    'document_id': document_id,
+                    'error': 'document_not_found',
+                    'message': 'Document not found or access denied',
+                    'needs_confirmation': False,
+                })
+                continue
+
+            delete_guard = _personal_document_delete_guard(
+                document_record,
+                document_id,
+                user_id,
+                conversation_linked_delete_confirmed=conversation_linked_delete_confirmed,
+                file_sync_delete_action=file_sync_delete_action,
+            )
+            if delete_guard:
+                errors.append({
+                    'document_id': document_id,
+                    'needs_confirmation': True,
+                    **delete_guard,
+                })
+                continue
+
+            try:
+                apply_synced_document_delete_action(
+                    FILE_SYNC_SCOPE_PERSONAL,
+                    document_id,
+                    user_id,
+                    file_sync_delete_action,
+                )
+                delete_result = delete_document_revision(
+                    user_id, document_id, delete_mode=delete_mode
+                )
+                deleted.append({
+                    'document_id': document_id,
+                    **(delete_result or {}),
+                })
+            except Exception as delete_error:
+                errors.append({
+                    'document_id': document_id,
+                    'error': 'document_delete_failed',
+                    'message': str(delete_error),
+                    'needs_confirmation': False,
+                })
+
+        # Once for the batch rather than per document: the cache is keyed by user, so
+        # invalidating it inside the loop would repeat identical work for every document.
+        if deleted:
+            invalidate_personal_search_cache(user_id)
+
+        return jsonify({
+            'message': f'Deleted {len(deleted)} of {len(seen_document_ids)} documents',
+            'deleted': deleted,
+            'errors': errors,
+            'deleted_count': len(deleted),
+            'error_count': len(errors),
+        }), 200
+
+    @bp.route('/api/documents/facets', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_get_user_document_facets():
+        """Counts describing the caller's whole document workspace.
+
+        Deliberately unfiltered. These counts drive a navigation rail, and a rail whose
+        entries re-count themselves against the current filter would collapse to zeroes the
+        moment a user selected anything in it.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            documents = _load_accessible_personal_documents(user_id)
+        except Exception as facet_error:
+            log_event(
+                f"[DOCUMENT_FACETS] Failed to load documents for facets: {facet_error}",
+                extra={'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Error building document facets'}), 500
+
+        return jsonify(build_personal_document_facets(documents, user_id)), 200
 
     @bp.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())

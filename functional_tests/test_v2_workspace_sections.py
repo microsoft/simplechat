@@ -236,9 +236,16 @@ def test_every_registered_section_has_a_component():
     workspace_dir = V2_SRC / "pages" / "workspace"
     registry = _read(workspace_dir / "sections.tsx")
 
+    # Counted from the registry rather than hard-coded, so adding a section does not require
+    # editing an assertion that is really about every section being complete.
+    section_ids = re.findall(r"^\s{8}id: '([a-z_]+)',", registry, re.MULTILINE)
+    section_count = len(section_ids)
+    assert section_count >= 8, f"Expected the full section registry, found {section_ids}"
+
     components = re.findall(r"<(\w+Section)\b", registry)
-    assert len(set(components)) == 8, (
-        f"Expected eight section components, found {sorted(set(components))}"
+    assert len(set(components)) == section_count, (
+        f"Expected one component per section ({section_count}), "
+        f"found {sorted(set(components))}"
     )
 
     sources = list(workspace_dir.glob("*.tsx"))
@@ -251,8 +258,12 @@ def test_every_registered_section_has_a_component():
     # Each section needs the sentence the overview shows for it, which is the only
     # explanation a user gets for a section their administrator has switched off.
     blurbs = re.findall(r"blurb: '([^']+)'", registry)
-    assert len(blurbs) == 8, f"Every section needs a blurb; found {len(blurbs)}"
-    assert len(set(blurbs)) == 8, "Section blurbs must be distinct, not boilerplate"
+    assert len(blurbs) == section_count, (
+        f"Every section needs a blurb; found {len(blurbs)} for {section_count} sections"
+    )
+    assert len(set(blurbs)) == section_count, (
+        "Section blurbs must be distinct, not boilerplate"
+    )
 
     print("Section registry test passed!")
     return True

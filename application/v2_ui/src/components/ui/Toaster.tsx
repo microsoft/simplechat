@@ -50,6 +50,18 @@ export function Toaster() {
                             )}
                         />
                         <p className="min-w-0 flex-1 text-sm text-text-1">{item.message}</p>
+                        {item.action ? (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    item.action?.onAct();
+                                    dismiss(item.id);
+                                }}
+                                className="shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold text-accent transition-colors hover:bg-accent-soft"
+                            >
+                                {item.action.label}
+                            </button>
+                        ) : null}
                         {/* Work in progress cannot be cancelled, so offering to close it would
                             only hide the one thing telling the user it is still running. */}
                         {!pending && (

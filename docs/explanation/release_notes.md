@@ -2,6 +2,46 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.045)**
+
+#### New Features
+
+*   **Documents In My Workspace Is Now A File Explorer**
+    *   The documents page in the new interface was one flat list that could upload a file, delete a file, and filter by one tag. It is now laid out like a file manager: a command bar across the top, a navigation rail down the left, the list in the middle, a details pane on the right and a status bar along the bottom.
+    *   **Everything the server could already do is now reachable.** The page previously asked for a thousand documents at once and sorted and searched them in the browser, ignoring the paging, searching, sorting, filtering, downloading, metadata editing, re-extraction and sharing the API has supported all along. All of it is now used.
+    *   **Tags live in the left rail instead of behind a view mode.** The classic workspace shows tags as folder cards you switch into a separate mode to see; here they are always visible, with their colour and a live count, and clicking one filters the list. Ctrl-clicking a second tag narrows to documents carrying both.
+    *   **Drag documents onto a tag to file them.** The confirmation offers an **Undo**, so tagging a batch never needs a dialog first.
+    *   **Saved views** pin a combination of search, tags, classification and status to the rail under your own name for it — the closest thing to a folder that a workspace organised by tags can honestly offer.
+    *   **Multi-select works the way it does everywhere else.** There is no longer a mode to switch on before checkboxes appear: click, Ctrl-click, Shift-click, Ctrl+A, Escape, and the arrow keys all behave as expected, and the toolbar's Download, Tag, Chat, Extract and Delete act on whatever is selected.
+    *   **Titles lead, file names follow.** A file called `MSA_v2_FINAL(3).docx` now shows its extracted title on the first line with the file name beneath it, and its tags as coloured chips in their own column rather than run together into one line of text.
+    *   **The details pane** shows a document's tags, classification, size, pages, version, dates, authors, keywords, abstract and sharing, and lets you edit them. With several documents selected it reports how many, their combined size and the tags they have in common, so a bulk action states what it is about to touch.
+    *   **Two views instead of four.** Details (a sortable table) and Tiles (cards). The two folder-shaped modes are gone, replaced by the rail.
+    *   **Active filters are visible.** Whatever is narrowing the list appears as removable chips above it, with a Clear all — previously there was no way to tell why documents seemed to be missing.
+    *   (Ref: V2 My Workspace, Documents, `GET /api/documents`, `GET /api/documents/facets`, `POST /api/documents/bulk-delete`, `POST /api/documents/bulk-tag`)
+
+*   **A Tags Section In My Workspace**
+    *   Tags now have a home of their own under Knowledge, where they can be created, renamed, recoloured, merged and deleted, with a count of how many documents use each one.
+    *   **Renaming a tag onto one that already exists merges the two**, and the page says so before you commit to it.
+    *   Deleting a tag says how many documents it will be removed from, and never deletes the documents themselves.
+    *   Applying tags stays on the Documents page. Choosing what the tags *are* and browsing *by* them are different jobs, and the classic workspace does both from the same toolbar.
+    *   (Ref: V2 My Workspace, Tags, `PATCH /api/documents/tags/<name>`, tag colours)
+
+*   **Deleting Several Documents At Once**
+    *   Removing a selection was previously one request per document. It is now a single request that reports on each document individually.
+    *   **A document the server refuses to delete is named, with the reason.** Files uploaded through chat and files managed by file sync are protected because deleting them silently damages something else; those are now listed by name with an option to go ahead anyway, instead of one protected file blocking everything selected with it.
+    *   (Ref: `POST /api/documents/bulk-delete`, conversation-linked documents, file sync)
+
+#### Bug Fixes
+
+*   **Sorting Documents By Size Or Page Count Would Have Crashed The Listing**
+    *   The document sort compared a missing value against a present one as different types, which raises an error in Python. It was harmless while documents could only be sorted by name, title and date, and would have failed the moment any numeric column became sortable.
+    *   Sort fields are now declared as numeric or textual, so a document that has never had a size, a page count or a version still sorts correctly alongside ones that do.
+    *   (Ref: `sort_documents`, `ALLOWED_DOCUMENT_SORT_FIELDS`, personal, group and public document lists)
+
+*   **The "Shared With Me" Filter Never Did Anything**
+    *   The classic workspace sends a `shared_only` filter that the document listing has never read, so ticking it changed nothing. The listing now supports filtering by document state — recent, shared with you, processing, needs attention, or untagged — and the new interface's rail uses it.
+    *   (Ref: `GET /api/documents`, `place` parameter)
+
 ### **(v0.261.044)**
 
 #### Bug Fixes

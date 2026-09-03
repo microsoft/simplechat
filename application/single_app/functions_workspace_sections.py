@@ -34,6 +34,7 @@ from functions_settings import is_user_workflows_enabled_for_user
 # Order matters: it is the order the sections are presented in, within their groups.
 WORKSPACE_SECTION_IDS = (
     "documents",
+    "tags",
     "sync",
     "prompts",
     "agents",
@@ -48,6 +49,7 @@ WORKSPACE_SECTION_IDS = (
 # can do, and "connections" is the shared plumbing the other two reuse.
 WORKSPACE_SECTION_GROUPS = {
     "documents": "knowledge",
+    "tags": "knowledge",
     "sync": "knowledge",
     "prompts": "knowledge",
     "agents": "automation",
@@ -167,8 +169,10 @@ def build_workspace_section_availability(
 
     sections = {
         # Documents and prompts have no capability of their own: reaching the workspace at
-        # all already required enable_user_workspace.
+        # all already required enable_user_workspace. Tags is the vocabulary those documents
+        # are filed under, so it is available on exactly the same terms.
         "documents": _section(True),
+        "tags": _section(True),
         "prompts": _section(True),
         "sync": _section(
             file_sync_enabled,

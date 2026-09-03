@@ -42,23 +42,34 @@ def test_workspace_tags_are_treated_as_objects():
         "if the contract changed, update the V2 client to match"
     )
 
-    # The tag handling moved with the documents list when the workspace page became a
-    # grouped set of sections; the guarantee it encodes is unchanged.
-    workspace_page = _read(V2_SRC / "pages" / "workspace" / "DocumentsSection.tsx")
+    # The tag handling moved again when the documents page became the explorer: the
+    # normalisation is now shared by the table, the tiles, the details pane and the rail, so
+    # it lives in the library those all draw on. The guarantee it encodes is unchanged.
+    explorer_lib = _read(V2_SRC / "lib" / "documentExplorer.ts")
 
-    assert "function tagName(" in workspace_page, (
-        "The documents section must funnel tags through tagName() so an object tag is "
-        "never rendered directly (this caused React error #31)"
+    assert "export function tagName(" in explorer_lib, (
+        "The explorer must funnel tags through tagName() so an object tag is never "
+        "rendered directly (this caused React error #31)"
     )
-    assert "'name' in tag" in workspace_page, (
+    assert "'name' in tag" in explorer_lib, (
         "tagName() must handle the object tag shape returned by /api/documents/tags"
     )
 
-    # The crash was rendering the raw tag as a JSX child. Guard against its return.
-    assert re.search(r"\{tag\}", workspace_page) is None, (
-        "The documents section renders a raw tag value as a JSX child; render "
-        "tagName(tag) instead"
-    )
+    # The crash was rendering the raw tag as a JSX child. Guard against its return across
+    # every surface that displays a tag.
+    documents_components = V2_SRC / "components" / "documents"
+    tag_surfaces = [
+        V2_SRC / "pages" / "workspace" / "DocumentsSection.tsx",
+        V2_SRC / "pages" / "workspace" / "TagsSection.tsx",
+        *sorted(documents_components.glob("*.tsx")),
+    ]
+    for surface in tag_surfaces:
+        source = _read(surface)
+        # Only a JSX *child* is the hazard. `tag={tag}` passes the object to a component
+        # that knows what to do with it, which is exactly how it should travel.
+        assert re.search(r"(?<![=\w]){tag}", source) is None, (
+            f"{surface.name} renders a raw tag value as a JSX child; render its name instead"
+        )
 
     endpoints = _read(V2_SRC / "lib" / "endpoints.ts")
     assert "tags?: WorkspaceTag[]" in endpoints, (
