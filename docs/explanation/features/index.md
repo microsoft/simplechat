@@ -51,6 +51,7 @@ category: Version History
 
 ## Versioned Features
 
+- [V2 Inline Diagram Editing](V2_INLINE_DIAGRAM_EDITING.md)
 - [V2 Diagram And Chart Styling](V2_DIAGRAM_AND_CHART_STYLING.md)
 - [Mermaid Diagram Rendering](MERMAID_DIAGRAM_RENDERING.md)
 - [Mermaid And TeX Rendering In Exports](EXPORT_MERMAID_AND_TEX_RENDERING.md)

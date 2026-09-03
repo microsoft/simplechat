@@ -28,7 +28,7 @@ import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reas
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
 import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
-import { destroyInlineDiagrams, extractInlineDiagramBlocks, hydrateInlineDiagrams, injectInlineDiagramHtml, restoreInlineDiagramTokens } from './chat-inline-diagrams.js';
+import { applyStoredDiagramRevisions, destroyInlineDiagrams, extractInlineDiagramBlocks, hydrateInlineDiagrams, injectInlineDiagramHtml, restoreInlineDiagramTokens } from './chat-inline-diagrams.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
@@ -2749,13 +2749,19 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       </div>`;
   }
 
-  export function renderAiMessageContent(messageContent) {
+  export function renderAiMessageContent(messageContent, options = {}) {
     const followUpRenderModel = buildFollowUpRenderModel(messageContent);
     let cleaned = stripInlineAzureMapsBlocks(followUpRenderModel.visibleMarkdown).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
     const diagramExtraction = extractInlineDiagramBlocks(chartExtraction.markdown);
+    // Show the current version of any diagram edited in the V2 client. `originalBlock` is
+    // deliberately untouched, so copying the message still yields the markdown as stored.
+    diagramExtraction.blocks = applyStoredDiagramRevisions(
+      diagramExtraction.blocks,
+      options.blockRevisions,
+    );
     const imageProposalExtraction = extractInlineImageProposalBlocks(diagramExtraction.markdown);
     const withInlineCitations = parseCitations(imageProposalExtraction.markdown);
     const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
@@ -5845,7 +5851,9 @@ export function appendMessage(
       fullMessageObject
     );
 
-    const renderedAiContent = renderAiMessageContent(messageContent);
+    const renderedAiContent = renderAiMessageContent(messageContent, {
+      blockRevisions: fullMessageObject?.metadata?.block_revisions,
+    });
     const htmlContent = renderedAiContent.htmlContent;
     const inlineAssistantExportActionsHtml = renderCompletedAssistantActions
       ? buildInlineAssistantExportActionsHtml(messageId)

@@ -3,6 +3,8 @@
 
 import { create } from 'zustand';
 import {
+    addMessageBlockRevision as addMessageBlockRevisionApi,
+    assistMessageBlockRevision as assistMessageBlockRevisionApi,
     createConversation,
     deleteConversation as deleteConversationApi,
     deleteMessage as deleteMessageApi,
@@ -15,11 +17,13 @@ import {
     maskMessage as maskMessageApi,
     renameConversation as renameConversationApi,
     retryMessage as retryMessageApi,
+    setMessageBlockRevision as setMessageBlockRevisionApi,
     setMessageVisualStyle as setMessageVisualStyleApi,
     submitFeedback as submitFeedbackApi,
     switchAttempt as switchAttemptApi,
     toggleConversationHidden,
     toggleConversationPinned,
+    type MessageBlockRevisions,
 } from '../lib/endpoints';
 import {
     cancelStream,
@@ -264,6 +268,31 @@ interface ChatState {
         reason?: string,
     ) => Promise<void>;
     /**
+     * Store an edited diagram as a new revision and make it the one that shows.
+     *
+     * Resolves to null on success, or to a message explaining why the change was not kept. An
+     * error string rather than a thrown exception because the editor shows the reason inline
+     * beside the diagram rather than as a toast over the thread.
+     */
+    saveBlockRevision: (request: BlockRevisionRequest & {
+        source: string;
+        origin: 'manual' | 'control';
+        note: string;
+    }) => Promise<string | null>;
+    /** Show one of a diagram's stored revisions. Nothing is discarded. */
+    restoreBlockRevision: (request: Omit<BlockRevisionRequest, 'originalSource'> & {
+        revisionId: string;
+    }) => Promise<string | null>;
+    /** Ask the model to change one diagram, scoped to that diagram alone. */
+    askBlockRevision: (request: BlockRevisionRequest & {
+        instruction: string;
+    }) => Promise<string | null>;
+    /** Fold a message's updated revision map into the thread after a successful write. */
+    mergeBlockRevisions: (
+        messageId: string,
+        blockRevisions: MessageBlockRevisions | undefined,
+    ) => void;
+    /**
      * Generate the image a `simpleimage` proposal card describes.
      *
      * The conversation is passed in rather than read from the store, because approvals are
@@ -281,6 +310,48 @@ interface ChatState {
         assistantMessageId: string,
         proposal: ImageProposalSpec,
     ) => Promise<void>;
+}
+
+/**
+ * How a block revision request addresses one diagram.
+ *
+ * The conversation is passed in rather than read from the store for the same reason image
+ * approvals do it: a model edit can still be in flight when the reader has moved to another
+ * thread, and the edit belongs to the conversation it was started in.
+ */
+interface BlockRevisionRequest {
+    messageId: string;
+    conversationId: string;
+    blockKind: string;
+    blockIndex: number;
+    /** Fingerprint of the block's original source, which the entry is filed under. */
+    sourceHash: string;
+    originalSource: string;
+    /**
+     * How many revisions the editor was opened against.
+     *
+     * Sent so a second person editing the same diagram in a shared conversation gets a conflict
+     * rather than silently overwriting the first. Omitted when there is no history yet.
+     */
+    expectedRevisionCount?: number;
+}
+
+/**
+ * Turn a failed diagram edit into something worth showing beside the diagram.
+ *
+ * A 409 is the interesting one: it is not a fault, it means someone else edited the same
+ * diagram, and saying so is more useful than repeating whatever the server called it.
+ */
+function describeBlockRevisionError(error: unknown, fallback: string): string {
+    if (error instanceof ApiError) {
+        if (error.status === 403) {
+            return 'You can only edit diagrams in conversations you take part in.';
+        }
+        if (error.status === 409) {
+            return 'Someone else changed this diagram. Close and reopen it to see their version.';
+        }
+    }
+    return error instanceof Error && error.message ? error.message : fallback;
 }
 
 /**
@@ -2004,6 +2075,107 @@ export const useChatStore = create<ChatState>((set, get) => ({
             );
             return false;
         }
+    },
+
+    saveBlockRevision: async ({
+        messageId,
+        conversationId,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        source,
+        originalSource,
+        origin,
+        note,
+        expectedRevisionCount,
+    }) => {
+        try {
+            const result = await addMessageBlockRevisionApi(messageId, {
+                conversation_id: conversationId,
+                block_kind: blockKind,
+                block_index: blockIndex,
+                source_hash: sourceHash,
+                source,
+                original_source: originalSource,
+                origin,
+                note,
+                ...(expectedRevisionCount === undefined
+                    ? {}
+                    : { expected_revision_count: expectedRevisionCount }),
+            });
+            get().mergeBlockRevisions(messageId, result.block_revisions);
+            return null;
+        } catch (error) {
+            return describeBlockRevisionError(error, 'That change could not be saved.');
+        }
+    },
+
+    restoreBlockRevision: async ({
+        messageId,
+        conversationId,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        revisionId,
+    }) => {
+        try {
+            const result = await setMessageBlockRevisionApi(messageId, {
+                conversation_id: conversationId,
+                block_kind: blockKind,
+                block_index: blockIndex,
+                source_hash: sourceHash,
+                revision_id: revisionId,
+            });
+            get().mergeBlockRevisions(messageId, result.block_revisions);
+            return null;
+        } catch (error) {
+            return describeBlockRevisionError(error, 'That version could not be restored.');
+        }
+    },
+
+    askBlockRevision: async ({
+        messageId,
+        conversationId,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        instruction,
+        originalSource,
+        expectedRevisionCount,
+    }) => {
+        try {
+            const result = await assistMessageBlockRevisionApi(messageId, {
+                conversation_id: conversationId,
+                block_kind: blockKind,
+                block_index: blockIndex,
+                source_hash: sourceHash,
+                instruction,
+                original_source: originalSource,
+                ...(expectedRevisionCount === undefined
+                    ? {}
+                    : { expected_revision_count: expectedRevisionCount }),
+            });
+            get().mergeBlockRevisions(messageId, result.block_revisions);
+            return null;
+        } catch (error) {
+            return describeBlockRevisionError(error, 'The diagram could not be updated.');
+        }
+    },
+
+    mergeBlockRevisions: (messageId, blockRevisions) => {
+        set((state) => ({
+            messages: state.messages.map((message) =>
+                message.id === messageId
+                    ? {
+                          ...message,
+                          metadata: {
+                              ...(message.metadata as Record<string, unknown>),
+                              block_revisions: blockRevisions ?? {},
+                          },
+                      }
+                    : message,
+            ),
+        }));
     },
 
     forkFromMessage: async (messageId) => {
