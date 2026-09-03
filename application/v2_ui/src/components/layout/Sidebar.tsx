@@ -181,6 +181,30 @@ export function Sidebar() {
     const onChatPage = location.pathname.startsWith('/chat');
     const collapsed = railCollapsed;
 
+    /**
+     * Arriving at the chat page from elsewhere starts a fresh chat.
+     *
+     * The store is not reset by navigation — it is plain in-memory state that outlives a
+     * route change — so without this, returning to the chat page silently re-opens the
+     * conversation last read and puts it back in the address bar. Since `New chat` is only
+     * offered on the chat page, this is what makes a new chat reachable from anywhere else.
+     *
+     * Two things are deliberately left alone. Clicking `Chats` while already on the chat
+     * page does nothing, so a stray click on the highlighted nav item cannot throw away
+     * whatever is being read. And a conversation still streaming a reply is returned to
+     * rather than reset, because the reset stops the stream and the reply would be lost.
+     *
+     * `streaming` is read from the store rather than subscribed to: it changes with every
+     * token, and subscribing would re-render this rail — conversation list included —
+     * throughout a response.
+     */
+    const startNewChatOnArrival = () => {
+        if (onChatPage || useChatStore.getState().streaming) {
+            return;
+        }
+        startNewConversation();
+    };
+
     return (
         <nav
             aria-label="Primary"
@@ -219,27 +243,33 @@ export function Sidebar() {
                 </button>
             )}
 
-            <div className="px-3">
-                <button
-                    type="button"
-                    onClick={startNewConversation}
-                    title="Start a new chat"
-                    className={clsx(
-                        'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
-                        'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
-                        collapsed && 'justify-center px-0',
-                    )}
-                >
-                    <MessageSquarePlus size={17} className="shrink-0" />
-                    {!collapsed && <span>New chat</span>}
-                </button>
-            </div>
+            {/* Only offered where it has somewhere to act. On any other page it reset chat
+                state that was not on screen and left the reader where they were, which
+                looked like a button that did nothing. `Chats` covers that case instead. */}
+            {onChatPage && (
+                <div className="px-3">
+                    <button
+                        type="button"
+                        onClick={startNewConversation}
+                        title="Start a new chat"
+                        className={clsx(
+                            'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
+                            'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
+                            collapsed && 'justify-center px-0',
+                        )}
+                    >
+                        <MessageSquarePlus size={17} className="shrink-0" />
+                        {!collapsed && <span>New chat</span>}
+                    </button>
+                </div>
+            )}
 
-            <ul className="mt-3 space-y-0.5 px-3">
+            <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
                 {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => (
                     <li key={item.to}>
                         <NavLink
                             to={item.to}
+                            onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
                             title={collapsed ? item.label : item.hint}
                             className={({ isActive }) =>
                                 clsx(

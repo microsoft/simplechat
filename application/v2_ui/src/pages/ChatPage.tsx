@@ -248,6 +248,7 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
 
 export function ChatPage() {
     const [detailsOpen, setDetailsOpen] = useState(false);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
 
     useConversationUrlSync();
 
@@ -261,7 +262,12 @@ export function ChatPage() {
                 <Composer />
             </div>
             <ConversationDrawer />
-            {detailsOpen && <ConversationDetails onClose={() => setDetailsOpen(false)} />}
+            {/* Gated on there being a conversation as well as on the panel being open, so
+                starting a new chat cannot leave a details panel describing the conversation
+                just left. The button that opened it is drawn from the same condition. */}
+            {detailsOpen && activeConversationId && (
+                <ConversationDetails onClose={() => setDetailsOpen(false)} />
+            )}
             <ParticipantsPanel />
         </div>
     );
