@@ -5,11 +5,11 @@ import logging
 from config import *
 from functions_authentication import *
 from functions_group import get_user_groups
-from functions_governance import filter_governed_model_endpoints, is_action_scope_access_allowed, is_governance_access_allowed
+from functions_governance import filter_governed_model_endpoints
 from functions_public_workspaces import get_user_visible_public_workspace_docs
 from functions_settings import *
-from functions_file_sync import is_file_sync_enabled_for_user
 from functions_source_review import is_url_access_enabled_for_user
+from functions_workspace_sections import build_workspace_section_availability
 from swagger_wrapper import swagger_route, get_auth_security
 
 def register_route_frontend_workspace(bp):
@@ -38,10 +38,20 @@ def register_route_frontend_workspace(bp):
             settings,
             user_roles=current_user_roles,
         )
-        file_sync_enabled = is_file_sync_enabled_for_user(settings, user_id, user_info.get('email'), user_info=user_info) if user_id else False
         if not user_id:
             print("User not authenticated.")
             return redirect(url_for('frontend_authentication.login'))
+
+        # Shared with the V2 interface so the two cannot disagree about which sections of
+        # the personal workspace a user may see.
+        workspace_availability = build_workspace_section_availability(
+            settings,
+            user_id,
+            user_info=user_info,
+            user_roles=current_user_roles,
+        )
+        file_sync_enabled = workspace_availability['file_sync_enabled']
+
         
         query = """
             SELECT VALUE COUNT(1)
@@ -69,12 +79,7 @@ def register_route_frontend_workspace(bp):
             enable_audio=enable_audio_uploads
         )
         
-        workspace_governance = {
-            "user_agents": is_governance_access_allowed("governance_user_agents", user_id),
-            "user_actions": is_action_scope_access_allowed("governance_user_actions", user_id, "personal"),
-            "user_endpoints": is_governance_access_allowed("governance_user_endpoints", user_id),
-            "global_endpoints": is_governance_access_allowed("governance_global_endpoints", user_id),
-        }
+        workspace_governance = workspace_availability['governance']
 
         personal_endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
         personal_model_endpoints = sanitize_model_endpoints_for_frontend(

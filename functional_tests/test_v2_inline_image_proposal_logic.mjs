@@ -1,9 +1,9 @@
 // test_v2_inline_image_proposal_logic.mjs
 //
 // Runtime test for the V2 inline image proposal logic.
-// Version: 0.261.041
+// Version: 0.261.045
 // Implemented in: 0.261.029
-// Card identity and card state added in: 0.261.041
+// Card identity and card state added in: 0.261.045
 //
 // The companion test, test_v2_inline_image_proposals.py, asserts that the V2 card agrees with
 // the classic client and the server about names, caps, paths and thresholds. Those are source

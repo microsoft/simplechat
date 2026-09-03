@@ -2,7 +2,7 @@
 """
 Functional test for the V2 settings tabs and the routes behind them.
 
-Version: 0.261.022
+Version: 0.261.041
 Implemented in: 0.261.022
 
 Each tab reads a different set of endpoints, and every field name and query parameter here
@@ -153,7 +153,7 @@ def test_feedback_and_violations_read_the_right_fields():
 
 
 def test_stats_uses_an_allowed_window_and_local_charts():
-    """The window is an enum, and charts must not pull in a CDN dependency."""
+    """The window is an enum, and the charts are drawn from vendored bytes."""
     print("Testing stats contract...")
 
     windows = _read(APP_DIR / "functions_stats_windows.py")
@@ -161,13 +161,15 @@ def test_stats_uses_an_allowed_window_and_local_charts():
     assert match, "Could not find the allowed stats windows"
     allowed = {value.strip() for value in match.group(1).split(",") if value.strip()}
 
-    client = _read(V2_SRC / "components" / "settings" / "StatsTab.tsx")
-    offered = set(re.findall(r"\{ days: (\d+),", client))
+    stats_lib = _read(V2_SRC / "lib" / "userStats.ts")
+    offered = set(re.findall(r"\{ days: (\d+),", stats_lib))
     assert offered <= allowed, (
         f"The stats tab offers windows the route rejects: {offered - allowed}. "
         "An unrecognised value silently falls back to the default."
     )
     assert offered, "The stats tab should offer at least one window"
+
+    client = _read(V2_SRC / "components" / "settings" / "StatsTab.tsx")
 
     # Response field names.
     profile = _read(APP_DIR / "route_frontend_profile.py")
@@ -179,13 +181,30 @@ def test_stats_uses_an_allowed_window_and_local_charts():
     assert "data?.conversations?.creates" in client
     assert "data?.documents?.uploads" in client
 
-    # Charts are drawn locally, not fetched.
-    assert "cdn" not in client.lower(), "Browser assets must be served locally"
+    # Charts are drawn from the copy of Chart.js committed to this repository and served
+    # from the app's own origin, loaded through the shared runtime rather than a second
+    # loader of its own. Nothing is fetched from the public Internet.
+    runtime = _read(V2_SRC / "lib" / "chartRuntime.ts")
+    assert "VENDOR_PATHS.chartJs" in runtime, (
+        "chartRuntime.ts must load Chart.js from the vendored path"
+    )
+    chart_component = _read(V2_SRC / "components" / "settings" / "StatsChart.tsx")
+    assert "loadChartRuntime" in chart_component, (
+        "The stats charts must use the shared vendored Chart.js loader"
+    )
+    for source in (client, chart_component, runtime):
+        assert "cdn" not in source.lower(), "Browser assets must be served locally"
+        assert "http://" not in source and "https://" not in source, (
+            "The stats charts must not reference an absolute URL"
+        )
+
+    # Vendoring is the point: a charting package pulled from npm would be bundled into the
+    # entry chunk and downloaded by every user, including the ones who never open this tab.
     package_json = _read(REPO_ROOT / "application" / "v2_ui" / "package.json")
     for charting in ("chart.js", "recharts", "d3", "apexcharts"):
         assert charting not in package_json, (
-            f"{charting} was added for a series of daily counts that plain SVG already "
-            "draws; this grows the bundle for every page"
+            f"{charting} was added as an npm dependency; Chart.js is vendored under "
+            "public/vendor/ and loaded on demand so it never enters the main bundle"
         )
 
     print("Stats contract test passed!")

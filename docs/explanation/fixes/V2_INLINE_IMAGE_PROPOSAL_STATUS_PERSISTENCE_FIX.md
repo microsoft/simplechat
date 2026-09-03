@@ -1,6 +1,6 @@
 # V2 Inline Image Proposal Status Persistence Fix
 
-Fixed in version: **0.261.041**
+Fixed in version: **0.261.045**
 
 ## Issue
 
@@ -115,7 +115,7 @@ badges and description exactly as before.
 | `application/v2_ui/src/lib/imageProposalSpec.ts` | New `proposalCardKey`, which names a card within its message |
 | `application/v2_ui/src/components/chat/ImageProposalContext.tsx` | The scope owns the card state map and exposes `cardStates` and `updateCardState` |
 | `application/v2_ui/src/components/chat/InlineImageProposal.tsx` | Reads and writes its state through the scope; accepts `blockIndex`; the approved card drops the badge row |
-| `application/single_app/config.py` | `VERSION` to `0.261.041` |
+| `application/single_app/config.py` | `VERSION` to `0.261.045` |
 
 ## Not changed
 

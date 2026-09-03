@@ -2,8 +2,8 @@
 """
 Functional test for V2 inline image proposal approval state surviving a re-render.
 
-Version: 0.261.041
-Implemented in: 0.261.041
+Version: 0.261.045
+Implemented in: 0.261.045
 
 Approving several image proposals in one reply used to unravel the moment the first image came
 back. The remaining cards lost their "Generating image..." status, their Approve buttons became
@@ -45,7 +45,7 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.041"
+IMPLEMENTED_IN = "0.261.045"
 
 MARKDOWN_COMPONENT = V2_SRC / "components" / "chat" / "AssistantMarkdown.tsx"
 CARD_COMPONENT = V2_SRC / "components" / "chat" / "InlineImageProposal.tsx"

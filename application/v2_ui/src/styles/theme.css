@@ -213,6 +213,16 @@ html[data-font-size='xl'] {
             radial-gradient(45rem 45rem at 50% 110%, var(--backdrop-tint-c), transparent 60%);
     }
 
+    /* Tailwind v4's Preflight dropped the v3 rule that gave buttons a pointer cursor,
+       leaving every control in this interface with the arrow that browsers use for inert
+       text. Restored here rather than as a utility on each button, because the affordance
+       is not something any individual button should have to opt into. `:not(:disabled)`
+       leaves the `disabled:cursor-not-allowed` utilities used throughout the app intact. */
+    button:not(:disabled),
+    [role='button']:not(:disabled) {
+        cursor: pointer;
+    }
+
     :focus-visible {
         outline: 2px solid var(--accent);
         outline-offset: 2px;

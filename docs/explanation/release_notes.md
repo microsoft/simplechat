@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.041)**
+### **(v0.261.045)**
 
 #### Bug Fixes
 
@@ -16,6 +16,84 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   After an image had been generated, its card still showed the labels from the original proposal — the kind of visual, the slide it referred to, and the context it was drawn from. Those describe an image that does not exist yet, and say nothing once you can see it.
     *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
     *   (Ref: V2 chat, inline image proposals, generated image card)
+
+### **(v0.261.044)**
+
+#### Bug Fixes
+
+*   **The New Interface's New Chat Button Now Works, And Buttons Look Clickable**
+    *   **New chat** appeared in the sidebar on every page but only ever did anything on the chat page. Clicking it from **My Workspace**, **Admin Settings** or **Settings** produced no visible response at all — it reset chat state that was not on screen and left you where you were. It is now shown only on the chat page, where it has something to act on.
+    *   **Chats** in the sidebar covers what that leaves behind. Clicking it from anywhere else now starts a fresh chat, which is what makes a new chat reachable from the rest of the application. Two exceptions: clicking **Chats** while already on the chat page still does nothing, so a stray click cannot discard what you are reading, and a conversation still streaming a reply is returned to rather than reset, so a response in progress is never thrown away.
+    *   Previously, leaving the chat page and coming back silently reopened whatever conversation you last had. That conversation is still one click away in the conversation list.
+    *   No button in the new interface showed a hand cursor — not **New chat**, not the chat header icons, the conversation list, the composer or the admin controls. Everything rendered with the arrow cursor browsers use for text you cannot click. The whole interface now indicates what is clickable.
+    *   Starting a new chat no longer leaves the conversation drawer stranded open and empty after its **Contents** and **Documents** buttons have disappeared, and the conversation details panel no longer outlives the conversation it was describing.
+    *   (Ref: V2 navigation rail, New chat, conversation drawer, button cursor)
+
+### **(v0.261.043)**
+
+#### Bug Fixes
+
+*   **Chart And Diagram Colours Could Not Be Saved In A Shared Conversation**
+    *   Picking a colour for a chart or a diagram in a shared conversation changed it on screen and then reported "That change could not be saved", with a 404 in the browser console. Only shared conversations were affected; personal ones saved as normal.
+    *   Shared conversations are stored separately from personal ones, and the endpoint that saves a block's colours could only find personal conversations, so it refused the write before it ever reached the message. Colours and sizes now save in shared conversations too.
+    *   Because a shared conversation is shared, the colours you choose are stored on the message and are what everybody in the conversation sees — the same way masking already works — and they change on the other participants' screens as you make them rather than on their next visit. Changing them needs the same access as posting a message, so a read-only viewer sees the colours others chose without being able to alter them for everybody.
+    *   (Ref: V2 chat, shared conversations, diagram and chart colours, `/api/collaboration/conversations/.../visual-style`)
+
+*   **Opening A Link To A Shared Conversation Logged A Console Error**
+    *   Following a link to a shared conversation worked, but always left a 404 in the browser console. The interface was working out whether the link pointed at a personal or a shared conversation by asking about it as a personal one first and reading the failure as its answer.
+    *   It now asks once and gets a straight answer, so opening a shared conversation from a link is a single successful request and the console stays clean.
+    *   (Ref: V2 chat, shared conversations, conversation deep links)
+
+### **(v0.261.042)**
+
+#### New Features
+
+*   **My Workspace In The V2 Interface**
+    *   The personal workspace in the new interface previously listed documents and nothing else. It now covers all eight areas the classic workspace does — documents, file sources, prompts, agents, actions, workflows, identities and endpoints.
+    *   **The sections are grouped by what they are for**, rather than presented as eight equal tabs. **Knowledge** is what your assistant can draw on, **Automation** is what it can do, and **Connections** is the shared setup the other two reuse. Identities and endpoints are plumbing that other sections consume, and no longer sit alongside documents as though they were the same kind of thing.
+    *   **An overview page explains how the pieces fit together.** It lists each group with a count of what is in it, one line on what each section is for, and states the relationships plainly: identities are used by file sources and actions, file sources feed documents, documents and actions and endpoints are used by agents, and agents are used by workflows.
+    *   **Sections your administrator has not enabled are named, with the reason.** They appear on the overview greyed out rather than silently vanishing, so a capability that is switched off can no longer be mistaken for one that is broken or missing.
+    *   **Sync is now called File sources**, which is what people go there to set up, and identities are described as saved sign-ins for other systems rather than as your own account.
+    *   Each section is its own address — `/workspace/agents`, `/workspace/prompts` — so a link to one can be bookmarked or shared.
+    *   Prompts support full create, edit and delete. Agents can be created, edited and deleted. Workflows can be run, cancelled and inspected. File sources can be synced on demand with their run history. Connector configuration, the workflow designer and endpoint connection details are still done in the classic workspace, and each section links to it.
+    *   (Ref: V2 interface, My Workspace, `/api/v2/bootstrap`, `functions_workspace_sections.py`)
+
+*   **Per-Item Editing For Personal Agents, Actions And Endpoints**
+    *   Saving or deleting one of these used to rewrite the entire collection. Two browser tabs open on the workspace could overwrite each other's work, and any item a client did not know about was deleted along the way.
+    *   Each now supports editing and removing a single item. The old whole-collection save still works and the classic interface is unaffected.
+    *   Editing a model endpoint no longer risks blanking its stored credentials: only the fields that changed are sent, and the secrets — which are never given to the browser in the first place — are merged in on the server.
+    *   (Ref: `/api/user/agents`, `/api/user/plugins`, `/api/user/model-endpoints`)
+
+#### Bug Fixes
+
+*   **Deleting A Personal Agent Reported An Error After It Had Worked**
+    *   The delete endpoint removed the agent and then answered with an error, so the caller was told the operation failed when it had already succeeded. This happened on any delete that left at least one agent behind, in any deployment without a global agent configured.
+    *   The check that caused it now runs before the delete, so a refusal means nothing was removed.
+    *   (Ref: personal agents, `/api/user/agents`)
+
+*   **Deleting A Personal Agent Skipped Its Governance Check**
+    *   Saving agents checked whether governance policy allowed it; deleting them did not, so a user who had been denied access to personal agents could still delete them. The check is now applied before the agent is removed.
+    *   (Ref: personal agents, governance policy)
+
+### **(v0.261.041)**
+
+#### New Features
+
+*   **Full Activity Stats In The V2 Interface**
+    *   The **Stats** tab under Settings in the new interface now reports everything the classic profile page's stats tab reports, instead of the four small sparklines it showed before.
+    *   **Your lifetime totals** — conversations, messages, documents and sign-ins — are shown as cards, together with when they were last worked out and when you last signed in. These are cached figures rather than live ones, and the tab now says so, so they are not mistaken for the totals for the period you are looking at.
+    *   **Pick a period.** The last 7, 30 or 90 days, or a start and end date of your own. A range with the dates the wrong way round, or with one date missing, is now explained before the request is sent rather than failing silently.
+    *   **Four activity charts and a storage breakdown.** Sign-ins and token usage as lines, conversations and documents as paired bars showing created against deleted and uploaded against deleted, and storage split between AI Search and blob storage. These are the same charts, shapes and colours as the classic page.
+    *   **Export to CSV.** Choose which of summary totals, sign-ins, conversations, documents and token usage to include, and the period to cover — which can differ from the one on screen. The file matches the classic export column for column.
+    *   **Your account** — name, email address and user id — is shown at the foot of the tab.
+    *   (Ref: V2 settings, Stats tab, `/api/user/activity-trends`, `/api/user/settings`, vendored Chart.js)
+
+#### User Interface Enhancements
+
+*   **One Destination For Personal Settings In The V2 Interface**
+    *   The account menu in the left rail offered both **Settings** and **Profile**, the second of which left the new interface for the classic profile page. With the activity stats now rebuilt under Settings, the Profile entry led nowhere the new interface does not already cover, so it has been removed. **Settings** is the single destination.
+    *   The "open in the classic interface" links inside the Groups and Public tabs are unchanged — those capabilities have not been rebuilt yet, and the links remain the way to reach them.
+    *   (Ref: V2 sidebar, account menu, settings navigation)
 
 ### **(v0.261.040)**
 
@@ -36,6 +114,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
     *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
     *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
+
 ### **(v0.261.039)**
 
 #### New Features

@@ -2,6 +2,12 @@
 // The single navigation surface. SimpleChat V2 has no top bar by design: brand, primary
 // navigation, workspace scopes, theme control and the user menu all live in this rail,
 // which collapses to an icon strip.
+//
+// The user menu deliberately offers one destination for personal settings. It used to offer
+// two — Settings here and Profile in the classic interface — which was a choice nobody had
+// the information to make, since the classic profile page is where the settings *and* the
+// activity stats were. The stats now live on the Settings page's Stats tab, so the second
+// entry has nothing left to lead to.
 
 import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
@@ -20,7 +26,6 @@ import {
     SlidersHorizontal,
     Sparkles,
     Sun,
-    User,
     Users,
 } from 'lucide-react';
 import { useUiStore } from '../../stores/uiStore';
@@ -33,13 +38,27 @@ interface NavItem {
     to: string;
     label: string;
     icon: typeof MessagesSquare;
+    /** Hover text. Two entries are easily confused without it, so both say what they are. */
+    hint?: string;
     adminOnly?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
     { to: '/chat', label: 'Chats', icon: MessagesSquare },
-    { to: '/agents', label: 'Agents', icon: Sparkles },
-    { to: '/workspace', label: 'My Workspace', icon: FolderOpen },
+    {
+        to: '/agents',
+        label: 'Agents',
+        icon: Sparkles,
+        // Distinct from My Workspace > Agents, which is where you build your own. This is
+        // the catalogue of every agent you are allowed to use, wherever it came from.
+        hint: 'Browse every agent you can use',
+    },
+    {
+        to: '/workspace',
+        label: 'My Workspace',
+        icon: FolderOpen,
+        hint: 'Your documents, prompts, agents and automation',
+    },
     { to: '/groups', label: 'Group Workspaces', icon: Users },
     { to: '/public', label: 'Public Workspaces', icon: Globe2 },
     { to: '/admin', label: 'Admin Settings', icon: Settings, adminOnly: true },
@@ -101,12 +120,6 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                     >
                         <SlidersHorizontal size={15} /> Settings
                     </NavLink>
-                    <a
-                        href="/profile"
-                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2"
-                    >
-                        <User size={15} /> Profile
-                    </a>
                     {/* Carries the open conversation across, since both interfaces read the
                         same parameter. Crossing over otherwise lands on the conversation
                         list, leaving you to find your place again. */}
@@ -168,6 +181,30 @@ export function Sidebar() {
     const onChatPage = location.pathname.startsWith('/chat');
     const collapsed = railCollapsed;
 
+    /**
+     * Arriving at the chat page from elsewhere starts a fresh chat.
+     *
+     * The store is not reset by navigation — it is plain in-memory state that outlives a
+     * route change — so without this, returning to the chat page silently re-opens the
+     * conversation last read and puts it back in the address bar. Since `New chat` is only
+     * offered on the chat page, this is what makes a new chat reachable from anywhere else.
+     *
+     * Two things are deliberately left alone. Clicking `Chats` while already on the chat
+     * page does nothing, so a stray click on the highlighted nav item cannot throw away
+     * whatever is being read. And a conversation still streaming a reply is returned to
+     * rather than reset, because the reset stops the stream and the reply would be lost.
+     *
+     * `streaming` is read from the store rather than subscribed to: it changes with every
+     * token, and subscribing would re-render this rail — conversation list included —
+     * throughout a response.
+     */
+    const startNewChatOnArrival = () => {
+        if (onChatPage || useChatStore.getState().streaming) {
+            return;
+        }
+        startNewConversation();
+    };
+
     return (
         <nav
             aria-label="Primary"
@@ -206,28 +243,34 @@ export function Sidebar() {
                 </button>
             )}
 
-            <div className="px-3">
-                <button
-                    type="button"
-                    onClick={startNewConversation}
-                    title="Start a new chat"
-                    className={clsx(
-                        'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
-                        'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
-                        collapsed && 'justify-center px-0',
-                    )}
-                >
-                    <MessageSquarePlus size={17} className="shrink-0" />
-                    {!collapsed && <span>New chat</span>}
-                </button>
-            </div>
+            {/* Only offered where it has somewhere to act. On any other page it reset chat
+                state that was not on screen and left the reader where they were, which
+                looked like a button that did nothing. `Chats` covers that case instead. */}
+            {onChatPage && (
+                <div className="px-3">
+                    <button
+                        type="button"
+                        onClick={startNewConversation}
+                        title="Start a new chat"
+                        className={clsx(
+                            'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
+                            'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
+                            collapsed && 'justify-center px-0',
+                        )}
+                    >
+                        <MessageSquarePlus size={17} className="shrink-0" />
+                        {!collapsed && <span>New chat</span>}
+                    </button>
+                </div>
+            )}
 
-            <ul className="mt-3 space-y-0.5 px-3">
+            <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
                 {NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin).map((item) => (
                     <li key={item.to}>
                         <NavLink
                             to={item.to}
-                            title={collapsed ? item.label : undefined}
+                            onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
+                            title={collapsed ? item.label : item.hint}
                             className={({ isActive }) =>
                                 clsx(
                                     'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',

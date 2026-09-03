@@ -39,6 +39,7 @@ import {
     maskCollaborationMessage,
     postCollaborationMessage,
     renameCollaborationConversation,
+    setCollaborationMessageVisualStyle,
     streamCollaborationUrl,
     toggleCollaborationHidden,
     toggleCollaborationPinned,
@@ -72,7 +73,8 @@ import type {
     ThoughtEntry,
 } from '../lib/types';
 import { isCollaborative } from '../lib/types';
-import { fetchConversationMetadata } from '../lib/endpoints';
+import { fetchConversationKind, fetchConversationMetadata } from '../lib/endpoints';
+import type { ConversationKind } from '../lib/endpoints';
 
 const FEED_PAGE_SIZE = 30;
 
@@ -89,8 +91,11 @@ export type DrawerMode = 'contents' | 'documents' | null;
  * `/api/collaboration/*`; sending its id to a personal route either 404s or, in the case of
  * `/api/get_messages`, answers 200 with an empty list. Every conversation-scoped call
  * therefore branches on this rather than trying one endpoint and falling back.
+ *
+ * Defined with the wire types because the server reports it, and re-exported here because this
+ * is where the rest of the app has always read it from.
  */
-export type ConversationKind = 'personal' | 'collaborative';
+export type { ConversationKind };
 
 /**
  * How far a stream recovery has got.
@@ -246,6 +251,14 @@ interface ChatState {
     applyVisualStyle: (
         messageId: string,
         conversationId: string,
+        /**
+         * Which API family that conversation belongs to, captured when the change was made.
+         *
+         * Passed in for the same reason `conversationId` is: a pending change is flushed when
+         * the block unmounts, and by then the conversation it belongs to may no longer be the
+         * open one. `null` falls back to whatever the store can still work out.
+         */
+        conversationKind: ConversationKind | null,
         blockKind: string,
         blockIndex: number,
         sourceHash: string,
@@ -732,9 +745,11 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
  * Work out which API family a conversation belongs to by asking.
  *
  * Only reached for a conversation that is not in the loaded rail — a deep link, or one
- * opened straight after being shared. The personal endpoint is tried first because it is
- * the overwhelmingly common case, and both answer 404 for an id belonging to the other, so
- * the sequence terminates rather than guessing.
+ * opened straight after being shared.
+ *
+ * A single endpoint answers this. It used to be inferred by calling the personal metadata
+ * endpoint and reading its 404 as "then it is a shared one", which was correct but made the
+ * browser log a failed request every time somebody followed a link to a shared conversation.
  *
  * A collaboration response is handed back rather than written to a store: it is the same
  * document the participants panel and the composer need, so returning it saves a second
@@ -742,7 +757,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
  * a conversation that is not open yet, which is exactly the class of stale write the
  * collaboration store now refuses.
  *
- * With `requireExists`, a conversation neither endpoint recognises is a rejection rather
+ * With `requireExists`, a conversation the server does not recognise is a rejection rather
  * than a default, which is what lets a dead link be reported instead of opening as an empty
  * chat.
  */
@@ -751,18 +766,16 @@ async function resolveConversationKind(
     options: { requireExists?: boolean } = {},
 ): Promise<{ kind: ConversationKind; conversation?: CollaborationConversation }> {
     try {
-        await fetchConversationMetadata(conversationId);
-        return { kind: 'personal' };
-    } catch (personalError) {
-        try {
-            const { conversation } = await fetchCollaborationConversation(conversationId);
-            return { kind: 'collaborative', conversation };
-        } catch {
-            if (options.requireExists) {
-                throw personalError;
-            }
-            return { kind: 'personal' };
+        const { kind, conversation } = await fetchConversationKind(conversationId);
+        return { kind, conversation };
+    } catch (error) {
+        if (options.requireExists) {
+            throw error;
         }
+        // Not knowing is not the same as knowing it is shared, and personal is the
+        // overwhelmingly common case, so an unreachable server degrades to the thread simply
+        // failing to load rather than to collaboration calls that could never work.
+        return { kind: 'personal' };
     }
 }
 
@@ -860,6 +873,34 @@ function attachCollaborationEvents(conversationId: string): void {
             if (updatedByUserId && updatedByUserId !== currentUserId()) {
                 toast.info('A message in this conversation was masked.');
             }
+        },
+
+        onMessageVisualStyleUpdated: (message) => {
+            if (!stillOpen()) {
+                return;
+            }
+            // Only the styles are taken, not the whole message. Everything else in the
+            // broadcast is unchanged by a recolour, and replacing it wholesale would discard
+            // client-side state the thread has built up around the message.
+            //
+            // No toast, and no interest in who did it: a colour change is cosmetic, and a drag
+            // on somebody else's screen would announce itself repeatedly for something the
+            // reader can already see happening.
+            const styles =
+                (message.metadata as Record<string, unknown> | undefined)?.visual_styles ?? {};
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === message.id
+                        ? {
+                              ...existing,
+                              metadata: {
+                                  ...(existing.metadata as Record<string, unknown>),
+                                  visual_styles: styles,
+                              },
+                          }
+                        : existing,
+                ),
+            }));
         },
 
         onTyping: (user, isTyping, expiresAt) => {
@@ -1237,6 +1278,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             reconnectPhase: null,
             metadata: null,
             metadataError: null,
+            // Closed rather than left behind. The header's Contents and Documents toggles
+            // are drawn only while a conversation is open, so an open drawer would survive
+            // with nothing left to describe and no control to dismiss it from. The classic
+            // interface closes it here too.
+            drawerMode: null,
         });
         useCollaborationStore.getState().setActiveConversation(null);
     },
@@ -1944,6 +1990,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
      * a block unmounts — by which point the active conversation is already the new one, and the
      * write would be addressed to a conversation the message is not in.
      *
+     * A shared conversation has its own endpoint. Its messages are in a different Cosmos
+     * container, so the personal route cannot even find the conversation to authorize the
+     * write and answers 404 — which is what made recolouring a chart in a shared thread report
+     * that the change could not be saved.
+     *
      * The server returns the whole stored map rather than just the entry that changed, so the
      * local copy is replaced by it: a block whose entry the server dropped as stale should stop
      * showing its old colours here too.
@@ -1951,6 +2002,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     applyVisualStyle: async (
         messageId,
         conversationId,
+        conversationKind,
         blockKind,
         blockIndex,
         sourceHash,
@@ -1961,23 +2013,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return false;
         }
 
+        // The kind recorded when the change was made is authoritative. Falling back to the
+        // store only covers the case where it was not yet known, and the rail row it consults
+        // may be gone by the time a flushed change is written.
+        const collaborative =
+            conversationKind === null
+                ? isCollaborativeConversation(get(), conversationId)
+                : conversationKind === 'collaborative';
+        const payloadStyle = style
+            ? {
+                  palette: style.palette,
+                  background: style.background,
+                  colors: style.colors,
+              }
+            : null;
+        // Spread rather than always sent: the server distinguishes an absent key, which keeps
+        // the stored height, from an explicit null, which clears it.
+        const heightFields = height === undefined ? {} : { height };
+
         try {
-            const result = await setMessageVisualStyleApi(messageId, {
-                conversation_id: conversationId,
-                block_kind: blockKind,
-                block_index: blockIndex,
-                source_hash: sourceHash,
-                style: style
-                    ? {
-                          palette: style.palette,
-                          background: style.background,
-                          colors: style.colors,
-                      }
-                    : null,
-                // Spread rather than always sent: the server distinguishes an absent key,
-                // which keeps the stored height, from an explicit null, which clears it.
-                ...(height === undefined ? {} : { height }),
-            });
+            const result = collaborative
+                ? await setCollaborationMessageVisualStyle(conversationId, messageId, {
+                      block_kind: blockKind,
+                      block_index: blockIndex,
+                      source_hash: sourceHash,
+                      style: payloadStyle,
+                      ...heightFields,
+                  })
+                : await setMessageVisualStyleApi(messageId, {
+                      conversation_id: conversationId,
+                      block_kind: blockKind,
+                      block_index: blockIndex,
+                      source_hash: sourceHash,
+                      style: payloadStyle,
+                      ...heightFields,
+                  });
 
             set((state) => ({
                 messages: state.messages.map((message) =>
@@ -1997,7 +2067,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         } catch (error) {
             toast.error(
                 error instanceof ApiError && error.status === 403
-                    ? 'You can only restyle blocks in your own conversations.'
+                    ? collaborative
+                        ? 'You need write access to this shared conversation to restyle its blocks.'
+                        : 'You can only restyle blocks in your own conversations.'
                     : error instanceof Error
                       ? error.message
                       : 'Those colours could not be saved.',

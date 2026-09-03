@@ -2,7 +2,7 @@
 """
 Functional test for V2 inline image generation proposals.
 
-Version: 0.261.041
+Version: 0.261.045
 Implemented in: 0.261.029
 
 A model can propose a generated image inside an ordinary reply by emitting a fenced

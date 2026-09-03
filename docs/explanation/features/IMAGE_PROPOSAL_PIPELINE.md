@@ -125,7 +125,7 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
 - `functional_tests/test_v2_inline_image_proposals.py` validates that the V2 card agrees with both the classic client and the server: the same fence language, the same sanitization caps, the registered endpoint path, the same approve-all threshold, and that generation is opt-in, serialized, and rendered without any HTML sink.
 - `functional_tests/test_v2_inline_image_proposal_logic.mjs` executes the V2 parsing, result matching, card identity, card state and approval queue against the real modules, covering the cases where a mistake would render perfectly and still be wrong: a proposal approved after its prompt was edited, a prompt whose newlines the server flattened, several approvals started at once, and one card's progress disturbing another's.
 - `functional_tests/test_v2_inline_image_proposal_status_persistence.py` validates that the markdown component map is memoised and that a card's approval state is owned by its message, so an approval still in flight keeps reporting itself when the card is rebuilt.
-- Version was updated in `application/single_app/config.py` to `0.241.135` for traceability, to `0.261.029` when V2 support was added, and to `0.261.041` when V2 approval state was made to survive a re-render.
+- Version was updated in `application/single_app/config.py` to `0.241.135` for traceability, to `0.261.029` when V2 support was added, and to `0.261.045` when V2 approval state was made to survive a re-render.
 
 ## Known Limitations
 
