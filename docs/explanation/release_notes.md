@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.034)**
+
+#### Bug Fixes
+
+*   **Picking An Agent No Longer Leaves A Model And Reasoning Level Pretending To Apply**
+    *   In the new interface, choosing an agent left the **Model** picker still showing a selected model and the **Reasoning** picker still offering a level, even though an agent can act on neither — an agent answers with its own model, and reasoning levels only reach a directly chosen model.
+    *   Worse, the request sent all three together, and the server reads a model sent alongside an agent as a deliberate instruction to override it. So an agent could quietly answer through the wrong model rather than the one it is configured with.
+    *   Selecting an agent now dims the **Model** picker back to the plain word "Model" and hides **Reasoning**. The model you had chosen is remembered, not thrown away, and comes straight back when you clear the agent.
+    *   The model picker stays clickable while it is dimmed: choosing a model is how you switch back, and doing so clears the agent for you. Its menu still shows a tick beside the model you had, so you can see what returns.
+    *   Hovering the dimmed picker names the agent that is supplying the model.
+    *   Reasoning is now also hidden while generating an image, matching the classic interface.
+    *   (Ref: V2 chat, agent picker, model picker, reasoning effort, `chatRequestSelection.ts`)
+
 ### **(v0.261.033)**
 
 #### New Features
