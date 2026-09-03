@@ -41,7 +41,7 @@ local path.
 |---|---|---|
 | KaTeX 0.18.4 | `katex.min.js`, `katex.min.css`, `fonts/` | TeX rendering |
 | Mermaid 11.17.2 | `mermaid.min.js` | Diagram rendering |
-| Chart.js 4.5.1 | `chart.umd.min.js` | Inline chart rendering |
+| Chart.js 4.5.1 | `chart.umd.min.js` | Inline chat charts and the settings stats charts |
 | DOMPurify 3.4.14 | `purify.min.js` | Sanitizer boundary in front of both HTML sinks |
 
 Resolving these from a registry at build time would mean the code the browser executes is
@@ -50,7 +50,10 @@ reviewable commit rather than a silent substitution. Vite copies `public/` into 
 output verbatim, so the committed bytes are exactly what is served.
 
 They are loaded on demand rather than bundled. Mermaid alone is 3.4 MB, and a conversation
-with no diagram, chart or equation downloads none of it.
+with no diagram, chart or equation downloads none of it. Each library has a single loader, so
+a second consumer reuses the script that is already parsed: `src/lib/chartRuntime.ts` is what
+both the inline chat charts and the settings stats charts call, and whichever draws first
+pays for Chart.js.
 
 To upgrade one, replace the directory and its `LICENSE`, then update `VENDOR_PATHS` in
 `src/lib/vendorAssets.ts` and the expected version in
@@ -753,12 +756,19 @@ Two things are worth noting about the other tabs:
   unknown workspace, 403 for one the caller is not a member of. Writing `activeGroupOid` to
   the settings route also works, but it is popped and never returned, so the client would
   have no way to confirm it took.
-- **Stats draws its own charts.** The classic page uses Chart.js; here the data is a flat
-  series of daily counts, which needs no axis machinery, interaction model or animation
-  loop, so it is drawn as plain SVG `<rect>` bars. Adding a charting dependency would grow
-  the bundle for every page to draw a shape the browser already has, and browser assets have
-  to be locally served in any case. The window is an enum — the route accepts only 7, 30 or
-  90 and silently falls back to its default for anything else — so only those are offered.
+- **Stats covers what the classic stats page covers.** Lifetime totals, a 7/30/90 or custom
+  window, day-by-day sign-in, conversation, document and token charts, a storage breakdown,
+  a CSV export and the signed-in account's details. It is drawn with the vendored Chart.js,
+  loaded on demand through the same runtime the inline chat charts use, so nothing is added
+  to the main bundle and nothing is fetched from outside the application. See
+  [V2 Stats Tab Parity](V2_STATS_TAB_PARITY.md).
+
+The account menu offers one destination for personal settings. It previously offered two —
+Settings here and Profile in the classic interface — which was a choice nobody had the
+information to make, since the classic profile page held the settings *and* the activity
+stats. With Stats rebuilt, the Profile entry has nothing left to lead to and is gone. The
+`/profile?tab=groups` and `/profile?tab=public-workspaces` links inside the Groups and Public
+tabs remain: those are the fallback for tabs V2 has not rebuilt, not profile navigation.
 
 ### Not rebuilt yet
 
@@ -863,6 +873,8 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_generated_image_lightbox.py` | The image thumbnail opens a dialog rather than a new tab, the dialog is dismissable and manages focus, every source kind is handled by download and open-in-new-tab, and `window.open` is not given `noopener` |
 | `functional_tests/test_v2_chat_notices.py` | Both notices resolved server-side from the shared helpers, the web search notice's three-key condition including consent, all four AI notice frequencies, dismissal only after a successful write, session keys shared with the classic interface, no hardcoded disclaimer, notice text escaped |
 | `functional_tests/test_v2_conversation_deep_link.py` | Both parameter spellings read and only the canonical one written, the incoming link captured before any effect can strip it, the URL replaced rather than pushed, a dead link reported instead of stranded, a list row backfilled behind the stale-response guard, and the classic handover carrying the conversation |
+| `functional_tests/test_v2_stats_parity.py` | Every trend field, window parameter and cached-metrics key the Stats tab reads exists on the server side, each classic stats surface has a counterpart, the account menu offers one destination, and both chart consumers share the vendored runtime |
+| `functional_tests/test_v2_stats_logic.mjs` | Executes the stats logic: preset versus custom window parameters, custom-range validation, series aligned by date rather than index, formatting, and the CSV export's sections, columns and quoting |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 
