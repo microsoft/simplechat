@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Approving Several Images At Once Looked Like It Had Stopped**
+    *   In the new interface, when a reply proposed several images and you pressed **Approve all**, every card correctly greyed out its Approve button and showed **Generating image…**. The moment the first image appeared, the remaining cards lost their status, their Approve buttons came back, and the **Approve all** button reappeared — so it looked as though nothing was happening and you needed to approve again. The images were in fact still being generated and did arrive shortly after.
+    *   The cards are now told what is happening by the message they belong to rather than keeping it to themselves, so a card that is queued or generating keeps saying so until its image arrives, whatever else happens in the conversation. Editing a proposal's prompt, or dismissing a proposal, now survives a refresh of the reply too.
+    *   The underlying cause was that the whole message was being rebuilt from scratch every time anything about it changed. Diagrams and charts were being thrown away and redrawn for the same reason, and no longer are.
+    *   (Ref: V2 chat, inline image proposals, approve all, assistant markdown rendering)
+
+*   **Generated Image Cards Kept Repeating The Proposal's Description**
+    *   After an image had been generated, its card still showed the labels from the original proposal — the kind of visual, the slide it referred to, and the context it was drawn from. Those describe an image that does not exist yet, and say nothing once you can see it.
+    *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
+    *   (Ref: V2 chat, inline image proposals, generated image card)
+
 ### **(v0.261.044)**
 
 #### Bug Fixes
