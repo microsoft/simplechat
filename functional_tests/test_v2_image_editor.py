@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the inline image editor.
-Version: 0.261.056
-Implemented in: 0.261.056
+Version: 0.261.057
+Implemented in: 0.261.057
 
 This test ensures a generated image can be changed in place — by asking the model, by rewriting
 its prompt, or by changing how it is rendered — without the conversation filling up with
@@ -37,7 +37,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.056"
+IMPLEMENTED_IN = "0.261.057"
 
 EDITOR_TSX = V2_SRC / "components" / "chat" / "ImageEditor.tsx"
 MASK_TSX = V2_SRC / "components" / "chat" / "ImageMaskCanvas.tsx"
