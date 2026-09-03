@@ -1,8 +1,8 @@
 // test_v2_image_mask_logic.ts
 // Behavioural checks for the image mask geometry.
 //
-// Version: 0.261.057
-// Implemented in: 0.261.057
+// Version: 0.261.058
+// Implemented in: 0.261.058
 //
 // The V2 interface has no unit test runner, so this follows test_v2_diagram_editor_logic.ts:
 // bundled with the esbuild Vite already brings in, run under node by test_v2_image_editor.py,

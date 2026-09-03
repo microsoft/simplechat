@@ -24,9 +24,11 @@ import { resolveImageSource, imageEndpointBase } from '../../lib/images';
 import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisions';
 import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
+import { ChatFilePreview } from './ChatFilePreview';
+import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { MessageActions } from './MessageActions';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
-import { ThoughtsList } from './ThoughtsList';
+import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { MaskedSpan, MaskSelectionPopup } from './MaskedSpan';
 import {
     applyMasks,
@@ -49,9 +51,10 @@ import {
     messageAuthorName,
     resolveReplyContext,
 } from '../../lib/sharedMessage';
+import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
 import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
 
-function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
+function ThoughtsPanel({ thoughts, live = false }: { thoughts: ThoughtEntry[]; live?: boolean }) {
     const [open, setOpen] = useState(false);
 
     if (thoughts.length === 0) {
@@ -60,6 +63,9 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
 
     return (
         <div className="mb-2">
+            {/* Staged work in flight shows its progress without being expanded: a run that
+                takes minutes should not need a click to prove it is still going. */}
+            {live && <ThoughtsProgressCard thoughts={thoughts} live />}
             <button
                 type="button"
                 onClick={() => setOpen((isOpen) => !isOpen)}
@@ -78,6 +84,7 @@ function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
 
             {open && (
                 <div className="mt-1.5">
+                    {!live && <ThoughtsProgressCard thoughts={thoughts} />}
                     <ThoughtsList thoughts={thoughts} />
                 </div>
             )}
@@ -232,12 +239,47 @@ function ReplyQuote({ context }: { context: { display_name?: string; preview?: s
  * text, because `content` for one of these is extracted document text and can be the whole
  * document.
  */
+/**
+ * A file attached to a conversation.
+ *
+ * The name opens the file when it can. An attachment is usually the subject of everything
+ * said after it, so being unable to look at it means checking the assistant's answers
+ * against something you cannot see.
+ *
+ * It stays inert in two cases, because the endpoint behind it would fail rather than
+ * explain. `/api/get_file_content` reads the *personal* conversations container and requires
+ * the caller to own the conversation, so a shared conversation — whose messages live
+ * elsewhere under different ids — always 404s. It is also gated on `enable_user_workspace`,
+ * so on a tenant with the workspace disabled it 403s. A control that cannot succeed is worse
+ * than no control.
+ */
 function FileMessage({ message }: { message: ChatMessage }) {
     const chatWidth = useUiStore((state) => state.chatWidth);
     const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const workspaceEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_user_workspace),
+    );
+    const collaborative = useChatStore(
+        (state) => state.activeConversationKind === 'collaborative',
+    );
     const shared = message as CollaborationMessage;
     const author = messageAuthorName(message, currentUserId);
     const own = isOwnMessage(message, currentUserId);
+    const [previewOpen, setPreviewOpen] = useState(false);
+
+    const fileName = shared.filename || 'Attached file';
+    // The upload's own id, which is the message id for a file message. Both it and the
+    // conversation are needed to fetch the content.
+    const fileId = String(message.id ?? '').trim();
+    const conversationId = String(message.conversation_id ?? '').trim();
+    const openable = Boolean(fileId && conversationId && workspaceEnabled && !collaborative);
+
+    const body = (
+        <>
+            <FileText size={16} className="shrink-0 text-text-3" />
+            <span className="truncate">{fileName}</span>
+        </>
+    );
 
     return (
         <div
@@ -245,15 +287,38 @@ function FileMessage({ message }: { message: ChatMessage }) {
             className={clsx('flex flex-col', own && 'items-end')}
         >
             {author && <p className="mb-1 px-1 text-[11px] text-text-3">{author}</p>}
-            <div
-                className={clsx(
-                    bubbleWidthClass(chatWidth),
-                    'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] text-text-1',
-                )}
-            >
-                <FileText size={16} className="shrink-0 text-text-3" />
-                <span className="truncate">{shared.filename || 'Attached file'}</span>
-            </div>
+            {openable ? (
+                <button
+                    type="button"
+                    onClick={() => setPreviewOpen(true)}
+                    title={`Open ${fileName}`}
+                    className={clsx(
+                        bubbleWidthClass(chatWidth),
+                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-left text-[14px] text-text-1',
+                        'transition-colors hover:bg-surface-2',
+                    )}
+                >
+                    {body}
+                </button>
+            ) : (
+                <div
+                    className={clsx(
+                        bubbleWidthClass(chatWidth),
+                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] text-text-1',
+                    )}
+                >
+                    {body}
+                </div>
+            )}
+
+            {previewOpen && (
+                <ChatFilePreview
+                    conversationId={conversationId}
+                    fileId={fileId}
+                    fileName={fileName}
+                    onClose={() => setPreviewOpen(false)}
+                />
+            )}
         </div>
     );
 }
@@ -304,6 +369,16 @@ function MessageBubbleInner({
         () => resolveReplyContext(message, messages, currentUserId),
         [message, messages, currentUserId],
     );
+
+    /**
+     * Files this turn produced, and whether they replace its text.
+     *
+     * Read once here rather than inside the card so the reply body can be suppressed on the
+     * same pass — a finished durable run leaves behind a holding sentence that the artifacts
+     * have made untrue.
+     */
+    const artifacts = useMemo(() => readGeneratedArtifacts(message.metadata), [message.metadata]);
+    const artifactsReplaceText = suppressesAssistantText(artifacts);
 
     // A user message is plain text, so its masked spans can be cut straight out of the
     // content rather than going through the markdown placeholder path.
@@ -426,16 +501,18 @@ function MessageBubbleInner({
                         {message.thoughts && message.thoughts.length > 0 && (
                             <ThoughtsPanel thoughts={message.thoughts} />
                         )}
-                        <ImageProposalScope
-                            assistantMessageId={message.id}
-                            results={proposalImages}
-                        >
-                            <AssistantMarkdown
-                                content={message.content}
-                                masks={masks.ranges}
-                                messageId={message.id}
-                            />
-                        </ImageProposalScope>
+                        {!artifactsReplaceText && (
+                            <ImageProposalScope
+                                assistantMessageId={message.id}
+                                results={proposalImages}
+                            >
+                                <AssistantMarkdown
+                                    content={message.content}
+                                    masks={masks.ranges}
+                                    messageId={message.id}
+                                />
+                            </ImageProposalScope>
+                        )}
                         {(message.model_deployment_name || message.agent_display_name) && (
                             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
                                 {message.agent_display_name ? (
@@ -448,6 +525,20 @@ function MessageBubbleInner({
                                 )}
                             </p>
                         )}
+                        {/* Inside the bubble, because a generated file belongs to the reply
+                            that produced it rather than sitting loose in the thread. */}
+                        {artifacts.map((artifact, index) => (
+                            <GeneratedArtifactCard
+                                key={
+                                    artifact.artifact_message_id ||
+                                    artifact.document_id ||
+                                    artifact.export_run_id ||
+                                    `artifact-${index}`
+                                }
+                                artifact={artifact}
+                                conversationId={message.conversation_id}
+                            />
+                        ))}
                     </>
                 )}
             </div>
@@ -545,7 +636,7 @@ function StreamingBubble() {
                         Reconnected.
                     </p>
                 )}
-                <ThoughtsPanel thoughts={thoughts} />
+                <ThoughtsPanel thoughts={thoughts} live />
                 {streamingContent ? (
                     <AssistantMarkdown content={streamingContent} streaming />
                 ) : (

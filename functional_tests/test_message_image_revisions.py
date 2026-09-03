@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for generated image revision storage and editing.
-Version: 0.261.057
-Implemented in: 0.261.057
+Version: 0.261.058
+Implemented in: 0.261.058
 
 This test ensures a generated image can be changed in place, versioned and restored without the
 conversation filling up with near-duplicate images, and that the two details most easily got
@@ -63,7 +63,7 @@ from functions_image_edit import (  # noqa: E402
     _optional_parameters,
 )
 
-IMPLEMENTED_IN = "0.261.057"
+IMPLEMENTED_IN = "0.261.058"
 
 MESSAGE_ID = "conv123_image_1700000000_4242"
 BLOB = {

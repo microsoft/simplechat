@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.057)**
+### **(v0.261.058)**
 
 #### New Features
 
@@ -23,6 +23,52 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Images In Shared Conversations Now Display In The New Interface**
     *   An image in a shared conversation is served from a different address than one in a personal conversation, and the new interface only recognised the personal form. A shared image therefore rendered as "Image unavailable" rather than as a picture.
     *   (Ref: `images.ts`, `resolveImageSource`, collaboration image URLs)
+
+### **(v0.261.057)**
+
+#### New Features
+
+*   **Generated Files Are Reachable In The New Interface**
+    *   Tabular analysis has always *run* in the new interface — asking a question about a spreadsheet gave a real answer, because the analysis happens on the server. What was missing was everything the analysis produced. A request for an export created the file, said it had created it, and then offered nothing to open it with. The file existed in storage the whole time; nothing in the interface led to it.
+    *   Every file an assistant turn produces now appears as a card beneath the reply, with its row count, where it was saved, what it came from, a preview and a download.
+    *   **This covers more than spreadsheets.** The same cards surface Analyze summaries, document-comparison workbooks and Deep Research ledgers, all of which were equally unreachable.
+    *   A finished row-level export gets a compact card — its name and row count say what it is — with a **View** control that opens the full preview when you actually want it. Longer prose artifacts show their preview inline, and Analyze and comparison outputs keep theirs collapsed so they do not push the reply off screen.
+    *   (Ref: `generatedArtifacts.ts`, `GeneratedArtifactCard.tsx`, `/api/chat_artifacts/download`, [V2 Tabular Analysis](features/V2_TABULAR_ANALYSIS.md))
+
+*   **Long Exports Report Their Progress And Can Be Stopped**
+    *   A large export runs in the background over minutes, checkpointing as it goes. Previously the new interface showed none of this: the run was invisible, and there was no way to restart one the worker had dropped or stop one started by mistake.
+    *   A running export now shows its status, a progress bar, what it is currently doing, throughput and an estimated time remaining, with **Continue** and **Cancel** where the server says those are possible. When it finishes, the progress card is replaced by the files it produced.
+    *   (Ref: `TabularRunStatus.tsx`, `/api/tabular/generated-output/runs/<run_id>`)
+
+*   **Staged Work Shows How Far Along It Is**
+    *   Reasoning steps were drawn as a flat list of sentences. For a tabular analysis — one workbook tool call at a time, for minutes — that is a growing wall of text that reads the same whether the run is working or stuck.
+    *   Work that happens in countable stages now gets a progress card above the steps, naming the current stage and counting completed against total. It stays visible while the run is live without anything needing to be expanded.
+    *   The progress bar never runs backwards, so a new stage starting is never mistaken for lost work.
+    *   (Ref: `activityLanes.ts`, `ThoughtsList.tsx`)
+
+*   **A Confirmation Before An Expensive Row-Level Run**
+    *   Asking for output for every one of several thousand rows is a long, expensive run, and it is as easy to ask for by accident as on purpose. The new interface now says what it is about to do — the row count and the estimated number of batches — and offers to narrow the prompt instead. Declining leaves what you typed exactly where it was.
+    *   Only fires when a prompt asks for row-level output *and* a file *and* names a count over the administrator's thresholds, so ordinary questions are never interrupted.
+    *   (Ref: `tabularRunEstimate.ts`, `enable_tabular_durable_run_confirmation`)
+
+*   **Uploaded Files Can Be Opened**
+    *   A file attached to a conversation showed only its name. Since an attachment is usually the subject of everything said after it, that meant checking the assistant's answers against something you could not see. Clicking the name now opens it — spreadsheets as a table — with **Download original** when the original file is still in storage.
+    *   Personal conversations only, and only where the user workspace is enabled; the name stays inert elsewhere rather than offering a control that cannot work.
+    *   (Ref: `ChatFilePreview.tsx`, `/api/get_file_content`)
+
+*   **Files Awaiting Approval Say So**
+    *   A file generated in a shared conversation is withheld until the conversation's owner releases it. The card now explains that instead of showing a download button that fails, and offers **Approve** and **Deny** to whoever can make the decision.
+    *   (Ref: `GeneratedArtifactCard.tsx`, generated file approvals)
+
+*   **Large Tool Results Are Readable**
+    *   A tabular tool call that matched four thousand rows returned four thousand rows into the message inspector. The result now states how many matched and shows the first few, with controls for twenty-five or all of them.
+    *   (Ref: `agentCitationRows.ts`, `MessageInspector.tsx`)
+
+#### Bug Fixes
+
+*   **Live Reasoning Steps Were All Labelled "Thinking"**
+    *   The new interface read a step's title from a field the server does not send, so every step of a live response was labelled identically until the page was reloaded. Steps now carry the name the server gives them as they arrive.
+    *   (Ref: `chatStore.ts`, thought stream frames)
 
 ### **(v0.261.056)**
 
