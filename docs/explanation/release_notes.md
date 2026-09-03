@@ -2,6 +2,37 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.039)**
+
+#### New Features
+
+*   **My Workspace In The V2 Interface**
+    *   The personal workspace in the new interface previously listed documents and nothing else. It now covers all eight areas the classic workspace does — documents, file sources, prompts, agents, actions, workflows, identities and endpoints.
+    *   **The sections are grouped by what they are for**, rather than presented as eight equal tabs. **Knowledge** is what your assistant can draw on, **Automation** is what it can do, and **Connections** is the shared setup the other two reuse. Identities and endpoints are plumbing that other sections consume, and no longer sit alongside documents as though they were the same kind of thing.
+    *   **An overview page explains how the pieces fit together.** It lists each group with a count of what is in it, one line on what each section is for, and states the relationships plainly: identities are used by file sources and actions, file sources feed documents, documents and actions and endpoints are used by agents, and agents are used by workflows.
+    *   **Sections your administrator has not enabled are named, with the reason.** They appear on the overview greyed out rather than silently vanishing, so a capability that is switched off can no longer be mistaken for one that is broken or missing.
+    *   **Sync is now called File sources**, which is what people go there to set up, and identities are described as saved sign-ins for other systems rather than as your own account.
+    *   Each section is its own address — `/workspace/agents`, `/workspace/prompts` — so a link to one can be bookmarked or shared.
+    *   Prompts support full create, edit and delete. Agents can be created, edited and deleted. Workflows can be run, cancelled and inspected. File sources can be synced on demand with their run history. Connector configuration, the workflow designer and endpoint connection details are still done in the classic workspace, and each section links to it.
+    *   (Ref: V2 interface, My Workspace, `/api/v2/bootstrap`, `functions_workspace_sections.py`)
+
+*   **Per-Item Editing For Personal Agents, Actions And Endpoints**
+    *   Saving or deleting one of these used to rewrite the entire collection. Two browser tabs open on the workspace could overwrite each other's work, and any item a client did not know about was deleted along the way.
+    *   Each now supports editing and removing a single item. The old whole-collection save still works and the classic interface is unaffected.
+    *   Editing a model endpoint no longer risks blanking its stored credentials: only the fields that changed are sent, and the secrets — which are never given to the browser in the first place — are merged in on the server.
+    *   (Ref: `/api/user/agents`, `/api/user/plugins`, `/api/user/model-endpoints`)
+
+#### Bug Fixes
+
+*   **Deleting A Personal Agent Reported An Error After It Had Worked**
+    *   The delete endpoint removed the agent and then answered with an error, so the caller was told the operation failed when it had already succeeded. This happened on any delete that left at least one agent behind, in any deployment without a global agent configured.
+    *   The check that caused it now runs before the delete, so a refusal means nothing was removed.
+    *   (Ref: personal agents, `/api/user/agents`)
+
+*   **Deleting A Personal Agent Skipped Its Governance Check**
+    *   Saving agents checked whether governance policy allowed it; deleting them did not, so a user who had been denied access to personal agents could still delete them. The check is now applied before the agent is removed.
+    *   (Ref: personal agents, governance policy)
+
 ### **(v0.261.038)**
 
 #### Bug Fixes

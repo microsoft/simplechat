@@ -33,13 +33,27 @@ interface NavItem {
     to: string;
     label: string;
     icon: typeof MessagesSquare;
+    /** Hover text. Two entries are easily confused without it, so both say what they are. */
+    hint?: string;
     adminOnly?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
     { to: '/chat', label: 'Chats', icon: MessagesSquare },
-    { to: '/agents', label: 'Agents', icon: Sparkles },
-    { to: '/workspace', label: 'My Workspace', icon: FolderOpen },
+    {
+        to: '/agents',
+        label: 'Agents',
+        icon: Sparkles,
+        // Distinct from My Workspace > Agents, which is where you build your own. This is
+        // the catalogue of every agent you are allowed to use, wherever it came from.
+        hint: 'Browse every agent you can use',
+    },
+    {
+        to: '/workspace',
+        label: 'My Workspace',
+        icon: FolderOpen,
+        hint: 'Your documents, prompts, agents and automation',
+    },
     { to: '/groups', label: 'Group Workspaces', icon: Users },
     { to: '/public', label: 'Public Workspaces', icon: Globe2 },
     { to: '/admin', label: 'Admin Settings', icon: Settings, adminOnly: true },
@@ -227,7 +241,7 @@ export function Sidebar() {
                     <li key={item.to}>
                         <NavLink
                             to={item.to}
-                            title={collapsed ? item.label : undefined}
+                            title={collapsed ? item.label : item.hint}
                             className={({ isActive }) =>
                                 clsx(
                                     'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',

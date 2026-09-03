@@ -22,6 +22,7 @@ from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
 import re
 import requests
+import uuid
 
 
 def _get_configured_models(settings, setting_key):
@@ -798,28 +799,27 @@ def register_route_backend_models(bp):
         })
 
 
-    @bp.route('/api/user/model-endpoints', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @user_required
-    @enabled_required('allow_user_custom_endpoints')
-    def save_user_model_endpoints():
-        user_id = get_current_user_id()
-        try:
-            ensure_governance_access("governance_user_endpoints", user_id)
-        except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
-        data = request.get_json() or {}
-        incoming = data.get("endpoints", [])
-        if not isinstance(incoming, list):
-            return jsonify({"error": "endpoints must be a list."}), 400
-
+    def _load_personal_endpoints(user_id):
+        """Read the caller's stored personal endpoints as a list."""
         user_settings = get_user_settings(user_id)
-        existing = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+        endpoints = user_settings.get("settings", {}).get("personal_model_endpoints", [])
+        return endpoints if isinstance(endpoints, list) else []
 
-        merged = merge_model_endpoints_with_existing(incoming, existing)
+    def _find_personal_endpoint(endpoints, endpoint_id):
+        reference = str(endpoint_id or "")
+        for endpoint in endpoints:
+            if isinstance(endpoint, dict) and str(endpoint.get("id") or "") == reference:
+                return endpoint
+        return None
 
-        normalized, _ = normalize_model_endpoints(merged)
+    def _persist_personal_endpoints(user_id, normalized, existing):
+        """Save a full endpoint list, moving Key Vault secrets to match.
+
+        Secrets are handled in three passes because each endpoint can carry them: saved
+        endpoints write theirs, changed endpoints have the superseded version cleaned up,
+        and endpoints that are gone have theirs deleted. Skipping the last one would leave
+        orphaned secrets behind after a delete.
+        """
         existing_by_id = {
             endpoint.get("id"): endpoint
             for endpoint in existing
@@ -861,6 +861,163 @@ def register_route_backend_models(bp):
                 keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="user")
 
         update_user_settings(user_id, {"personal_model_endpoints": saved_endpoints})
+        return saved_endpoints
+
+    def _single_endpoint_response(saved_endpoints, endpoint_id, status):
+        saved = _find_personal_endpoint(saved_endpoints, endpoint_id)
+        sanitized = sanitize_model_endpoints_for_frontend([saved]) if saved else []
+        return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
+
+    def _create_personal_model_endpoint(user_id, payload):
+        """Add one endpoint to the caller's stored list."""
+        if not isinstance(payload, dict) or not payload:
+            return jsonify({"error": "Model endpoint payload must be an object."}), 400
+
+        existing = _load_personal_endpoints(user_id)
+        candidate = dict(payload)
+        endpoint_id = str(candidate.get("id") or "").strip()
+        if not endpoint_id:
+            endpoint_id = str(uuid.uuid4())
+        elif _find_personal_endpoint(existing, endpoint_id):
+            return jsonify({"error": "A model endpoint with that id already exists."}), 409
+        candidate["id"] = endpoint_id
+
+        normalized, _ = normalize_model_endpoints(list(existing) + [candidate])
+        saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
+        return _single_endpoint_response(saved_endpoints, endpoint_id, 201)
+
+    @bp.route('/api/user/model-endpoints', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_custom_endpoints')
+    def save_user_model_endpoints():
+        """Create one endpoint, or replace the whole collection.
+
+        A body carrying an ``endpoints`` list replaces every personal endpoint at once. That
+        is how the classic interface saves, so it is retained, but it is deprecated: the
+        client has to send back endpoints it never edited, and a stale copy silently
+        overwrites another tab's work. Any other object body creates a single endpoint.
+        """
+        user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_user_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+        data = request.get_json() or {}
+
+        if "endpoints" not in data:
+            return _create_personal_model_endpoint(user_id, data)
+
+        incoming = data.get("endpoints", [])
+        if not isinstance(incoming, list):
+            return jsonify({"error": "endpoints must be a list."}), 400
+
+        existing = _load_personal_endpoints(user_id)
+
+        merged = merge_model_endpoints_with_existing(incoming, existing)
+
+        normalized, _ = normalize_model_endpoints(merged)
+        _persist_personal_endpoints(user_id, normalized, existing)
+        return jsonify({"success": True})
+
+
+    @bp.route('/api/user/model-endpoints/<endpoint_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_custom_endpoints')
+    def get_user_model_endpoint(endpoint_id):
+        """Return one personal model endpoint, with its secrets stripped."""
+        user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_user_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+
+        endpoint = _find_personal_endpoint(_load_personal_endpoints(user_id), endpoint_id)
+        if not endpoint:
+            return jsonify({"error": "Model endpoint not found."}), 404
+
+        sanitized = sanitize_model_endpoints_for_frontend([endpoint])
+        return jsonify({"endpoint": sanitized[0] if sanitized else {}})
+
+
+    @bp.route('/api/user/model-endpoints/<endpoint_id>', methods=['PATCH'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_custom_endpoints')
+    def update_user_model_endpoint(endpoint_id):
+        """Apply a partial update to one personal model endpoint.
+
+        The stored endpoint is merged with the supplied keys server-side, so a client that
+        never received the secret values -- they are stripped on the way out -- cannot blank
+        them by sending the object back.
+        """
+        user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_user_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+
+        updates = request.get_json(silent=True)
+        if not isinstance(updates, dict):
+            return jsonify({"error": "Model endpoint payload must be an object."}), 400
+
+        existing = _load_personal_endpoints(user_id)
+        current = _find_personal_endpoint(existing, endpoint_id)
+        if not current:
+            return jsonify({"error": "Model endpoint not found."}), 404
+
+        merged_endpoint = merge_model_endpoint_payload(current, {**updates, "id": current.get("id")})
+        replaced = [
+            merged_endpoint
+            if isinstance(endpoint, dict) and str(endpoint.get("id") or "") == str(endpoint_id)
+            else endpoint
+            for endpoint in existing
+        ]
+
+        normalized, _ = normalize_model_endpoints(replaced)
+        saved_endpoints = _persist_personal_endpoints(user_id, normalized, existing)
+        return _single_endpoint_response(saved_endpoints, current.get("id"), 200)
+
+
+    @bp.route('/api/user/model-endpoints/<endpoint_id>', methods=['DELETE'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_custom_endpoints')
+    def delete_user_model_endpoint(endpoint_id):
+        """Remove one personal model endpoint and its stored secrets.
+
+        Unlike the collection save, this reads the stored list server-side, so it cannot
+        drop an endpoint the caller could not see. That is the case
+        ``merge_model_endpoints_with_existing`` has to defend against when a whole list
+        arrives from a browser.
+        """
+        user_id = get_current_user_id()
+        try:
+            ensure_governance_access("governance_user_endpoints", user_id)
+        except PermissionError as exc:
+            return jsonify({"error": str(exc)}), 403
+
+        existing = _load_personal_endpoints(user_id)
+        if not _find_personal_endpoint(existing, endpoint_id):
+            return jsonify({"error": "Model endpoint not found."}), 404
+
+        remaining = [
+            endpoint
+            for endpoint in existing
+            if not (isinstance(endpoint, dict) and str(endpoint.get("id") or "") == str(endpoint_id))
+        ]
+
+        normalized, _ = normalize_model_endpoints(remaining)
+        _persist_personal_endpoints(user_id, normalized, existing)
+        log_event(
+            "User model endpoint deleted",
+            extra={"user_id": user_id, "endpoint_id": endpoint_id},
+        )
         return jsonify({"success": True})
 
 
