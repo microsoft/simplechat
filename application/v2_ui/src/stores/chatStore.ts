@@ -463,6 +463,36 @@ let streamingConversationId: string | null = null;
 let streamingConversationKind: ConversationKind = 'personal';
 
 /**
+ * Stop reading the in-flight stream without asking the server to stop producing it.
+ *
+ * These are two different things and only the Stop button means the second one. Generation
+ * runs in background execution and deliberately outlives the connection carrying it
+ * (`build_background_stream_response`, route_backend_chats.py:14372), so dropping the reader
+ * leaves the answer being written and saved; `resumeChatStream` picks it back up when the
+ * conversation is opened again.
+ *
+ * Cancelling instead would end the generation for good. `/api/chat/stream/cancel` reaches
+ * `request_cancel` (route_backend_chats.py:8382), which sets `cancel_requested`, and the
+ * agent loop honours it. Worse, a cancel that lands before the first content token persists
+ * no assistant message at all (`message_persisted=False`, route_backend_chats.py:15971) —
+ * so leaving a thread during the thinking phase destroyed the reply outright rather than
+ * merely truncating it. The classic client never does this: chat-conversations.js reattaches
+ * on select and only the stop control cancels.
+ */
+function detachActiveStream(): void {
+    if (!activeStreamController) {
+        return;
+    }
+    activeStreamController.abort();
+    activeStreamController = null;
+    streamingConversationId = null;
+    // Included here rather than left to callers: neither `selectConversation` nor
+    // `startNewConversation` clears `streaming` itself, so dropping it would leave the
+    // composer stuck showing Stop for a stream that is no longer being read.
+    useChatStore.setState({ streaming: false, streamingContent: '', reconnectPhase: null });
+}
+
+/**
  * Detach from the open shared conversation's event stream, if there is one.
  *
  * Held at module scope for the same reason as the stream controller: it is a live
@@ -806,11 +836,12 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
     const controller = new AbortController();
     activeStreamController = controller;
     // Deliberately NOT setting streamingConversationId. That marks a stream this tab
-    // started, and stopStreaming uses it to POST /api/chat/stream/cancel, which is a real
-    // server-side cancellation. This stream belongs to whoever started it — possibly
-    // another tab, or this page before a reload — so leaving the conversation must detach
-    // locally without killing the generation. The classic client does the same: a thread
-    // switch only aborts its own reader, and cancel is reached solely from the Stop button.
+    // started, and it is the only thing that lets Stop POST /api/chat/stream/cancel, which
+    // is a real server-side cancellation. This stream belongs to whoever started it —
+    // another tab, or this page before a reload — so Stop here detaches this reader instead
+    // of ending a generation somebody else is still waiting on. The classic client draws the
+    // same line: reattachStreamingConversation (chat-streaming.js:1157) opens its reattached
+    // stream with no cancelEndpoint at all.
     const isCurrent = () => activeStreamController === controller;
 
     set({
@@ -1204,10 +1235,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     selectConversation: async (conversationId, options = {}) => {
-        // Any stream still running belongs to the thread being left. Without this its
-        // handlers would append the finished response into the newly selected
-        // conversation's message list.
-        get().stopStreaming();
+        // Any stream still running belongs to the thread being left, so its reader is
+        // dropped: left attached, its handlers would append the finished response into the
+        // newly selected conversation's message list.
+        //
+        // Detached rather than cancelled. The generation carries on server-side and is
+        // picked back up by `resumeChatStream` below when this thread is opened again,
+        // which is what chat-conversations.js:1695 does. Cancelling here meant that simply
+        // clicking another conversation ended the answer — and ended it with nothing saved
+        // at all when it had not yet produced its first token.
+        detachActiveStream();
         // Likewise the event stream: it is a live connection, and left attached it would
         // keep delivering the previous conversation's messages into this one.
         stopCollaborationEvents();
@@ -1374,9 +1411,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     startNewConversation: () => {
-        // Stop first: the running stream belongs to the previous thread and must not
-        // deliver its response into the empty new one.
-        get().stopStreaming();
+        // Detach first: the running stream belongs to the previous thread and must not
+        // deliver its response into the empty new one. Detached rather than cancelled, so
+        // starting a new chat leaves the previous answer to finish and be saved rather than
+        // discarding it — reopening that thread resumes or shows the completed reply.
+        detachActiveStream();
         stopCollaborationEvents();
         useCollaborationStore.getState().reset();
 
@@ -1783,8 +1822,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (!activeStreamController) {
             return;
         }
-        // Addresses the conversation the stream actually belongs to, which may no longer
-        // be the one on screen, through whichever cancel route that conversation uses.
+        // The one place a cancel belongs: the reader asked for the answer to stop being
+        // written, not merely to stop being watched. Addresses the conversation the stream
+        // actually belongs to, which may no longer be the one on screen, through whichever
+        // cancel route that conversation uses.
         if (streamingConversationId) {
             void cancelStream(
                 streamingConversationId,
@@ -1793,10 +1834,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     : undefined,
             );
         }
-        activeStreamController.abort();
-        activeStreamController = null;
-        streamingConversationId = null;
-        set({ streaming: false, streamingContent: '', reconnectPhase: null });
+        detachActiveStream();
     },
 
     setDrawerMode: (drawerMode) => {

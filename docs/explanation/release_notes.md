@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.050)**
+
+#### Bug Fixes
+
+*   **Leaving A Chat No Longer Destroys The Answer Being Written**
+    *   In the new interface, sending a message and then opening a different conversation before the reply finished ended the reply. Coming back showed the question with no answer, and nothing to reconnect to.
+    *   It looked intermittent because the timing changed the symptom. Leaving during the "thinking" phase, before the assistant had produced its first word, saved no reply at all. Leaving later left a truncated one.
+    *   The cause was that switching conversations, and starting a new chat, asked the server to *cancel* the generation rather than simply stopping reading it. Those are different things, and only the Stop button should mean the second one. Answers are generated in the background and deliberately outlive the connection carrying them, so dropping the connection was always safe; cancelling was not.
+    *   Leaving a conversation now detaches. The answer finishes and is saved, reopening the thread picks the reply back up mid-flow or shows it complete, and several conversations can be generating at once — matching how the classic interface has always behaved.
+    *   Stop is unchanged and still cancels. Leaving a shared conversation also no longer cancels a reply other participants are waiting for.
+    *   (Ref: `chatStore.ts` `detachActiveStream`, `selectConversation`, `startNewConversation`, `stopStreaming`, `/api/chat/stream/cancel`, [V2 Stream Cancelled On Conversation Leave](fixes/V2_STREAM_CANCELLED_ON_CONVERSATION_LEAVE_FIX.md))
+
 ### **(v0.261.049)**
 
 #### New Features
