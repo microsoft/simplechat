@@ -2,8 +2,8 @@
 """
 Functional test for the V2 diagram viewer: sizing, resizing, expanding and render recovery.
 
-Version: 0.261.034
-Implemented in: 0.261.034
+Version: 0.261.037
+Implemented in: 0.261.037
 
 Four reported problems, each reproduced against the vendored mermaid 11.17.2 bundle in
 Chromium before anything was changed:
@@ -55,7 +55,7 @@ from functions_message_visual_styles import (  # noqa: E402
     validate_block_height,
 )
 
-IMPLEMENTED_IN = "0.261.034"
+IMPLEMENTED_IN = "0.261.037"
 
 MERMAID_TSX = V2_SRC / "components" / "chat" / "MermaidDiagram.tsx"
 STAGE_TSX = V2_SRC / "components" / "chat" / "DiagramStage.tsx"

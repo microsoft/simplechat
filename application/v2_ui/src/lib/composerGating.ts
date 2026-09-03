@@ -10,6 +10,12 @@
 //
 // Showing every capability at all times is what makes the row crowded, and offering
 // "Read URLs" when there is no URL to read is an invitation to a confusing result.
+//
+// The model and reasoning controls are gated on the agent selection for the same reason. An
+// agent answers with its own deployment (`azure_openai_gpt_deployment`, read by
+// semantic_kernel_loader.py), and `reasoning_effort` only ever reaches the direct-model path
+// (`_resolve_reasoning_effort_for_model` in route_backend_chats.py). Leaving either control
+// looking live under an agent advertises a choice the request cannot act on.
 
 /** Matches the URL detection in the classic client. */
 const URL_PATTERN = /https?:\/\/[^\s<>'"]+/gi;
@@ -26,6 +32,8 @@ export interface GatingInput {
     webSearchActive: boolean;
     urlAccessActive: boolean;
     imageGenerationActive: boolean;
+    /** True while an agent is selected in the composer. */
+    agentActive: boolean;
 }
 
 export interface ControlGating {
@@ -42,6 +50,19 @@ export interface ControlGating {
      */
     disabledByImageGeneration: boolean;
     showModelPicker: boolean;
+    /**
+     * The model picker is retained but overridden: an agent is selected, so it supplies the
+     * deployment. The picker stays usable, because choosing a model is how the user gets
+     * back out of agent mode.
+     */
+    modelPickerInactive: boolean;
+    /**
+     * Whether a reasoning level is a real choice right now. Mirrors
+     * `updateReasoningButtonVisibility` in static/js/chat/chat-reasoning.js, which hides the
+     * control for image generation and for agents alike. Model support is a separate
+     * question, resolved from the catalog by the caller.
+     */
+    showReasoning: boolean;
 }
 
 function enabled(features: Record<string, unknown>, key: string): boolean {
@@ -49,7 +70,14 @@ function enabled(features: Record<string, unknown>, key: string): boolean {
 }
 
 export function resolveGating(input: GatingInput): ControlGating {
-    const { prompt, features, webSearchActive, urlAccessActive, imageGenerationActive } = input;
+    const {
+        prompt,
+        features,
+        webSearchActive,
+        urlAccessActive,
+        imageGenerationActive,
+        agentActive,
+    } = input;
     const urls = promptUrls(prompt);
     const hasUrls = urls.length > 0;
 
@@ -70,5 +98,7 @@ export function resolveGating(input: GatingInput): ControlGating {
         showFileUpload: enabled(features, 'enable_chat_file_uploads'),
         disabledByImageGeneration: imageGenerationActive,
         showModelPicker: !imageGenerationActive,
+        modelPickerInactive: agentActive,
+        showReasoning: !agentActive && !imageGenerationActive,
     };
 }

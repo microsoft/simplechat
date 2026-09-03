@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.034)**
+### **(v0.261.037)**
 
 #### Bug Fixes
 
@@ -20,7 +20,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 *   **A Diagram That Will Not Draw Now Says Why**
     *   "Diagram could not be rendered" was all you got, and nothing was written to the browser console either, so there was nothing to report and nothing to look into. The reason is now shown behind **Show details**, logged to the console, and the source can be copied with one click.
-    *   More usefully, most of those diagrams now just work. When a diagram fails, SimpleChat repairs the common mistakes and draws it again: reserved words such as `end` used as a box name, a `subgraph` left unclosed, `End` instead of `end`, placeholders like `<random GUID>` carried over from pasted text, stray quotes and braces inside a label, and several more. Twelve distinct failures were reproduced and all twelve now render.
+    *   More usefully, most of those diagrams now just work. When a diagram fails, SimpleChat repairs the common mistakes and draws it again: reserved words such as `end` used as a box name, a `subgraph` left unclosed, `End` instead of `end`, placeholders like `<random GUID>` carried over from pasted text, stray quotes and braces inside a label, and several more. Fourteen distinct failures were reproduced and all fourteen now render.
     *   Repairs only happen after a diagram has already failed, so a diagram that draws correctly today is never altered.
     *   A diagram is also given a time limit and a size limit, so a broken one can no longer leave "Rendering diagram…" on screen indefinitely.
     *   (Ref: V2 chat, Mermaid diagrams, diagram source repair)
@@ -37,6 +37,55 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The assistant is now told which words break a diagram, to close every `subgraph`, and to keep box labels to a short phrase rather than packing a dozen lines into one box — which is what made the reported diagrams both unreadable and unrenderable.
     *   When you paste text or ASCII art and ask for a diagram, it is told to summarise the detail rather than copying placeholders and punctuation straight into the boxes.
     *   (Ref: diagram prompt guidance)
+
+### **(v0.261.036)**
+
+#### Bug Fixes
+
+*   **Your Reasoning Level Now Sticks In The New Interface**
+    *   Choosing a reasoning level in the V2 chat used to be forgotten the moment you left the page and came back, and switching models either carried the level over or lost it entirely. It is now remembered per model, so each model keeps the level you chose for it.
+    *   The level is shared with the classic interface, which has always remembered it: set **Medium** for a model in one interface and it is Medium in the other.
+    *   Switching to a model that has no reasoning — `gpt-4o`, for example — no longer leaves the previous model's level attached to your request. The setting disappeared from the toolbar but was still being sent.
+    *   The model you pick is now remembered too. It previously only appeared to stick, because the page fell back to whichever model the server considered your default.
+    *   A model you have not chosen a level for shows its usual default rather than a blank control, matching the classic interface.
+    *   (Ref: V2 chat, reasoning effort, model picker, user preferences)
+
+### **(v0.261.035)**
+
+#### Bug Fixes
+
+*   **Exported Diagrams Are No Longer Empty Boxes**
+    *   Exporting a message with a diagram to Word or PowerPoint produced the right shapes, arrows and layout, but **no text inside any of the boxes**, even though the same diagram read correctly on screen.
+    *   The application image ships no scalable font, so when the server drew a diagram itself the browser it uses had nothing to write with: it measured every label as zero-width, fell back to the smallest box that would fit nothing, and painted no lettering. The tell-tale sign was every box coming out the same width, while on screen they varied with their labels.
+    *   The renderer now carries its own font instead of relying on whatever the host happens to have, so a diagram exports the same way on every deployment. Real fonts were also added to the image for everything else that draws in it.
+    *   Diagrams are now captured directly from the page they are drawn on, rather than being redrawn from a copy — a step that quietly discarded anything it could not reproduce.
+    *   (Ref: message export, Mermaid diagrams, server-side rendering, container fonts)
+
+*   **Exports Say When They Are Working**
+    *   Exporting to Word, PowerPoint or email closed the menu and then appeared to do nothing, sometimes for a long time. A PowerPoint export in particular waits on the model planning your slides, and long enough that it was reasonably read as having hung or failed when it was still going.
+    *   All three now put up a notice as soon as you click, which stays until the file arrives and is then replaced by the result. The menu entry spins and greys out while it runs, so an impatient second click cannot start a duplicate export.
+    *   Both the classic and new interfaces behave the same way.
+    *   (Ref: message export, notifications, chat message menu)
+
+#### User Interface Enhancements
+
+*   **Faster Exports That Keep Your Diagram Colours**
+    *   The new interface now sends the diagram it has already drawn along with the export, so the server no longer starts a browser to draw it again. Exports containing diagrams finish noticeably sooner.
+    *   Because the exported picture is the one on your screen, any colours you picked for that diagram now come with it.
+    *   (Ref: V2 chat, message export, Mermaid diagrams)
+
+### **(v0.261.034)**
+
+#### Bug Fixes
+
+*   **Picking An Agent No Longer Leaves A Model And Reasoning Level Pretending To Apply**
+    *   In the new interface, choosing an agent left the **Model** picker still showing a selected model and the **Reasoning** picker still offering a level, even though an agent can act on neither — an agent answers with its own model, and reasoning levels only reach a directly chosen model.
+    *   Worse, the request sent all three together, and the server reads a model sent alongside an agent as a deliberate instruction to override it. So an agent could quietly answer through the wrong model rather than the one it is configured with.
+    *   Selecting an agent now dims the **Model** picker back to the plain word "Model" and hides **Reasoning**. The model you had chosen is remembered, not thrown away, and comes straight back when you clear the agent.
+    *   The model picker stays clickable while it is dimmed: choosing a model is how you switch back, and doing so clears the agent for you. Its menu still shows a tick beside the model you had, so you can see what returns.
+    *   Hovering the dimmed picker names the agent that is supplying the model.
+    *   Reasoning is now also hidden while generating an image, matching the classic interface.
+    *   (Ref: V2 chat, agent picker, model picker, reasoning effort, `chatRequestSelection.ts`)
 
 ### **(v0.261.033)**
 

@@ -30,6 +30,17 @@ interface DropdownProps {
     /** Allows the current selection to be cleared from within the menu. */
     clearable?: boolean;
     disabled?: boolean;
+    /**
+     * The selection is retained but currently overridden by something else, so the trigger
+     * shows the placeholder in its muted styling.
+     *
+     * Deliberately distinct from `disabled`: the control stays usable, because choosing a
+     * value is how the user takes the override back off. The menu still marks the retained
+     * value, so it is visible what returns.
+     */
+    inactive?: boolean;
+    /** Tooltip for the trigger. Explains an `inactive` state, where one is not obvious. */
+    title?: string;
     align?: 'left' | 'right';
     /** Renders the trigger as an icon-sized button with the label as a tooltip. */
     compact?: boolean;
@@ -43,6 +54,8 @@ export function Dropdown({
     icon,
     clearable = false,
     disabled = false,
+    inactive = false,
+    title,
     align = 'left',
     compact = false,
 }: DropdownProps) {
@@ -55,6 +68,10 @@ export function Dropdown({
     const containerRef = useRef<HTMLDivElement>(null);
 
     const selected = options.find((option) => option.value === value);
+    // What the trigger reads as. An overridden selection is still `selected` for the menu's
+    // check mark, but the trigger falls back to the placeholder so the row does not claim a
+    // choice that is not in force.
+    const triggerLabel = inactive ? placeholder : (selected?.label ?? placeholder);
 
     const measure = useCallback(() => {
         const element = containerRef.current;
@@ -122,19 +139,20 @@ export function Dropdown({
                 }}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                title={compact ? (selected?.label ?? placeholder) : undefined}
+                title={title ?? (compact ? (selected?.label ?? placeholder) : undefined)}
                 className={clsx(
                     'inline-flex h-9 items-center gap-2 rounded-xl border border-edge',
                     'bg-surface-1 text-sm font-medium transition-colors',
                     'hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50',
                     compact ? 'w-9 justify-center' : 'max-w-[14rem] px-3',
-                    selected ? 'text-text-1' : 'text-text-3',
+                    selected && !inactive ? 'text-text-1' : 'text-text-3',
+                    inactive && 'opacity-70',
                 )}
             >
                 {icon}
                 {!compact && (
                     <>
-                        <span className="truncate">{selected?.label ?? placeholder}</span>
+                        <span className="truncate">{triggerLabel}</span>
                         <ChevronDown size={14} className="ml-auto shrink-0 opacity-60" />
                     </>
                 )}

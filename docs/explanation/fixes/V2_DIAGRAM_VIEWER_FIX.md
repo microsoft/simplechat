@@ -3,7 +3,7 @@
 Diagrams in the V2 chat rendered too small to read, made long threads unusable, and sometimes
 did not render at all with nothing to explain why.
 
-Fixed in version: **0.261.034**
+Fixed in version: **0.261.037**
 
 ## The reports
 

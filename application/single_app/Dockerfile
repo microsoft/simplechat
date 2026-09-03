@@ -131,7 +131,11 @@ RUN set -eux; \
                 nspr \
                 nss \
                 pango; \
+            tdnf install -y dejavu-fonts || tdnf install -y dejavu-sans-fonts || true; \
+            tdnf install -y liberation-fonts || true; \
+            tdnf install -y google-noto-sans-fonts || true; \
             tdnf install -y xorg-x11-fonts-Type1 xorg-x11-fonts-misc || true; \
+            command -v fc-cache >/dev/null 2>&1 && fc-cache -f || true; \
             ;; \
         *) \
             echo "Skipping Chromium runtime package installation because INSTALL_PLAYWRIGHT_CHROMIUM=${INSTALL_PLAYWRIGHT_CHROMIUM}"; \

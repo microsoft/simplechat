@@ -43,6 +43,7 @@ import {
     repairMermaidSource,
 } from '../../lib/mermaidSource';
 import { downloadDataUri, fileNameStem, svgElementToPngDataUri } from '../../lib/svgRaster';
+import { registerExportDiagram } from '../../lib/exportVisuals';
 import { VisualStyleMenu } from './VisualStyleMenu';
 import {
     clampZoom,
@@ -701,6 +702,23 @@ export function MermaidDiagram({
             }
         },
         [background, source],
+    );
+
+    /**
+     * Offer this diagram to a Word, PowerPoint or email export of the same message.
+     *
+     * The SVG is read back at export time rather than captured here, so the export gets the
+     * diagram as it stands, and a message whose diagrams are all registered never makes the
+     * server start a browser to redraw them.
+     */
+    useEffect(
+        () =>
+            registerExportDiagram(messageId, blockIndex, {
+                source,
+                background,
+                getSvg: () => containerRef.current?.querySelector('svg') ?? null,
+            }),
+        [messageId, blockIndex, source, background],
     );
 
     if (state.status === 'error') {

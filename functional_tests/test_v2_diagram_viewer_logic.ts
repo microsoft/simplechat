@@ -1,8 +1,8 @@
 // test_v2_diagram_viewer_logic.ts
 // Behavioural checks for the V2 diagram source repair and diagram sizing logic.
 //
-// Version: 0.261.034
-// Implemented in: 0.261.034
+// Version: 0.261.037
+// Implemented in: 0.261.037
 //
 // The V2 interface has no unit test runner, so this follows test_v2_visual_style_logic.ts:
 // bundled with the esbuild Vite already brings in, run under node by
