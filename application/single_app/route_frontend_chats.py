@@ -398,6 +398,10 @@ def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_na
         'id': prompt.get('id'),
         'name': prompt.get('name', ''),
         'content': prompt.get('content', ''),
+        # Read defensively: prompts created before these fields existed do not carry them, and
+        # neither does one last saved by the classic interface, which sends name and content only.
+        'description': prompt.get('description', '') or '',
+        'is_favorite': bool(prompt.get('is_favorite', False)),
         'scope_type': scope_type,
         'scope_id': scope_id,
         'scope_name': scope_name,

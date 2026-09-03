@@ -7,7 +7,7 @@ checkbox in its left gutter; ticking it starts a selection, and a bulk bar appea
 list offering **pin/unpin**, **hide**, **export** and **delete**. Ctrl/Cmd+click adds one
 conversation to the selection and Shift+click extends a range.
 
-**Implemented in version: 0.261.053**
+**Implemented in version: 0.261.054**
 
 ### Why it exists
 

@@ -23,7 +23,6 @@ import {
     type BulkDeleteError,
     type SharedDocumentUser,
 } from '../../lib/endpoints';
-import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import { readableTextColor } from './documentPresentation';
 
@@ -31,8 +30,11 @@ import { readableTextColor } from './documentPresentation';
 /* Shell                                                                       */
 /* -------------------------------------------------------------------------- */
 
-// `Modal` moved to components/ui/Modal.tsx when the chat rail needed the same shell for
-// its delete confirmation. Re-exported so existing importers of this module are unaffected.
+// The dialog shell moved to components/ui/Modal.tsx when the prompts workbench needed the same
+// one. Imported for this file's own dialogs and re-exported so anything importing Modal from
+// here carries on working against a single implementation.
+import { Modal } from '../ui/Modal';
+
 export { Modal };
 
 function TextField({
@@ -290,7 +292,7 @@ export function MetadataDialog({
             title="Edit metadata"
             description={String(document.file_name ?? '')}
             onClose={onClose}
-            wide
+            size="lg"
             footer={
                 <>
                     <GlassButton variant="ghost" size="sm" onClick={onClose}>
