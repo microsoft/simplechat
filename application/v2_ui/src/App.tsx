@@ -13,7 +13,7 @@ import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { ChatPage } from './pages/ChatPage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { WorkspacePage } from './pages/WorkspacePage';
+import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 function BootScreen() {
@@ -110,6 +110,9 @@ export function App() {
                 <Route path="/" element={<Navigate to="/chat" replace />} />
                 <Route path="/chat" element={<ChatPage />} />
                 <Route path="/workspace" element={<WorkspacePage />} />
+                {/* Sections are real paths rather than a query parameter, so a link to one
+                    reads as what it is and survives being shared. */}
+                <Route path="/workspace/:section" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
                 <Route
