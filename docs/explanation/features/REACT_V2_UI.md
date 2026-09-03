@@ -276,6 +276,27 @@ and the conversation list sit beneath, and the theme toggle and user menu are pi
 bottom. The rail collapses to a 68px icon strip, and the collapse state is persisted. All
 content lives in the right-hand pane.
 
+The brand mark is the link to the home page; there is no separate **Home** navigation item,
+because the logo is where a reader looks for that destination anyway. What it draws depends
+on what is configured and how much room there is:
+
+| Custom logo | Rail | Application title | Brand shows |
+|---|---|---|---|
+| yes | expanded | shown | logo and title |
+| yes | expanded | hidden | logo |
+| yes | collapsed | either | logo, capped at 44px wide |
+| no | expanded | shown | the title alone |
+| no | expanded | hidden | a letter square holding the title's initial |
+| no | collapsed | either | the letter square |
+
+The letter square is a stand-in for a mark, so it appears only where the title itself
+cannot: in the collapsed rail, or when **Hide Application Title** is on. Drawn beside the
+title it was the same word twice.
+
+The link names itself for the collapsed rail — where it holds only a decorative logo or
+letter — as the application title followed by "home", rather than "Home" alone, so the
+visible label stays inside the accessible name.
+
 The classification banner, when configured, is the only element that spans the full width —
 matching the server-rendered interface.
 
@@ -1095,6 +1116,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_new_chat_scoping.py` | **New chat** offered only where it can act and the nav list's spacing following it, **Chats** starting a fresh conversation on arrival from elsewhere, that reset guarded on both the current route and an in-flight stream with the guard preceding it, the streaming flag read rather than subscribed, the drawer and details panel closed with the conversation they describe, and enabled buttons carrying a pointer cursor |
 | `functional_tests/test_v2_sidebar_account_menu.py` | Admin Settings has left the primary navigation for the account menu and is gated on the admin flag, the menu is not gated on the rail being expanded and dismisses on Escape and an outside click, the nav groups collapse with no entry-count threshold, `sidebarMenuState` is writable in both the client key list and the route whitelist and uses the same key names as the classic interface, and the profile photo reaches both the rail and the settings page header |
 | `functional_tests/test_v2_sidebar_menu_state_logic.mjs` | Executes the shared menu-state helpers: the whitelist matching the classic interface, boolean and legacy string forms, unknown keys and unusable values dropped, an untouched group defaulting to open, and a write carrying the whole object so a V2 toggle cannot reset the classic interface's own menus |
+| `functional_tests/test_v2_brand_mark_home_link.py` | The **Home** nav item, its icon import and the exact-match field it needed all removed; the brand mark carrying the home destination with the exact matching that keeps it off every other route; the link naming itself for the collapsed rail; and the letter square gated on the title being absent rather than on the logo being absent |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.052)**
+### **(v0.261.053)**
 
 #### User Interface Enhancements
 
@@ -29,6 +29,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   With the V2 left-hand menu collapsed to icons, clicking your account picture did nothing at all. Your settings, the way back to the classic interface and **Sign out** could only be reached by expanding the menu first, and nothing said so.
     *   The menu now opens beside the icon strip and names the account it belongs to. It also closes when you press Escape or click elsewhere, which it previously did not.
     *   (Ref: V2 interface, left-hand menu, collapsed rail, account menu)
+
+### **(v0.261.052)**
+
+#### User Interface Enhancements
+
+*   **The Logo Is The Way Home In The New Interface**
+    *   Clicking the logo or the application title at the top of the left rail now opens the home page. Previously it was not a link at all, and a separate **Home** row sat directly underneath it — two controls for one destination, only one of which worked.
+    *   That **Home** row has been removed. The rail is one item shorter, and the place people already click is the place that works.
+    *   The link is announced to screen readers as the application name followed by "home", so it is still identifiable when the rail is collapsed to just a logo or a single letter.
+    *   (Ref: V2 navigation rail, brand mark, [V2 Brand Mark Home Link Fix](fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
+
+#### Bug Fixes
+
+*   **The Application Title No Longer Appears Twice In The Left Rail**
+    *   With no custom logo uploaded, the new interface showed a coloured square holding the first letter of the application title *and* the full title next to it — "**S** SimpleChat".
+    *   The lettered square is a stand-in for a logo, so it now appears only where the title itself cannot: when the left rail is collapsed, or when **Hide Application Title** is turned on. An expanded rail shows the title on its own.
+    *   Deployments with a custom logo are unaffected.
+    *   (Ref: V2 navigation rail, Appearance > Branding, [V2 Brand Mark Home Link Fix](fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
 
 ### **(v0.261.051)**
 

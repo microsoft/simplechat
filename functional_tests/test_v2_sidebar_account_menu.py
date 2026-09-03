@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 rail's account menu and remembered navigation groups.
-Version: 0.261.052
-Implemented in: 0.261.052
+Version: 0.261.053
+Implemented in: 0.261.053
 
 Four things about the V2 navigation rail are asserted here, all of which fail silently:
 
@@ -76,8 +76,9 @@ def test_admin_settings_left_the_primary_navigation():
     )
 
     # The rest of the primary list is untouched, so a bad edit to NAV_ITEMS is caught rather
-    # than passing because the whole list went missing.
-    for route in ("'/'", "'/chat'", "'/agents'", "'/workspace'", "'/groups'", "'/public'"):
+    # than passing because the whole list went missing. Home is deliberately absent: the
+    # brand mark above the list carries that destination (test_v2_brand_mark_home_link.py).
+    for route in ("'/chat'", "'/agents'", "'/workspace'", "'/groups'", "'/public'"):
         assert route in nav_items, f"The primary navigation lost {route}"
 
     print("Admin Settings placement test passed!")
@@ -256,8 +257,8 @@ def test_version_is_at_least_the_implementation_version():
     """The application carries at least the version this behaviour arrived in."""
     print("Testing version...")
     assert_app_version_at_least(
-        "0.261.052",
-        reason="The V2 account menu and remembered navigation groups landed in 0.261.052.",
+        "0.261.053",
+        reason="The V2 account menu and remembered navigation groups landed in 0.261.053.",
     )
     print("Version test passed!")
     return True
