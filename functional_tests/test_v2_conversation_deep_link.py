@@ -192,15 +192,47 @@ def test_a_dead_link_is_reported_and_does_not_strand_itself():
     assert action, "openLinkedConversation should be implemented"
     body = action.group(0)
 
-    # /api/get_messages is not an existence check: route_backend_conversations.py catches the
-    # not-found LookupError and answers `{'messages': []}` with a 200. Relying on it would
-    # open a deleted conversation as an empty chat, leave its id in the URL, and leave it as
-    # the target of the next message sent. The metadata endpoint 404s and 403s instead.
-    existence_check = body.index("await fetchConversationMetadata(conversationId)")
-    select = body.index("await get().selectConversation(conversationId)")
+    # Neither message endpoint is an existence check: route_backend_conversations.py catches
+    # the not-found LookupError and answers `{'messages': []}` with a 200, and the
+    # collaboration counterpart answers the same way for a conversation with no messages yet.
+    # Relying on either would open a deleted conversation as an empty chat, leave its id in
+    # the URL, and leave it as the target of the next message sent.
+    #
+    # Since v0.261.034 the probe is `resolveConversationKind`, because the question "does
+    # this exist" and the question "which API family owns it" have the same answer: it asks
+    # the personal metadata endpoint, which 404s and 403s, and then the collaboration one,
+    # which does the same. `requireExists` is what makes a conversation neither recognises a
+    # rejection rather than a default.
+    existence_check = body.index(
+        "await resolveConversationKind(conversationId, { requireExists: true })"
+    )
+    select = body.index("await get().selectConversation(conversationId, {")
+    assert "kind: resolved.kind" in body, (
+        "The kind the probe resolved must be handed to selectConversation rather than "
+        "resolved a second time"
+    )
     assert existence_check < select, (
         "The conversation must be shown to exist before it is opened, because "
         "/api/get_messages answers 200 with an empty list when it does not"
+    )
+
+    # The probe itself must still be a real existence check against both families, rather
+    # than something that quietly defaults.
+    resolver = re.search(
+        r"async function resolveConversationKind\((.|\n)*?\n\}", source
+    )
+    assert resolver, "resolveConversationKind should be implemented"
+    resolver_body = resolver.group(0)
+    assert "await fetchConversationMetadata(conversationId)" in resolver_body, (
+        "The personal metadata endpoint is what answers 404 and 403 for a personal conversation"
+    )
+    assert "await fetchCollaborationConversation(conversationId)" in resolver_body, (
+        "A shared conversation is not in the personal metadata endpoint and must be probed "
+        "through its own"
+    )
+    assert "if (options.requireExists)" in resolver_body, (
+        "A link naming a conversation neither endpoint recognises must be rejected, not "
+        "defaulted to personal"
     )
 
     assert "toast.error(" in body, "An unopenable link must say so rather than look dead"

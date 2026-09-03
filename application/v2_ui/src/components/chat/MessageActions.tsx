@@ -24,6 +24,7 @@ import {
     Mail,
     Pencil,
     RefreshCw,
+    Reply,
     Split,
     ThumbsDown,
     ThumbsUp,
@@ -32,6 +33,7 @@ import {
     VolumeX,
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { toast } from '../../stores/toastStore';
@@ -40,6 +42,7 @@ import { attemptState } from '../../lib/threads';
 import { readSources } from '../../lib/messageDetails';
 import { messageToPlainText } from '../../lib/messageText';
 import { canMask, readMaskState } from '../../lib/masking';
+import { buildReplyPreview, messageAuthorName } from '../../lib/sharedMessage';
 import type { InspectorSection } from './MessageInspector';
 import type { ChatMessage, Json } from '../../lib/types';
 import {
@@ -220,6 +223,10 @@ function OverflowMenu({
     const [placement, setPlacement] = useState<'up' | 'down'>('up');
     const containerRef = useRef<HTMLDivElement>(null);
     const { removeMessage } = useChatStore();
+    // Editing resends the message as a new thread attempt, which only the personal
+    // conversation API can do. In a shared conversation the entry is left out rather than
+    // offered and then failing.
+    const shared = useChatStore((state) => state.activeConversationKind === 'collaborative');
     const isUser = message.role === 'user';
 
     const toggle = () => {
@@ -290,7 +297,7 @@ function OverflowMenu({
                         placement === 'up' ? 'bottom-full mb-1' : 'top-full mt-1',
                     )}
                 >
-                    {isUser && onEdit && item('Edit', <Pencil size={14} />, onEdit)}
+                    {isUser && !shared && onEdit && item('Edit', <Pencil size={14} />, onEdit)}
                     {item('Copy with sources', <Copy size={14} />, () => {
                         // The plain Copy button drops citations entirely. This keeps the
                         // attribution, as a reference list under the answer rather than
@@ -351,15 +358,43 @@ export function MessageActions({
     onEdit,
     inspector,
     onInspect,
+    alignRight,
 }: {
     message: ChatMessage;
     onEdit?: () => void;
     /** Section currently open below the message, or null when the panel is closed. */
     inspector?: InspectorSection | null;
     onInspect?: (section: InspectorSection | null) => void;
+    /**
+     * Which side the message bubble sits on.
+     *
+     * Passed in rather than derived from the role, because in a shared conversation another
+     * participant's message is also `role: 'user'` but belongs on the left. Deriving it here
+     * would put the action row on the opposite side from the bubble it belongs to.
+     */
+    alignRight?: boolean;
 }) {
     const { retryMessage, changeAttempt, sendFeedback, forkFromMessage, streaming, attemptsByThread, applyMask } =
         useChatStore();
+    /**
+     * Whether this message is in a shared conversation.
+     *
+     * Retry, edit, attempt navigation and fork are all thread operations, and threads are a
+     * property of the personal conversation API — `/api/message/<id>/retry` and its siblings
+     * read from the personal messages container and have no collaboration counterpart. The
+     * classic interface leaves them out of a shared conversation for the same reason, so
+     * hiding them here is the parity rather than a reduction.
+     */
+    const shared = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const loadedCollaboration = useCollaborationStore((state) => state.conversation);
+    // Guarded on the id, and deny-by-default, for the same reasons as the composer: the
+    // participants panel keeps its own slot now, but a membership that has not loaded must
+    // not be read as permission.
+    const canPost =
+        loadedCollaboration?.id === activeConversationId &&
+        loadedCollaboration?.can_post_messages === true;
+    const setReplyTo = useCollaborationStore((state) => state.setReplyTo);
     const feedbackEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_user_feedback),
     );
@@ -397,10 +432,10 @@ export function MessageActions({
                 // Groups are separated by a wider gap than the buttons within them, so the
                 // row reads as related sets rather than one long undifferentiated strip.
                 'mt-1 flex items-center gap-3',
-                isUser ? 'justify-end' : 'justify-start',
+                (alignRight ?? isUser) ? 'justify-end' : 'justify-start',
             )}
         >
-            {attempts.show && (
+            {attempts.show && !shared && (
                 <div className="flex items-center gap-0.5">
                     <IconButton
                         label="Previous attempt"
@@ -441,13 +476,32 @@ export function MessageActions({
                     )}
                 </IconButton>
 
-                <IconButton
-                    label="Retry"
-                    onClick={() => void retryMessage(message.id)}
-                    disabled={streaming}
-                >
-                    <RefreshCw size={15} />
-                </IconButton>
+                {shared ? (
+                    canPost && (
+                        <IconButton
+                            label="Reply to this message"
+                            onClick={() =>
+                                setReplyTo({
+                                    message_id: message.id,
+                                    display_name:
+                                        messageAuthorName(message, currentUserId) ||
+                                        (message.role === 'assistant' ? 'Assistant' : ''),
+                                    preview: buildReplyPreview(message),
+                                })
+                            }
+                        >
+                            <Reply size={15} />
+                        </IconButton>
+                    )
+                ) : (
+                    <IconButton
+                        label="Retry"
+                        onClick={() => void retryMessage(message.id)}
+                        disabled={streaming}
+                    >
+                        <RefreshCw size={15} />
+                    </IconButton>
+                )}
 
                 {!isUser && ttsEnabled && <SpeakButton message={message} />}
             </div>
@@ -545,7 +599,7 @@ export function MessageActions({
 
             {/* Branching and everything else. */}
             <div className="flex items-center gap-0.5">
-                {!isUser && (
+                {!isUser && !shared && (
                     <IconButton
                         label="Fork conversation from here"
                         onClick={() => void forkFromMessage(message.id)}

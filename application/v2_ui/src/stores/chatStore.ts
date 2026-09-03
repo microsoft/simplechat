@@ -27,7 +27,29 @@ import {
     reattachChatStream,
     streamChat,
     type ChatStreamHandlers,
+    type ChatStreamOptions,
 } from '../lib/sse';
+import {
+    cancelCollaborationStreamUrl,
+    collaborationDeleteAction,
+    deleteCollaborationMessage,
+    fetchCollaborationConversation,
+    fetchCollaborationMessages,
+    markCollaborationConversationRead,
+    maskCollaborationMessage,
+    postCollaborationMessage,
+    renameCollaborationConversation,
+    streamCollaborationUrl,
+    toggleCollaborationHidden,
+    toggleCollaborationPinned,
+} from '../lib/collaboration';
+import { subscribeToCollaborationEvents, conversationFactsOnly } from '../lib/collaborationEvents';
+import {
+    conversationParticipants,
+    extractMentionedParticipants,
+    mentionsCurrentUser,
+    resolveSendTarget,
+} from '../lib/mentions';
 import { agentInfoForSelection } from '../lib/agents';
 import { modelIdentityForSelection, type ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
@@ -36,15 +58,20 @@ import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imagePro
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
 import { useBootstrapStore } from './bootstrapStore';
+import { useCollaborationStore, participantName } from './collaborationStore';
 import type { MaskAction, MaskSelection } from '../lib/masking';
 import type { VisualStyle } from '../lib/visualPalettes';
 import type {
+    AgentOption,
     ChatMessage,
     ChatStreamRequest,
+    CollaborationConversation,
+    CollaborationMessage,
     Conversation,
     ConversationMetadata,
     ThoughtEntry,
 } from '../lib/types';
+import { isCollaborative } from '../lib/types';
 import { fetchConversationMetadata } from '../lib/endpoints';
 
 const FEED_PAGE_SIZE = 30;
@@ -54,6 +81,16 @@ const STREAMING_MESSAGE_ID = '__streaming__';
 
 /** Which mode the right-hand drawer is showing, or null when it is closed. */
 export type DrawerMode = 'contents' | 'documents' | null;
+
+/**
+ * Which API family the open conversation belongs to.
+ *
+ * A shared conversation is stored in different Cosmos containers and served by
+ * `/api/collaboration/*`; sending its id to a personal route either 404s or, in the case of
+ * `/api/get_messages`, answers 200 with an empty list. Every conversation-scoped call
+ * therefore branches on this rather than trying one endpoint and falling back.
+ */
+export type ConversationKind = 'personal' | 'collaborative';
 
 /**
  * How far a stream recovery has got.
@@ -93,6 +130,14 @@ interface ChatState {
     searchTerm: string;
 
     activeConversationId: string | null;
+    /**
+     * Which API family the open conversation belongs to.
+     *
+     * Null only before anything is open. Resolved when the conversation is selected rather
+     * than looked up per call, because a deep link may name a conversation that is not in
+     * the loaded rail and answering the question costs a request.
+     */
+    activeConversationKind: ConversationKind | null;
     messages: ChatMessage[];
     messagesLoading: boolean;
     messagesError: string | null;
@@ -132,7 +177,20 @@ interface ChatState {
     loadMore: () => Promise<void>;
     setSearchTerm: (term: string) => void;
 
-    selectConversation: (conversationId: string | null) => Promise<void>;
+    selectConversation: (
+        conversationId: string | null,
+        options?: {
+            kind?: ConversationKind;
+            /**
+             * Membership already fetched for this conversation, saving a second request.
+             *
+             * Passed in rather than left in the store, because it is fetched before the
+             * conversation is open and the store now refuses writes for anything that is
+             * not.
+             */
+            prefetched?: CollaborationConversation;
+        },
+    ) => Promise<void>;
     /**
      * Open a conversation named by the URL rather than clicked in the rail.
      *
@@ -229,6 +287,31 @@ function conversationFromMetadata(
     };
 }
 
+/**
+ * Present a shared conversation as the metadata shape the header and drawer already read.
+ *
+ * The two responses overlap but are not the same: a shared conversation keys itself as `id`
+ * where metadata uses `conversation_id`, and carries membership the personal shape has no
+ * place for. Mapping here rather than teaching every consumer about both shapes keeps the
+ * badges, classification pills, document drawer and summary working on a shared thread
+ * without a single change to those components.
+ *
+ * The original is kept under `collaboration` so anything that genuinely needs the
+ * membership can reach it without a second request.
+ */
+export function metadataFromCollaboration(
+    conversation: CollaborationConversation,
+): ConversationMetadata {
+    return {
+        ...conversation,
+        conversation_id: String(conversation.id ?? ''),
+        title: conversation.title || 'Untitled conversation',
+        last_updated: conversation.updated_at ?? conversation.last_updated,
+        chat_type: conversation.chat_type ?? null,
+        collaboration: conversation,
+    } as ConversationMetadata;
+}
+
 /** Controller for the in-flight stream, kept outside the store as it is not render state. */
 let activeStreamController: AbortController | null = null;
 
@@ -240,6 +323,81 @@ let activeStreamController: AbortController | null = null;
  * streaming, not whichever one happens to be on screen.
  */
 let streamingConversationId: string | null = null;
+
+/**
+ * Whether the in-flight stream belongs to a shared conversation.
+ *
+ * Cancelling addresses a different endpoint for each, and the answer must survive the
+ * reader switching threads mid-response, so it is recorded alongside the conversation id
+ * rather than re-derived from whatever is on screen when Stop is pressed.
+ */
+let streamingConversationKind: ConversationKind = 'personal';
+
+/**
+ * Detach from the open shared conversation's event stream, if there is one.
+ *
+ * Held at module scope for the same reason as the stream controller: it is a live
+ * connection rather than render state, and leaving one attached after a thread switch
+ * would keep feeding another conversation's messages into the list.
+ */
+let detachCollaborationEvents: (() => void) | null = null;
+
+function stopCollaborationEvents(): void {
+    if (detachCollaborationEvents) {
+        detachCollaborationEvents();
+        detachCollaborationEvents = null;
+    }
+}
+
+/**
+ * Merge a message that arrived from the server into the thread.
+ *
+ * Idempotent by message id, which it has to be: the sender of an AI request receives the
+ * assistant's reply twice — once in the stream's terminal frame and once as a
+ * `collaboration.message.created` event — and a posted message comes back both in the
+ * POST response and over the event stream. Appending blindly shows each of those twice.
+ *
+ * An optimistic placeholder for the same message is replaced rather than left behind:
+ * matched on the pending id when it is known, and otherwise on the reader's own unsent
+ * text, which is how a message posted from another tab still lands in one place.
+ */
+function mergeCollaborationMessage(
+    messages: ChatMessage[],
+    incoming: CollaborationMessage,
+    options: { pendingId?: string | null; currentUserId?: string } = {},
+): ChatMessage[] {
+    const existingIndex = messages.findIndex((message) => message.id === incoming.id);
+    if (existingIndex !== -1) {
+        const merged = [...messages];
+        merged[existingIndex] = { ...merged[existingIndex], ...incoming };
+        return merged;
+    }
+
+    const senderId = String(incoming.sender?.user_id ?? '').trim();
+    const isOwnMessage = Boolean(
+        options.currentUserId && senderId && senderId === options.currentUserId,
+    );
+
+    const placeholderIndex = messages.findIndex((message) => {
+        if (options.pendingId && message.id === options.pendingId) {
+            return true;
+        }
+        return (
+            isOwnMessage &&
+            typeof message.id === 'string' &&
+            message.id.startsWith('pending-user-') &&
+            message.content === incoming.content
+        );
+    });
+
+    if (placeholderIndex !== -1) {
+        const merged = [...messages];
+        merged[placeholderIndex] = incoming;
+        return merged;
+    }
+
+    return [...messages, incoming];
+}
 
 /** Store writer used by the stream handlers, kept narrow so they can be shared. */
 type StreamStateSetter = (
@@ -257,8 +415,31 @@ function buildStreamHandlers(
     isCurrent: () => boolean,
     set: StreamStateSetter,
     getState: () => ChatState,
+    /**
+     * Id of the optimistic user message this stream was started for, when there is one.
+     *
+     * Given the server's real id as soon as the message is persisted. Without this the
+     * bubble keeps a `pending-user-…` id, and every per-message action on it — delete,
+     * mask, reply — would address a message the server has never heard of. It also lets a
+     * shared conversation recognise its own message when the same one arrives back over
+     * the event stream.
+     */
+    pendingUserMessageId?: string | null,
 ): ChatStreamHandlers {
     return {
+        onUserMessagePersisted: (event) => {
+            const persistedId = String(event.user_message_id ?? event.message_id ?? '').trim();
+            if (!persistedId || !pendingUserMessageId || !isCurrent()) {
+                return;
+            }
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === pendingUserMessageId
+                        ? { ...message, id: persistedId }
+                        : message,
+                ),
+            }));
+        },
         onContent: (_delta, accumulated) => {
             if (!isCurrent()) {
                 return;
@@ -317,7 +498,14 @@ function buildStreamHandlers(
                     getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
             };
             set((state) => ({
-                messages: [...state.messages, finalMessage],
+                // Appended by id rather than blindly: in a shared conversation the same
+                // assistant message also arrives as a `collaboration.message.created` event,
+                // and whichever of the two lands second must update the message rather than
+                // add a second copy of it.
+                messages: mergeCollaborationMessage(
+                    state.messages,
+                    finalMessage as CollaborationMessage,
+                ),
                 streaming: false,
                 streamingContent: '',
                 reconnectPhase: null,
@@ -397,7 +585,16 @@ function buildStreamHandlers(
 async function runChatStream(
     requestBody: ChatStreamRequest,
     conversationId: string,
-    options: { isNewConversation?: boolean; reloadOnDone?: boolean } = {},
+    options: {
+        isNewConversation?: boolean;
+        reloadOnDone?: boolean;
+        /** Which API family this stream belongs to, so a cancel reaches the right route. */
+        kind?: ConversationKind;
+        /** Endpoint and recovery overrides for a shared conversation. */
+        stream?: ChatStreamOptions;
+        /** Optimistic user message to reconcile with the server's id. */
+        pendingUserMessageId?: string | null;
+    } = {},
 ): Promise<void> {
     const { set, getState } = {
         set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
@@ -408,6 +605,7 @@ async function runChatStream(
     const controller = new AbortController();
     activeStreamController = controller;
     streamingConversationId = conversationId;
+    streamingConversationKind = options.kind ?? 'personal';
 
     // A stream is "current" only while it is still the active one. If the user switches
     // threads or starts a new chat mid-response, this goes false and the remaining
@@ -416,8 +614,15 @@ async function runChatStream(
 
     await streamChat(
         requestBody,
-        buildStreamHandlers(conversationId, isCurrent, set, getState),
+        buildStreamHandlers(
+            conversationId,
+            isCurrent,
+            set,
+            getState,
+            options.pendingUserMessageId,
+        ),
         controller.signal,
+        options.stream,
     );
 
     // Only tear down if this stream is still the active one; a newer send may already have
@@ -501,6 +706,252 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
     return true;
 }
 
+/**
+ * Work out which API family a conversation belongs to by asking.
+ *
+ * Only reached for a conversation that is not in the loaded rail — a deep link, or one
+ * opened straight after being shared. The personal endpoint is tried first because it is
+ * the overwhelmingly common case, and both answer 404 for an id belonging to the other, so
+ * the sequence terminates rather than guessing.
+ *
+ * A collaboration response is handed back rather than written to a store: it is the same
+ * document the participants panel and the composer need, so returning it saves a second
+ * request — but stashing it somewhere for `selectConversation` to find would be a write for
+ * a conversation that is not open yet, which is exactly the class of stale write the
+ * collaboration store now refuses.
+ *
+ * With `requireExists`, a conversation neither endpoint recognises is a rejection rather
+ * than a default, which is what lets a dead link be reported instead of opening as an empty
+ * chat.
+ */
+async function resolveConversationKind(
+    conversationId: string,
+    options: { requireExists?: boolean } = {},
+): Promise<{ kind: ConversationKind; conversation?: CollaborationConversation }> {
+    try {
+        await fetchConversationMetadata(conversationId);
+        return { kind: 'personal' };
+    } catch (personalError) {
+        try {
+            const { conversation } = await fetchCollaborationConversation(conversationId);
+            return { kind: 'collaborative', conversation };
+        } catch {
+            if (options.requireExists) {
+                throw personalError;
+            }
+            return { kind: 'personal' };
+        }
+    }
+}
+
+/**
+ * Attach to a shared conversation's event stream and fold what arrives into the stores.
+ *
+ * This is what makes the conversation shared rather than merely visible: without it, a
+ * message written by somebody else appears only if the reader reloads.
+ */
+function attachCollaborationEvents(conversationId: string): void {
+    const set = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
+        useChatStore.setState(partial as never);
+    const getState = () => useChatStore.getState();
+    const collaboration = () => useCollaborationStore.getState();
+    const currentUserId = () => useBootstrapStore.getState().data?.user?.id;
+
+    /** Ignore anything that arrives after the reader has moved to another conversation. */
+    const stillOpen = () => getState().activeConversationId === conversationId;
+
+    /**
+     * Re-read this reader's own membership after a change to it.
+     *
+     * The event's payload cannot answer the question. Every publishing route serializes the
+     * conversation for the user who *caused* the event, so its `can_*` flags, role and
+     * membership status are theirs — an owner's action would hand every member owner
+     * permissions, and a member leaving would tell everyone else they can no longer post.
+     * Only a fetch returns the flags computed for the reader.
+     */
+    const refreshOwnMembership = () => {
+        if (stillOpen()) {
+            void collaboration().loadConversation(conversationId);
+        }
+    };
+
+    stopCollaborationEvents();
+    detachCollaborationEvents = subscribeToCollaborationEvents(conversationId, {
+        onMessageCreated: (message, conversation) => {
+            if (conversation) {
+                collaboration().applyBroadcast(conversation);
+            }
+            if (!stillOpen()) {
+                return;
+            }
+
+            set((state) => ({
+                messages: mergeCollaborationMessage(state.messages, message, {
+                    currentUserId: currentUserId(),
+                }),
+            }));
+
+            const senderId = String(message.sender?.user_id ?? '').trim();
+            if (!senderId || senderId === currentUserId()) {
+                return;
+            }
+
+            // Being named is the one thing in a shared conversation worth interrupting for;
+            // an ordinary message is already visible in the thread.
+            if (mentionsCurrentUser(message.metadata as Record<string, unknown>, currentUserId())) {
+                toast.info(
+                    `${participantName(message.sender)} mentioned you in this conversation.`,
+                );
+            }
+
+            // Somebody else has written, so the unread marker this thread may have just
+            // acquired is already satisfied by the reader looking at it.
+            void markCollaborationConversationRead(conversationId).catch(() => {
+                /* Read receipts are advisory. */
+            });
+        },
+
+        onMessageDeleted: (messageId, deletedByUserId, conversation) => {
+            if (conversation) {
+                collaboration().applyBroadcast(conversation);
+            }
+            if (!stillOpen()) {
+                return;
+            }
+            set((state) => ({
+                messages: state.messages.filter((message) => message.id !== messageId),
+            }));
+            if (deletedByUserId && deletedByUserId !== currentUserId()) {
+                toast.info('A message was deleted from this conversation.');
+            }
+        },
+
+        onMessageMasked: (message, updatedByUserId) => {
+            if (!stillOpen()) {
+                return;
+            }
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === message.id ? { ...existing, ...message } : existing,
+                ),
+            }));
+            if (updatedByUserId && updatedByUserId !== currentUserId()) {
+                toast.info('A message in this conversation was masked.');
+            }
+        },
+
+        onTyping: (user, isTyping, expiresAt) => {
+            if (!stillOpen()) {
+                return;
+            }
+            collaboration().applyTyping(user, isTyping, expiresAt, currentUserId());
+        },
+
+        onConversationUpdated: (conversation) => {
+            // Only the facts every reader shares. The capability flags, role, membership
+            // status and pin state in this payload are the acting user's, not this one's.
+            collaboration().applyBroadcast(conversation);
+            if (!conversation.id) {
+                return;
+            }
+            const facts = conversationFactsOnly(conversation);
+            // The rail row and the header read from the conversation list, so a change to
+            // the title or the participant count lands there too — but the reader's own pin
+            // and hide state must survive it, which is why the same stripping applies.
+            set((state) => ({
+                conversations: state.conversations.map((item) =>
+                    item.id === conversation.id ? { ...item, ...facts } : item,
+                ),
+                metadata:
+                    state.activeConversationId === conversation.id && state.metadata
+                        ? ({ ...state.metadata, ...facts } as ConversationMetadata)
+                        : state.metadata,
+            }));
+        },
+
+        onMembersInvited: (participants) => {
+            const names = participants
+                .map((participant) => participantName(participant))
+                .filter(Boolean);
+            if (names.length > 0 && stillOpen()) {
+                toast.info(
+                    names.length === 1
+                        ? `${names[0]} was invited to this conversation.`
+                        : `${names.length} people were invited to this conversation.`,
+                );
+            }
+        },
+
+        onMemberRemoved: (participant) => {
+            const removedId = String(participant?.user_id ?? '').trim();
+            if (removedId && removedId === currentUserId()) {
+                // The reader has lost access. Leaving the thread on screen would show a
+                // conversation every subsequent request will refuse.
+                toast.info('You no longer have access to this shared conversation.');
+                removeConversationLocally(conversationId);
+                return;
+            }
+            if (participant && stillOpen()) {
+                toast.info(`${participantName(participant)} was removed from this conversation.`);
+            }
+            // Somebody leaving can promote somebody else, so the reader's own role may have
+            // changed even though they were not the subject of the event.
+            refreshOwnMembership();
+        },
+
+        onMemberRoleUpdated: (participant) => {
+            if (participant && stillOpen()) {
+                const role = String(participant.role ?? 'member');
+                toast.info(`${participantName(participant)} is now ${role}.`);
+            }
+            refreshOwnMembership();
+        },
+
+        onInviteAnswered: (participant, accepted) => {
+            if (participant && accepted && stillOpen()) {
+                toast.success(`${participantName(participant)} joined the conversation.`);
+            }
+        },
+
+        onConversationDeleted: () => {
+            toast.info('This shared conversation was deleted.');
+            removeConversationLocally(conversationId);
+        },
+    });
+}
+
+/**
+ * Whether a conversation must be driven through the collaboration API.
+ *
+ * Answered from what the client already knows — the open conversation's resolved kind, or
+ * the rail row's `conversation_kind` — so no request is needed to decide which endpoint an
+ * action belongs to.
+ */
+function isCollaborativeConversation(state: ChatState, conversationId: string): boolean {
+    if (state.activeConversationId === conversationId) {
+        return state.activeConversationKind === 'collaborative';
+    }
+    const listed = state.conversations.find((item) => item.id === conversationId);
+    return isCollaborative(listed);
+}
+
+/**
+ * Drop a conversation from the interface without asking the server to delete it.
+ *
+ * Used when the server has already made it inaccessible — deleted by its owner, or the
+ * reader removed from it — where the ordinary delete path would post to a conversation that
+ * would rightly refuse.
+ */
+function removeConversationLocally(conversationId: string): void {
+    const store = useChatStore.getState();
+    useChatStore.setState({
+        conversations: store.conversations.filter((item) => item.id !== conversationId),
+    });
+    if (store.activeConversationId === conversationId) {
+        store.startNewConversation();
+    }
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
     conversations: [],
     conversationsLoading: false,
@@ -510,6 +961,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     searchTerm: '',
 
     activeConversationId: null,
+    activeConversationKind: null,
     messages: [],
     messagesLoading: false,
     messagesError: null,
@@ -567,14 +1019,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
         void get().loadConversations({ reset: true, search: searchTerm });
     },
 
-    selectConversation: async (conversationId) => {
+    selectConversation: async (conversationId, options = {}) => {
         // Any stream still running belongs to the thread being left. Without this its
         // handlers would append the finished response into the newly selected
         // conversation's message list.
         get().stopStreaming();
+        // Likewise the event stream: it is a live connection, and left attached it would
+        // keep delivering the previous conversation's messages into this one.
+        stopCollaborationEvents();
+        useCollaborationStore.getState().reset();
+
+        // Known from the rail row when there is one, which is the common case and costs no
+        // request. A conversation opened from a link is not in the list yet, so its kind is
+        // resolved below by asking the collaboration API about it.
+        const listed = get().conversations.find((item) => item.id === conversationId);
+        const knownKind: ConversationKind | null =
+            options.kind ?? (listed ? (isCollaborative(listed) ? 'collaborative' : 'personal') : null);
 
         set({
             activeConversationId: conversationId,
+            activeConversationKind: knownKind,
             messages: [],
             messagesError: null,
             streamingContent: '',
@@ -588,6 +1052,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // Thread ids are per conversation, so learned attempt sets do not carry over.
             attemptsByThread: {},
         });
+        // Mirrored so the collaboration store can refuse a membership write that arrives for
+        // a conversation which is no longer open.
+        useCollaborationStore.getState().setActiveConversation(conversationId);
 
         if (!conversationId) {
             return;
@@ -595,7 +1062,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         set({ messagesLoading: true });
         try {
-            const { messages } = await fetchMessages(conversationId);
+            let prefetched = options.prefetched;
+            let kind = knownKind;
+            if (!kind) {
+                const resolved = await resolveConversationKind(conversationId);
+                kind = resolved.kind;
+                prefetched = prefetched ?? resolved.conversation;
+            }
+            // Discarded if the reader moved on while the kind was being resolved; without
+            // this the wrong thread's messages would be fetched and displayed.
+            if (get().activeConversationId !== conversationId) {
+                return;
+            }
+            set({ activeConversationKind: kind });
+
+            const { messages } =
+                kind === 'collaborative'
+                    ? await fetchCollaborationMessages(conversationId)
+                    : await fetchMessages(conversationId);
+
+            if (get().activeConversationId !== conversationId) {
+                return;
+            }
             set({ messages: messages ?? [], messagesLoading: false });
 
             // The header badges describe what this conversation is bound to, so its
@@ -603,22 +1091,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // expanded. Advisory: a failure leaves the badges off, not the thread broken.
             void get().loadMetadata(conversationId);
 
-            // Generation outlives the connection that started it, so a thread opened while
-            // its answer is still being written picks the stream back up instead of showing
-            // a message that stops mid-sentence.
-            void resumeChatStream(conversationId).catch(() => {
-                /* Advisory: the thread is readable whether or not a resume was possible. */
-            });
+            if (kind === 'collaborative') {
+                // Membership and the capability flags that gate the composer and the
+                // participants panel.
+                if (prefetched?.id === conversationId) {
+                    useCollaborationStore.getState().setConversation(prefetched);
+                } else {
+                    void useCollaborationStore.getState().loadConversation(conversationId);
+                }
+                // Then the live stream that keeps the thread current while other people are
+                // writing in it.
+                attachCollaborationEvents(conversationId);
+            } else {
+                // Generation outlives the connection that started it, so a thread opened
+                // while its answer is still being written picks the stream back up instead of
+                // showing a message that stops mid-sentence.
+                //
+                // Deliberately not attempted for a shared conversation: the generation runs
+                // in a hidden source conversation whose id the browser is never given, so
+                // the status and reattach endpoints have nothing to address.
+                void resumeChatStream(conversationId).catch(() => {
+                    /* Advisory: the thread is readable whether or not a resume was possible. */
+                });
+            }
 
             // Only clear the marker when there is one. Calling unconditionally produced a
             // 404 for collaboration conversations, which are stored separately and have
             // their own endpoint.
-            const conversation = get().conversations.find((item) => item.id === conversationId);
-            if (conversation?.has_unread_assistant_response) {
-                void markConversationRead(
-                    conversationId,
-                    conversation.conversation_kind === 'collaborative',
-                )
+            if (listed?.has_unread_assistant_response) {
+                void markConversationRead(conversationId, kind === 'collaborative')
                     .then(() => {
                         set((state) => ({
                             conversations: state.conversations.map((item) =>
@@ -633,6 +1134,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     });
             }
         } catch (error) {
+            if (get().activeConversationId !== conversationId) {
+                return;
+            }
             set({
                 messagesLoading: false,
                 messagesError:
@@ -648,18 +1152,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
      * can name a conversation that has been deleted, or one belonging to somebody else,
      * whereas a row in the rail is one the server has just listed.
      *
-     * Existence is checked against the metadata endpoint rather than inferred from the
-     * message load, because `/api/get_messages` is not an existence check: it turns a
-     * not-found conversation into `{'messages': []}` with a 200
-     * (`route_backend_conversations.py`), so a deleted conversation would open as an empty
-     * chat, keep its id in the address bar, and remain the target of the next message sent.
-     * The metadata endpoint answers 404 when the conversation is gone and 403 when it is
-     * someone else's, which is the question actually being asked. It costs one request on
-     * a path that runs once per page load.
+     * Existence is checked against a metadata endpoint rather than inferred from the
+     * message load, because neither message endpoint is an existence check:
+     * `/api/get_messages` turns a not-found conversation into `{'messages': []}` with a 200
+     * (`route_backend_conversations.py`), and its collaboration counterpart answers the same
+     * way for a conversation with no messages yet. A deleted conversation would otherwise
+     * open as an empty chat, keep its id in the address bar, and remain the target of the
+     * next message sent.
+     *
+     * Which endpoint answers that question is itself the thing being determined, so the
+     * probe doubles as the kind resolution and its result is handed to
+     * `selectConversation` rather than being asked for twice.
      */
     openLinkedConversation: async (conversationId) => {
+        let resolved: { kind: ConversationKind; conversation?: CollaborationConversation };
         try {
-            await fetchConversationMetadata(conversationId);
+            resolved = await resolveConversationKind(conversationId, { requireExists: true });
         } catch {
             toast.error(
                 'Could not open that conversation. It may have been deleted, or you may not have access to it.',
@@ -667,7 +1175,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
 
-        await get().selectConversation(conversationId);
+        await get().selectConversation(conversationId, {
+            kind: resolved.kind,
+            prefetched: resolved.conversation,
+        });
 
         // Still checked: the conversation exists, but its messages may not have loaded.
         if (get().messagesError) {
@@ -682,12 +1193,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Stop first: the running stream belongs to the previous thread and must not
         // deliver its response into the empty new one.
         get().stopStreaming();
+        stopCollaborationEvents();
+        useCollaborationStore.getState().reset();
 
         // The conversation row is created by the server on first send, so a new chat is
         // purely a local reset until then. This avoids leaving empty conversations behind
         // when someone clicks New Chat and navigates away.
         set({
             activeConversationId: null,
+            // A new chat is always personal. Sharing is something done to a conversation
+            // that already exists, so there is no way to start one shared.
+            activeConversationKind: null,
             messages: [],
             messagesError: null,
             streamingContent: '',
@@ -697,24 +1213,42 @@ export const useChatStore = create<ChatState>((set, get) => ({
             metadata: null,
             metadataError: null,
         });
+        useCollaborationStore.getState().setActiveConversation(null);
     },
 
     renameConversation: async (conversationId, title) => {
         const previous = get().conversations;
+        const collaborative = isCollaborativeConversation(get(), conversationId);
         set({
             conversations: previous.map((conversation) =>
                 conversation.id === conversationId ? { ...conversation, title } : conversation,
             ),
         });
         try {
-            await renameConversationApi(conversationId, title);
+            if (collaborative) {
+                await renameCollaborationConversation(conversationId, title);
+            } else {
+                await renameConversationApi(conversationId, title);
+            }
         } catch {
             set({ conversations: previous });
         }
     },
 
+    /**
+     * Remove a conversation from the reader's view.
+     *
+     * For a shared conversation this is not necessarily a deletion. Only an owner may
+     * destroy one for everybody; anybody else leaves it, which removes it from their rail
+     * and leaves the conversation intact for the remaining participants. The server reports
+     * which applies, so the right one is chosen rather than assumed — posting `delete` as a
+     * member is refused, and posting `leave` as the sole owner would strand the thread.
+     */
     removeConversation: async (conversationId) => {
         const previous = get().conversations;
+        const listed = previous.find((conversation) => conversation.id === conversationId);
+        const collaborative = isCollaborativeConversation(get(), conversationId);
+
         set({
             conversations: previous.filter((conversation) => conversation.id !== conversationId),
         });
@@ -724,9 +1258,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         try {
-            await deleteConversationApi(conversationId);
-        } catch {
+            if (collaborative) {
+                const detail =
+                    useCollaborationStore.getState().conversation?.id === conversationId
+                        ? useCollaborationStore.getState().conversation
+                        : (listed as CollaborationConversation | undefined);
+                const action = detail?.can_delete_conversation ? 'delete' : 'leave';
+                await collaborationDeleteAction(conversationId, action);
+            } else {
+                await deleteConversationApi(conversationId);
+            }
+        } catch (error) {
             set({ conversations: previous });
+            toast.error(
+                error instanceof Error ? error.message : 'Could not remove that conversation.',
+            );
         }
     },
 
@@ -744,7 +1290,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             ),
         });
         try {
-            const result = await toggleConversationPinned(conversationId);
+            const result = isCollaborative(conversation)
+                ? await toggleCollaborationPinned(conversationId)
+                : await toggleConversationPinned(conversationId);
             set({
                 conversations: get().conversations.map((item) =>
                     item.id === conversationId
@@ -774,7 +1322,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
             conversations: get().conversations.filter((item) => item.id !== conversationId),
         });
         try {
-            await toggleConversationHidden(conversationId);
+            if (isCollaborative(conversation)) {
+                await toggleCollaborationHidden(conversationId);
+            } else {
+                await toggleConversationHidden(conversationId);
+            }
         } catch {
             await get().loadConversations({ reset: true });
         }
@@ -788,14 +1340,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         let conversationId = get().activeConversationId;
         const isNewConversation = !conversationId;
+        const collaborative = Boolean(
+            conversationId && isCollaborativeConversation(get(), conversationId),
+        );
 
         // A conversation is created up front so the streaming endpoint has a stable id to
-        // attach to and so a cancel request has something to address.
+        // attach to and so a cancel request has something to address. Only ever a personal
+        // one: a shared conversation always already exists, because sharing is done to a
+        // conversation rather than at the moment of writing into one.
         if (!conversationId) {
             try {
                 const created = await createConversation(trimmed);
                 conversationId = created.conversation_id;
-                set({ activeConversationId: conversationId });
+                set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+                // Mirrored like every other write to this field. Today the conversation just
+                // created can only be personal — this branch is reached only when nothing was
+                // open, which forces `collaborative` false above — so nothing would currently
+                // notice. Leaving it out would make the collaboration store's guard depend on
+                // that reasoning continuing to hold, and a shared conversation reachable here
+                // later would silently strand its composer at "checking access".
+                useCollaborationStore.getState().setActiveConversation(conversationId);
             } catch (error) {
                 set({
                     streamError:
@@ -807,24 +1371,100 @@ export const useChatStore = create<ChatState>((set, get) => ({
             }
         }
 
+        const bootstrap = useBootstrapStore.getState().data;
+        const loadedCollaboration = useCollaborationStore.getState().conversation;
+        // Guarded on the id: the participants panel keeps its own slot, but a stale load
+        // would still resolve this message's mentions against another conversation's people.
+        const collaborationConversation =
+            loadedCollaboration?.id === conversationId ? loadedCollaboration : null;
+        const replyTo = useCollaborationStore.getState().replyTo;
+
+        // In a shared conversation most messages are people talking to each other, so the
+        // AI is only brought in when something asks for it. `resolveSendTarget` applies the
+        // classic client's rule; null means this message is for the participants alone.
+        const invocationTarget = collaborative
+            ? resolveSendTarget(
+                  trimmed,
+                  {
+                      agentSelection: options.agentSelection,
+                      promptId: options.promptId,
+                      documentSearch: options.documentSearch,
+                      webSearch: options.webSearch,
+                      imageGeneration: options.imageGeneration,
+                      deepResearch: options.deepResearch,
+                      urlAccess: options.urlAccess,
+                      modelDeployment: options.modelDeployment,
+                  },
+                  {
+                      agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+                      models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                  },
+              )
+            : null;
+
+        const pendingUserMessageId = `pending-user-${Date.now()}`;
         const optimisticUserMessage: ChatMessage = {
-            id: `pending-user-${Date.now()}`,
+            id: pendingUserMessageId,
             conversation_id: conversationId,
             role: 'user',
             content: trimmed,
             timestamp: new Date().toISOString(),
         };
 
+        // A shared message that is not addressed to the AI produces no stream, so the
+        // interface must not sit in the streaming state waiting for one that never starts.
+        const willStream = !collaborative || invocationTarget !== null;
+
         set((state) => ({
             messages: [...state.messages, optimisticUserMessage],
-            streaming: true,
+            streaming: willStream,
             streamingContent: '',
             thoughts: [],
             streamError: null,
             reconnectPhase: null,
         }));
 
-        const bootstrap = useBootstrapStore.getState().data;
+        const mentionedParticipants = collaborative
+            ? extractMentionedParticipants(
+                  trimmed,
+                  conversationParticipants(collaborationConversation),
+              )
+            : [];
+
+        if (collaborative && !invocationTarget) {
+            // Posted rather than streamed. The response carries the stored message, which
+            // replaces the placeholder; the same message also arrives over the event stream,
+            // and `mergeCollaborationMessage` recognises it by id rather than adding it
+            // twice.
+            try {
+                const result = await postCollaborationMessage(conversationId, {
+                    content: trimmed,
+                    reply_to_message_id: replyTo?.message_id ?? null,
+                    mentioned_participants: mentionedParticipants,
+                });
+                useCollaborationStore.getState().setReplyTo(null);
+                if (result.conversation) {
+                    useCollaborationStore.getState().setConversation(result.conversation);
+                }
+                set((state) => ({
+                    messages: mergeCollaborationMessage(state.messages, result.message, {
+                        pendingId: pendingUserMessageId,
+                    }),
+                }));
+            } catch (error) {
+                // The placeholder is removed rather than left as a message that was never
+                // sent, and the text is reported so it can be retyped or the cause fixed.
+                set((state) => ({
+                    messages: state.messages.filter(
+                        (message) => message.id !== pendingUserMessageId,
+                    ),
+                    streamError:
+                        error instanceof Error ? error.message : 'Could not post that message.',
+                }));
+            }
+            return;
+        }
+
         const scope = resolveDocumentScope({
             activeGroupId: bootstrap?.scope?.active_group_id,
             activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
@@ -863,16 +1503,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
             requestBody,
             modelIdentityForSelection(
                 bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-                options.modelDeployment,
+                // An explicit `@model` tag chooses the model for this message, overriding
+                // the picker, which is the point of tagging one.
+                invocationTarget?.target_type === 'model' && invocationTarget.selection_key
+                    ? invocationTarget.selection_key
+                    : options.modelDeployment,
             ),
         );
 
-        if (options.agentSelection) {
+        // An explicit `@agent` tag likewise selects the agent for this message alone.
+        const agentSelection =
+            invocationTarget?.target_type === 'agent' && invocationTarget.agent_selection_key
+                ? invocationTarget.agent_selection_key
+                : options.agentSelection;
+        if (agentSelection) {
             // The server reads `agent_info` and requires a dict; a bare string is silently
             // ignored, so the picker would appear to do nothing.
             const agentInfo = agentInfoForSelection(
                 bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
-                options.agentSelection,
+                agentSelection,
             );
             if (agentInfo) {
                 requestBody.agent_info = agentInfo;
@@ -882,18 +1531,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
             requestBody.reasoning_effort = options.reasoningEffort;
         }
 
-        await runChatStream(requestBody, conversationId, { isNewConversation });
-    },
+        if (collaborative) {
+            // The collaboration stream reads the text as `content` and records who was
+            // named and what was addressed alongside it, so the thread shows what was asked
+            // rather than only that something was.
+            requestBody.content = trimmed;
+            requestBody.reply_to_message_id = replyTo?.message_id ?? null;
+            requestBody.mentioned_participants = mentionedParticipants;
+            requestBody.invocation_target = invocationTarget;
+            // The server resolves the hidden source conversation itself; sending the shared
+            // conversation's id here would point the bridge at the wrong thread.
+            delete requestBody.conversation_id;
+            useCollaborationStore.getState().setReplyTo(null);
+        }
 
+        await runChatStream(requestBody, conversationId, {
+            isNewConversation,
+            kind: collaborative ? 'collaborative' : 'personal',
+            pendingUserMessageId,
+            stream: collaborative
+                ? {
+                      url: streamCollaborationUrl(conversationId),
+                      // No reattach endpoint exists for a shared conversation, so a dropped
+                      // transport must be reported rather than retried against a route that
+                      // does not know this conversation id.
+                      allowRecovery: false,
+                  }
+                : undefined,
+        });
+    },
 
     stopStreaming: () => {
         if (!activeStreamController) {
             return;
         }
         // Addresses the conversation the stream actually belongs to, which may no longer
-        // be the one on screen.
+        // be the one on screen, through whichever cancel route that conversation uses.
         if (streamingConversationId) {
-            void cancelStream(streamingConversationId);
+            void cancelStream(
+                streamingConversationId,
+                streamingConversationKind === 'collaborative'
+                    ? cancelCollaborationStreamUrl(streamingConversationId)
+                    : undefined,
+            );
         }
         activeStreamController.abort();
         activeStreamController = null;
@@ -918,8 +1598,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     loadMetadata: async (conversationId) => {
         set({ metadataLoading: true, metadataError: null });
+        const collaborative = isCollaborativeConversation(get(), conversationId);
         try {
-            const metadata = await fetchConversationMetadata(conversationId);
+            // A shared conversation has no entry in the personal metadata route, and its own
+            // detail response carries everything that one does plus the membership. It is
+            // mapped onto the metadata shape so the badges, classification pills, document
+            // drawer and summary all keep working untouched.
+            const metadata = collaborative
+                ? await fetchCollaborationConversation(conversationId).then((result) => {
+                      useCollaborationStore.getState().setConversation(result.conversation);
+                      return metadataFromCollaboration(result.conversation);
+                  })
+                : await fetchConversationMetadata(conversationId);
             // Discard if the user moved on while this was in flight.
             if (get().activeConversationId !== conversationId) {
                 set({ metadataLoading: false });
@@ -937,7 +1627,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 // older conversation into a page that has not been loaded.
                 conversations: state.conversations.some((item) => item.id === conversationId)
                     ? state.conversations
-                    : [conversationFromMetadata(conversationId, metadata), ...state.conversations],
+                    : [
+                          {
+                              ...conversationFromMetadata(conversationId, metadata),
+                              // Carried so the row's own actions keep routing to the right
+                              // API family after a reload that does not go through the feed.
+                              conversation_kind: collaborative ? 'collaborative' : undefined,
+                          },
+                          ...state.conversations,
+                      ],
             }));
         } catch (error) {
             set({
@@ -954,7 +1652,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
         try {
-            const { messages } = await fetchMessages(conversationId);
+            const { messages } =
+                get().activeConversationKind === 'collaborative'
+                    ? await fetchCollaborationMessages(conversationId)
+                    : await fetchMessages(conversationId);
             if (get().activeConversationId !== conversationId) {
                 return;
             }
@@ -972,9 +1673,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     removeMessage: async (messageId, deleteThread = false) => {
         const previous = get().messages;
+        const conversationId = get().activeConversationId;
+        const collaborative = get().activeConversationKind === 'collaborative';
         set({ messages: previous.filter((message) => message.id !== messageId) });
         try {
-            await deleteMessageApi(messageId, deleteThread);
+            if (collaborative && conversationId) {
+                // A shared conversation deletes one message at a time and has no thread
+                // model, so `deleteThread` has nothing to address there.
+                await deleteCollaborationMessage(conversationId, messageId);
+            } else {
+                await deleteMessageApi(messageId, deleteThread);
+            }
             // Deletion is soft when archiving is enabled: the server masks the message
             // rather than removing it, so the authoritative list is re-read instead of
             // trusting the optimistic removal.
@@ -1100,11 +1809,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
 
         try {
-            const result = await maskMessageApi(messageId, {
-                action,
-                conversation_id: conversationId,
-                selection,
-            });
+            const result =
+                get().activeConversationKind === 'collaborative'
+                    ? await maskCollaborationMessage(conversationId, messageId, {
+                          action,
+                          selection,
+                      })
+                    : await maskMessageApi(messageId, {
+                          action,
+                          conversation_id: conversationId,
+                          selection,
+                      });
 
             // The response carries the authoritative mask state, including ranges the
             // server merged or re-placed, so it replaces the local copy rather than being

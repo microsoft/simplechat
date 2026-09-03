@@ -14,17 +14,28 @@ import {
     Link2,
     Loader2,
     Paperclip,
+    Reply,
     Search,
     Square,
     Telescope,
+    X,
 } from 'lucide-react';
 import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
 import { uploadDocument } from '../../lib/endpoints';
+import { sendCollaborationTyping } from '../../lib/collaboration';
 import { agentSelectionKey } from '../../lib/agents';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { resolveGating } from '../../lib/composerGating';
+import {
+    findMentionAtCaret,
+    replaceMention,
+    type MentionMatch,
+    type MentionSuggestion,
+} from '../../lib/mentions';
 import { useUiStore } from '../../stores/uiStore';
+import { toast } from '../../stores/toastStore';
 import { chatWidthClass } from '../../lib/chatWidth';
 import {
     getModelSupportedLevels,
@@ -33,6 +44,7 @@ import {
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
 import { AiNotice } from './AiNotice';
+import { MentionMenu, useMentionSuggestions } from './MentionMenu';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
 
@@ -76,6 +88,35 @@ export function Composer() {
     const bootstrap = useBootstrapStore((state) => state.data);
     const features = bootstrap?.features ?? {};
 
+    /**
+     * Whether this is a shared conversation, and whether the reader may write in it.
+     *
+     * `can_post_messages` is the server's decision. A pending invitee can read a shared
+     * conversation but not write in it, and a group-visibility conversation grants posting
+     * with no membership record at all, so this cannot be worked out from the participant
+     * list in the browser.
+     */
+    const shared = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const loadedCollaboration = useCollaborationStore((state) => state.conversation);
+    // Only trusted when it is this conversation's membership. The participants panel used to
+    // share this slot, and an unrelated conversation's flags gating the thread on screen was
+    // exactly the failure that split them apart.
+    const collaboration =
+        loadedCollaboration?.id === activeConversationId ? loadedCollaboration : null;
+    /**
+     * Whether the reader may write here.
+     *
+     * Deny-by-default in a shared conversation: `can_post_messages` must be explicitly true,
+     * so a membership that has not loaded yet — or failed to — leaves the composer disabled
+     * rather than offering a Send button to somebody who has not joined. A personal
+     * conversation is unaffected.
+     */
+    const canPost = !shared || collaboration?.can_post_messages === true;
+    const awaitingInvite = Boolean(shared && collaboration?.can_accept_invite);
+    const checkingAccess = shared && !collaboration;
+    const replyTo = useCollaborationStore((state) => state.replyTo);
+    const setReplyTo = useCollaborationStore((state) => state.setReplyTo);
+
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -83,6 +124,11 @@ export function Composer() {
     const [uploading, setUploading] = useState(false);
     const [uploadNotice, setUploadNotice] = useState<string | null>(null);
     const chatWidth = useUiStore((state) => state.chatWidth);
+
+    /** The `@` token under the caret, when the menu should be offering completions for it. */
+    const [mention, setMention] = useState<MentionMatch | null>(null);
+    const [mentionIndex, setMentionIndex] = useState(0);
+    const suggestions = useMentionSuggestions(shared && canPost ? (mention?.query ?? null) : null);
 
     const [options, setOptions] = useState<ComposerOptions>({
         documentSearch: false,
@@ -152,6 +198,69 @@ export function Composer() {
 
     useEffect(autoGrow, [text]);
 
+    /**
+     * Tell the other participants that this person is writing.
+     *
+     * Sent as a state change rather than per keystroke — one ping when typing starts and
+     * one when it stops — because the server broadcasts every one of these to every other
+     * participant's event stream. The stop is also sent on a short idle timer, so walking
+     * away mid-sentence clears the indicator instead of leaving it up until the server's own
+     * eight-second expiry.
+     */
+    const typingRef = useRef(false);
+    const typingIdleTimer = useRef<number | null>(null);
+
+    const setTyping = (isTyping: boolean) => {
+        if (!shared || !activeConversationId || !canPost || typingRef.current === isTyping) {
+            return;
+        }
+        typingRef.current = isTyping;
+        void sendCollaborationTyping(activeConversationId, isTyping).catch(() => {
+            /* Presence is advisory; a lost ping expires on its own. */
+        });
+    };
+
+    const stopTyping = () => {
+        if (typingIdleTimer.current !== null) {
+            window.clearTimeout(typingIdleTimer.current);
+            typingIdleTimer.current = null;
+        }
+        setTyping(false);
+    };
+
+    const noteTyping = (value: string) => {
+        if (!shared) {
+            return;
+        }
+        setTyping(Boolean(value.trim()));
+        if (typingIdleTimer.current !== null) {
+            window.clearTimeout(typingIdleTimer.current);
+        }
+        typingIdleTimer.current = window.setTimeout(() => {
+            typingIdleTimer.current = null;
+            setTyping(false);
+        }, 3000);
+    };
+
+    // Leaving the conversation, or the page, must not leave a stale "is typing" behind for
+    // everybody else.
+    useEffect(
+        () => () => {
+            if (typingIdleTimer.current !== null) {
+                window.clearTimeout(typingIdleTimer.current);
+            }
+            typingRef.current = false;
+        },
+        [],
+    );
+
+    useEffect(() => {
+        // A conversation change invalidates both the draft's mention state and any typing
+        // claim made in the conversation being left.
+        setMention(null);
+        typingRef.current = false;
+    }, [activeConversationId]);
+
     // A model is identified by endpoint + id + provider + deployment together, so the
     // option is keyed on `selection_key` (unique per endpoint) rather than the deployment
     // name, which can repeat across endpoints.
@@ -208,14 +317,112 @@ export function Composer() {
     }, [options.modelDeployment, bootstrap]);
 
     const submit = () => {
-        if (!text.trim() || streaming) {
+        if (!text.trim() || streaming || !canPost) {
             return;
         }
         void sendMessage(text, options);
         setText('');
+        setMention(null);
+        // Sent, so the indicator other people can see must stop now rather than when the
+        // idle timer happens to fire.
+        stopTyping();
+    };
+
+    /**
+     * Track the `@` token under the caret.
+     *
+     * Recomputed from the value and the caret on every change, rather than tracked
+     * incrementally, so editing in the middle of a line, pasting and undo all behave the
+     * same as typing.
+     */
+    const syncMention = (element: HTMLTextAreaElement) => {
+        if (!shared || !canPost) {
+            return;
+        }
+        const found = findMentionAtCaret(element.value, element.selectionStart ?? 0);
+        setMention(found);
+        setMentionIndex(0);
+    };
+
+    const applySuggestion = (suggestion: MentionSuggestion) => {
+        const element = textareaRef.current;
+        if (!element || !mention) {
+            return;
+        }
+        const { value, caretIndex } = replaceMention(text, mention, suggestion.mention_text);
+        setText(value);
+        setMention(null);
+
+        // An "Add to this conversation" row is an action, not just a completion. Inserting
+        // the name without performing it left the row dead: the person was neither added nor
+        // mentioned, because the mention list is resolved against existing participants only
+        // and the server filters it again.
+        if (suggestion.kind === 'invite' && activeConversationId) {
+            void useCollaborationStore
+                .getState()
+                .inviteParticipants([
+                    {
+                        user_id: suggestion.user_id,
+                        display_name: suggestion.display_name,
+                        email: suggestion.email,
+                    },
+                ])
+                .then(() => {
+                    toast.success(`${suggestion.display_name} was added to this conversation.`);
+                })
+                .catch((error: unknown) => {
+                    toast.error(
+                        error instanceof Error
+                            ? error.message
+                            : `${suggestion.display_name} could not be added.`,
+                    );
+                });
+        }
+
+        // Applied after the value change has been rendered, or the browser would put the
+        // caret back at the end of the new value.
+        window.requestAnimationFrame(() => {
+            element.focus();
+            element.setSelectionRange(caretIndex, caretIndex);
+        });
     };
 
     const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // The mention menu owns these keys while it is open, which is why it is handled
+        // before the send: Enter should complete the highlighted name, not send a message
+        // containing a half-typed one.
+        if (mention && suggestions.length > 0) {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setMentionIndex((index) => (index + 1) % suggestions.length);
+                return;
+            }
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setMentionIndex(
+                    (index) => (index - 1 + suggestions.length) % suggestions.length,
+                );
+                return;
+            }
+            if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                applySuggestion(suggestions[mentionIndex]);
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setMention(null);
+                return;
+            }
+        }
+
+        // Escape also cancels a reply, which is otherwise easy to forget is armed.
+        if (event.key === 'Escape' && replyTo) {
+            event.preventDefault();
+            setReplyTo(null);
+            return;
+        }
+
         // Enter sends; Shift+Enter inserts a newline. Matches the classic UI.
         if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault();
@@ -269,7 +476,35 @@ export function Composer() {
                     next to the message it is about, not below the send button. */}
                 <WebSearchNotice active={options.webSearch} />
 
-                <div className="glass glass-edge rounded-2xl p-2">
+                <div className="glass glass-edge relative rounded-2xl p-2">
+                    {mention && (
+                        <MentionMenu
+                            suggestions={suggestions}
+                            activeIndex={mentionIndex}
+                            onSelect={applySuggestion}
+                        />
+                    )}
+
+                    {replyTo && (
+                        <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
+                            <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
+                            <span className="min-w-0 flex-1 text-xs text-text-2">
+                                {replyTo.display_name && (
+                                    <span className="font-medium">Replying to {replyTo.display_name}: </span>
+                                )}
+                                <span className="line-clamp-2">{replyTo.preview}</span>
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setReplyTo(null)}
+                                aria-label="Cancel reply"
+                                className="shrink-0 rounded-md p-0.5 text-text-3 hover:bg-surface-3 hover:text-text-1"
+                            >
+                                <X size={13} />
+                            </button>
+                        </div>
+                    )}
+
                     <label htmlFor="composer-input" className="sr-only">
                         Message
                     </label>
@@ -278,12 +513,32 @@ export function Composer() {
                         ref={textareaRef}
                         rows={1}
                         value={text}
-                        onChange={(event) => setText(event.target.value)}
+                        disabled={!canPost}
+                        onChange={(event) => {
+                            setText(event.target.value);
+                            syncMention(event.target);
+                            noteTyping(event.target.value);
+                        }}
+                        // The caret can move without the value changing — clicking, or an
+                        // arrow key — and the mention under it changes with it.
+                        onSelect={(event) => syncMention(event.currentTarget)}
+                        onBlur={stopTyping}
                         onKeyDown={onKeyDown}
-                        placeholder="Send a message…"
+                        placeholder={
+                            checkingAccess
+                                ? 'Checking your access to this conversation…'
+                                : awaitingInvite
+                                  ? 'Join this conversation to reply'
+                                  : !canPost
+                                    ? 'You do not have permission to write in this conversation'
+                                    : shared
+                                      ? 'Message the group, or @mention a model or agent to ask the assistant…'
+                                      : 'Send a message…'
+                        }
                         className={clsx(
                             'w-full resize-none bg-transparent px-3 py-2.5 text-[15px] leading-relaxed',
                             'text-text-1 placeholder:text-text-3 focus:outline-none',
+                            'disabled:cursor-not-allowed',
                         )}
                     />
 
@@ -482,8 +737,12 @@ export function Composer() {
                                 <button
                                     type="button"
                                     onClick={submit}
-                                    disabled={!text.trim()}
-                                    aria-label="Send message"
+                                    disabled={!text.trim() || !canPost}
+                                    aria-label={
+                                        shared && !streaming
+                                            ? 'Send to this conversation'
+                                            : 'Send message'
+                                    }
                                     className={clsx(
                                         'inline-flex h-9 w-9 items-center justify-center rounded-xl',
                                         'bg-accent text-on-accent transition-colors hover:bg-accent-hover',

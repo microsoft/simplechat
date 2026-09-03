@@ -89,10 +89,10 @@ def test_mark_read_is_conditional_and_routed_by_conversation_kind():
     )
 
     chat_store = _read(V2_SRC / "stores" / "chatStore.ts")
-    assert "conversation?.has_unread_assistant_response" in chat_store, (
+    assert "listed?.has_unread_assistant_response" in chat_store, (
         "mark-read must only be called when the conversation is actually unread"
     )
-    assert "conversation.conversation_kind === 'collaborative'" in chat_store, (
+    assert "markConversationRead(conversationId, kind === 'collaborative')" in chat_store, (
         "mark-read must be routed using the conversation kind"
     )
 

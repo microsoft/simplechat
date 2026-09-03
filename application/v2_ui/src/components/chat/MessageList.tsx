@@ -7,12 +7,15 @@ import {
     Brain,
     ChevronDown,
     EyeOff,
+    FileText,
     ImageOff,
     RefreshCw,
+    Reply,
     Sparkles,
     TriangleAlert,
 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUiStore } from '../../stores/uiStore';
 import { bubbleWidthClass, chatWidthClass } from '../../lib/chatWidth';
@@ -37,7 +40,13 @@ import {
     findResultForSpec,
     groupProposalImages,
 } from '../../lib/imageProposalSpec';
-import type { ChatMessage, ThoughtEntry } from '../../lib/types';
+import {
+    isAiRequest,
+    isOwnMessage,
+    messageAuthorName,
+    resolveReplyContext,
+} from '../../lib/sharedMessage';
+import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
 
 function ThoughtsPanel({ thoughts }: { thoughts: ThoughtEntry[] }) {
     const [open, setOpen] = useState(false);
@@ -145,6 +154,61 @@ function ImageMessage({ message }: { message: ChatMessage }) {
     );
 }
 
+/**
+ * A quotation of the message being replied to.
+ *
+ * Shared conversations are not linear the way a personal one is — several people write into
+ * the same thread — so a reply that does not show what it answers is frequently
+ * unintelligible by the time it is read.
+ */
+function ReplyQuote({ context }: { context: { display_name?: string; preview?: string } }) {
+    return (
+        <div className="mb-2 flex items-start gap-1.5 border-l-2 border-current/30 pl-2 text-[12px] opacity-70">
+            <Reply size={12} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">
+                {context.display_name && (
+                    <span className="font-medium">{context.display_name}: </span>
+                )}
+                <span className="line-clamp-2">{context.preview}</span>
+            </span>
+        </div>
+    );
+}
+
+/**
+ * A file somebody attached to a shared conversation.
+ *
+ * `serialize_collaboration_message` gives an upload the display role `file`, which the
+ * personal endpoints never emit. Rendered as a named attachment rather than as message
+ * text, because `content` for one of these is extracted document text and can be the whole
+ * document.
+ */
+function FileMessage({ message }: { message: ChatMessage }) {
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const shared = message as CollaborationMessage;
+    const author = messageAuthorName(message, currentUserId);
+    const own = isOwnMessage(message, currentUserId);
+
+    return (
+        <div
+            id={`message-${message.id}`}
+            className={clsx('flex flex-col', own && 'items-end')}
+        >
+            {author && <p className="mb-1 px-1 text-[11px] text-text-3">{author}</p>}
+            <div
+                className={clsx(
+                    bubbleWidthClass(chatWidth),
+                    'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] text-text-1',
+                )}
+            >
+                <FileText size={16} className="shrink-0 text-text-3" />
+                <span className="truncate">{shared.filename || 'Attached file'}</span>
+            </div>
+        </div>
+    );
+}
+
 function MessageBubble({
     message,
     proposalImages,
@@ -162,9 +226,33 @@ function MessageBubble({
     const applyMask = useChatStore((state) => state.applyMask);
     const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
     const chatWidth = useUiStore((state) => state.chatWidth);
+    const messages = useChatStore((state) => state.messages);
 
     const masks = readMaskState(message);
     const maskingAllowed = canMask(message, currentUserId);
+
+    /**
+     * Who wrote this, when that is a question worth answering.
+     *
+     * Empty for every personal conversation and for assistant replies, so nothing changes
+     * outside a shared thread.
+     */
+    const author = messageAuthorName(message, currentUserId);
+    const own = isOwnMessage(message, currentUserId);
+    /**
+     * Which side of the thread this message sits on.
+     *
+     * In a personal conversation that is simply "did the user write it". In a shared one it
+     * is "did *this* reader write it": another participant's message is theirs, not the
+     * reader's, and putting it on the reader's side would misattribute it at a glance.
+     * `author` is empty outside a shared conversation, so this reduces to the old rule
+     * there.
+     */
+    const alignRight = author ? own : isUser;
+    const replyContext = useMemo(
+        () => resolveReplyContext(message, messages, currentUserId),
+        [message, messages, currentUserId],
+    );
 
     // A user message is plain text, so its masked spans can be cut straight out of the
     // content rather than going through the markdown placeholder path.
@@ -184,6 +272,10 @@ function MessageBubble({
 
     if (message.role === 'image') {
         return <ImageMessage message={message} />;
+    }
+
+    if (message.role === 'file') {
+        return <FileMessage message={message} />;
     }
 
     if (editing) {
@@ -228,9 +320,20 @@ function MessageBubble({
     return (
         <div
             id={`message-${message.id}`}
-            className={clsx('group/message flex flex-col transition-shadow', isUser && 'items-end')}
+            className={clsx(
+                'group/message flex flex-col transition-shadow',
+                alignRight && 'items-end',
+            )}
         >
-            <div className={clsx('flex w-full', isUser ? 'justify-end' : 'justify-start')}>
+            {/* Only ever present in a shared conversation, where a thread with several
+                authors is unreadable without knowing who wrote what. */}
+            {author && (
+                <p className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-text-3">
+                    <span className="font-medium">{author}</span>
+                    {isAiRequest(message) && <span>asked the assistant</span>}
+                </p>
+            )}
+            <div className={clsx('flex w-full', alignRight ? 'justify-end' : 'justify-start')}>
             <div
                 ref={bodyRef}
                 className={clsx(
@@ -238,11 +341,12 @@ function MessageBubble({
                     'rounded-2xl px-4 py-3',
                     // These are repeated per message, so they use the non-blurred surface:
                     // a backdrop-filter per bubble makes long threads scroll badly.
-                    isUser
+                    alignRight
                         ? 'bg-accent text-on-accent'
                         : 'glass-flat text-text-1',
                 )}
             >
+                {replyContext && <ReplyQuote context={replyContext} />}
                 {masks.fullyMasked ? (
                     // The whole message is masked, so none of it is rendered. The server
                     // also withholds it from the model.
@@ -255,7 +359,7 @@ function MessageBubble({
                         })}
                         className={clsx(
                             'flex items-center gap-2 text-[15px] italic',
-                            isUser ? 'text-on-accent/80' : 'text-text-3',
+                            alignRight ? 'text-on-accent/80' : 'text-text-3',
                         )}
                     >
                         <EyeOff size={14} className="shrink-0" />
@@ -319,6 +423,7 @@ function MessageBubble({
                     onEdit={isUser ? () => setEditing(true) : undefined}
                     inspector={inspector}
                     onInspect={setInspector}
+                    alignRight={alignRight}
                 />
             </div>
 
@@ -394,6 +499,46 @@ function StreamingBubble() {
                     </span>
                 )}
             </div>
+        </div>
+    );
+}
+
+/**
+ * Who else is currently writing.
+ *
+ * Only ever populated in a shared conversation. It sits at the end of the thread rather
+ * than under the composer so it reads as part of the conversation — the same place the
+ * message being written will appear.
+ */
+function TypingIndicator() {
+    const typingUsers = useCollaborationStore((state) => state.typingUsers);
+
+    if (typingUsers.length === 0) {
+        return null;
+    }
+
+    const names = typingUsers.map((entry) => entry.display_name);
+    const label =
+        names.length === 1
+            ? `${names[0]} is typing`
+            : names.length === 2
+              ? `${names[0]} and ${names[1]} are typing`
+              : `${names.length} people are typing`;
+
+    return (
+        <div className="flex justify-start">
+            <p className="flex items-center gap-1.5 px-1 text-[12px] text-text-3">
+                <span className="flex gap-1">
+                    {[0, 150, 300].map((delay) => (
+                        <span
+                            key={delay}
+                            className="h-1 w-1 animate-bounce rounded-full bg-text-3"
+                            style={{ animationDelay: `${delay}ms` }}
+                        />
+                    ))}
+                </span>
+                {label}
+            </p>
         </div>
     );
 }
@@ -524,6 +669,7 @@ export function MessageList() {
                         />
                     ))}
                     {streaming && <StreamingBubble />}
+                    <TypingIndicator />
                 </div>
 
                 {streamError && (
