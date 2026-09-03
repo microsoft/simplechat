@@ -26,6 +26,8 @@ import {
     type MessageSources,
 } from '../../lib/messageDetails';
 import type { ChatMessage, Json, PersistedThought } from '../../lib/types';
+import { buildToolResultView, type RowMode } from '../../lib/agentCitationRows';
+import { GlassButton } from '../ui/primitives';
 import { normalizePersistedThought, ThoughtsList } from './ThoughtsList';
 
 export type InspectorSection = 'details' | 'sources' | 'reasoning';
@@ -219,42 +221,73 @@ function SourcesSection({ sources }: { sources: MessageSources }) {
                         <Braces size={12} /> Tool calls ({sources.tools.length})
                     </h4>
                     <ul className="space-y-1">
-                        {sources.tools.map((tool, index) => {
-                            const args = renderToolValue(tool.function_arguments);
-                            const result = renderToolValue(tool.function_result);
-                            return (
-                                <li
-                                    key={`${tool.tool_name ?? 'tool'}-${index}`}
-                                    className="rounded-lg bg-surface-sunken px-2.5 py-1.5 text-xs"
-                                >
-                                    <details>
-                                        <summary className="cursor-pointer text-text-1">
-                                            {String(tool.tool_name ?? `Tool ${index + 1}`)}
-                                        </summary>
-                                        {args && (
-                                            <div className="mt-1.5">
-                                                <span className="text-text-3">Arguments</span>
-                                                <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] text-text-2">
-                                                    {args}
-                                                </pre>
-                                            </div>
-                                        )}
-                                        {result && (
-                                            <div className="mt-1.5">
-                                                <span className="text-text-3">Result</span>
-                                                <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] text-text-2">
-                                                    {result}
-                                                </pre>
-                                            </div>
-                                        )}
-                                    </details>
-                                </li>
-                            );
-                        })}
+                        {sources.tools.map((tool, index) => (
+                            <li
+                                key={`${tool.tool_name ?? 'tool'}-${index}`}
+                                className="rounded-lg bg-surface-sunken px-2.5 py-1.5 text-xs"
+                            >
+                                <details>
+                                    <summary className="cursor-pointer text-text-1">
+                                        {String(tool.tool_name ?? `Tool ${index + 1}`)}
+                                    </summary>
+                                    <ToolCallBody tool={tool} />
+                                </details>
+                            </li>
+                        ))}
                     </ul>
                 </div>
             )}
         </div>
+    );
+}
+
+/**
+ * One tool call's arguments and result.
+ *
+ * Split into its own component because the result needs state: a tabular result is shown a
+ * few rows at a time and the reader chooses how many, which cannot live in a `.map()`.
+ */
+function ToolCallBody({ tool }: { tool: MessageSources['tools'][number] }) {
+    const [rowMode, setRowMode] = useState<RowMode>('preview');
+    const args = renderToolValue(tool.function_arguments);
+    const view = buildToolResultView(tool.function_result, rowMode);
+
+    return (
+        <>
+            {args && (
+                <div className="mt-1.5">
+                    <span className="text-text-3">Arguments</span>
+                    <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] text-text-2">
+                        {args}
+                    </pre>
+                </div>
+            )}
+            {view.resultText && (
+                <div className="mt-1.5">
+                    <span className="text-text-3">Result</span>
+                    {view.summaryText && (
+                        <p className="mt-0.5 text-[11px] text-text-3">{view.summaryText}</p>
+                    )}
+                    <pre className="mt-0.5 max-h-40 overflow-auto rounded bg-surface-2 p-2 font-mono text-[11px] text-text-2">
+                        {view.resultText}
+                    </pre>
+                    {view.controls.length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {view.controls.map((control) => (
+                                <GlassButton
+                                    key={control.mode}
+                                    size="sm"
+                                    variant="subtle"
+                                    onClick={() => setRowMode(control.mode)}
+                                >
+                                    {control.label}
+                                </GlassButton>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </>
     );
 }
 
