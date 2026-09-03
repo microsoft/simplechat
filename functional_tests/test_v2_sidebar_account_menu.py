@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 rail's account menu and remembered navigation groups.
-Version: 0.261.053
-Implemented in: 0.261.053
+Version: 0.261.054
+Implemented in: 0.261.054
 
 Four things about the V2 navigation rail are asserted here, all of which fail silently:
 
@@ -257,8 +257,8 @@ def test_version_is_at_least_the_implementation_version():
     """The application carries at least the version this behaviour arrived in."""
     print("Testing version...")
     assert_app_version_at_least(
-        "0.261.053",
-        reason="The V2 account menu and remembered navigation groups landed in 0.261.053.",
+        "0.261.054",
+        reason="The V2 account menu and remembered navigation groups landed in 0.261.054.",
     )
     print("Version test passed!")
     return True

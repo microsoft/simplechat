@@ -1,6 +1,6 @@
 # V2 Sidebar Navigation And Account Menu Fix
 
-Fixed in version: **0.261.053**
+Fixed in version: **0.261.054**
 
 ## Issues
 
@@ -136,7 +136,7 @@ is fetched once at startup.
 | `application/v2_ui/src/components/layout/Sidebar.tsx` | `/admin` removed from `NAV_ITEMS`; account menu reworked for the collapsed rail, given dismissal handling, User Settings and Admin Settings entries and the avatar. |
 | `application/v2_ui/src/components/layout/PageHeader.tsx` | Optional `leading` slot. |
 | `application/v2_ui/src/pages/SettingsPage.tsx` | Avatar in the header; title is "User Settings". |
-| `application/single_app/config.py` | `VERSION` `0.261.052` → `0.261.053`. |
+| `application/single_app/config.py` | `VERSION` `0.261.053` → `0.261.054`. |
 
 No server code changed. `sidebarMenuState` was already in the route's `allowed_keys`, since
 the classic interface writes it.

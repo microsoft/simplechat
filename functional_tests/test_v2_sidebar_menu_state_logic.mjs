@@ -1,8 +1,8 @@
 // test_v2_sidebar_menu_state_logic.mjs
 //
 // Runtime test for the V2 rail's remembered menu state.
-// Version: 0.261.053
-// Implemented in: 0.261.053
+// Version: 0.261.054
+// Implemented in: 0.261.054
 //
 // The External Links and Custom Pages groups in the V2 rail now collapse and remember that
 // choice, and they remember it in the same per-user setting the classic interface uses so a

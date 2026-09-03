@@ -13,6 +13,106 @@ def _invalidate_prompt_chat_bootstrap_cache(user_id, group_id=None, public_works
     else:
         bump_chat_bootstrap_user_cache_version(user_id, reason=reason)
 
+
+# A description is the one line shown beside a prompt's name in the workbench list. Capped
+# because it is rendered on a single line: anything longer is truncated on display, so storing
+# the remainder achieves nothing but a larger document.
+PROMPT_DESCRIPTION_MAX_LENGTH = 200
+
+
+def normalize_prompt_description(value):
+    """Trim a description to what the interface can actually show."""
+    return str(value or '').strip()[:PROMPT_DESCRIPTION_MAX_LENGTH]
+
+
+def serialize_prompt_summary(doc):
+    """The shape a write returns to the client.
+
+    Deliberately one function rather than a dict literal at each call site. The client applies
+    this optimistically to its list, so a create that omits a field the update returns would
+    make a newly created prompt render differently from the same prompt after an edit.
+
+    ``description`` and ``is_favorite`` are read defensively: prompts created before those
+    fields existed do not carry them, and neither does a prompt last saved by the classic
+    interface, which sends only ``name`` and ``content``.
+    """
+    doc = doc or {}
+    return {
+        "id": doc.get("id"),
+        "name": doc.get("name", ""),
+        "description": doc.get("description", "") or "",
+        "is_favorite": bool(doc.get("is_favorite", False)),
+        "created_at": doc.get("created_at"),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+def build_prompt_updates(data, require_fields=True):
+    """Validate a PATCH body into the fields a prompt document may carry.
+
+    Shared by the personal, group and public prompt routes, which previously repeated the same
+    name and content checks three times over. Repeating them once more for every new field is
+    how the three drift apart, and a field accepted on a personal prompt but silently dropped
+    on a group one reads to a user as a save that did not work.
+
+    ``require_fields=False`` is for the create routes, which validate name and content
+    themselves and use this only for the optional fields. An empty result is legitimate there:
+    it means the caller supplied none of them.
+
+    Returns ``(updates, error)``. ``error`` is a message suitable for a 400 response and is
+    ``None`` when ``updates`` is usable.
+    """
+    data = data or {}
+    updates = {}
+
+    if "name" in data:
+        if not isinstance(data["name"], str) or not data["name"].strip():
+            return None, "Invalid 'name' provided"
+        updates["name"] = data["name"].strip()
+
+    if "content" in data:
+        if not isinstance(data["content"], str):
+            return None, "Invalid 'content' provided"
+        updates["content"] = data["content"]
+
+    if "description" in data:
+        # None is accepted as "clear it", which is what the editor sends when the field is
+        # emptied. Any other non-string is a client bug rather than an intention.
+        if data["description"] is not None and not isinstance(data["description"], str):
+            return None, "Invalid 'description' provided"
+        updates["description"] = normalize_prompt_description(data["description"])
+
+    if "is_favorite" in data:
+        if not isinstance(data["is_favorite"], bool):
+            return None, "Invalid 'is_favorite' provided"
+        updates["is_favorite"] = data["is_favorite"]
+
+    if require_fields and not updates:
+        return None, "No fields provided for update"
+
+    return updates, None
+
+
+# The fields a create accepts beyond name and content. Validated through the same function the
+# updates use, so the two paths cannot disagree about what a valid description is.
+PROMPT_OPTIONAL_CREATE_FIELDS = ("description", "is_favorite")
+
+
+def build_prompt_create_options(data):
+    """Validate the optional fields of a create body.
+
+    Returns ``(options, error)`` where ``options`` is ready to splat into ``create_prompt_doc``.
+    """
+    data = data or {}
+    supplied = {key: data[key] for key in PROMPT_OPTIONAL_CREATE_FIELDS if key in data}
+    options, error = build_prompt_updates(supplied, require_fields=False)
+    if error:
+        return None, error
+    return {
+        "description": options.get("description", ""),
+        "is_favorite": options.get("is_favorite", False),
+    }, None
+
 def get_pagination_params(args):
     try:
         page = int(args.get('page', 1))
@@ -51,6 +151,7 @@ def _filter_prompt_items(items, search_term):
     return [
         item for item in items
         if normalized_search in (item.get('name') or '').lower()
+        or normalized_search in (item.get('description') or '').lower()
     ]
 
 
@@ -208,8 +309,16 @@ def list_prompts(user_id, prompt_type, args, group_id=None, public_workspace_id=
 
     if search_term:
         st = search_term[:100]
-        select_query += " AND CONTAINS(c.name, @search, true)"
-        count_query  += " AND CONTAINS(c.name, @search, true)"
+        # `IS_DEFINED` guards the description arm rather than relying on Cosmos three-valued
+        # logic: prompts created before the field existed have no `description` at all, and an
+        # unguarded CONTAINS against a missing property is the kind of thing that quietly
+        # changes which rows come back.
+        match_clause = (
+            " AND (CONTAINS(c.name, @search, true)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(c.description, @search, true)))"
+        )
+        select_query += match_clause
+        count_query += match_clause
         parameters.append({"name": "@search", "value": st})
 
     select_query += " ORDER BY c.updated_at DESC"
@@ -258,7 +367,8 @@ def list_all_prompts_for_scope(user_id, prompt_type, group_id=None, public_works
 
     return _query_prompt_items(cosmos_container, query, parameters)
 
-def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None):
+def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None,
+                      description=None, is_favorite=False):
     """
     Create a new prompt for a user or a group.
     Returns minimal created doc.
@@ -281,6 +391,8 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public
         "id": prompt_id,
         "name": name.strip(),
         "content": content,
+        "description": normalize_prompt_description(description),
+        "is_favorite": bool(is_favorite),
         "type": prompt_type,
         "created_at": now,
         "updated_at": now
@@ -301,11 +413,7 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public
         public_workspace_id=public_workspace_id,
         reason="prompt_created",
     )
-    return {
-        "id": created["id"],
-        "name": created["name"],
-        "updated_at": created["updated_at"]
-    }
+    return serialize_prompt_summary(created)
 
 def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None, public_workspace_id=None):
     """
@@ -349,11 +457,7 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
         reason="prompt_updated",
     )
 
-    return {
-        "id":         updated["id"],
-        "name":       updated["name"],
-        "updated_at": updated["updated_at"]
-    }
+    return serialize_prompt_summary(updated)
 
 def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=None):
     """
