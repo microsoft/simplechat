@@ -5,24 +5,62 @@
 // one toggle can take several clicks through two levels of tabs. Here the same structure
 // (still sourced from admin_settings_nav.py, so it cannot drift) is flattened: a slim
 // category rail, a single scrollable pane, and a search box that matches across every
-// section and every capability key at once.
+// section and every setting at once.
+//
+// Two sources feed the controls:
+//
+// `field_schema`
+//     Sections described in `admin_settings_fields.py` render real controls -- text,
+//     selects, colours, ranges, uploads and repeatable lists -- driven entirely by the
+//     declaration. This is the path new work should take.
+//
+// the `enable_*` fallback
+//     Sections not described yet are still discovered by scanning the settings document
+//     for booleans and matching them to a section by word stems. That is how the whole
+//     page used to work; it stays so undescribed groups keep functioning, and it retires
+//     one group at a time as each is described.
+//
+// Edits are buffered into a draft and saved together. Terms of Use and the AI notice
+// derive a content version from their text, and a new version re-prompts every user, so
+// saving per keystroke would mint a version per character.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Search, ShieldAlert, TriangleAlert, Check } from 'lucide-react';
-import { api } from '../lib/apiClient';
+import { Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
-import { GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
+import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
+import { AdminModal } from '../components/admin/AdminModal';
+import { AdminMarkdown } from '../components/admin/AdminMarkdown';
+import { BrandingImageField } from '../components/admin/BrandingImageField';
+import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { SaveBar } from '../components/admin/SaveBar';
+import { SettingField } from '../components/admin/fields';
+import {
+    ClassificationBannerPreview,
+    UserAgreementPreview,
+} from '../components/admin/previews';
+import {
+    asBoolean,
+    asNumber,
+    asString,
+    extractFieldErrors,
+    fieldSearchText,
+    humanizeKey,
+    isFieldVisible,
+    readFieldValue,
+    type AdminField,
+    type AdminSettingsPatchResponse,
+    type AdminSettingsResponse,
+    type BrandingAssets,
+    type BrandingUploadResponse,
+} from '../lib/adminFields';
+import { toast } from '../stores/toastStore';
 import type { AdminNavGroup, Json } from '../lib/types';
 
-interface AdminSettingsResponse {
-    settings: Json;
-    admin_nav: AdminNavGroup[];
-    version: string;
-}
-
-/** One searchable row: a capability key rendered under its section and tab. */
+/** One fallback row: an `enable_*` key with no declared field. */
 interface CapabilityRow {
     key: string;
     label: string;
@@ -33,14 +71,22 @@ interface CapabilityRow {
     sectionLabel: string;
 }
 
-/** Turn `enable_document_classification` into `Document classification`. */
-function humanizeKey(key: string): string {
-    const withoutPrefix = key.replace(/^enable_/, '').replace(/_/g, ' ').trim();
-    return withoutPrefix.charAt(0).toUpperCase() + withoutPrefix.slice(1);
+/** A section as rendered: its declared fields, plus any fallback capability rows. */
+interface RenderedSection {
+    sectionId: string;
+    label: string;
+    groupId: string;
+    groupLabel: string;
+    tabLabel: string;
+    fields: AdminField[];
+    capabilities: CapabilityRow[];
 }
 
+/** Synthetic field definitions used to read a sibling's current value for a preview. */
+const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: '' });
+
 /**
- * Associate each `enable_*` setting with a section.
+ * Associate each undeclared `enable_*` setting with a section.
  *
  * The navigation definition names sections but does not enumerate which settings keys
  * belong to them, so keys are matched to the section whose id shares the most leading
@@ -50,9 +96,17 @@ function humanizeKey(key: string): string {
 function buildCapabilityIndex(
     nav: AdminNavGroup[],
     settings: Json,
-): { rows: CapabilityRow[]; unmatched: CapabilityRow[] } {
+    declaredKeys: Set<string>,
+): CapabilityRow[] {
     const capabilityKeys = Object.keys(settings)
-        .filter((key) => key.startsWith('enable_') && typeof settings[key] === 'boolean')
+        .filter(
+            (key) =>
+                key.startsWith('enable_') &&
+                typeof settings[key] === 'boolean' &&
+                // A key with a proper field is rendered by the schema path; rendering it
+                // here as well would put two controls on one value.
+                !declaredKeys.has(key),
+        )
         .sort();
 
     const sections = nav.flatMap((group) =>
@@ -73,10 +127,7 @@ function buildCapabilityIndex(
         ),
     );
 
-    const rows: CapabilityRow[] = [];
-    const unmatched: CapabilityRow[] = [];
-
-    for (const key of capabilityKeys) {
+    return capabilityKeys.map((key) => {
         const keyTokens = key
             .replace(/^enable_/, '')
             .split('_')
@@ -98,7 +149,7 @@ function buildCapabilityIndex(
             }
         }
 
-        const row: CapabilityRow = {
+        return {
             key,
             label: humanizeKey(key),
             groupId: best?.groupId ?? '__other',
@@ -107,27 +158,24 @@ function buildCapabilityIndex(
             sectionId: best?.sectionId ?? '__other',
             sectionLabel: best?.sectionLabel ?? 'Other capabilities',
         };
-
-        if (best) {
-            rows.push(row);
-        } else {
-            unmatched.push(row);
-        }
-    }
-
-    return { rows, unmatched };
+    });
 }
 
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
 
     const [data, setData] = useState<AdminSettingsResponse | null>(null);
+    const [brandingAssets, setBrandingAssets] = useState<BrandingAssets>({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
-    const [savingKey, setSavingKey] = useState<string | null>(null);
-    const [savedKey, setSavedKey] = useState<string | null>(null);
+
+    const [draft, setDraft] = useState<Json>({});
+    const [saving, setSaving] = useState(false);
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+    const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
+    const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -143,6 +191,7 @@ export function AdminSettingsPage() {
                 const response = await api.get<AdminSettingsResponse>('/api/v2/admin/settings');
                 if (!cancelled) {
                     setData(response);
+                    setBrandingAssets(response.branding_assets ?? {});
                     setLoading(false);
                 }
             } catch (fetchError) {
@@ -163,12 +212,14 @@ export function AdminSettingsPage() {
     }, [isAdmin]);
 
     // "/" focuses search from anywhere on the page, which is the whole point of a
-    // search-first surface.
+    // search-first surface. Ignored while typing so it can still be typed into a field.
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             const target = event.target as HTMLElement | null;
             const typingInField =
-                target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA';
+                target?.tagName === 'INPUT' ||
+                target?.tagName === 'TEXTAREA' ||
+                target?.tagName === 'SELECT';
             if (event.key === '/' && !typingInField) {
                 event.preventDefault();
                 searchRef.current?.focus();
@@ -178,79 +229,360 @@ export function AdminSettingsPage() {
         return () => document.removeEventListener('keydown', onKeyDown);
     }, []);
 
-    const { rows, unmatched } = useMemo(() => {
-        if (!data) {
-            return { rows: [] as CapabilityRow[], unmatched: [] as CapabilityRow[] };
+    const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
+    const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+
+    const declaredKeys = useMemo(() => {
+        const keys = new Set<string>();
+        for (const fields of Object.values(schema)) {
+            for (const field of fields) {
+                if (field.key) {
+                    keys.add(field.key);
+                }
+            }
         }
-        return buildCapabilityIndex(data.admin_nav, data.settings);
-    }, [data]);
+        return keys;
+    }, [schema]);
 
-    const allRows = useMemo(() => [...rows, ...unmatched], [rows, unmatched]);
+    const capabilityRows = useMemo(
+        () => (data ? buildCapabilityIndex(data.admin_nav, data.settings, declaredKeys) : []),
+        [data, declaredKeys],
+    );
 
-    const visibleRows = useMemo(() => {
+    /** Every section that has something to show, in navigation order. */
+    const sections = useMemo<RenderedSection[]>(() => {
+        if (!data) {
+            return [];
+        }
+
+        const capabilitiesBySection = new Map<string, CapabilityRow[]>();
+        for (const row of capabilityRows) {
+            const existing = capabilitiesBySection.get(row.sectionId);
+            if (existing) {
+                existing.push(row);
+            } else {
+                capabilitiesBySection.set(row.sectionId, [row]);
+            }
+        }
+
+        const rendered: RenderedSection[] = [];
+        for (const group of data.admin_nav) {
+            for (const tab of group.tabs) {
+                for (const section of tab.sections) {
+                    const fields = schema[section.id] ?? [];
+                    const capabilities = capabilitiesBySection.get(section.id) ?? [];
+                    capabilitiesBySection.delete(section.id);
+                    if (!fields.length && !capabilities.length) {
+                        continue;
+                    }
+                    rendered.push({
+                        sectionId: section.id,
+                        label: section.label,
+                        groupId: group.id,
+                        groupLabel: group.label,
+                        tabLabel: tab.label,
+                        fields,
+                        capabilities,
+                    });
+                }
+            }
+        }
+
+        // Anything the stem match could not place still has to be reachable.
+        for (const [sectionId, capabilities] of capabilitiesBySection) {
+            rendered.push({
+                sectionId,
+                label: capabilities[0]?.sectionLabel ?? 'Other capabilities',
+                groupId: capabilities[0]?.groupId ?? '__other',
+                groupLabel: capabilities[0]?.groupLabel ?? 'Other',
+                tabLabel: capabilities[0]?.tabLabel ?? '',
+                fields: [],
+                capabilities,
+            });
+        }
+
+        return rendered;
+    }, [data, schema, capabilityRows]);
+
+    const visibleSections = useMemo(() => {
         const needle = query.trim().toLowerCase();
 
-        return allRows.filter((row) => {
-            if (needle) {
-                // Search spans the key, its readable label and its location, so both
-                // "retention" and "data lifecycle" find the same setting.
-                const haystack =
-                    `${row.key} ${row.label} ${row.sectionLabel} ${row.tabLabel} ${row.groupLabel}`.toLowerCase();
-                return haystack.includes(needle);
-            }
-            if (activeGroup) {
-                return row.groupId === activeGroup;
-            }
-            return true;
-        });
-    }, [allRows, query, activeGroup]);
+        return sections
+            .map((section) => {
+                if (!needle) {
+                    return activeGroup && section.groupId !== activeGroup ? null : section;
+                }
 
-    // Group the visible rows by section, preserving the order they were indexed in.
-    const grouped = useMemo(() => {
-        const bySection = new Map<string, { label: string; group: string; rows: CapabilityRow[] }>();
-        for (const row of visibleRows) {
-            const existing = bySection.get(row.sectionId);
-            if (existing) {
-                existing.rows.push(row);
-            } else {
-                bySection.set(row.sectionId, {
-                    label: row.sectionLabel,
-                    group: row.groupLabel,
-                    rows: [row],
-                });
+                const location =
+                    `${section.label} ${section.tabLabel} ${section.groupLabel}`.toLowerCase();
+                if (location.includes(needle)) {
+                    return section;
+                }
+
+                // Search spans keys, labels and help text, so both "retention" and
+                // "data lifecycle" find the same setting.
+                const fields = section.fields.filter((field) =>
+                    fieldSearchText(field).includes(needle),
+                );
+                const capabilities = section.capabilities.filter((row) =>
+                    `${row.key} ${row.label}`.toLowerCase().includes(needle),
+                );
+                return fields.length || capabilities.length
+                    ? { ...section, fields, capabilities }
+                    : null;
+            })
+            .filter((section): section is RenderedSection => section !== null);
+    }, [sections, query, activeGroup]);
+
+    const settingCount = declaredKeys.size + capabilityRows.length;
+
+    /**
+     * Keys that gate a save rather than being stored.
+     *
+     * They ride along in the draft so they reach the PATCH, but they are not changes an
+     * administrator made and must not be counted as such.
+     */
+    const acknowledgementKeys = useMemo(() => {
+        const keys = new Set<string>();
+        for (const fields of Object.values(schema)) {
+            for (const field of fields) {
+                if (field.requires_acknowledgement) {
+                    keys.add(field.requires_acknowledgement.key);
+                }
             }
         }
-        return [...bySection.entries()];
-    }, [visibleRows]);
+        return keys;
+    }, [schema]);
 
-    const onToggle = async (key: string, next: boolean) => {
-        if (!data) {
+    const dirtyKeys = useMemo(
+        () => Object.keys(draft).filter((key) => !acknowledgementKeys.has(key)),
+        [draft, acknowledgementKeys],
+    );
+
+    const setValue = useCallback((key: string, value: unknown) => {
+        setDraft((current) => ({ ...current, [key]: value }));
+        setFieldErrors((current) => {
+            if (!(key in current)) {
+                return current;
+            }
+            const next = { ...current };
+            delete next[key];
+            return next;
+        });
+    }, []);
+
+    /**
+     * Apply a switch change, intercepting capabilities that require an acknowledgement.
+     *
+     * Custom Pages does not take full effect until the App Service restarts, so an
+     * administrator has to be told before the toggle can be turned on.
+     */
+    const onSwitchChange = useCallback(
+        (field: AdminField, next: boolean) => {
+            if (!field.key) {
+                return;
+            }
+            const acknowledgement = field.requires_acknowledgement;
+            const alreadyOn = asBoolean(settings[field.key]);
+
+            if (acknowledgement && next && !alreadyOn) {
+                setPendingAck(field);
+                return;
+            }
+
+            if (acknowledgement && !next) {
+                // Turning the capability back off before saving must not leave a stale
+                // acknowledgement behind for the next time it is switched on.
+                const fieldKey = field.key;
+                setDraft((current) => {
+                    const updated = { ...current, [fieldKey]: false };
+                    delete updated[acknowledgement.key];
+                    return updated;
+                });
+                return;
+            }
+
+            setValue(field.key, next);
+        },
+        [settings, setValue],
+    );
+
+    const discard = useCallback(() => {
+        setDraft({});
+        setFieldErrors({});
+        setFieldWarnings({});
+    }, []);
+
+    const save = useCallback(async () => {
+        if (!Object.keys(draft).length) {
             return;
         }
-
-        const previous = data.settings[key];
-        setSavingKey(key);
-        setSavedKey(null);
-        setData({ ...data, settings: { ...data.settings, [key]: next } });
+        setSaving(true);
+        setError(null);
+        setFieldErrors({});
 
         try {
-            await api.patch('/api/v2/admin/settings', { settings: { [key]: next } });
-            setSavedKey(key);
-            window.setTimeout(
-                () => setSavedKey((current) => (current === key ? null : current)),
-                1800,
+            const response = await api.patch<AdminSettingsPatchResponse>(
+                '/api/v2/admin/settings',
+                { settings: draft },
             );
-        } catch (patchError) {
-            // Roll the switch back so the UI never claims a change that did not persist.
+
             setData((current) =>
-                current ? { ...current, settings: { ...current.settings, [key]: previous } } : current,
+                current
+                    ? { ...current, settings: { ...current.settings, ...response.settings } }
+                    : current,
             );
-            setError(
-                patchError instanceof Error ? patchError.message : `Could not update ${key}.`,
+            setFieldWarnings(response.warnings ?? {});
+            setDraft({});
+
+            const warningCount = Object.keys(response.warnings ?? {}).length;
+            toast.success(
+                warningCount
+                    ? `Saved with ${warningCount} warning${warningCount === 1 ? '' : 's'}.`
+                    : `Saved ${response.updated_keys.length} setting${
+                          response.updated_keys.length === 1 ? '' : 's'
+                      }.`,
             );
+        } catch (saveError) {
+            const errors =
+                saveError instanceof ApiError ? extractFieldErrors(saveError.payload) : {};
+            if (Object.keys(errors).length) {
+                // Keep the draft so the rejected values stay on screen next to their errors.
+                setFieldErrors(errors);
+                toast.error('Some settings could not be saved.');
+            } else {
+                setError(
+                    saveError instanceof Error ? saveError.message : 'Failed to save settings.',
+                );
+            }
         } finally {
-            setSavingKey(null);
+            setSaving(false);
         }
+    }, [draft]);
+
+    const onBrandingUploaded = useCallback((target: string, result: BrandingUploadResponse) => {
+        setBrandingAssets((current) => ({
+            ...current,
+            [target]: { present: true, version: result.version, url: result.url },
+        }));
+        toast.success('Image uploaded.');
+    }, []);
+
+    /** Read another field's current value, preferring an unsaved edit. */
+    const readSibling = (key: string, fallback = '') =>
+        asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
+
+    /** Render one declared field, dispatching the types the page owns. */
+    const renderField = (field: AdminField) => {
+        if (!isFieldVisible(field, settings, draft)) {
+            return null;
+        }
+
+        const key = field.key ?? field.component ?? field.label;
+        const value = readFieldValue(field, settings, draft);
+        const error = field.key ? fieldErrors[field.key] : undefined;
+        const warning = field.key ? fieldWarnings[field.key] : undefined;
+
+        if (field.type === 'image') {
+            return (
+                <BrandingImageField
+                    key={key}
+                    field={field}
+                    asset={field.upload_target ? brandingAssets[field.upload_target] : undefined}
+                    scalePercent={asNumber(
+                        readFieldValue(
+                            READ_ONLY_REF('landing_page_logo_scale_percent'),
+                            settings,
+                            draft,
+                        ),
+                        100,
+                    )}
+                    onUploaded={onBrandingUploaded}
+                />
+            );
+        }
+
+        if (field.type === 'link_list') {
+            return (
+                <ExternalLinksEditor
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'component') {
+            switch (field.component) {
+                case 'custom-pages-table':
+                    return <CustomPagesTable key={key} help={field.help} />;
+                case 'classification-banner-preview':
+                    return (
+                        <ClassificationBannerPreview
+                            key={key}
+                            text={readSibling('classification_banner_text')}
+                            color={readSibling('classification_banner_color', '#ffc107')}
+                            textColor={readSibling(
+                                'classification_banner_text_color',
+                                '#ffffff',
+                            )}
+                        />
+                    );
+                case 'user-agreement-preview':
+                    return (
+                        <UserAgreementPreview
+                            key={key}
+                            text={readSibling('user_agreement_text')}
+                        />
+                    );
+                default:
+                    return null;
+            }
+        }
+
+        const control = (
+            <SettingField
+                field={field}
+                value={value}
+                error={error}
+                warning={warning}
+                disabled={saving}
+                onChange={(next) => {
+                    if (field.type === 'switch') {
+                        onSwitchChange(field, asBoolean(next));
+                    } else if (field.key) {
+                        setValue(field.key, next);
+                    }
+                }}
+            />
+        );
+
+        // Markdown fields show what the saved copy will look like, which is the only way
+        // to judge alignment and formatting without leaving the page.
+        if (field.markdown) {
+            const align =
+                field.key === 'landing_page_text'
+                    ? (readSibling('landing_page_alignment', 'left') as
+                          | 'left'
+                          | 'center'
+                          | 'right')
+                    : 'left';
+            return (
+                <div key={key}>
+                    {control}
+                    <div className="mb-3 rounded-lg border border-edge bg-surface-1 p-3">
+                        <span className="mb-1.5 block text-xs font-medium text-text-3">
+                            Preview
+                        </span>
+                        <AdminMarkdown content={asString(value)} align={align} />
+                    </div>
+                </div>
+            );
+        }
+
+        return <div key={key}>{control}</div>;
     };
 
     if (!isAdmin) {
@@ -272,13 +604,19 @@ export function AdminSettingsPage() {
         );
     }
 
+    // Only groups that still rely on the fallback scan should point at the classic page.
+    const activeGroupUsesFallback = sections.some(
+        (section) =>
+            section.capabilities.length > 0 && (!activeGroup || section.groupId === activeGroup),
+    );
+
     return (
         <>
             <PageHeader
                 title="Admin settings"
                 description={
                     data
-                        ? `${allRows.length} capabilities across ${data.admin_nav.length} groups`
+                        ? `${settingCount} settings across ${data.admin_nav.length} groups`
                         : undefined
                 }
             />
@@ -357,72 +695,123 @@ export function AdminSettingsPage() {
                                 </div>
                             )}
 
-                            {!loading && grouped.length === 0 && (
+                            {!loading && visibleSections.length === 0 && (
                                 <p className="py-12 text-center text-sm text-text-3">
                                     No settings match “{query}”.
                                 </p>
                             )}
 
-                            {grouped.map(([sectionId, section]) => (
-                                <GlassPanel key={sectionId} edge className="p-4">
-                                    <div className="mb-2">
+                            {visibleSections.map((section) => (
+                                <GlassPanel key={section.sectionId} edge className="p-4">
+                                    <div className="mb-1">
                                         <h2 className="text-sm font-semibold text-text-1">
                                             {section.label}
                                         </h2>
-                                        <p className="text-xs text-text-3">{section.group}</p>
+                                        <p className="text-xs text-text-3">
+                                            {section.groupLabel}
+                                            {section.tabLabel ? ` · ${section.tabLabel}` : ''}
+                                        </p>
                                     </div>
+
                                     <div className="divide-y divide-edge">
-                                        {section.rows.map((row) => (
-                                            <div
-                                                key={row.key}
-                                                className="flex items-center gap-3 py-1"
-                                            >
-                                                <div className="min-w-0 flex-1">
-                                                    <Toggle
-                                                        label={row.label}
-                                                        description={row.key}
-                                                        checked={Boolean(
-                                                            data?.settings[row.key],
-                                                        )}
-                                                        disabled={savingKey === row.key}
-                                                        onChange={(next) =>
-                                                            void onToggle(row.key, next)
-                                                        }
-                                                    />
-                                                </div>
-                                                {savingKey === row.key && (
-                                                    <Loader2
-                                                        size={14}
-                                                        className="shrink-0 animate-spin text-text-3"
-                                                    />
-                                                )}
-                                                {savedKey === row.key && (
-                                                    <Check
-                                                        size={14}
-                                                        className="shrink-0 text-ok"
-                                                        aria-label="Saved"
-                                                    />
-                                                )}
+                                        {section.fields.map(renderField)}
+
+                                        {section.capabilities.map((row) => (
+                                            <div key={row.key} className="py-1">
+                                                <Toggle
+                                                    label={row.label}
+                                                    description={row.key}
+                                                    checked={asBoolean(
+                                                        Object.prototype.hasOwnProperty.call(
+                                                            draft,
+                                                            row.key,
+                                                        )
+                                                            ? draft[row.key]
+                                                            : settings[row.key],
+                                                    )}
+                                                    disabled={saving}
+                                                    onChange={(next) => setValue(row.key, next)}
+                                                />
                                             </div>
                                         ))}
                                     </div>
                                 </GlassPanel>
                             ))}
 
-                            {!loading && (
+                            {!loading && activeGroupUsesFallback && (
                                 <p className="pb-6 text-center text-xs text-text-3">
-                                    Settings that need more than a switch — endpoints, keys,
-                                    prompts and connection tests — remain on the{' '}
+                                    Settings in this group that need more than a switch —
+                                    endpoints, keys, prompts and connection tests — are still on
+                                    the{' '}
                                     <a href="/admin/settings" className="text-accent underline">
                                         classic admin page
                                     </a>
                                     .
                                 </p>
                             )}
+
+                            <SaveBar
+                                dirtyCount={dirtyKeys.length}
+                                saving={saving}
+                                onSave={() => void save()}
+                                onDiscard={discard}
+                            />
                         </div>
                     </div>
                 </div>
             </div>
+
+            {pendingAck?.requires_acknowledgement ? (
+                <AdminModal
+                    title={pendingAck.requires_acknowledgement.title}
+                    onClose={() => setPendingAck(null)}
+                    footer={
+                        <>
+                            <GlassButton
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setPendingAck(null)}
+                            >
+                                Cancel
+                            </GlassButton>
+                            <GlassButton
+                                type="button"
+                                variant="primary"
+                                size="sm"
+                                onClick={() => {
+                                    const field = pendingAck;
+                                    const acknowledgement = field.requires_acknowledgement;
+                                    if (field.key && acknowledgement) {
+                                        const fieldKey = field.key;
+                                        setDraft((current) => ({
+                                            ...current,
+                                            [fieldKey]: true,
+                                            [acknowledgement.key]: true,
+                                        }));
+                                    }
+                                    setPendingAck(null);
+                                }}
+                            >
+                                I understand, enable it
+                            </GlassButton>
+                        </>
+                    }
+                >
+                    <p className="text-sm leading-relaxed text-text-2">
+                        {pendingAck.requires_acknowledgement.message}
+                    </p>
+                </AdminModal>
+            ) : null}
+
+            {saving ? (
+                <div className="pointer-events-none fixed inset-0 z-40 flex items-end justify-center pb-24">
+                    <span className="flex items-center gap-2 rounded-full bg-surface-solid px-3 py-1.5 text-xs text-text-2 shadow">
+                        <Loader2 size={13} className="animate-spin" />
+                        Saving…
+                    </span>
+                </div>
+            ) : null}
         </>
     );
 }

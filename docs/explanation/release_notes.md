@@ -2,6 +2,39 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.038)**
+
+#### New Features
+
+*   **The New Admin Settings Page Now Has The Rest Of The Appearance Settings**
+    *   The new interface's admin page could only ever show on/off switches, because it worked out what to display by looking for settings that happened to be true or false. Everything else was invisible — so the whole Appearance group amounted to a handful of switches and a note telling you to go back to the classic page.
+    *   Appearance is now complete. **Branding** has the application title, the home page logo size slider, and uploads for the light logo, dark logo and favicon, each showing the image you currently have. **Home Page Text** has the alignment control and the landing page editor, with a live preview that follows the alignment you pick. **Notices & Agreements** has the classification banner with both colour pickers and a preview strip, the AI notice, the full Terms of Use configuration, and the user agreement with its four apply-to options, a word counter and a **Test preview** button. **Pages & Links** has the custom pages settings, the full static page designer, the developer guide, and an external links editor you can add to, remove from and reorder.
+    *   (Ref: V2 admin settings, Appearance group, `admin_settings_fields.py`)
+
+*   **Changes Are Saved Together, When You Say So**
+    *   Switches used to save the instant you clicked them, which does not translate to typing into a text box. Edits now collect in a bar at the bottom of the page that tells you how many changes are waiting, with **Save changes** and **Discard**. `Ctrl`/`Cmd`+`S` saves, and closing the tab with unsaved edits asks first.
+    *   This also fixes something subtler: the Terms of Use and AI notice re-prompt every user whenever their wording changes. Saving on every keystroke would have re-prompted everyone once per character typed.
+    *   (Ref: V2 admin settings, save bar)
+
+*   **Rejected Settings Now Explain Themselves**
+    *   Values are checked before anything is written, and a rejected save comes back with the reason attached to the control that caused it — a colour that is not valid hex, a link that is not an http or https address, a cancel redirect that would leave the site unsafely. Nothing is saved unless everything in the batch is valid, so a save can no longer land half-applied.
+    *   The checks reuse the same code the classic page uses, so the two interfaces agree about what a valid value is.
+    *   (Ref: V2 admin settings, settings validation)
+
+#### Bug Fixes
+
+*   **Navigation Links Can No Longer Be Given An Unsafe Address**
+    *   External navigation links saved through the new admin page are now restricted to local paths and http or https addresses. Previously any text was accepted and placed directly into the link, which allowed a `javascript:` address into the navigation bar on every page.
+    *   (Ref: external links, navigation)
+
+*   **Logo And Favicon Handling Now Lives In One Place**
+    *   Image conversion was written into the classic settings page. Both admin pages now share one implementation, so a logo is stored identically no matter where it was uploaded from, and the PNG/JPEG-only restriction that keeps unexpected image formats away from the image library applies to every upload path.
+    *   (Ref: `functions_branding_images.py`, logo and favicon uploads)
+
+*   **Three Tests That Could Not Fail Correctly**
+    *   The Pillow security test pinned an exact dependency version and the custom logo test looked for help text in a file it had moved out of, so both reported problems that were not real while no longer checking the thing they were written for. They now assert a minimum version and read the composed template.
+    *   (Ref: functional tests, version assertions)
+
 ### **(v0.261.037)**
 
 #### Bug Fixes
