@@ -21,6 +21,8 @@ revisions behind it, and the sub-conversation that produced them, are not.
 
 **Implemented in version: 0.261.043**
 
+<!-- Shared conversation support landed in 0.261.044. -->
+
 ### What this deliberately does not do
 
 Mermaid is a declarative language. Node positions are computed by a layout engine, and the
@@ -140,6 +142,38 @@ content.
 `expected_revision_count` is optional. Sending the count the editor was opened against turns a
 silent overwrite of someone else's edit into a `409`.
 
+### Shared conversations
+
+A shared conversation is stored in different Cosmos containers and served by
+`/api/collaboration/*`, so it has its own three routes:
+
+| Route |
+|---|
+| `POST /api/collaboration/conversations/<cid>/messages/<mid>/block-revision` |
+| `POST /api/collaboration/conversations/<cid>/messages/<mid>/block-revision/current` |
+| `POST /api/collaboration/conversations/<cid>/messages/<mid>/block-revision/assist` |
+
+The request and response shapes are deliberately identical, so the client picks an endpoint from
+the conversation's kind — `activeConversationKind` in `chatStore` — and sends the same body
+either way. It does not try one and fall back: a shared conversation id sent to a personal route
+reads the personal container, finds nothing, and reports the conversation as missing.
+
+These routes authorize with `assert_user_can_participate_in_collaboration_conversation` rather
+than by ownership. A participant is not the owner of the underlying source conversation and
+would fail a plain ownership comparison even though they are a legitimate member.
+
+**A shared message is a mirror, so an edit is written through to its source.** The shared AI
+request is delegated to the personal chat path using the *source* conversation id, and the
+history builder, the export and the owner's own view all read the personal container. An edit
+stored only on the mirror would be visible to whoever was reading the shared thread while the
+model and everyone else continued to see the original. `_sync_collaboration_block_revisions_to_source`
+is what closes that, mirroring `_sync_collaboration_mask_metadata_to_source`, which exists for
+exactly the same reason.
+
+Each shared edit is published as a `collaboration.message.block_revised` event, so other
+participants see the change without reloading. The event carries only the revision map, not the
+whole message, since nothing else about the message changed.
+
 ### Limits
 
 | Limit | Value | Why |
@@ -213,7 +247,7 @@ reach the page.
 |---|---|
 | `functional_tests/test_message_block_revisions.py` | Storage, pruning, restore, stale entries, position drift, duplicate blocks, fence breakout, concurrency, mask ordering, Python/JavaScript fingerprint parity |
 | `functional_tests/test_block_revision_assist.py` | Context isolation, reply parsing, model failure handling, prompt guidance |
-| `functional_tests/test_v2_diagram_editor.py` | Sink boundary, resolver wiring across all three readers, route decorators, three-way fingerprint parity |
+| `functional_tests/test_v2_diagram_editor.py` | Sink boundary, resolver wiring across all three readers, route decorators, shared conversation routes and source mirroring, three-way fingerprint parity |
 | `functional_tests/test_v2_diagram_editor_logic.ts` | Layout transforms and edit validation |
 
 The fingerprint parity checks read the JavaScript implementations out of their source files and

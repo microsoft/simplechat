@@ -34,6 +34,8 @@ import {
     type ChatStreamOptions,
 } from '../lib/sse';
 import {
+    addCollaborationBlockRevision,
+    assistCollaborationBlockRevision,
     cancelCollaborationStreamUrl,
     collaborationDeleteAction,
     deleteCollaborationMessage,
@@ -43,6 +45,7 @@ import {
     maskCollaborationMessage,
     postCollaborationMessage,
     renameCollaborationConversation,
+    setCollaborationBlockRevision,
     streamCollaborationUrl,
     toggleCollaborationHidden,
     toggleCollaborationPinned,
@@ -930,6 +933,30 @@ function attachCollaborationEvents(conversationId: string): void {
             }));
             if (updatedByUserId && updatedByUserId !== currentUserId()) {
                 toast.info('A message in this conversation was masked.');
+            }
+        },
+
+        onMessageBlockRevised: (messageId, blockRevisions, updatedByUserId) => {
+            if (!stillOpen()) {
+                return;
+            }
+            // Only the revision map is replaced. The editor reads the current version out of
+            // the message's metadata, so this is enough for an open editor to follow along.
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === messageId
+                        ? {
+                              ...existing,
+                              metadata: {
+                                  ...(existing.metadata as Record<string, unknown>),
+                                  block_revisions: blockRevisions,
+                              },
+                          }
+                        : existing,
+                ),
+            }));
+            if (updatedByUserId && updatedByUserId !== currentUserId()) {
+                toast.info('A diagram in this conversation was edited.');
             }
         },
 
@@ -2089,20 +2116,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
         note,
         expectedRevisionCount,
     }) => {
+        // A shared conversation's messages live in different Cosmos containers behind
+        // `/api/collaboration/*`. Sending its id to the personal route 404s as
+        // "Conversation not found", so the endpoint is chosen from the conversation's kind
+        // exactly as every other conversation-scoped action here does.
+        const shared = isCollaborativeConversation(get(), conversationId);
+        const body = {
+            block_kind: blockKind,
+            block_index: blockIndex,
+            source_hash: sourceHash,
+            source,
+            original_source: originalSource,
+            origin,
+            note,
+            ...(expectedRevisionCount === undefined
+                ? {}
+                : { expected_revision_count: expectedRevisionCount }),
+        };
+
         try {
-            const result = await addMessageBlockRevisionApi(messageId, {
-                conversation_id: conversationId,
-                block_kind: blockKind,
-                block_index: blockIndex,
-                source_hash: sourceHash,
-                source,
-                original_source: originalSource,
-                origin,
-                note,
-                ...(expectedRevisionCount === undefined
-                    ? {}
-                    : { expected_revision_count: expectedRevisionCount }),
-            });
+            const result = shared
+                ? await addCollaborationBlockRevision(conversationId, messageId, body)
+                : await addMessageBlockRevisionApi(messageId, {
+                      conversation_id: conversationId,
+                      ...body,
+                  });
             get().mergeBlockRevisions(messageId, result.block_revisions);
             return null;
         } catch (error) {
@@ -2118,14 +2156,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
         sourceHash,
         revisionId,
     }) => {
+        const shared = isCollaborativeConversation(get(), conversationId);
+        const body = {
+            block_kind: blockKind,
+            block_index: blockIndex,
+            source_hash: sourceHash,
+            revision_id: revisionId,
+        };
+
         try {
-            const result = await setMessageBlockRevisionApi(messageId, {
-                conversation_id: conversationId,
-                block_kind: blockKind,
-                block_index: blockIndex,
-                source_hash: sourceHash,
-                revision_id: revisionId,
-            });
+            const result = shared
+                ? await setCollaborationBlockRevision(conversationId, messageId, body)
+                : await setMessageBlockRevisionApi(messageId, {
+                      conversation_id: conversationId,
+                      ...body,
+                  });
             get().mergeBlockRevisions(messageId, result.block_revisions);
             return null;
         } catch (error) {
@@ -2143,18 +2188,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
         originalSource,
         expectedRevisionCount,
     }) => {
+        const shared = isCollaborativeConversation(get(), conversationId);
+        const body = {
+            block_kind: blockKind,
+            block_index: blockIndex,
+            source_hash: sourceHash,
+            instruction,
+            original_source: originalSource,
+            ...(expectedRevisionCount === undefined
+                ? {}
+                : { expected_revision_count: expectedRevisionCount }),
+        };
+
         try {
-            const result = await assistMessageBlockRevisionApi(messageId, {
-                conversation_id: conversationId,
-                block_kind: blockKind,
-                block_index: blockIndex,
-                source_hash: sourceHash,
-                instruction,
-                original_source: originalSource,
-                ...(expectedRevisionCount === undefined
-                    ? {}
-                    : { expected_revision_count: expectedRevisionCount }),
-            });
+            const result = shared
+                ? await assistCollaborationBlockRevision(conversationId, messageId, body)
+                : await assistMessageBlockRevisionApi(messageId, {
+                      conversation_id: conversationId,
+                      ...body,
+                  });
             get().mergeBlockRevisions(messageId, result.block_revisions);
             return null;
         } catch (error) {

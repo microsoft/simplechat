@@ -6,6 +6,7 @@ order: 120
 category: Version History
 ---
 
+- [Shared Conversation Diagram Editing Fix](SHARED_CONVERSATION_DIAGRAM_EDITING_FIX.md)
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
 - [Semantic Kernel Startup Request Context Fix](SEMANTIC_KERNEL_STARTUP_REQUEST_CONTEXT_FIX.md)
 - [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)

@@ -26,6 +26,7 @@ import type {
     MembershipRole,
 } from './types';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
+import type { BlockRevisionAssistResponse, BlockRevisionResponse } from './endpoints';
 
 /* -------------------------------------------------------------------------- */
 /* Paths                                                                       */
@@ -258,6 +259,72 @@ export const maskCollaborationMessage = (
 ) =>
     api.post<CollaborationMaskResponse>(
         `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/mask`,
+        body,
+    );
+
+/* -------------------------------------------------------------------------- */
+/* Block revisions                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Editing a diagram in a shared conversation.
+ *
+ * The same three operations as the personal routes in `endpoints.ts`, against the
+ * collaboration containers. They cannot be one route because a shared conversation's messages
+ * live somewhere else entirely, but the request and response shapes are deliberately identical
+ * so `chatStore` can pick an endpoint and pass the same body either way.
+ *
+ * The conversation id is in the path here rather than the body, matching every other
+ * collaboration route.
+ */
+export const addCollaborationBlockRevision = (
+    conversationId: string,
+    messageId: string,
+    body: {
+        block_kind: string;
+        block_index: number;
+        source_hash: string;
+        source: string;
+        original_source: string;
+        origin?: 'manual' | 'control';
+        note?: string;
+        expected_revision_count?: number;
+    },
+) =>
+    api.post<BlockRevisionResponse>(
+        `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/block-revision`,
+        body,
+    );
+
+export const setCollaborationBlockRevision = (
+    conversationId: string,
+    messageId: string,
+    body: {
+        block_kind: string;
+        block_index: number;
+        source_hash: string;
+        revision_id: string;
+    },
+) =>
+    api.post<BlockRevisionResponse>(
+        `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/block-revision/current`,
+        body,
+    );
+
+export const assistCollaborationBlockRevision = (
+    conversationId: string,
+    messageId: string,
+    body: {
+        block_kind: string;
+        block_index: number;
+        source_hash: string;
+        instruction: string;
+        original_source: string;
+        expected_revision_count?: number;
+    },
+) =>
+    api.post<BlockRevisionAssistResponse>(
+        `${base(conversationId)}/messages/${encodeURIComponent(messageId)}/block-revision/assist`,
         body,
     );
 

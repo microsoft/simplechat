@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.044)**
+
+#### Bug Fixes
+
+*   **Editing A Diagram In A Shared Conversation Reported "Conversation Not Found"**
+    *   The diagram editor opened correctly in a shared conversation, but changing the direction or spacing, editing the source, or asking the AI to change it failed with a "Conversation not found" error. Personal conversations were unaffected.
+    *   Shared conversations keep their messages in different storage and are served by their own set of endpoints. The editor was sending every change to the personal endpoints, which looked in the wrong place and reported the conversation as missing.
+    *   Shared conversations now have their own diagram editing endpoints, which check that you are a participant rather than the owner — so anyone in a shared thread can edit a diagram, as intended.
+    *   **An edit made in a shared conversation is now also written through to the underlying message**, so the AI, exports, and the conversation's owner all see the version you edited rather than the original.
+    *   **Other participants see the change as it happens**, without reloading, and are told a diagram was edited.
+    *   (Ref: `route_backend_collaboration.py`, `/api/collaboration/conversations/<id>/messages/<id>/block-revision`, shared conversations, diagram editing)
+
 ### **(v0.261.043)**
 
 #### New Features

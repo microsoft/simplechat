@@ -31,7 +31,7 @@ sys.path.insert(0, str(APP_DIR))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
-IMPLEMENTED_IN = "0.261.043"
+IMPLEMENTED_IN = "0.261.044"
 
 EDITOR_TSX = V2_SRC / "components" / "chat" / "DiagramEditor.tsx"
 MERMAID_TSX = V2_SRC / "components" / "chat" / "MermaidDiagram.tsx"
@@ -43,8 +43,11 @@ STORE_TS = V2_SRC / "stores" / "chatStore.ts"
 CLASSIC_DIAGRAMS_JS = APP_DIR / "static" / "js" / "chat" / "chat-inline-diagrams.js"
 CLASSIC_MESSAGES_JS = APP_DIR / "static" / "js" / "chat" / "chat-messages.js"
 ROUTES_PY = APP_DIR / "route_backend_chats.py"
+COLLABORATION_PY = APP_DIR / "route_backend_collaboration.py"
 STORAGE_PY = APP_DIR / "functions_message_block_revisions.py"
 EXPORT_PY = APP_DIR / "route_backend_conversation_export.py"
+COLLABORATION_TS = V2_SRC / "lib" / "collaboration.ts"
+COLLABORATION_EVENTS_TS = V2_SRC / "lib" / "collaborationEvents.ts"
 
 
 def _read(path):
@@ -381,6 +384,135 @@ def test_the_three_fingerprints_agree():
     print(f"  ok  all three fingerprints agree across {len(samples)} samples")
 
 
+def test_a_shared_conversation_can_be_edited():
+    """A shared conversation's diagrams must be editable, not answer "Conversation not found".
+
+    Shared conversations live in different Cosmos containers and are served by
+    `/api/collaboration/*`. Sending a shared conversation id to the personal block-revision
+    route reads the personal container, finds nothing, and reports the conversation as missing —
+    which is what the first cut of this feature did for every shared thread.
+    """
+    collaboration = _read(COLLABORATION_PY)
+
+    for path in (
+        "/messages/<message_id>/block-revision'",
+        "/messages/<message_id>/block-revision/current'",
+        "/messages/<message_id>/block-revision/assist'",
+    ):
+        assert path in collaboration, f"the shared counterpart of {path} is missing"
+
+    # Authorization is the collaboration one, not personal ownership: a participant is not the
+    # owner of the source conversation and would fail a plain ownership comparison.
+    assert "assert_user_can_participate_in_collaboration_conversation" in collaboration, (
+        "shared edits must authorize participation rather than ownership"
+    )
+    assert "_authorize_personal_conversation_access" not in collaboration, (
+        "the personal ownership check would reject every participant"
+    )
+
+    # The shared routes must read and write the collaboration containers.
+    assert "get_collaboration_message(message_id)" in collaboration
+    assert "cosmos_collaboration_messages_container.upsert_item" in collaboration
+
+    # And they must reuse the storage rules rather than reimplementing them, so the two
+    # families cannot drift on caps, pruning or fence-breakout refusal.
+    assert "from functions_message_block_revisions import" in collaboration
+    assert "apply_block_revision" in collaboration and "set_current_revision" in collaboration
+
+    print("  ok  shared conversations have their own authorized block revision routes")
+
+
+def test_a_shared_edit_reaches_the_model():
+    """A shared message is a mirror, so an edit has to be written through to its source.
+
+    The shared AI request is delegated to the personal chat path with the *source* conversation
+    id, and the history builder reads the personal container. An edit stored only on the shared
+    mirror would be visible to whoever is reading the shared thread while the model, the export
+    and the conversation owner all continued to see the original diagram.
+    """
+    collaboration = _read(COLLABORATION_PY)
+
+    assert "_sync_collaboration_block_revisions_to_source" in collaboration, (
+        "a shared edit must be mirrored onto the source message"
+    )
+    # Called on every write path, not just one of them.
+    assert collaboration.count("_sync_collaboration_block_revisions_to_source(message_doc)") >= 1
+    assert "_save_collaboration_block_revisions" in collaboration, (
+        "the write, the source sync and the broadcast belong together so a route cannot skip one"
+    )
+    assert collaboration.count("_save_collaboration_block_revisions(") >= 4, (
+        "every shared block revision route must go through the shared save helper"
+    )
+
+    # The sync mirrors the same metadata key the resolver reads.
+    assert "BLOCK_REVISIONS_METADATA_KEY" in collaboration
+
+    # The delegation this relies on: the shared stream runs the personal chat path against the
+    # source conversation, which is where the resolver already runs.
+    assert "'conversation_id': source_conversation_id" in collaboration, (
+        "if the shared stream stopped delegating to the source conversation, syncing revisions "
+        "there would no longer put them in front of the model"
+    )
+
+    print("  ok  a shared edit is mirrored to the source, so the model sees the current version")
+
+
+def test_the_client_picks_the_right_endpoint_family():
+    """The client must branch on conversation kind rather than trying one and falling back."""
+    store = _read(STORE_TS)
+
+    # Each action's text is bounded by the start of the next one rather than by a fixed window.
+    # A generous window overlaps the following action, so a branch deleted from one would be
+    # satisfied by its neighbour's and the regression would go unnoticed.
+    starts = {
+        action: store.index(f"{action}: async ({{")
+        for action in ("saveBlockRevision", "restoreBlockRevision", "askBlockRevision")
+    }
+    boundaries = sorted(starts.values()) + [store.index("mergeBlockRevisions:", max(starts.values()))]
+
+    for action, start in starts.items():
+        end = next(boundary for boundary in boundaries if boundary > start)
+        body = store[start:end]
+        assert "isCollaborativeConversation(get(), conversationId)" in body, (
+            f"{action} must choose its endpoint from the conversation's kind"
+        )
+        assert "conversation_id: conversationId" in body, (
+            f"{action} must still send the conversation id on the personal route"
+        )
+
+    collaboration = _read(COLLABORATION_TS)
+    for name in (
+        "addCollaborationBlockRevision",
+        "setCollaborationBlockRevision",
+        "assistCollaborationBlockRevision",
+    ):
+        assert f"export const {name}" in collaboration, f"{name} is missing"
+        assert name in store, f"{name} is never called"
+
+    print("  ok  the client sends a shared conversation to the collaboration routes")
+
+
+def test_a_shared_edit_is_broadcast_to_the_other_readers():
+    """Editing a shared diagram changes what everyone sees, so everyone should be told."""
+    collaboration = _read(COLLABORATION_PY)
+    assert "'collaboration.message.block_revised'" in collaboration, (
+        "a shared edit must be published to the conversation's event stream"
+    )
+
+    events = _read(COLLABORATION_EVENTS_TS)
+    assert "collaboration.message.block_revised" in events, "the client must handle the event"
+    assert "onMessageBlockRevised" in events
+
+    store = _read(STORE_TS)
+    assert "onMessageBlockRevised:" in store, "the thread must apply the broadcast"
+    # Only the revision map is replaced; replacing the whole message would clobber local state.
+    index = store.index("onMessageBlockRevised:")
+    window = store[index : index + 1200]
+    assert "block_revisions: blockRevisions" in window
+
+    print("  ok  a shared edit reaches the other participants live")
+
+
 def test_the_typescript_logic_checks_pass():
     """Run the bundled behaviour checks, when the front-end toolchain is installed."""
     ui_dir = REPO_ROOT / "application" / "v2_ui"
@@ -444,6 +576,10 @@ TESTS = [
     test_the_routes_are_declared_correctly,
     test_positioning_is_not_promised,
     test_the_endpoints_and_store_are_wired,
+    test_a_shared_conversation_can_be_edited,
+    test_a_shared_edit_reaches_the_model,
+    test_the_client_picks_the_right_endpoint_family,
+    test_a_shared_edit_is_broadcast_to_the_other_readers,
     test_the_three_fingerprints_agree,
     test_the_typescript_logic_checks_pass,
 ]
