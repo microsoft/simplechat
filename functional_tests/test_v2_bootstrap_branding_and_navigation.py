@@ -2,8 +2,8 @@
 # test_v2_bootstrap_branding_and_navigation.py
 """
 Functional test for the V2 bootstrap branding and navigation blocks.
-Version: 0.261.044
-Implemented in: 0.261.044
+Version: 0.261.047
+Implemented in: 0.261.047
 
 The V2 SPA cannot read Jinja context, so everything the classic interface gets from
 ``app_settings`` and the ``inject_settings`` context processor has to arrive in the
@@ -97,7 +97,7 @@ def test_favicon_url_is_versioned_only_for_a_custom_icon():
     """Without the version, a replaced favicon keeps serving from cache."""
     print("Testing the favicon URL...")
 
-    assert_app_version_at_least("0.261.044")
+    assert_app_version_at_least("0.261.047")
 
     build = load_builders()["_build_branding"]
 

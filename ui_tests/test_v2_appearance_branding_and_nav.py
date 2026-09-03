@@ -3,8 +3,8 @@
 UI test for V2 Appearance branding, the classification banner, the home page and the
 administrator-configured navigation groups.
 
-Version: 0.261.044
-Implemented in: 0.261.044
+Version: 0.261.047
+Implemented in: 0.261.047
 
 Six Appearance settings had no visible effect in the V2 interface:
 
@@ -177,14 +177,17 @@ def test_home_is_reachable_from_the_rail(v2_context):
 
 
 @pytest.mark.ui
-def test_new_chat_from_the_home_page_opens_chat(v2_context):
-    """The rail is shown everywhere, so New chat has to go somewhere it can be typed."""
+def test_new_chat_is_not_offered_on_the_home_page(v2_context):
+    """New chat acts on chat state, so it is only offered where that is on screen."""
     page, _bootstrap = _open_v2(v2_context)
 
     rail = page.get_by_role("navigation", name="Primary")
-    rail.get_by_role("button", name="New chat").click()
+    expect(rail.get_by_role("button", name="New chat")).to_have_count(0)
 
+    # Chats is what reaches a fresh chat from here.
+    rail.get_by_role("link", name="Chats").click()
     page.wait_for_url("**/v2/chat")
+    expect(rail.get_by_role("button", name="New chat")).to_be_visible()
 
 
 @pytest.mark.ui

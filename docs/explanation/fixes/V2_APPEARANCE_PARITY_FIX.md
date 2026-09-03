@@ -1,6 +1,6 @@
 # V2 Appearance Parity Fix
 
-**Fixed in version: 0.261.044**
+**Fixed in version: 0.261.047**
 
 ## Issue
 
@@ -34,6 +34,16 @@ Applying a branding change therefore updated the settings document and left ever
 consumer of `branding` holding the payload fetched at sign-in. `Sidebar.BrandMark`
 and `AppShell.ClassificationBanner` were both already written correctly; neither
 ever received a fresh value. The only way to see a change was a full page reload.
+
+**This cause was diagnosed and fixed independently, in parallel with this work, and
+shipped first in `0.261.046`.** See
+[V2_ADMIN_SETTINGS_LIVE_SHELL_REFRESH_FIX.md](V2_ADMIN_SETTINGS_LIVE_SHELL_REFRESH_FIX.md),
+which adds `bootstrapStore.refresh()` and calls it from both write paths in
+`AdminSettingsPage`. That implementation also orders concurrent refreshes so a
+slower earlier refetch cannot land after a newer one, and is the one kept here. The
+three symptoms are recorded in this document because they are what was reported
+against Appearance, and because the remaining causes below are only visible once
+this one is out of the way.
 
 ### The SPA shell hard-coded the shipped favicon (symptom 3)
 
@@ -96,22 +106,23 @@ against the real settings keys.
 | `application/single_app/admin_settings_fields.py` | Declared the five misfiled toggles in their real sections, plus the Support Menu gate chain the documentation-links toggle depends on. |
 | `application/single_app/route_backend_v2.py` | `_build_branding` now returns `favicon_url` and the landing page fields; new `_build_navigation` supplies the custom pages and external links groups; `BRANDING_IMAGE_TARGETS` reads its paths from the shared module. |
 | `application/single_app/route_frontend_v2.py` | `_serve_v2_shell` rewrites the shell's icon link and title from settings. |
-| `application/v2_ui/src/stores/bootstrapStore.ts` | Added `refresh()`. |
-| `application/v2_ui/src/pages/AdminSettingsPage.tsx` | Refreshes bootstrap after a save and after a branding upload. |
-| `application/v2_ui/src/components/layout/Sidebar.tsx` | Logo sized by height rather than forced square; Home nav entry; mounts `NavExtras`; New chat now navigates to chat. |
+| `application/v2_ui/src/components/layout/Sidebar.tsx` | Logo sized by height rather than forced square; Home nav entry; mounts `NavExtras`. |
 | `application/v2_ui/src/components/layout/NavExtras.tsx` | **New.** Renders the two configured navigation groups. |
 | `application/v2_ui/src/lib/navigationGroups.ts` | **New.** The inline-versus-menu and visibility rules, kept testable. |
 | `application/v2_ui/src/pages/HomePage.tsx` | **New.** See `docs/explanation/features/V2_HOME_PAGE.md`. |
 | `application/v2_ui/src/components/admin/AdminMarkdown.tsx` | Added a `size` variant so home page copy is not rendered at settings-preview scale. |
+| `application/v2_ui/src/components/layout/AppShell.tsx` | Gave the classification banner the `classification-banner` id the classic layout uses. |
 | `application/v2_ui/src/App.tsx` | Home route; keeps the tab icon in step with the stored favicon. |
 | `application/v2_ui/src/lib/types.ts` | Extended `branding`; added the `navigation` block. |
-| `application/single_app/config.py` | Version bump to `0.261.044`. |
+| `application/single_app/config.py` | Version bump to `0.261.047`. |
+
+`bootstrapStore.ts` and `AdminSettingsPage.tsx` are not listed: the refresh they
+needed arrived in `0.261.046` and is kept as it was written there.
 
 ## Behavior changes
 
-- Applying any Admin Settings change in V2 now re-reads bootstrap, so branding, the
-  classification banner and every feature flag take effect without a page reload.
-- A custom favicon and the configured application title now reach the browser tab.
+- A custom favicon and the configured application title now reach the browser tab,
+  and the tab icon follows an upload made in the same session.
 - Custom Pages and External Links appear in the V2 rail, using the same rule as the
   classic navigation: one or two entries inline, three or more (or "Force Menu
   Display") behind the configured menu name.
@@ -121,6 +132,7 @@ against the real settings keys.
   present in a settings document, would have become an anchor in every V2 user's
   rail. `EXTERNAL_LINK_ALLOWED_SCHEMES` is now enforced on the read path too.
 - The five relocated settings now appear under the tab that owns them.
+- The rail logo keeps its own proportions instead of being drawn into a square.
 - `/v2` opens a home page rather than redirecting to chat.
 - Clearing the landing page copy leaves the home page without it. Restoring default
   wording would put an acceptable-use statement back on a page an administrator had

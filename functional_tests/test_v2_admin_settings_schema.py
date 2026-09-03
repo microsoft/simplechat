@@ -272,7 +272,7 @@ def test_declared_defaults_match_the_application():
     """A drifted default shows a toggle that disagrees with what the app does."""
     print("\nTesting declared defaults against functions_settings.py...")
 
-    assert_app_version_at_least("0.261.044")
+    assert_app_version_at_least("0.261.047")
 
     app_defaults = read_application_defaults()
 

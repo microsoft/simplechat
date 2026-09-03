@@ -184,6 +184,14 @@ Settings returned here are always sanitized. The logo is reported as a URL rathe
 stored base64 payload, because sanitization strips any key containing `base64` and the
 images are already served as static files.
 
+The payload is fetched at startup and re-read after an administrator saves. `bootstrapStore`
+exposes `refresh()` alongside `load()` for that second case: it replaces the payload in
+place, without touching `loading` or `error`. Those two drive the boot screen and the boot
+error, each of which replaces the entire interface, so a background refetch that used them
+would tear down the page being worked on and discard its unsaved edits. A failed refresh is
+therefore advisory rather than reported — the write it follows has already succeeded. A
+sequence guard stops a slower earlier refresh from landing after a newer one.
+
 ### `GET` and `PATCH /api/v2/admin/settings`
 
 Blueprint `backend_v2_admin` — `login_required`, `admin_required`.
@@ -270,6 +278,23 @@ content lives in the right-hand pane.
 
 The classification banner, when configured, is the only element that spans the full width —
 matching the server-rendered interface.
+
+**New chat** is drawn only while the chat page is open. It is a state reset rather than a
+navigation, so on any other page it would clear a conversation that is not on screen and
+leave the reader where they were — a control that appears to do nothing.
+
+**Chats** covers that case instead: reaching the chat page from anywhere else starts a fresh
+conversation. This is needed because the chat store is ordinary in-memory state with no
+persistence, so the open conversation survives a client-side route change and the chat page
+would otherwise silently resume it. Two exceptions are deliberate. Clicking **Chats** while
+already on the chat page does nothing, so a stray click on the highlighted item cannot
+discard what is being read; and a conversation still streaming is returned to rather than
+reset, since the reset cancels the stream. The streaming flag is read from the store at
+click time rather than subscribed to, because it changes with every token and a
+subscription would re-render the rail and its conversation list throughout a response.
+
+Deep links are unaffected: the reset is on the navigation item's click, which a direct load
+of `/v2/chat?conversationId=<id>` never passes through.
 
 ### Chat
 
@@ -786,6 +811,13 @@ Two things save immediately instead, because they are not part of the settings d
 branding image uploads, which need server-side conversion before anything can be previewed,
 and custom page metadata, which lives in its own Cosmos container.
 
+A successful save re-reads `/api/v2/bootstrap`, and so does a branding image upload. Many of
+the settings edited here are what the shell draws itself from — the classification banner,
+the sidebar logo and application title, the feature flags the chat surface branches on —
+and that payload would otherwise be the one fetched when the page was opened. Without the
+re-read a saved change is invisible until the browser is reloaded, which reads as a save
+that did not work.
+
 #### Appearance group
 
 | Tab | What V2 now renders |
@@ -1012,6 +1044,7 @@ this entirely and is the recommended layout.
 | `functional_tests/test_v2_conversation_export.py` | The wizard reuses the existing export endpoints and sends only fields the route reads, the summary model carries all four identity fields, JSON exports skip rasterizing, diagrams render through the shared hardened runtime, a percentage width is not mistaken for a size, the rail's selection survives rows being removed, and all three entry points open the wizard |
 | `functional_tests/test_v2_stats_parity.py` | Every trend field, window parameter and cached-metrics key the Stats tab reads exists on the server side, each classic stats surface has a counterpart, the account menu offers one destination, and both chart consumers share the vendored runtime |
 | `functional_tests/test_v2_stats_logic.mjs` | Executes the stats logic: preset versus custom window parameters, custom-range validation, series aligned by date rather than index, formatting, and the CSV export's sections, columns and quoting |
+| `functional_tests/test_v2_new_chat_scoping.py` | **New chat** offered only where it can act and the nav list's spacing following it, **Chats** starting a fresh conversation on arrival from elsewhere, that reset guarded on both the current route and an in-flight stream with the guard preceding it, the streaming flag read rather than subscribed, the drawer and details panel closed with the conversation they describe, and enabled buttons carrying a pointer cursor |
 | `functional_tests/test_csrf_state_changing_route_guard.py` | Cross-site mutations require an explicitly trusted origin; CORS preflights answered before authentication and never wildcarded |
 | `functional_tests/route_tests/` | Blueprint policy classification for `frontend_v2`, `backend_v2`, `backend_v2_admin` |
 

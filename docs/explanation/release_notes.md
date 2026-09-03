@@ -2,14 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.044)**
+### **(v0.261.047)**
 
 #### New Features
 
 *   **A Home Page In The V2 Interface**
     *   The new interface opened straight into chat and had no landing page, which meant three Appearance settings — **Landing Page Text**, **Markdown Alignment** and **Main Page Logo Size** — configured a page that only existed in the classic interface. Editing them appeared to do nothing.
     *   `/v2` now opens a home page carrying your logo, your landing copy and a **Start chatting** button, and **Home** has been added to the left-hand menu. The logo is sized by **Main Page Logo Size** exactly as the classic home page sizes it.
-    *   **New chat** in the left-hand menu now opens the chat page as well as clearing the current conversation. It previously only cleared it, which was invisible from anywhere that was not already chat.
+    *   Clearing the landing copy leaves the home page without it, rather than restoring the default wording you deleted.
     *   (Ref: V2 interface, home page, `landing_page_text`, `landing_page_alignment`, `landing_page_logo_scale_percent`)
 
 *   **Custom Pages And External Links In The V2 Left-Hand Menu**
@@ -19,11 +19,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `/api/v2/bootstrap`)
 
 #### Bug Fixes
-
-*   **Branding Changes Did Not Take Effect In The V2 Interface Until A Page Reload**
-    *   Uploading a logo, changing the application title or switching on the classification banner updated the settings but changed nothing on screen. The left-hand menu kept showing the letter avatar and the banner never appeared.
-    *   The new interface reads branding and every capability toggle from a single payload it fetched once when you signed in, and saving in Admin Settings never asked for it again. It now re-reads that payload after every save and after every image upload, so a change applies as soon as you apply it.
-    *   (Ref: V2 interface, Admin Settings, branding, classification banner)
 
 *   **Custom Favicon Was Never Shown In The V2 Interface**
     *   An uploaded favicon replaced the browser tab icon in the classic interface but never in the new one, which also always showed "SimpleChat" as the tab title regardless of the configured application title.
@@ -44,6 +39,44 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Settings that had not yet been described to the new admin page were placed by matching their name against the section names, and these five matched the wrong section — "external" matched External Links rather than Health Check, and "user" matched User Agreement rather than Personal Workspaces.
     *   They are now described properly and appear where they belong: the health check endpoints under **Operations > Logging & Health > Health Check**, the documentation guide links under **Help > User-Facing Latest Features**, personal workspaces under **Workspaces > Workspace Types**, and the text action under **Agents & Actions > Actions**. Each also gained the explanatory text the classic page has always shown.
     *   (Ref: V2 Admin Settings, `admin_settings_fields.py`, capability placement)
+
+### **(v0.261.046)**
+
+#### Bug Fixes
+
+*   **Admin Settings Changes Did Not Appear Until The Page Was Reloaded (New Interface)**
+    *   Enabling the classification banner in the new interface and saving appeared to do nothing. The banner was saved correctly, but it only showed up after reloading the browser.
+    *   The banner was not the only thing affected. The new interface reads the application title, the sidebar logo, the classification banner and the list of enabled capabilities once, when the page first loads, and had no way of being told that any of them had changed. Every one of those went stale the moment you saved.
+    *   Saving in **Admin Settings** now refreshes what the interface knows about itself, so the banner appears — or disappears — straight away, along with a changed title or a newly enabled capability. Uploading a logo or favicon updates the sidebar immediately too, rather than waiting for the next reload.
+    *   Your unsaved edits are unaffected: the refresh happens quietly in the background and never interrupts the page you are working on.
+    *   (Ref: V2 interface, Admin Settings, classification banner, branding, `/api/v2/bootstrap`)
+
+### **(v0.261.045)**
+
+#### Bug Fixes
+
+*   **Approving Several Images At Once Looked Like It Had Stopped**
+    *   In the new interface, when a reply proposed several images and you pressed **Approve all**, every card correctly greyed out its Approve button and showed **Generating image…**. The moment the first image appeared, the remaining cards lost their status, their Approve buttons came back, and the **Approve all** button reappeared — so it looked as though nothing was happening and you needed to approve again. The images were in fact still being generated and did arrive shortly after.
+    *   The cards are now told what is happening by the message they belong to rather than keeping it to themselves, so a card that is queued or generating keeps saying so until its image arrives, whatever else happens in the conversation. Editing a proposal's prompt, or dismissing a proposal, now survives a refresh of the reply too.
+    *   The underlying cause was that the whole message was being rebuilt from scratch every time anything about it changed. Diagrams and charts were being thrown away and redrawn for the same reason, and no longer are.
+    *   (Ref: V2 chat, inline image proposals, approve all, assistant markdown rendering)
+
+*   **Generated Image Cards Kept Repeating The Proposal's Description**
+    *   After an image had been generated, its card still showed the labels from the original proposal — the kind of visual, the slide it referred to, and the context it was drawn from. Those describe an image that does not exist yet, and say nothing once you can see it.
+    *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
+    *   (Ref: V2 chat, inline image proposals, generated image card)
+
+### **(v0.261.044)**
+
+#### Bug Fixes
+
+*   **The New Interface's New Chat Button Now Works, And Buttons Look Clickable**
+    *   **New chat** appeared in the sidebar on every page but only ever did anything on the chat page. Clicking it from **My Workspace**, **Admin Settings** or **Settings** produced no visible response at all — it reset chat state that was not on screen and left you where you were. It is now shown only on the chat page, where it has something to act on.
+    *   **Chats** in the sidebar covers what that leaves behind. Clicking it from anywhere else now starts a fresh chat, which is what makes a new chat reachable from the rest of the application. Two exceptions: clicking **Chats** while already on the chat page still does nothing, so a stray click cannot discard what you are reading, and a conversation still streaming a reply is returned to rather than reset, so a response in progress is never thrown away.
+    *   Previously, leaving the chat page and coming back silently reopened whatever conversation you last had. That conversation is still one click away in the conversation list.
+    *   No button in the new interface showed a hand cursor — not **New chat**, not the chat header icons, the conversation list, the composer or the admin controls. Everything rendered with the arrow cursor browsers use for text you cannot click. The whole interface now indicates what is clickable.
+    *   Starting a new chat no longer leaves the conversation drawer stranded open and empty after its **Contents** and **Documents** buttons have disappeared, and the conversation details panel no longer outlives the conversation it was describing.
+    *   (Ref: V2 navigation rail, New chat, conversation drawer, button cursor)
 
 ### **(v0.261.043)**
 

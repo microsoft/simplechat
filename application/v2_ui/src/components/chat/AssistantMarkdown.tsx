@@ -7,9 +7,9 @@
 // types that render as something other than code, which is a distinct concern from the
 // scrolling list around it.
 
-import { Children, useMemo } from 'react';
+import { Children, useCallback, useMemo } from 'react';
 import { clsx } from 'clsx';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import { toText } from 'hast-util-to-text';
@@ -76,6 +76,17 @@ function PendingRichBlock({ kind }: { kind: string }) {
 }
 
 /**
+ * Shared empties for the optional inputs.
+ *
+ * Module-level rather than an inline `?? []`, which would mint a new array on every render and
+ * so invalidate the memoised component map below for messages that carry no citations, masks
+ * or maths — which is most of them.
+ */
+const NO_CITATIONS: CitationGroup[] = [];
+const NO_MASKS: MaskedRange[] = [];
+const NO_MATH: MathSegment[] = [];
+
+/**
  * Markdown renderer for assistant output.
  *
  * Raw HTML is deliberately not enabled (no rehype-raw): model output is untrusted input,
@@ -105,9 +116,9 @@ function Markdown({
     math?: MathSegment[];
     messageId?: string;
 }) {
-    const groups = citations ?? [];
-    const maskRanges = masks ?? [];
-    const mathSegments = math ?? [];
+    const groups = citations ?? NO_CITATIONS;
+    const maskRanges = masks ?? NO_MASKS;
+    const mathSegments = math ?? NO_MATH;
 
     /**
      * Substitute components for the placeholder tokens left in the text.
@@ -116,82 +127,189 @@ function Markdown({
      * in here, so none of them injects HTML into model output. A single text node can carry
      * more than one kind, so each pattern is applied in turn over the results of the last.
      */
-    const renderTokens = (children: React.ReactNode): React.ReactNode => {
-        if (groups.length === 0 && maskRanges.length === 0 && mathSegments.length === 0) {
-            return children;
-        }
-
-        const substitutions: {
-            tag: string;
-            pattern: RegExp;
-            render: (index: number, key: string) => React.ReactNode;
-        }[] = [
-            {
-                tag: 'mask',
-                pattern: MASK_PLACEHOLDER_PATTERN,
-                render: (index, key) => <MaskedSpan key={key} range={maskRanges[index]} />,
-            },
-            {
-                tag: 'cite',
-                pattern: CITATION_PLACEHOLDER_PATTERN,
-                render: (index, key) => {
-                    const group = groups[index];
-                    return group ? <CitationChip key={key} group={group} /> : null;
-                },
-            },
-            {
-                tag: 'math',
-                pattern: MATH_PLACEHOLDER_PATTERN,
-                render: (index, key) => {
-                    const segment = mathSegments[index];
-                    if (!segment) {
-                        return null;
-                    }
-                    return segment.display ? (
-                        <MathDisplay key={key} tex={segment.tex} />
-                    ) : (
-                        <MathInline key={key} tex={segment.tex} />
-                    );
-                },
-            },
-        ];
-
-        return Children.map(children, (child) => {
-            if (typeof child !== 'string') {
-                return child;
+    const renderTokens = useCallback(
+        (children: React.ReactNode): React.ReactNode => {
+            if (groups.length === 0 && maskRanges.length === 0 && mathSegments.length === 0) {
+                return children;
             }
 
-            let nodes: React.ReactNode[] = [child];
-            for (const substitution of substitutions) {
-                const next: React.ReactNode[] = [];
-                nodes.forEach((node, nodeIndex) => {
-                    if (typeof node !== 'string') {
-                        next.push(node);
-                        return;
-                    }
-                    // String.split with a capturing group interleaves text and captures, so
-                    // odd indices hold the captured index.
-                    node.split(substitution.pattern).forEach((part, partIndex) => {
-                        if (partIndex % 2 === 1) {
-                            next.push(
-                                substitution.render(
-                                    Number(part),
-                                    `${substitution.tag}-${nodeIndex}-${partIndex}`,
-                                ),
-                            );
+            const substitutions: {
+                tag: string;
+                pattern: RegExp;
+                render: (index: number, key: string) => React.ReactNode;
+            }[] = [
+                {
+                    tag: 'mask',
+                    pattern: MASK_PLACEHOLDER_PATTERN,
+                    render: (index, key) => <MaskedSpan key={key} range={maskRanges[index]} />,
+                },
+                {
+                    tag: 'cite',
+                    pattern: CITATION_PLACEHOLDER_PATTERN,
+                    render: (index, key) => {
+                        const group = groups[index];
+                        return group ? <CitationChip key={key} group={group} /> : null;
+                    },
+                },
+                {
+                    tag: 'math',
+                    pattern: MATH_PLACEHOLDER_PATTERN,
+                    render: (index, key) => {
+                        const segment = mathSegments[index];
+                        if (!segment) {
+                            return null;
+                        }
+                        return segment.display ? (
+                            <MathDisplay key={key} tex={segment.tex} />
+                        ) : (
+                            <MathInline key={key} tex={segment.tex} />
+                        );
+                    },
+                },
+            ];
+
+            return Children.map(children, (child) => {
+                if (typeof child !== 'string') {
+                    return child;
+                }
+
+                let nodes: React.ReactNode[] = [child];
+                for (const substitution of substitutions) {
+                    const next: React.ReactNode[] = [];
+                    nodes.forEach((node, nodeIndex) => {
+                        if (typeof node !== 'string') {
+                            next.push(node);
                             return;
                         }
-                        if (part !== '') {
-                            next.push(part);
-                        }
+                        // String.split with a capturing group interleaves text and captures, so
+                        // odd indices hold the captured index.
+                        node.split(substitution.pattern).forEach((part, partIndex) => {
+                            if (partIndex % 2 === 1) {
+                                next.push(
+                                    substitution.render(
+                                        Number(part),
+                                        `${substitution.tag}-${nodeIndex}-${partIndex}`,
+                                    ),
+                                );
+                                return;
+                            }
+                            if (part !== '') {
+                                next.push(part);
+                            }
+                        });
                     });
-                });
-                nodes = next;
-            }
+                    nodes = next;
+                }
 
-            return nodes;
-        });
-    };
+                return nodes;
+            });
+        },
+        [groups, maskRanges, mathSegments],
+    );
+
+    /**
+     * The component map react-markdown renders each node with.
+     *
+     * Memoised, and that is load-bearing rather than an optimisation. react-markdown uses these
+     * functions as the *element type* for the nodes they handle, and React unmounts and
+     * remounts a subtree whenever an element's type changes. Built inline, every render of this
+     * message would therefore tear down and rebuild every diagram, chart and image proposal
+     * card in it — discarding a proposal card's approval state, so a card mid-generation would
+     * silently reappear as though it had never been approved, and re-running Mermaid over every
+     * diagram in the thread on each token of an unrelated reply.
+     */
+    const components = useMemo<Components>(
+        () => ({
+            // Every block a citation or mask placeholder can land in. A block left
+            // out here would render the raw ⟦cite:N⟧ token as visible text.
+            p: ({ children }) => <p>{renderTokens(children)}</p>,
+            li: ({ children }) => <li>{renderTokens(children)}</li>,
+            td: ({ children }) => <td>{renderTokens(children)}</td>,
+            th: ({ children }) => <th>{renderTokens(children)}</th>,
+            h1: ({ children }) => <h1>{renderTokens(children)}</h1>,
+            h2: ({ children }) => <h2>{renderTokens(children)}</h2>,
+            h3: ({ children }) => <h3>{renderTokens(children)}</h3>,
+            h4: ({ children }) => <h4>{renderTokens(children)}</h4>,
+            blockquote: ({ children }) => <blockquote>{renderTokens(children)}</blockquote>,
+            em: ({ children }) => <em>{renderTokens(children)}</em>,
+            strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
+
+            // A diagram, chart or image proposal replaces the whole code block, so the
+            // <pre> wrapper markdown puts around it is dropped: leaving it would box
+            // the rendered output in the code block's background and padding.
+            //
+            // Handled here rather than in `code` because the <pre> is the element the
+            // renderer replaces; the index a diagram or chart is matched to any saved
+            // colours by comes from `rehypeRichBlockIndex`, stamped on the <code>
+            // inside it.
+            pre: ({ children, node }) => {
+                const code = fenceCodeElement(node);
+                if (richFenceKind(code) === null) {
+                    return <pre>{children}</pre>;
+                }
+
+                const language = readFenceLanguage(code?.properties?.className);
+                const pendingKind = readPendingKind(language);
+                if (pendingKind) {
+                    return <PendingRichBlock kind={pendingKind} />;
+                }
+
+                // Read off the hast node rather than the rendered children, which may
+                // already have been split into highlighted spans; a chart's JSON
+                // payload has to come back intact.
+                const source = code ? toText(code, { whitespace: 'pre' }) : '';
+
+                // Null only if the plugin did not run. Left undefined rather than
+                // defaulted to zero, because an unnumbered block sharing block zero's
+                // slot would overwrite that block's saved colours, and would file two
+                // proposal cards' approval state under one entry.
+                const index = readRichBlockIndex(code);
+
+                if (language === IMAGE_PROPOSAL_LANGUAGE) {
+                    return (
+                        <InlineImageProposal source={source} blockIndex={index ?? undefined} />
+                    );
+                }
+
+                if (language === MERMAID_LANGUAGE) {
+                    return (
+                        <MermaidDiagram
+                            source={source}
+                            messageId={messageId}
+                            blockIndex={index ?? undefined}
+                        />
+                    );
+                }
+                return (
+                    <InlineChart
+                        source={source}
+                        messageId={messageId}
+                        blockIndex={index ?? undefined}
+                    />
+                );
+            },
+
+            // `node` is pulled out and discarded rather than left in `props`: it is the
+            // hast node, and spreading it onto a DOM <code> element makes React warn
+            // about an unrecognised attribute on every code block in the thread.
+            code: ({ className, children, node: _node, ...props }) => {
+                // Rich fences are rendered from `pre` above and never reach this, but
+                // a placeholder is still handled here in case one is ever produced
+                // without its wrapper.
+                const pendingKind = readPendingKind(readFenceLanguage(className));
+                if (pendingKind) {
+                    return <PendingRichBlock kind={pendingKind} />;
+                }
+
+                return (
+                    <code className={className} {...props}>
+                        {children}
+                    </code>
+                );
+            },
+        }),
+        [renderTokens, messageId],
+    );
 
     return (
         <div
@@ -217,94 +335,7 @@ function Markdown({
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkBreaks]}
                 rehypePlugins={[rehypeRichBlockIndex, rehypeHighlightSubset]}
-                components={{
-                    // Every block a citation or mask placeholder can land in. A block left
-                    // out here would render the raw ⟦cite:N⟧ token as visible text.
-                    p: ({ children }) => <p>{renderTokens(children)}</p>,
-                    li: ({ children }) => <li>{renderTokens(children)}</li>,
-                    td: ({ children }) => <td>{renderTokens(children)}</td>,
-                    th: ({ children }) => <th>{renderTokens(children)}</th>,
-                    h1: ({ children }) => <h1>{renderTokens(children)}</h1>,
-                    h2: ({ children }) => <h2>{renderTokens(children)}</h2>,
-                    h3: ({ children }) => <h3>{renderTokens(children)}</h3>,
-                    h4: ({ children }) => <h4>{renderTokens(children)}</h4>,
-                    blockquote: ({ children }) => (
-                        <blockquote>{renderTokens(children)}</blockquote>
-                    ),
-                    em: ({ children }) => <em>{renderTokens(children)}</em>,
-                    strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
-
-                    // A diagram, chart or image proposal replaces the whole code block, so the
-                    // <pre> wrapper markdown puts around it is dropped: leaving it would box
-                    // the rendered output in the code block's background and padding.
-                    //
-                    // Handled here rather than in `code` because the <pre> is the element the
-                    // renderer replaces; the index a diagram or chart is matched to any saved
-                    // colours by comes from `rehypeRichBlockIndex`, stamped on the <code>
-                    // inside it.
-                    pre: ({ children, node }) => {
-                        const code = fenceCodeElement(node);
-                        if (richFenceKind(code) === null) {
-                            return <pre>{children}</pre>;
-                        }
-
-                        const language = readFenceLanguage(code?.properties?.className);
-                        const pendingKind = readPendingKind(language);
-                        if (pendingKind) {
-                            return <PendingRichBlock kind={pendingKind} />;
-                        }
-
-                        // Read off the hast node rather than the rendered children, which may
-                        // already have been split into highlighted spans; a chart's JSON
-                        // payload has to come back intact.
-                        const source = code ? toText(code, { whitespace: 'pre' }) : '';
-
-                        if (language === IMAGE_PROPOSAL_LANGUAGE) {
-                            return <InlineImageProposal source={source} />;
-                        }
-
-                        // Null only if the plugin did not run. Left undefined rather than
-                        // defaulted to zero, because an unnumbered block sharing block zero's
-                        // slot would overwrite that block's saved colours.
-                        const index = readRichBlockIndex(code);
-
-                        if (language === MERMAID_LANGUAGE) {
-                            return (
-                                <MermaidDiagram
-                                    source={source}
-                                    messageId={messageId}
-                                    blockIndex={index ?? undefined}
-                                />
-                            );
-                        }
-                        return (
-                            <InlineChart
-                                source={source}
-                                messageId={messageId}
-                                blockIndex={index ?? undefined}
-                            />
-                        );
-                    },
-
-                    // `node` is pulled out and discarded rather than left in `props`: it is the
-                    // hast node, and spreading it onto a DOM <code> element makes React warn
-                    // about an unrecognised attribute on every code block in the thread.
-                    code: ({ className, children, node: _node, ...props }) => {
-                        // Rich fences are rendered from `pre` above and never reach this, but
-                        // a placeholder is still handled here in case one is ever produced
-                        // without its wrapper.
-                        const pendingKind = readPendingKind(readFenceLanguage(className));
-                        if (pendingKind) {
-                            return <PendingRichBlock kind={pendingKind} />;
-                        }
-
-                        return (
-                            <code className={className} {...props}>
-                                {children}
-                            </code>
-                        );
-                    },
-                }}
+                components={components}
             >
                 {content}
             </ReactMarkdown>

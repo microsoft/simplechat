@@ -163,12 +163,14 @@ function buildCapabilityIndex(
 
 export function AdminSettingsPage() {
     const isAdmin = useBootstrapStore((state) => Boolean(state.data?.user?.is_admin));
+
     /**
-     * Re-read bootstrap after a save.
+     * Re-read the bootstrap payload once a save lands.
      *
-     * Branding, the classification banner and the feature flags the whole application
-     * branches on all come from that payload, which is fetched once at startup. Without
-     * this, applying a setting here changed the settings document and nothing visible.
+     * The settings edited here are also what the shell draws itself from -- the
+     * classification banner, the sidebar logo and title, the feature flags -- and that
+     * payload is otherwise fetched only at startup. Without this a saved change is
+     * invisible until the browser is reloaded.
      */
     const refreshBootstrap = useBootstrapStore((state) => state.refresh);
 
@@ -475,8 +477,9 @@ export function AdminSettingsPage() {
                 ...current,
                 [target]: { present: true, version: result.version, url: result.url },
             }));
-            // Uploads save immediately rather than joining the draft, so the rail, the
-            // home page and the browser tab have to be told straight away.
+            // An upload is written to the settings document immediately rather than being
+            // held until Save, so the rail would otherwise keep drawing the previous logo
+            // -- and its URL is version-stamped, so only a refetch busts the cache.
             void refreshBootstrap();
             toast.success('Image uploaded.');
         },

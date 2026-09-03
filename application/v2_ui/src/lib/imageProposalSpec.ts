@@ -182,6 +182,36 @@ export function extractProposalSpecs(content: string): ImageProposalSpec[] {
     return specs;
 }
 
+/**
+ * A stable identity for one proposal card within its message.
+ *
+ * Approval state is held by the message's proposal scope rather than by the card, so it has
+ * to be filed under something that still names the same card after the markdown subtree is
+ * rebuilt. The fence index `rehypeRichBlockIndex` stamps is exactly that: it is assigned per
+ * kind in document order, so it is unique within the message and does not move when an
+ * unrelated block above it changes.
+ *
+ * The spec is only consulted when there is no index, which happens if the plugin did not run.
+ * The visual id comes first because it is the one field the guidance asks the model to make
+ * unique; the prompt is the fallback because it is the one field a proposal cannot omit. Two
+ * proposals identical in both are indistinguishable to `findResultForSpec` as well, so
+ * sharing a key costs nothing that was not already lost.
+ */
+export function proposalCardKey(spec: ImageProposalSpec | null, blockIndex?: number): string {
+    if (typeof blockIndex === 'number' && Number.isInteger(blockIndex) && blockIndex >= 0) {
+        return `block:${blockIndex}`;
+    }
+    if (!spec) {
+        return 'invalid';
+    }
+
+    const visualId = normalizeVisualId(spec.visualId);
+    if (visualId) {
+        return `visual:${visualId}`;
+    }
+    return `prompt:${trimText(spec.prompt, PROMPT_MAX_LENGTH)}`;
+}
+
 /** Short badges describing what the proposal is for. */
 export function proposalBadges(spec: ImageProposalSpec): string[] {
     const badges: string[] = [];

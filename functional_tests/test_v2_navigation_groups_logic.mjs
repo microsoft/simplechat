@@ -1,8 +1,8 @@
 // test_v2_navigation_groups_logic.mjs
 //
 // Runtime test for the V2 rail's administrator-configured navigation groups.
-// Version: 0.261.044
-// Implemented in: 0.261.044
+// Version: 0.261.047
+// Implemented in: 0.261.047
 //
 // Custom Pages and External Links are configured in Admin Settings and had no
 // representation in the V2 rail at all, so a deployment that had set them up saw none of

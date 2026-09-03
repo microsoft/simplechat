@@ -1,6 +1,6 @@
 # V2 Home Page
 
-**Implemented in version: 0.261.044**
+**Implemented in version: 0.261.047**
 
 ## Overview
 
@@ -86,10 +86,11 @@ both interfaces, so the alignment setting reads as a choice about the prose.
 
 **Home** was added as the first entry in the navigation rail.
 
-Making the home page the landing route exposed an existing gap: the rail's "New
-chat" button only reset chat state, which is invisible from any page that is not
-chat. It now navigates to the chat page as well, so the most prominent button in the
-rail does something observable from the page users now land on.
+**New chat** is not shown on the home page. It is offered only on the chat page,
+because it acts on chat state that is not on screen anywhere else; clicking
+**Chats** from the home page starts a fresh chat instead. That behaviour arrived in
+`0.261.044` and needed no change here — see
+[V2_NEW_CHAT_BUTTON_SCOPING_FIX.md](../fixes/V2_NEW_CHAT_BUTTON_SCOPING_FIX.md).
 
 ## Navigation groups
 

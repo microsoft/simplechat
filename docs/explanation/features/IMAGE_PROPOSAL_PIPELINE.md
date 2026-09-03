@@ -78,18 +78,30 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
     reject.
   - Reads `metadata.image_proposal` on stored image messages and matches an approved image
     back to the card that proposed it.
+  - `proposalCardKey` names a card within its message, from the fence index
+    `rehypeRichBlockIndex` stamps on each rich fence.
+- `application/v2_ui/src/lib/imageProposalCardState.ts`
+  - The state of one card — status, queue position, failure, edited prompt, editor open — and
+    the reducer that patches it.
 - `application/v2_ui/src/lib/imageProposalQueue.ts`
   - Runs approvals one at a time and reports queue position, so approving several proposals
     does not open several image generation requests at once.
 - `application/v2_ui/src/components/chat/InlineImageProposal.tsx`
   - The approval card, its approve/edit/cancel states, and the approved image, which opens in
-    the same viewer as any other chat image.
+    the same viewer as any other chat image. Once the image exists the card shows the title,
+    the image and the model that produced it; the proposal's description and badges describe an
+    image that does not yet exist, so they are not repeated afterwards.
 - `application/v2_ui/src/components/chat/ImageProposalContext.tsx`
   - Supplies each card with the assistant message it belongs to and the images already
-    generated for that message, and renders the approve-all control.
+    generated for that message, renders the approve-all control, and owns each card's state.
+    That last point matters: a card is rendered from inside the markdown output, which React
+    can rebuild at any time, so a card that held its own approval status would lose it — see
+    `docs/explanation/fixes/V2_INLINE_IMAGE_PROPOSAL_STATUS_PERSISTENCE_FIX.md`.
 - `application/v2_ui/src/components/chat/AssistantMarkdown.tsx`
   - Renders the fence as a card and, while a reply is streaming, shows a placeholder for a
-    fence that has not finished arriving.
+    fence that has not finished arriving. Its react-markdown component map is memoised, because
+    react-markdown uses those functions as element types and React rebuilds a subtree whenever
+    an element's type changes.
 - `application/v2_ui/src/components/chat/MessageList.tsx`
   - Files approved images under the assistant message that proposed them and takes them out of
     the flat thread once a card has claimed them.
@@ -111,8 +123,9 @@ no extract/inject/hydrate step and no HTML sink to sanitize.
 - `functional_tests/test_image_proposal_pipeline.py` validates proposal normalization, guidance text, and settings gates.
 - `ui_tests/test_chat_inline_image_proposal_cards.py` validates card rendering, approve-all, edit, and cancel workflows with the approval endpoint mocked by Playwright.
 - `functional_tests/test_v2_inline_image_proposals.py` validates that the V2 card agrees with both the classic client and the server: the same fence language, the same sanitization caps, the registered endpoint path, the same approve-all threshold, and that generation is opt-in, serialized, and rendered without any HTML sink.
-- `functional_tests/test_v2_inline_image_proposal_logic.mjs` executes the V2 parsing, result matching and approval queue against the real modules, covering the cases where a mistake would render perfectly and still be wrong: a proposal approved after its prompt was edited, a prompt whose newlines the server flattened, and several approvals started at once.
-- Version was updated in `application/single_app/config.py` to `0.241.135` for traceability, and to `0.261.029` when V2 support was added.
+- `functional_tests/test_v2_inline_image_proposal_logic.mjs` executes the V2 parsing, result matching, card identity, card state and approval queue against the real modules, covering the cases where a mistake would render perfectly and still be wrong: a proposal approved after its prompt was edited, a prompt whose newlines the server flattened, several approvals started at once, and one card's progress disturbing another's.
+- `functional_tests/test_v2_inline_image_proposal_status_persistence.py` validates that the markdown component map is memoised and that a card's approval state is owned by its message, so an approval still in flight keeps reporting itself when the card is rebuilt.
+- Version was updated in `application/single_app/config.py` to `0.241.135` for traceability, to `0.261.029` when V2 support was added, and to `0.261.045` when V2 approval state was made to survive a re-render.
 
 ## Known Limitations
 

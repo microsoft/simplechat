@@ -2,8 +2,8 @@
 # test_v2_admin_capability_placement.py
 """
 Functional test pinning where the V2 admin surface files each capability toggle.
-Version: 0.261.044
-Implemented in: 0.261.044
+Version: 0.261.047
+Implemented in: 0.261.047
 
 Settings that ``admin_settings_fields.py`` does not describe are still shown in the
 V2 admin UI, by scanning the settings document for ``enable_*`` booleans and
@@ -147,7 +147,7 @@ def test_ported_heuristic_still_matches_the_renderer():
     """A rewritten renderer would leave this test asserting the wrong thing."""
     print("Testing the ported heuristic against AdminSettingsPage.tsx...")
 
-    assert_app_version_at_least("0.261.044")
+    assert_app_version_at_least("0.261.047")
 
     assert RENDERER.is_file(), f"Missing the V2 admin renderer: {RENDERER}"
     source = RENDERER.read_text(encoding="utf-8")
