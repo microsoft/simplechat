@@ -2022,6 +2022,65 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
             "role": "capability",
         },
+        {
+            "key": "metadata_extraction_model",
+            "type": "component",
+            "component": "model-picker",
+            "label": "Extraction Model",
+            "help": (
+                "Uses Global Endpoints when multi-endpoint model management is on; "
+                "otherwise the legacy GPT or APIM deployment settings."
+            ),
+            "placeholder": "No metadata extraction model selected",
+            "required": True,
+            "group": {"id": "model", "label": "Model", "variant": "connection"},
+            "depends_on": {"key": "enable_extract_meta_data", "equals": True},
+        },
+    ],
+    # Vision analysis sends page images to a model, so the picker offers only
+    # models that read them. Which models those are used to be decided by
+    # matching the model's name against a pattern; it is now resolved from the
+    # shipped capability catalog, with an explicit per-model flag able to
+    # override it and the name pattern kept only as a last resort.
+    "multimodal-vision-section": [
+        {
+            "key": "enable_multimodal_vision",
+            "type": "switch",
+            "label": "Enable Multi-Modal Vision Analysis",
+            "help": (
+                "Sends page images to a vision-capable model so figures, charts and "
+                "scanned pages are described and indexed rather than skipped."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "multimodal_vision_model",
+            "type": "component",
+            "component": "model-picker",
+            "label": "Vision Model",
+            "help": (
+                "Only models that report image support are listed. If a model you expect "
+                "is missing, set its image support explicitly under AI Models."
+            ),
+            "placeholder": "Select a vision-capable model",
+            "requires_vision": True,
+            "required": True,
+            "group": {"id": "model", "label": "Model", "variant": "connection"},
+            "depends_on": {"key": "enable_multimodal_vision", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test vision analysis",
+            "help": "Sends a sample image to the selected model.",
+            "test_type": "multimodal_vision",
+            "test_payload": {
+                "vision_model": {"key": "multimodal_vision_model"},
+            },
+            "group": {"id": "model", "label": "Model", "variant": "connection"},
+            "depends_on": {"key": "enable_multimodal_vision", "equals": True},
+        },
     ],
     "actions-config": [
         {

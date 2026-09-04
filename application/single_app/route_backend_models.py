@@ -10,6 +10,7 @@ from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup
 from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
+from functions_model_capabilities import resolve_model_vision_support
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -525,6 +526,45 @@ def register_route_backend_models(bp):
                 "Unable to test the model connection right now. Try again later or contact an administrator.",
                 400,
             )
+
+    @bp.route('/api/models/vision-capability', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @admin_required
+    def resolve_models_vision_capability():
+        """Resolve whether each supplied model can accept image input.
+
+        The Model Endpoints editor needs this to pre-fill the image-support checkbox
+        when models are fetched from an endpoint, so an administrator does not have to
+        answer a question the shipped capability catalog already knows.
+
+        Resolved here rather than in the browser because the rules -- an explicit flag,
+        then the catalog, then a name heuristic -- have exactly one implementation in
+        ``functions_model_capabilities``. Mirroring them in JavaScript is how the old
+        name-matching pattern came to exist in two places and drift.
+        """
+        payload = request.get_json(silent=True) or {}
+        models = payload.get('models')
+        if not isinstance(models, list):
+            return jsonify({'error': 'Expected a list of models.'}), 400
+
+        resolved = {}
+        for entry in models[:200]:
+            record = entry if isinstance(entry, dict) else {'deploymentName': entry}
+            deployment = str(
+                record.get('deploymentName') or record.get('deployment') or ''
+            ).strip()
+            if not deployment:
+                continue
+
+            supports_vision, source = resolve_model_vision_support(record)
+            resolved[deployment] = {
+                'supports_vision': supports_vision,
+                'source': source,
+            }
+
+        return jsonify({'models': resolved}), 200
 
     @bp.route('/api/models/gpt', methods=['GET'])
     @swagger_route(security=get_auth_security())

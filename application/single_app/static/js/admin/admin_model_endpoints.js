@@ -895,7 +895,7 @@ function openModalForEndpoint(endpoint) {
         if (endpointIdentityHeaderNameInput) endpointIdentityHeaderNameInput.value = identityHeader.header_name;
         if (endpointIdentityValueTypeSelect) endpointIdentityValueTypeSelect.value = identityHeader.value_type;
         modalModels = Array.isArray(endpoint.models) ? [...endpoint.models] : [];
-        renderModalModels(modalModels);
+        refreshModalModels(modalModels);
     }
 
     updateAuthVisibility();
@@ -1196,11 +1196,127 @@ function findModelEditor(modelId) {
         .find((editor) => editor.dataset.modelEditorFor === String(modelId));
 }
 
+/**
+ * Cached vision-capability answers from the server, keyed by deployment name.
+ *
+ * Populated when the models modal opens. The resolution rules live in
+ * functions_model_capabilities.py and are deliberately not mirrored here: the old
+ * name-matching pattern existed in both Python and JavaScript and drifted, which is
+ * what this replaces.
+ * @type {Record<string, {supports_vision: boolean, source: string}>}
+ */
+let modelVisionCapability = {};
+
+/**
+ * Ask the server which of the loaded models can accept image input.
+ *
+ * Pre-filling the checkbox from the shipped capability catalog is the point: an
+ * administrator should only have to answer for a deployment the catalog does not know,
+ * such as a self-hosted model.
+ * @param {Array<object>} models Models currently in the modal.
+ * @returns {Promise<void>}
+ */
+async function loadModelVisionCapability(models) {
+    const wanted = (models || [])
+        .filter((model) => model && model.deploymentName)
+        .map((model) => ({
+            deploymentName: model.deploymentName,
+            modelName: model.modelName || "",
+            displayName: model.displayName || "",
+            supportsVision: model.supportsVision,
+        }));
+
+    if (!wanted.length) {
+        modelVisionCapability = {};
+        return false;
+    }
+
+    try {
+        const response = await fetch("/api/models/vision-capability", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ models: wanted })
+        });
+        const data = await response.json().catch(() => ({}));
+        modelVisionCapability = data.models || {};
+        return Object.keys(modelVisionCapability).length > 0;
+    } catch (error) {
+        // A failed lookup must not block editing the endpoint. The checkbox falls
+        // back to whatever is already stored on the model.
+        console.error("Vision capability lookup failed", error);
+        modelVisionCapability = {};
+        return false;
+    }
+}
+
+/**
+ * Build the image-support control for one model.
+ *
+ * Shown for every model rather than only vision ones, because the value an
+ * administrator most needs to correct is a wrong "no" on a model that does see.
+ * @param {object} model Model record.
+ * @param {string} modelId Stable id for this row.
+ * @returns {HTMLElement} Column element holding the control.
+ */
+function createModelVisionControl(model, modelId) {
+    const column = createElement("div", "col-md-4");
+    const resolved = modelVisionCapability[model.deploymentName || ""] || {};
+    const source = typeof model.supportsVision === "boolean" ? "declared" : resolved.source;
+    const checked = typeof model.supportsVision === "boolean"
+        ? model.supportsVision
+        : Boolean(resolved.supports_vision);
+
+    const wrapper = createElement("div", "form-check mt-4");
+    const checkbox = document.createElement("input");
+    checkbox.className = "form-check-input";
+    checkbox.type = "checkbox";
+    checkbox.id = getModelIconDomId(modelId, "supports-vision");
+    checkbox.dataset.supportsVisionFor = modelId;
+    checkbox.checked = checked;
+
+    const label = createElement("label", "form-check-label");
+    label.htmlFor = checkbox.id;
+    label.textContent = "Reads images";
+
+    wrapper.appendChild(checkbox);
+    wrapper.appendChild(label);
+    column.appendChild(wrapper);
+
+    const help = createElement("div", "form-text");
+    if (source === "declared") {
+        help.textContent = "Set here. Used by Multi-Modal Vision Analysis.";
+    } else if (source === "catalog") {
+        help.textContent = "From the built-in model capability data.";
+    } else {
+        help.textContent = "Inferred from the model name. Correct it if that is wrong.";
+    }
+    column.appendChild(help);
+
+    return column;
+}
+
+/**
+ * Render the model list, then refresh it once the server has resolved capabilities.
+ *
+ * Rendering first keeps the modal responsive; the lookup is a network call and the
+ * stored values are already good enough to show. When the answer arrives the rows are
+ * redrawn so the image-support checkbox reflects the catalog rather than a blank.
+ * @param {Array<object>} models Models to display.
+ * @returns {void}
+ */
+function refreshModalModels(models) {
+    renderModalModels(models);
+    void loadModelVisionCapability(models).then((resolved) => {
+        if (resolved) {
+            renderModalModels(models);
+        }
+    });
+}
+
 function renderModalModels(models) {
     if (!modelsListEl) {
         return;
     }
-
     if (!models || !models.length) {
         modelsListEl.innerHTML = "<p class=\"text-muted\">No models loaded yet.</p>";
         return;
@@ -1263,6 +1379,7 @@ function renderModalModels(models) {
         fieldsRow.appendChild(iconCol);
         fieldsRow.appendChild(responseLengthCol);
         fieldsRow.appendChild(descriptionCol);
+        fieldsRow.appendChild(createModelVisionControl(model, modelId));
 
         const actions = createElement("div", "d-flex gap-2 mt-2");
         const testButton = document.createElement("button");
@@ -1302,6 +1419,7 @@ function collectModalModels() {
         const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
         const descriptionInput = modelsListEl.querySelector(`input[data-description-for="${model.id}"]`);
         const responseLengthInput = modelsListEl.querySelector(`input[data-response-length-for="${model.id}"]`);
+        const visionInput = modelsListEl.querySelector(`input[data-supports-vision-for="${model.id}"]`);
         const iconEditor = findModelEditor(model.id);
         const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
         if (responseLength === null) {
@@ -1310,6 +1428,12 @@ function collectModalModels() {
         model.enabled = checkbox ? checkbox.checked : model.enabled;
         model.deploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
+        // Recorded on every save, not only when changed, so the value the catalog
+        // resolved becomes the endpoint's own answer. A model the catalog later
+        // reclassifies then keeps the behaviour the administrator saw and approved.
+        if (visionInput) {
+            model.supportsVision = visionInput.checked;
+        }
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
         model.description = descriptionInput ? descriptionInput.value.trim() : model.description;
         if (responseLength) {
@@ -1402,7 +1526,7 @@ async function fetchModels() {
             existingMap.set(key, true);
             addedCount += 1;
         });
-        renderModalModels(modalModels);
+        refreshModalModels(modalModels);
         showToast(`Fetched ${models.length} models. Added ${addedCount} new.`, "success");
     } catch (error) {
         console.error("Model fetch failed", error);

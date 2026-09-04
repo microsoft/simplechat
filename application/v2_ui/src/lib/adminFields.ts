@@ -140,6 +140,8 @@ export interface AdminField {
     test_payload?: Record<string, { key?: string; value?: unknown; when?: AdminFieldDependency }>;
     /** Marks a field that must hold a value before its section counts as configured. */
     required?: boolean;
+    /** `model-picker` components only: restrict the list to models that read images. */
+    requires_vision?: boolean;
     /** Lifts a field into the section header. See `FIELD_ROLES`. */
     role?: 'capability';
     /**
@@ -167,6 +169,22 @@ export interface BrandingAsset {
 
 export type BrandingAssets = Record<string, BrandingAsset>;
 
+/**
+ * One deployed model an administrator can pick, with its capabilities resolved.
+ *
+ * `vision_source` is `declared` when an administrator set it, `catalog` when the shipped
+ * capability data says so, and `inferred` when it was guessed from the model's name.
+ */
+export interface AdminModelCatalogEntry {
+    deployment: string;
+    label: string;
+    endpoint: string;
+    endpoint_id?: string | null;
+    model_name: string;
+    supports_vision: boolean;
+    vision_source: 'declared' | 'catalog' | 'inferred';
+}
+
 export interface AdminSettingsResponse {
     settings: Json;
     admin_nav: import('./types').AdminNavGroup[];
@@ -180,6 +198,8 @@ export interface AdminSettingsResponse {
      * inferring it from the wording would be guesswork.
      */
     status_readouts?: Record<string, { ok: boolean; message: string }>;
+    /** Deployed models a `model-picker` field can offer. */
+    model_catalog?: AdminModelCatalogEntry[];
     version: string;
 }
 
