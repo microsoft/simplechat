@@ -69,6 +69,7 @@ from route_backend_v2 import (
     register_route_backend_v2,
     register_route_backend_v2_admin,
 )
+from route_backend_orchestration import register_route_backend_orchestration
 from route_backend_search import *
 from route_backend_conversations import *
 from route_backend_documents import *
@@ -1381,6 +1382,9 @@ register_route_blueprint('backend_chats', register_route_backend_chats, user_req
 # ------------------- API V2 UI Routes -------------------
 register_route_blueprint('backend_v2', register_route_backend_v2, user_required_blueprint)
 register_route_blueprint('backend_v2_admin', register_route_backend_v2_admin, admin_required_blueprint)
+
+# ------------------- API Orchestration Routes ----------
+register_route_blueprint('backend_orchestration', register_route_backend_orchestration, user_required_blueprint)
 
 # ------------------- API Search Routes ------------------
 register_route_blueprint('backend_search', register_route_backend_search, user_required_blueprint)

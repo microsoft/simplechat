@@ -65,6 +65,7 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
 
 export function App() {
     const { data, loading, error, authExpired, load } = useBootstrapStore();
+    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
     const loadUserSettings = useUserSettingsStore((state) => state.load);
     const fontSize = useUserSettingsStore(
         (state) => (state.settings.fontSizePreference as string) || 'm',
@@ -85,6 +86,38 @@ export function App() {
         // has to be picked back up and reported.
         startImageApprovalTracking();
     }, [load, loadUserSettings]);
+
+    /**
+     * Re-read the payload when the tab comes back to the front.
+     *
+     * Bootstrap decides what the interface offers -- which capabilities the composer draws,
+     * whether orchestration exists at all -- and it was otherwise fetched once at startup.
+     * The V2 admin surface refreshes it after its own saves, but the classic Admin Settings
+     * page is a different page in a different tab and cannot reach into this one. So the
+     * ordinary way to enable a feature left an open chat tab insisting the feature did not
+     * exist, with nothing on screen to explain why, until somebody thought to reload.
+     *
+     * Refreshing on re-focus closes that gap for every setting at once rather than for
+     * whichever one is being complained about. `refresh` is advisory -- it leaves the page
+     * alone if the request fails, and never shows the boot screen -- so the worst case of a
+     * spurious wake-up is one wasted request.
+     */
+    useEffect(() => {
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+                void refreshBootstrap();
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        // Also on window focus: switching between two windows of the same browser does not
+        // always change visibility, and moving from the admin page to the chat page is
+        // exactly that journey.
+        window.addEventListener('focus', onVisible);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onVisible);
+        };
+    }, [refreshBootstrap]);
 
     useEffect(() => {
         const title = data?.branding?.app_title;

@@ -97,7 +97,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.084"
+VERSION = "0.261.085"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -715,6 +715,18 @@ cosmos_group_workflow_runs_container = cosmos_database.create_container_if_not_e
 cosmos_group_workflow_run_items_container_name = "group_workflow_run_items"
 cosmos_group_workflow_run_items_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_workflow_run_items_container_name,
+    partition_key=PartitionKey(path="/run_id")
+)
+
+cosmos_orchestration_runs_container_name = "orchestration_runs"
+cosmos_orchestration_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_orchestration_runs_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_orchestration_run_steps_container_name = "orchestration_run_steps"
+cosmos_orchestration_run_steps_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_orchestration_run_steps_container_name,
     partition_key=PartitionKey(path="/run_id")
 )
 

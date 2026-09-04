@@ -55,6 +55,10 @@ from functions_branding_images import (
     prepare_favicon_image_for_storage,
     prepare_logo_image_for_storage,
 )
+from functions_orchestration_registry import (
+    build_capability_client_projection,
+    resolve_available_capabilities,
+)
 from functions_branding_urls import (
     FAVICON_STATIC_URL,
     LOGO_DARK_STATIC_URL,
@@ -402,6 +406,62 @@ def _build_capabilities(settings):
     }
 
 
+def _build_orchestration(settings, public_settings):
+    """Describe the chat orchestration surface the SPA has to render.
+
+    ``features`` forwards every ``enable_*`` boolean, so ``enable_chat_orchestration``
+    reaches the browser without help. The rest of the configuration does not: approval
+    mode, the countdown length and whether a user may override either are ordinary
+    settings values rather than flags, and the composer cannot decide what to draw without
+    them.
+
+    The capability list is resolved here rather than in the browser because it is the
+    answer to a question only the server can settle -- which capabilities this deployment's
+    gates currently permit, including the document actions whose enablement lives in a
+    nested capability record rather than in a flag. The projection carries labels and cost
+    classes so the plan card can name a step it did not choose.
+    """
+    enabled = bool(public_settings.get('enable_chat_orchestration'))
+
+    # Resolved from raw settings: the document action gate reads a nested record that
+    # sanitization leaves alone but which the public view is not guaranteed to carry.
+    capabilities = resolve_available_capabilities(
+        settings,
+        allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+    )
+
+    approval_mode = str(
+        public_settings.get('chat_orchestration_default_approval_mode') or 'manual'
+    ).strip().lower()
+    if approval_mode not in ('manual', 'timed', 'auto'):
+        approval_mode = 'manual'
+
+    try:
+        timed_seconds = int(public_settings.get('chat_orchestration_timed_approval_seconds') or 10)
+    except (TypeError, ValueError):
+        timed_seconds = 10
+    timed_seconds = max(3, min(timed_seconds, 120))
+
+    try:
+        max_steps = int(public_settings.get('chat_orchestration_max_steps') or 8)
+    except (TypeError, ValueError):
+        max_steps = 8
+
+    return {
+        'enabled': enabled,
+        'default_approval_mode': approval_mode,
+        'timed_approval_seconds': timed_seconds,
+        'allow_user_approval_override': bool(
+            public_settings.get('chat_orchestration_allow_user_approval_override', True)
+        ),
+        'show_manual_controls': bool(
+            public_settings.get('chat_orchestration_show_manual_controls', True)
+        ),
+        'max_steps': max_steps,
+        'capabilities': build_capability_client_projection(capabilities),
+    }
+
+
 def _build_notices(public_settings, user_settings_dict):
     """Describe the administrator-configured notices the chat surface must render.
 
@@ -619,6 +679,7 @@ def register_route_backend_v2(bp):
                 "navigation": _build_navigation(settings, current_user_roles),
                 "features": _build_feature_flags(public_settings, per_user_overrides),
                 "capabilities": _build_capabilities(settings),
+                "orchestration": _build_orchestration(settings, public_settings),
                 "catalogs": {
                     "models": models,
                     "agents": agents,

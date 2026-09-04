@@ -121,6 +121,123 @@ interface DeferredStreamError {
 }
 
 /**
+ * The outcome of reading one POST SSE response body to its end.
+ *
+ * Reported as data rather than through callbacks because the two consumers disagree about
+ * what a transport failure or an unterminated body means: chat can reattach to the live
+ * generation, while the orchestration client in `orchestration.ts` has no such endpoint and
+ * treats the same close as an error. Keeping `readSsePost` free of either interpretation is
+ * what lets both share it.
+ */
+export interface SseReadOutcome {
+    /** A frame that `onEvent` reported as terminal was seen; the stream ended cleanly. */
+    terminal: boolean;
+    /** The read stopped because its `AbortSignal` fired. */
+    aborted: boolean;
+    /** The transport threw for a reason other than an abort. Null when it did not. */
+    transportError: Error | null;
+    /** The body closed with no terminal frame and without an abort or a throw. */
+    endedWithoutTerminal: boolean;
+}
+
+/**
+ * Read a POST SSE response body, handing each decoded JSON event to `onEvent`, which returns
+ * true when the event is terminal and reading must stop.
+ *
+ * This is the single SSE framing implementation in the app. The byte pump, the `\n\n` frame
+ * delimiter, the legacy escaped-delimiter repair and the tolerance of a malformed frame all
+ * live here so that neither the chat client below nor the orchestration client reimplements
+ * them -- a second reader is exactly the kind of thing that drifts from this one and quietly
+ * starts losing frames. `onEvent` supplies the per-consumer meaning; the framing is shared.
+ */
+export async function readSsePost<TEvent>(
+    response: Response,
+    onEvent: (event: TEvent) => boolean,
+    signal?: AbortSignal,
+): Promise<SseReadOutcome> {
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let terminal = false;
+    let aborted = false;
+    let transportError: Error | null = null;
+
+    const handleFrame = (frame: string): boolean => {
+        const json = parseSseEventPayload(frame);
+        if (!json) {
+            return false;
+        }
+        try {
+            return onEvent(JSON.parse(json) as TEvent);
+        } catch {
+            // A malformed frame is skipped rather than killing an otherwise healthy stream;
+            // the terminal frame is what decides completion.
+            return false;
+        }
+    };
+
+    const drainBuffer = (flush: boolean): boolean => {
+        let delimiter = buffer.indexOf('\n\n');
+        while (delimiter !== -1) {
+            const frame = buffer.slice(0, delimiter);
+            buffer = buffer.slice(delimiter + 2);
+            if (handleFrame(frame)) {
+                return true;
+            }
+            delimiter = buffer.indexOf('\n\n');
+        }
+
+        if (flush) {
+            const trailing = buffer.trim();
+            buffer = '';
+            if (trailing) {
+                return handleFrame(trailing);
+            }
+        }
+
+        return false;
+    };
+
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+                buffer += normalizeLegacyEscapedSseDelimiters(decoder.decode());
+                terminal = drainBuffer(true);
+                break;
+            }
+
+            buffer += normalizeLegacyEscapedSseDelimiters(
+                decoder.decode(value, { stream: true }),
+            );
+
+            if (drainBuffer(false)) {
+                terminal = true;
+                break;
+            }
+        }
+    } catch (error) {
+        if (signal?.aborted) {
+            aborted = true;
+        } else {
+            transportError = error instanceof Error ? error : new Error('Stream read error');
+        }
+    } finally {
+        reader.cancel().catch(() => {
+            /* Reader already closed. */
+        });
+    }
+
+    return {
+        terminal,
+        aborted,
+        transportError,
+        endedWithoutTerminal: !terminal && !aborted && !transportError,
+    };
+}
+
+/**
  * Read one already-open SSE response to a terminal frame.
  *
  * Shared by the initial POST and by a reattached GET so both consume byte-for-byte the
@@ -134,10 +251,6 @@ async function consumeStreamResponse(
     signal: AbortSignal | undefined,
     reportError: (message: string, event?: ChatStreamEvent) => void,
 ): Promise<void> {
-    const reader = response.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
         if (event.error) {
@@ -186,78 +299,27 @@ async function consumeStreamResponse(
         return false;
     };
 
-    const handleFrame = (frame: string): boolean => {
-        const json = parseSseEventPayload(frame);
-        if (!json) {
-            return false;
-        }
-        try {
-            return handleEvent(JSON.parse(json) as ChatStreamEvent);
-        } catch {
-            // A malformed frame is skipped rather than killing an otherwise healthy
-            // stream; the terminal frame is what decides completion.
-            return false;
-        }
-    };
+    // The framing loop is `readSsePost`; only the mapping from its outcome to a chat result
+    // is chat's own. An abort is a Stop press rather than a failure, a transport throw is
+    // reported, and a body that closed without a terminal frame is the "ended unexpectedly"
+    // case that was previously inlined in the read loop.
+    const outcome = await readSsePost<ChatStreamEvent>(response, handleEvent, signal);
 
-    const drainBuffer = (flush: boolean): boolean => {
-        let delimiter = buffer.indexOf('\n\n');
-        while (delimiter !== -1) {
-            const frame = buffer.slice(0, delimiter);
-            buffer = buffer.slice(delimiter + 2);
-            if (handleFrame(frame)) {
-                return true;
-            }
-            delimiter = buffer.indexOf('\n\n');
-        }
-
-        if (flush) {
-            const trailing = buffer.trim();
-            buffer = '';
-            if (trailing) {
-                return handleFrame(trailing);
-            }
-        }
-
-        return false;
-    };
-
-    try {
-        for (;;) {
-            const { done, value } = await reader.read();
-
-            if (done) {
-                buffer += normalizeLegacyEscapedSseDelimiters(decoder.decode());
-                const terminal = drainBuffer(true);
-                if (!terminal && !result.completed && !result.cancelled && !result.errored) {
-                    // The connection closed without a terminal frame. Surfaced as an error
-                    // so the caller can offer a retry instead of leaving a half-written
-                    // message on screen with no explanation.
-                    result.errored = true;
-                    reportError('The response ended unexpectedly.');
-                }
-                break;
-            }
-
-            buffer += normalizeLegacyEscapedSseDelimiters(
-                decoder.decode(value, { stream: true }),
-            );
-
-            if (drainBuffer(false)) {
-                break;
-            }
-        }
-    } catch (error) {
-        if (signal?.aborted) {
-            result.cancelled = true;
-        } else {
-            result.errored = true;
-            reportError(error instanceof Error ? error.message : 'Stream read error');
-        }
-    } finally {
-        reader.cancel().catch(() => {
-            /* Reader already closed. */
-        });
+    if (outcome.aborted) {
+        result.cancelled = true;
+    } else if (outcome.transportError) {
+        result.errored = true;
+        reportError(outcome.transportError.message);
+    } else if (
+        outcome.endedWithoutTerminal &&
+        !result.completed &&
+        !result.cancelled &&
+        !result.errored
+    ) {
+        // Surfaced as an error so the caller can offer a retry instead of leaving a
+        // half-written message on screen with no explanation.
+        result.errored = true;
+        reportError('The response ended unexpectedly.');
     }
 }
 

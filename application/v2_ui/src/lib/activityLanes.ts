@@ -86,6 +86,38 @@ const LANE_RULES: LaneRule[] = [
         toolKinds: ['tabular_tool_invocation'],
     },
     {
+        // Orchestration is declared above the agent lane and not below it because a planned run
+        // dispatches capabilities that are themselves agent work: without a more specific rule the
+        // step-execution thoughts would be claimed by the agent lane and the plan's own progress
+        // would vanish into "Agent progress". Step executions are the countable unit here, the way
+        // tool calls are for tabular; synthesis is the post-gathering phase, so it drives the same
+        // wording switch tabular uses for its export.
+        key: 'orchestration',
+        title: 'Orchestration',
+        currentStepPrefix: 'Current step',
+        initialStatus: 'Planning the work',
+        completedStatus: 'Plan complete',
+        postProcessingInitialStatus: 'Synthesizing the answer',
+        postProcessingCompletedStatus: 'Answer ready',
+        unit: 'step',
+        mixedUnit: 'step',
+        kinds: [
+            'orchestration_planning',
+            'orchestration_step_execution',
+            'orchestration_synthesis',
+        ],
+        laneKeys: ['orchestration'],
+        plugins: [],
+        stepTypes: [
+            'orchestration_triage',
+            'orchestration_planning',
+            'orchestration_step',
+            'orchestration_synthesis',
+        ],
+        postProcessingKinds: ['orchestration_synthesis'],
+        toolKinds: ['orchestration_step_execution'],
+    },
+    {
         key: 'agent',
         title: 'Agent progress',
         currentStepPrefix: 'Current tool',

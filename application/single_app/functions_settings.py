@@ -1280,6 +1280,33 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_mixed_source_conversation_continuity': False,
         'enable_cross_format_compare': False,
         'enable_cross_format_compare_one_to_many': False,
+
+        # Chat orchestration. Deliberately prefixed `chat_orchestration_*` rather than
+        # `orchestration_*`, because `orchestration_type` and
+        # `enable_multi_agent_orchestration` above already mean something entirely
+        # different: which Semantic Kernel multi-agent pattern runs a selected agent.
+        # This is the plan/approve/execute layer over chat, and an administrator reading
+        # the settings document should not have to guess which is which.
+        'enable_chat_orchestration': False,
+        'chat_orchestration_default_approval_mode': 'manual',
+        'chat_orchestration_timed_approval_seconds': 10,
+        'chat_orchestration_allow_user_approval_override': True,
+        'chat_orchestration_show_manual_controls': True,
+        # Empty means every capability the deployment's other settings already allow.
+        # A non-empty list narrows the registry the planner is shown.
+        'chat_orchestration_enabled_capabilities': [],
+        'chat_orchestration_max_steps': 8,
+        'chat_orchestration_max_replans': 2,
+        'chat_orchestration_step_timeout_seconds': 180,
+        'chat_orchestration_total_timeout_seconds': 900,
+        'chat_orchestration_ledger_max_bytes': 16384,
+        'chat_orchestration_ledger_max_runs': 10,
+        # Planner model binding. Unset falls back to the deployment's default chat model,
+        # so orchestration works before an administrator picks a dedicated planner.
+        'chat_orchestration_planner_deployment': '',
+        'chat_orchestration_planner_model_id': '',
+        'chat_orchestration_planner_model_endpoint_id': '',
+        'chat_orchestration_planner_model_provider': '',
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,

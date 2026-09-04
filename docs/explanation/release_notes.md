@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.085)**
+
+#### New Features
+
+*   **Orchestration: Describe What You Want Instead Of Assembling The Request**
+    *   Answering a question well used to depend on choosing correctly before you had seen any results. You had to decide whether to search your documents and which ones, whether to search the web, whether to read the URLs you had pasted, which saved prompt to apply, which agent to use, and which model should answer — all in advance, from a row of controls under the message box.
+    *   **You now just ask.** SimpleChat works out what the question needs, shows you the plan it intends to follow, and runs it. Where an administrator has enabled orchestration the composer opens in it, with the capability toggles and the model, agent and reasoning pickers folded behind **Manual controls** rather than removed; file upload and voice input stay exactly where they are.
+    *   **You decide how much say you want.** A plan can wait for you to read it, run after a countdown you can interrupt, or run immediately. Administrators set the default and can decide whether users may change it.
+    *   **You can narrow a plan before it runs.** Steps can be switched off and documents removed. You cannot add to a plan this way — widening it goes back through planning, so a request never skips the reasoning and the permission check that produced it.
+    *   **Questions are asked in the conversation, as a card.** When the orchestrator genuinely cannot proceed without knowing something, it asks with a short form — choices to pick rather than prose to write — instead of a paragraph you have to answer in the thread. The card speaks the MCP elicitation contract, so an MCP server asking a question later will use the same card.
+    *   **The plan lives in the side panel, next to Contents and Documents.** A Run view shows the current plan with live progress, and a Map view shows every run in the conversation in order, so you can see what has already been searched and produced. Clicking a run jumps the conversation to the turn that produced it.
+    *   **Later turns reuse earlier work.** The planner is shown a bounded summary of what previous turns in the conversation already did, so a follow-up question depends on findings that already exist rather than searching for them again — and you are never asked a question you have already answered.
+    *   Orchestration reaches only capabilities that are already enabled, so it grants no new access to anyone. This release covers document search, document analysis, document comparison, spreadsheet analysis, web search and answering.
+    *   Available in the V2 interface. The classic interface is unchanged. Off by default.
+    *   (Ref: `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_executor.py`, `/api/v2/orchestration/plan`, `/api/v2/orchestration/run`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Orchestration settings](../admin/orchestration.md))
+
+#### Bug Fixes
+
+*   **Enabling A Feature No Longer Requires Reloading The Chat Tab**
+    *   The new interface read its configuration once, when the page first loaded. An administrator who turned a capability on in Admin Settings — which is a different page, usually a different tab — came back to an open chat that still insisted the capability did not exist, with nothing on screen to explain why.
+    *   The configuration is now re-read whenever the tab comes back to the front, so returning from Admin Settings is enough. This applies to every setting, not just the one that surfaced it.
+    *   (Ref: `bootstrapStore.refresh`, `App.tsx` visibility and focus handling)
+
 ### **(v0.261.084)**
 
 #### New Features
