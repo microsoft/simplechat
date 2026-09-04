@@ -12,12 +12,15 @@ import type { Json } from './types';
 export type AdminFieldType =
     | 'text'
     | 'textarea'
+    | 'secret'
     | 'select'
     | 'switch'
     | 'checkbox_set'
     | 'color'
     | 'range'
     | 'number'
+    | 'string_list'
+    | 'note'
     | 'image'
     | 'link_list'
     | 'entry_list'
@@ -33,20 +36,23 @@ export interface AdminFieldOption {
 /**
  * Shows a field only while a condition holds.
  *
- * `key` names another settings field. `flag` names a server-resolved runtime
- * flag instead, for a capability that is gated outside the settings document --
- * Inbound MCP is gated by an App Service application setting, so there is no
- * settings key to depend on.
+ * `key` names another settings field. `flag` names a server-resolved runtime flag
+ * instead, for a capability gated outside the settings document -- Inbound MCP is
+ * gated by an App Service application setting, so there is no settings key to
+ * depend on.
  *
- * `equals` is usually a boolean, because most gates are switches. A string
- * compares against a select's value, which is how the Agents page hides its
- * gradient colour unless the two-tone mode is chosen.
+ * `equals` is a string for a select, and a boolean for a switch. A field may carry one
+ * of these or an array of them, in which case every condition has to hold — Content
+ * Safety's key is gated on the capability, the routing choice and the auth type at once.
  */
-export interface AdminFieldDependency {
+export interface AdminFieldCondition {
     key?: string;
     flag?: string;
     equals: boolean | string;
 }
+
+/** One condition, or a chain of them that must all hold. */
+export type AdminFieldDependency = AdminFieldCondition | AdminFieldCondition[];
 
 /**
  * A confirmation an administrator must give before a capability may be switched on.
@@ -80,6 +86,12 @@ export interface AdminField {
     min_selected?: number;
     fallback_when_empty?: boolean;
     item_fields?: AdminField[];
+    /** Text fields only: the input type the browser should use. */
+    input_type?: 'text' | 'email' | 'url';
+    /** String list fields only: per-item character cap. */
+    max_item_length?: number;
+    /** Optional sub-heading grouping consecutive fields inside one section. */
+    group?: string;
     /** `id_list` and `group_picker`: the admin search endpoint that finds records. */
     search_endpoint?: string;
     /** `id_list` only: query parameter the endpoint reads the search term from. */
@@ -97,6 +109,8 @@ export interface AdminField {
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
+    /** Connection test components only: which `test_connection` branch to call. */
+    test_type?: string;
     /**
      * Path into a nested settings object this field reads and writes.
      *
@@ -109,8 +123,6 @@ export interface AdminField {
     readonly?: boolean;
     /** Where a read-only mirror is actually configured. */
     managed_by?: string;
-    /** Optional sub-heading grouping several fields inside one section. */
-    group?: string;
     /** Entry list fields only: what one row's identifier is called. */
     value_label?: string;
     /** Entry list fields only: what to say when the list is empty. */
@@ -127,12 +139,37 @@ export interface AdminField {
     notice?: string;
     notice_level?: 'info' | 'warning';
     /** One condition, or a chain that must all hold. */
-    depends_on?: AdminFieldDependency | AdminFieldDependency[];
+    depends_on?: AdminFieldCondition | AdminFieldCondition[];
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
 /** Section id -> ordered fields. Section ids come from `admin_settings_nav.py`. */
 export type AdminFieldSchema = Record<string, AdminField[]>;
+
+/** One rule deciding whether an enabled section is actually usable. */
+export interface AdminSectionConfiguredRule {
+    when?: Record<string, boolean>;
+    requires: string[];
+}
+
+/** Mirrors `ADMIN_SECTION_STATUS`. */
+export interface AdminSectionStatusRule {
+    enabled_key: string;
+    configured?: AdminSectionConfiguredRule[];
+}
+
+export type AdminSectionStatusSchema = Record<string, AdminSectionStatusRule>;
+
+/** One entry from `APP_ROLE_REQUIREMENTS`. */
+export interface AppRoleRequirement {
+    key: string;
+    role: string;
+    label: string;
+    section_id: string;
+    grants: string;
+    when_off: string;
+    depends_on: string | null;
+}
 
 export interface BrandingAsset {
     present: boolean;
@@ -146,6 +183,8 @@ export interface AdminSettingsResponse {
     settings: Json;
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
+    section_status: AdminSectionStatusSchema;
+    app_role_requirements: AppRoleRequirement[];
     branding_assets: BrandingAssets;
     /**
      * Server-resolved flags a navigation section may be conditional on.
@@ -251,7 +290,7 @@ export function asStringArray(value: unknown): string[] {
 }
 
 /** Every `depends_on` condition a field declares, whether one or a chain. */
-export function fieldDependencies(field: AdminField): AdminFieldDependency[] {
+export function fieldDependencies(field: AdminField): AdminFieldCondition[] {
     const dependency = field.depends_on;
     if (!dependency) {
         return [];
@@ -351,6 +390,57 @@ export function isSectionVisible(
     return asBoolean(readDependencyValue(condition, settings, draft, fieldsByKey));
 }
 
+/**
+ * The placeholder the server sends in place of a stored secret.
+ *
+ * Mirrors `ADMIN_SETTINGS_SECRET_REDACTED_VALUE`. The browser never receives the real
+ * value, so this is how a control tells "a secret is stored" apart from "no secret set".
+ */
+export const SECRET_PLACEHOLDER = '***REDACTED***';
+
+export type SectionStatus = 'off' | 'unconfigured' | 'on';
+
+/**
+ * Reduce a section to a single word an administrator can read without opening it.
+ *
+ * "Enabled" and "working" are not the same thing for an integration: Content Safety can
+ * be switched on with no endpoint, in which case it silently does nothing. `unconfigured`
+ * is that state, and it is the whole reason this exists rather than a plain on/off.
+ */
+export function evaluateSectionStatus(
+    rule: AdminSectionStatusRule | undefined,
+    settings: Json,
+    draft: Json,
+): SectionStatus | null {
+    if (!rule) {
+        return null;
+    }
+
+    const read = (key: string): unknown =>
+        Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key];
+
+    if (!asBoolean(read(rule.enabled_key))) {
+        return 'off';
+    }
+
+    for (const candidate of rule.configured ?? []) {
+        const applies = Object.entries(candidate.when ?? {}).every(
+            ([key, expected]) => asBoolean(read(key)) === expected,
+        );
+        if (!applies) {
+            continue;
+        }
+        // Blank means unset. A secret key would read as its placeholder here, which is
+        // correct: the placeholder means a value is stored, the browser just cannot see it.
+        const missing = candidate.requires.some((key) => !asString(read(key)).trim());
+        if (missing) {
+            return 'unconfigured';
+        }
+    }
+
+    return 'on';
+}
+
 /** Turn `enable_document_classification` into `Document classification`. */
 export function humanizeKey(key: string): string {
     const withoutPrefix = key.replace(/^enable_/, '').replace(/_/g, ' ').trim();
@@ -385,9 +475,11 @@ export type SectionBlock =
  * Lay a section's fields out as ordered blocks.
  *
  * A group appears where its first field does, so declaration order still decides what an
- * administrator reads first. Grouping exists because a section such as the Agents page
- * holds three unrelated concerns -- the hero, the guidance text, and promotions -- and a
- * flat list of eleven controls gives no clue which ones belong together.
+ * administrator reads first. Grouping exists because a section can hold several unrelated
+ * concerns -- the Agents page has its hero, its guidance text and its promotions, and Key
+ * Vault has its connection settings and its expiration reminders -- and a flat list of a
+ * dozen controls gives no clue which ones belong together. A group may also start closed,
+ * which is what keeps the always-on built-in actions out of the way.
  */
 export function buildSectionBlocks(fields: AdminField[]): SectionBlock[] {
     const blocks: SectionBlock[] = [];
@@ -421,6 +513,21 @@ export function buildSectionBlocks(fields: AdminField[]): SectionBlock[] {
 /** Settings that gate a capability behind an Entra app role. */
 export const APP_ROLE_KEY_PREFIX = 'require_member_of_';
 
+/**
+ * The other naming a role requirement uses.
+ *
+ * `file_sync_personal_require_app_role` is the reason this exists: it gates a capability
+ * behind an app role exactly like the `require_member_of_*` settings, but it is named
+ * after its feature instead, so a prefix test alone leaves it out of the roster.
+ */
+export const APP_ROLE_KEY_SUFFIX = '_require_app_role';
+
+export function isAppRoleKey(key: string | undefined): boolean {
+    return Boolean(
+        key && (key.startsWith(APP_ROLE_KEY_PREFIX) || key.endsWith(APP_ROLE_KEY_SUFFIX)),
+    );
+}
+
 /** One app role requirement, with the section that owns its primary control. */
 export interface AppRoleEntry {
     key: string;
@@ -429,6 +536,15 @@ export interface AppRoleEntry {
     groupLabel: string;
     tabLabel: string;
     sectionLabel: string;
+    sectionId: string;
+    /** From the server registry: the Entra role value to assign. */
+    role?: string;
+    /** What enforcing the requirement restricts. */
+    grants?: string;
+    /** Who keeps access while it is not enforced. */
+    whenOff?: string;
+    /** The capability this requirement is meaningless without, if any. */
+    dependsOn?: string | null;
 }
 
 /**
@@ -440,30 +556,41 @@ export interface AppRoleEntry {
  * what puts the entries in the order the rest of the page uses, and it silently drops a
  * field filed under a section navigation does not define, which could never be reached.
  *
- * Only declared fields are visible: the page's `enable_*` fallback scan cannot see a
- * `require_member_of_*` key, so an undeclared role requirement appears nowhere at all and
- * would be missing from the roster for the same reason.
+ * The schema is the source of which requirements exist, because the page's `enable_*`
+ * fallback scan cannot see a role key: an undeclared one appears nowhere at all. The
+ * server registry supplies what the schema does not carry -- the Entra role value, and
+ * what changes in each direction -- keyed by settings key, so a requirement missing from
+ * the registry still renders, just without that detail.
  */
 export function collectAppRoleEntries(
     nav: import('./types').AdminNavGroup[],
     schema: AdminFieldSchema,
+    requirements: AppRoleRequirement[] = [],
 ): AppRoleEntry[] {
+    const byKey = new Map(requirements.map((entry) => [entry.key, entry]));
     const entries: AppRoleEntry[] = [];
 
     for (const group of nav) {
         for (const tab of group.tabs) {
             for (const section of tab.sections) {
                 for (const field of schema[section.id] ?? []) {
-                    if (!field.key?.startsWith(APP_ROLE_KEY_PREFIX)) {
+                    if (!isAppRoleKey(field.key)) {
                         continue;
                     }
+                    const key = field.key as string;
+                    const registered = byKey.get(key);
                     entries.push({
-                        key: field.key,
+                        key,
                         label: field.label,
                         help: field.help,
                         groupLabel: group.label,
                         tabLabel: tab.label,
                         sectionLabel: section.label,
+                        sectionId: section.id,
+                        role: registered?.role,
+                        grants: registered?.grants,
+                        whenOff: registered?.when_off,
+                        dependsOn: registered?.depends_on ?? null,
                     });
                 }
             }
