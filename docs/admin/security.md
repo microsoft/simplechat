@@ -7,6 +7,7 @@ audience: admin
 admin_tab: security
 redirect_from:
   - /admin/safety/
+  - /admin/workspace-identities/
 ---
 
 
@@ -40,24 +41,48 @@ SimpleChat recognises a general `Admin` role and a set of narrower Entra app rol
 
 ### Permissions {#permissions-section}
 
-Two admin reports can be restricted to their own roles rather than being open to every administrator: the Safety Violations report and the User Feedback report. Both contain what users actually typed, so deployments that treat administration as a shared duty but those reports as sensitive will want them narrowed.
+### Permissions {#permissions-section}
 
-Assign the role in the Enterprise App before enabling the requirement. Enabling first locks out every administrator, including you.
+Two administrative reports can be narrowed beyond the general Admin role: Safety Violations,
+which shows flagged message text, and User Feedback. Both are readable by any Admin unless a
+dedicated role is required here, so these are the settings to reach for when "administrator"
+and "may read what users typed" should not be the same group of people.
+
+The FeedbackAdmin requirement only governs the User Feedback report, so it does nothing until
+User Feedback is enabled under Chat.
+
+Assign the role in the Enterprise App before enabling the requirement. Enabling it first locks
+out every administrator, including you.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Require the SafetyViolationAdmin app role | Restricts the Safety Violations report to accounts holding `SafetyViolationAdmin`. Left off, any account with `Admin` can open it. | Off | `require_member_of_safety_violation_admin` |
-| Require the FeedbackAdmin app role | Restricts the User Feedback report to accounts holding `FeedbackAdmin`. Left off, any account with `Admin` can open it. Has no effect while User Feedback is disabled. | Off | `require_member_of_feedback_admin` |
+| Require SafetyViolationAdmin App Role | Narrows the Safety Violations report, including the flagged message text, to holders of the `SafetyViolationAdmin` role. Left off, any account with `Admin` can open it. | Off | `require_member_of_safety_violation_admin` |
+| Require FeedbackAdmin App Role | Narrows the User Feedback report to holders of the `FeedbackAdmin` role. Has no effect until User Feedback is enabled under Chat. | Off | `require_member_of_feedback_admin` |
 
 ### App Role Requirements {#app-role-requirements-section}
 
-Role requirements are decided on the tab that owns each feature, which keeps each decision in context but scatters the access policy across seven tabs. This section gathers all of them so the policy can be read as a whole.
+Every setting in the application that can demand an Entra app role, gathered in one place.
+Each switch is the same stored value as the one on the tab that owns the feature, not a copy
+of it, so changing it here changes it there.
 
-Each row names the exact Entra app role value to assign, states what enforcing it restricts and who retains access when it is left off, and links to the tab that owns it. The switches are the real settings, so changing one here changes it there. A requirement whose feature is currently switched off is marked as having no effect, because enforcing a role for a disabled feature looks like protection and is not.
+The reason for the duplication is that a role requirement read on its own tells you very
+little. Read together they are the deployment's access policy, and deciding whether that
+policy is coherent -- whether the same people can create groups, publish public workspaces,
+run workflows and read the Control Center -- means seeing all of them at once.
 
-The eleven requirements cover the two admin reports above, Control Center access and its dashboard-only tier, group and public workspace creation, chat file uploads, personal workflows, URL Access, Deep Research, and personal workspace file sync.
+Each row names the exact Entra app role value to assign, states what enforcing it restricts
+and who retains access when it is left off, and links to the tab that owns it. A requirement
+whose feature is currently switched off is marked as having no effect, because enforcing a
+role for a disabled feature looks like protection and is not.
+
+The eleven requirements cover the two admin reports above, Control Center access and its
+dashboard-only tier, group and public workspace creation, chat file uploads, personal
+workflows, URL Access, Deep Research, and personal workspace file sync.
+
+Assign a role in the Enterprise App before requiring it. Switching a requirement on before
+anyone holds the role removes the capability from everybody.
 
 ### Access Denied Message {#access-denied-message-section}
 
@@ -97,6 +122,26 @@ SimpleChat does not send the reminder emails. It raises them in-app and emits an
 | Scan interval (seconds) | How often the background sweep re-checks tracked secrets. Accepts 900 to 86400. | 21600 | `key_vault_secret_expiration_scan_interval_seconds` |
 | Require an expiration date when users enable tracking | Refuses to create a tracked secret with no expiry date, since it could never raise a reminder. | Off | `key_vault_secret_expiration_require_expiration` |
 | Include the contact email in external telemetry | Adds `contact_email` to the Application Insights reminder event. Enable only when downstream automation needs the address, since it puts an email address into telemetry. | Off | `key_vault_secret_expiration_emit_contact_email_in_telemetry` |
+
+## Global Identities {#workspace-identities}
+
+### Global Identities {#workspace-identities-section}
+
+A global identity is a credential for a system SimpleChat connects out to -- a SharePoint
+site, an HTTP API behind a key, a database -- saved once and referenced by name everywhere it
+is used. It is not an account for signing in to SimpleChat. Two things consume them: File
+Sync sources, which authenticate when they pull documents, and actions, which authenticate
+when an agent calls out.
+
+Storing the credential once and referencing it by name means the secret itself never travels
+with a source or action configuration, never appears in an export, and can be rotated in one
+place. Where Key Vault is configured, the secret is held there rather than in the settings
+document, which is why this sits next to Secrets rather than with the features that use it.
+
+An identity that is still referenced by a File Sync source or an action cannot be deleted;
+remove the reference first.
+
+{% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities tab in Admin Settings." title="Global Identities" %}
 
 ## Content Safety {#content-safety}
 
