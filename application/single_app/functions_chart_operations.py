@@ -230,6 +230,8 @@ def build_proactive_chart_guidance_message():
         "Use tool-backed tabular results, computed aggregates, or explicitly cited source values as chart data. Do not invent values, and summarize omitted categories when charting top-N slices. "
         "When a chart action/tool is available, call it for each useful chart and insert the returned chart_markdown exactly where the visual belongs in the generated content. "
         f"Use SimpleChat inline chart blocks only: emit compact ```{INLINE_CHART_BLOCK_LANGUAGE}``` blocks with version 1, kind, chartType, title, data.labels, data.datasets, options, and summary fields when a tool call cannot return chart_markdown. "
+        "Set options that make the chart readable rather than leaving the reader to fix it: xAxisLabel and yAxisLabel whenever the axes are not self-explanatory, beginAtZero false only when the differences would otherwise be invisible, "
+        "yScale 'logarithmic' when the values span orders of magnitude, yMin and yMax when a fixed range is what makes two charts comparable, xTickRotation and xTickLimit when the category names are long or numerous, and barWidth, lineWidth or pointRadius when the default weight obscures the data. "
         "Do not output matplotlib/Python, Vega, Mermaid, or other plotting code blocks as the visual chart response unless the user explicitly asks for source code instead of an inline chart. "
         "Mermaid is not a substitute for a data chart, but it is still the correct format for structural pictures: when the same answer also needs a process flow, architecture, sequence, state, or entity-relationship diagram, use a ```mermaid``` block for that diagram alongside the inline charts."
     )

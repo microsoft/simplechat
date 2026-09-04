@@ -1,5 +1,7 @@
 // chat-inline-charts.js
 
+import { applyStoredBlockRevisions, fingerprintSource } from './chat-block-revisions.js';
+
 const INLINE_CHART_LANGUAGE = 'simplechart';
 const INLINE_CHART_REGEX = new RegExp(`\`\`\`${INLINE_CHART_LANGUAGE}\\s*([\\s\\S]*?)\`\`\``, 'gi');
 const INLINE_CHART_PENDING_REGEX = new RegExp(`\`\`\`${INLINE_CHART_LANGUAGE}\\b[\\s\\S]*$`, 'i');
@@ -115,6 +117,14 @@ function sanitizeNumber(value) {
 
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sanitizeBoundedNumber(value, minimum, maximum, fallback) {
+    const parsed = sanitizeNumber(value);
+    if (parsed === null) {
+        return fallback;
+    }
+    return Math.min(Math.max(parsed, minimum), maximum);
 }
 
 function sanitizeColor(value, fallback) {
@@ -356,6 +366,11 @@ function parseInlineChartPayload(payloadText) {
     }
 }
 
+/** A fence body, read and sanitised into the spec the renderer draws from. */
+function parseInlineChartSource(source) {
+    return normalizeChartSpec(parseInlineChartPayload(source));
+}
+
 function normalizePoint(point, kind) {
     if (!point || typeof point !== 'object') {
         return null;
@@ -380,7 +395,7 @@ function normalizePoint(point, kind) {
     return normalized;
 }
 
-function normalizeDatasets(kind, rawDatasets, labels) {
+function normalizeDatasets(kind, rawDatasets, labels, options) {
     if (!Array.isArray(rawDatasets) || rawDatasets.length === 0) {
         return [];
     }
@@ -391,7 +406,7 @@ function normalizeDatasets(kind, rawDatasets, labels) {
             label: sanitizeText(dataset?.label || `Series ${datasetIndex + 1}`, 80),
             borderColor: sanitizeColor(dataset?.borderColor, palette.border),
             backgroundColor: sanitizeColor(dataset?.backgroundColor, palette.background),
-            borderWidth: 2
+            borderWidth: options.lineWidth
         };
 
         if (kind === 'scatter' || kind === 'bubble') {
@@ -405,12 +420,16 @@ function normalizeDatasets(kind, rawDatasets, labels) {
         }
 
         if (kind === 'line' || kind === 'area' || kind === 'stacked_line') {
-            normalized.fill = dataset?.fill === true || kind === 'area';
-            normalized.tension = dataset?.tension === 0 ? 0 : 0.35;
+            normalized.fill = dataset?.fill === true || options.fill || kind === 'area';
+            normalized.tension = !options.smooth || dataset?.tension === 0 ? 0 : 0.35;
         }
 
         if (kind === 'radar') {
-            normalized.fill = dataset?.fill === true;
+            normalized.fill = dataset?.fill === true || options.fill;
+        }
+
+        if (kind !== 'bubble' && kind !== 'bar' && kind !== 'stacked_bar') {
+            normalized.pointRadius = options.pointRadius;
         }
 
         if ((kind === 'pie' || kind === 'doughnut' || kind === 'polar_area') && Array.isArray(labels) && labels.length) {
@@ -474,10 +493,6 @@ function normalizeChartSpec(rawSpec) {
     const labels = Array.isArray(rawData.labels)
         ? rawData.labels.slice(0, 200).map(label => sanitizeText(label, 80))
         : [];
-    const datasets = normalizeDatasets(kind, rawData.datasets, labels);
-    if (!datasets.length) {
-        return null;
-    }
 
     const rawOptions = rawSpec.options && typeof rawSpec.options === 'object' && !Array.isArray(rawSpec.options)
         ? rawSpec.options
@@ -492,6 +507,8 @@ function normalizeChartSpec(rawSpec) {
         ? rawOptions.plugins.legend
         : {};
     const legendPosition = sanitizeText(rawOptions.legendPosition || rawLegendOptions.position || 'top', 10).toLowerCase();
+    const scaleType = sanitizeText(rawOptions.yScale, 20).toLowerCase();
+    const tickLimit = sanitizeNumber(rawOptions.xTickLimit);
     const normalizedOptions = {
         legendPosition: ['top', 'bottom', 'left', 'right'].includes(legendPosition) ? legendPosition : 'top',
         showLegend: rawOptions.showLegend !== false && rawLegendOptions.display !== false,
@@ -503,8 +520,23 @@ function normalizeChartSpec(rawSpec) {
         stacked: Boolean(rawOptions.stacked) || kind === 'stacked_bar' || kind === 'stacked_line',
         xAxisLabel: sanitizeText(rawOptions.xAxisLabel, 80),
         yAxisLabel: sanitizeText(rawOptions.yAxisLabel, 80),
-        cutout: sanitizeText(rawOptions.cutout || '60%', 20)
+        cutout: sanitizeText(rawOptions.cutout || '60%', 20),
+        yMin: sanitizeNumber(rawOptions.yMin),
+        yMax: sanitizeNumber(rawOptions.yMax),
+        yScale: scaleType === 'logarithmic' ? 'logarithmic' : 'linear',
+        xTickRotation: sanitizeBoundedNumber(rawOptions.xTickRotation, 0, 90, 0),
+        // A limit below two would leave an axis with nothing readable on it.
+        xTickLimit: tickLimit === null ? null : Math.min(Math.max(Math.round(tickLimit), 2), 200),
+        barWidth: sanitizeBoundedNumber(rawOptions.barWidth, 0.1, 1, 0.9),
+        lineWidth: sanitizeBoundedNumber(rawOptions.lineWidth, 0, 10, 2),
+        pointRadius: sanitizeBoundedNumber(rawOptions.pointRadius, 0, 20, 3),
+        showGridX: rawOptions.showGridX !== false,
+        showGridY: rawOptions.showGridY !== false
     };
+    const datasets = normalizeDatasets(kind, rawData.datasets, labels, normalizedOptions);
+    if (!datasets.length) {
+        return null;
+    }
 
     return {
         version: Number(rawSpec.version) || 1,
@@ -617,6 +649,34 @@ function createInlineChartToken(blocks, block) {
     return `\n\n${token}\n\n`;
 }
 
+/**
+ * Swap in the current version of any chart that has been edited in the V2 client.
+ *
+ * A chart block carries its parsed spec rather than the fence body, so the revision is put back
+ * through the same parser and sanitiser the original payload went through. A revision that no
+ * longer parses leaves the original chart on screen, which is the same way every other failure
+ * here degrades.
+ *
+ * The resolution rules live in chat-block-revisions.js, shared with diagrams.
+ */
+export function applyStoredChartRevisions(blocks, blockRevisions) {
+    return applyStoredBlockRevisions(
+        blocks,
+        blockRevisions,
+        INLINE_CHART_LANGUAGE,
+        (block, source) => {
+            const spec = parseInlineChartSource(source);
+            if (!spec) {
+                return null;
+            }
+            // The error the original payload may have carried does not describe this version.
+            const { error, ...resolved } = block;
+            void error;
+            return { ...resolved, spec };
+        },
+    );
+}
+
 function replaceAllOccurrences(source, target, replacement) {
     return source.split(target).join(replacement);
 }
@@ -657,26 +717,62 @@ function buildChartJsConfig(spec) {
     }
 
     if (['bar', 'line', 'scatter', 'bubble'].includes(baseType)) {
-        config.options.scales = {
-            x: {
-                stacked: spec.options.stacked,
-                title: {
-                    display: Boolean(spec.options.xAxisLabel),
-                    text: spec.options.xAxisLabel
-                }
+        const horizontal = spec.options.horizontal && baseType === 'bar';
+        const valueAxis = horizontal ? 'x' : 'y';
+        const categoryAxis = horizontal ? 'y' : 'x';
+        const logarithmic = spec.options.yScale === 'logarithmic';
+        const valueScale = {
+            stacked: spec.options.stacked,
+            beginAtZero: !logarithmic && spec.options.beginAtZero,
+            grid: {
+                display: horizontal ? spec.options.showGridX : spec.options.showGridY
             },
-            y: {
-                stacked: spec.options.stacked,
-                beginAtZero: spec.options.beginAtZero,
-                title: {
-                    display: Boolean(spec.options.yAxisLabel),
-                    text: spec.options.yAxisLabel
-                }
+            title: {
+                display: Boolean(spec.options.yAxisLabel),
+                text: spec.options.yAxisLabel
             }
         };
+        if (logarithmic) {
+            valueScale.type = 'logarithmic';
+        }
+        if (spec.options.yMin !== null && (!logarithmic || spec.options.yMin > 0)) {
+            valueScale.min = spec.options.yMin;
+        }
+        if (spec.options.yMax !== null) {
+            valueScale.max = spec.options.yMax;
+        }
 
-        if (spec.options.horizontal && baseType === 'bar') {
+        const categoryTicks = {};
+        if (spec.options.xTickRotation > 0) {
+            categoryTicks.minRotation = spec.options.xTickRotation;
+            categoryTicks.maxRotation = spec.options.xTickRotation;
+        }
+        if (spec.options.xTickLimit !== null) {
+            categoryTicks.maxTicksLimit = spec.options.xTickLimit;
+        }
+
+        const categoryScale = {
+            stacked: spec.options.stacked,
+            ticks: categoryTicks,
+            grid: {
+                display: horizontal ? spec.options.showGridY : spec.options.showGridX
+            },
+            title: {
+                display: Boolean(spec.options.xAxisLabel),
+                text: spec.options.xAxisLabel
+            }
+        };
+        config.options.scales = {
+            [valueAxis]: valueScale,
+            [categoryAxis]: categoryScale
+        };
+
+        if (horizontal) {
             config.options.indexAxis = 'y';
+        }
+
+        if (baseType === 'bar') {
+            config.options.barPercentage = spec.options.barWidth;
         }
     }
 
@@ -687,7 +783,11 @@ function buildChartJsConfig(spec) {
     if (baseType === 'radar') {
         config.options.scales = {
             r: {
-                beginAtZero: spec.options.beginAtZero
+                beginAtZero: spec.options.beginAtZero,
+                ...(spec.options.yMin !== null ? { min: spec.options.yMin } : {}),
+                ...(spec.options.yMax !== null ? { max: spec.options.yMax } : {}),
+                grid: { display: spec.options.showGridY },
+                angleLines: { display: spec.options.showGridX }
             }
         };
     }
@@ -931,16 +1031,20 @@ function bindChartColorControls(container, spec) {
 export function extractInlineChartBlocks(markdownText = '') {
     const blocks = [];
     let markdown = String(markdownText ?? '').replace(INLINE_CHART_REGEX, (match, payload) => {
-        const parsed = parseInlineChartPayload(payload);
-        const spec = normalizeChartSpec(parsed);
+        const spec = parseInlineChartSource(payload);
         if (!spec) {
             return createInlineChartToken(blocks, {
                 originalBlock: match,
+                sourceHash: fingerprintSource(payload),
                 error: 'The chart data format was not recognized.'
             });
         }
 
-        return createInlineChartToken(blocks, { spec, originalBlock: match });
+        return createInlineChartToken(blocks, {
+            spec,
+            sourceHash: fingerprintSource(payload),
+            originalBlock: match
+        });
     });
 
     markdown = markdown.replace(INLINE_CHART_PENDING_REGEX, match => createInlineChartToken(blocks, {
