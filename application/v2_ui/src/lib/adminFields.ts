@@ -12,15 +12,19 @@ import type { Json } from './types';
 export type AdminFieldType =
     | 'text'
     | 'textarea'
+    | 'secret'
     | 'select'
     | 'switch'
     | 'checkbox_set'
     | 'color'
     | 'range'
     | 'number'
-    | 'password'
+    | 'string_list'
+    | 'note'
     | 'image'
     | 'link_list'
+    | 'id_list'
+    | 'group_picker'
     | 'component';
 
 export interface AdminFieldOption {
@@ -31,14 +35,17 @@ export interface AdminFieldOption {
 /**
  * Shows a field only while another field holds a given value.
  *
- * `equals` is a boolean for a capability toggle and a string for a choice, such as an
- * authentication type. A string is compared as a string rather than for truthiness,
- * because every non-empty choice is truthy and so would satisfy every condition.
+ * `equals` is a string for a select, and a boolean for a switch. A field may carry one
+ * of these or an array of them, in which case every condition has to hold — Content
+ * Safety's key is gated on the capability, the routing choice and the auth type at once,
+ * and an Azure OpenAI key is gated on both the direct-connection route and the auth type.
  */
-export interface AdminFieldDependency {
+export interface AdminFieldCondition {
     key: string;
     equals: boolean | string;
 }
+
+export type AdminFieldDependency = AdminFieldCondition | AdminFieldCondition[];
 
 /**
  * A confirmation an administrator must give before a capability may be switched on.
@@ -72,18 +79,71 @@ export interface AdminField {
     min_selected?: number;
     fallback_when_empty?: boolean;
     item_fields?: AdminField[];
+    /** Text fields only: the input type the browser should use. */
+    input_type?: 'text' | 'email' | 'url';
+    /** String list fields only: per-item character cap. */
+    max_item_length?: number;
+    /** Optional sub-heading grouping consecutive fields inside one section. */
+    group?: string;
+    /** `id_list` and `group_picker`: the admin search endpoint that finds records. */
+    search_endpoint?: string;
+    /** `id_list` only: query parameter the endpoint reads the search term from. */
+    search_param?: string;
+    /** `id_list` only: fixed query parameters sent with every search. */
+    search_extra?: Record<string, string>;
+    /** `id_list` only: property on the response holding the result array. */
+    results_key?: string;
+    /** `id_list` only: what one assignable record is called, for summaries. */
+    item_noun?: string;
+    item_noun_plural?: string;
     /** Image fields only: which branding slot the upload endpoint should write. */
     upload_target?: 'logo' | 'logo_dark' | 'favicon';
     accept?: string;
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
+    /** Connection test components only: which `test_connection` branch to call. */
+    test_type?: string;
+    /**
+     * Standing guidance shown as a callout beneath the control.
+     *
+     * Distinct from `help`, which describes what the setting does, and from the
+     * server's per-save `warnings`, which react to a submitted value. A notice is
+     * an operational caveat that is true whenever the setting is on screen.
+     */
+    notice?: string;
+    notice_level?: 'info' | 'warning';
     depends_on?: AdminFieldDependency;
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
 /** Section id -> ordered fields. Section ids come from `admin_settings_nav.py`. */
 export type AdminFieldSchema = Record<string, AdminField[]>;
+
+/** One rule deciding whether an enabled section is actually usable. */
+export interface AdminSectionConfiguredRule {
+    when?: Record<string, boolean>;
+    requires: string[];
+}
+
+/** Mirrors `ADMIN_SECTION_STATUS`. */
+export interface AdminSectionStatusRule {
+    enabled_key: string;
+    configured?: AdminSectionConfiguredRule[];
+}
+
+export type AdminSectionStatusSchema = Record<string, AdminSectionStatusRule>;
+
+/** One entry from `APP_ROLE_REQUIREMENTS`. */
+export interface AppRoleRequirement {
+    key: string;
+    role: string;
+    label: string;
+    section_id: string;
+    grants: string;
+    when_off: string;
+    depends_on: string | null;
+}
 
 export interface BrandingAsset {
     present: boolean;
@@ -97,7 +157,17 @@ export interface AdminSettingsResponse {
     settings: Json;
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
+    section_status: AdminSectionStatusSchema;
+    app_role_requirements: AppRoleRequirement[];
     branding_assets: BrandingAssets;
+    /**
+     * `enable_*` keys the fallback scan must not draw.
+     *
+     * Some booleans in the settings document are derived or are staged rollout flags
+     * with no administrator control. A switch for one would appear to save and then
+     * revert, so the server names them and the scan skips them.
+     */
+    suppressed_capabilities: string[];
     version: string;
 }
 
@@ -178,85 +248,80 @@ export function asStringArray(value: unknown): string[] {
 }
 
 /**
- * Whether a field's `depends_on` condition is currently satisfied.
+ * Whether every `depends_on` condition on a field currently holds.
  *
- * Two behaviours beyond the plain comparison, both of which exist because the server
- * schema is flat while the panes it mirrors are nested:
- *
- *   - A field whose dependency is itself hidden is hidden too. The Azure OpenAI key sits
- *     inside the direct-connection block *and* inside the key-authentication block on the
- *     server-rendered page; a single `depends_on` can only express one of those, so the
- *     other is inherited from the field it depends on. Without this, switching a section
- *     to APIM would leave the direct connection's key on screen.
- *   - A dependency with no stored value falls back to the declared default of the field
- *     it names, because that is what the application would be applying. Reading an absent
- *     value as empty would permanently hide anything conditional on a non-empty default.
- *
- * `siblings` supplies the fields the dependency may name; pass the section's own list.
+ * A boolean `equals` is compared loosely, because a switch value arriving from a stored
+ * settings document may be `"on"` rather than `true`. A string `equals` is compared as a
+ * string, which is what a select needs.
  */
-export function isFieldVisible(
-    field: AdminField,
-    settings: Json,
-    draft: Json,
-    siblings: AdminField[] = [],
-    seen: Set<string> = new Set(),
-): boolean {
+export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
     const dependency = field.depends_on;
     if (!dependency) {
         return true;
     }
+    const conditions = Array.isArray(dependency) ? dependency : [dependency];
 
-    const stored = Object.prototype.hasOwnProperty.call(draft, dependency.key)
-        ? draft[dependency.key]
-        : settings[dependency.key];
-
-    const parent = siblings.find((candidate) => candidate.key === dependency.key);
-    const current = stored === undefined || stored === null ? parent?.default : stored;
-
-    const satisfied =
-        typeof dependency.equals === 'string'
-            ? asString(current) === dependency.equals
-            : asBoolean(current) === dependency.equals;
-
-    if (!satisfied) {
-        return false;
-    }
-
-    // A malformed schema could describe a cycle, and the schema test only rejects a
-    // field depending on itself. Stopping at a repeat keeps a bad declaration from
-    // hanging the page.
-    if (!parent || !field.key || seen.has(field.key)) {
-        return true;
-    }
-    return isFieldVisible(parent, settings, draft, siblings, new Set(seen).add(field.key));
+    return conditions.every((condition) => {
+        const current = Object.prototype.hasOwnProperty.call(draft, condition.key)
+            ? draft[condition.key]
+            : settings[condition.key];
+        return typeof condition.equals === 'boolean'
+            ? asBoolean(current) === condition.equals
+            : asString(current) === condition.equals;
+    });
 }
 
 /**
- * Whether a secret is already stored for a password field.
+ * The placeholder the server sends in place of a stored secret.
  *
- * Only presence is reported, never the value. The password control is write-only, so
- * the page has to be able to say "a key is stored" without putting that key into a
- * form control to find out.
+ * Mirrors `ADMIN_SETTINGS_SECRET_REDACTED_VALUE`. The browser never receives the real
+ * value, so this is how a control tells "a secret is stored" apart from "no secret set",
+ * and sending it back unchanged is what tells the server to keep the stored credential
+ * rather than overwrite it with this string.
  */
-export function hasStoredSecret(settings: Json, key: string | undefined): boolean {
-    if (!key) {
-        return false;
-    }
-    const stored = settings[key];
-    return typeof stored === 'string' && stored.trim().length > 0;
-}
+export const SECRET_PLACEHOLDER = '***REDACTED***';
+
+export type SectionStatus = 'off' | 'unconfigured' | 'on';
 
 /**
- * What a password control shows: what has been typed this session, and nothing else.
+ * Reduce a section to a single word an administrator can read without opening it.
  *
- * `null` is an explicit removal held in the draft. It renders as an empty box with a
- * pending-removal note rather than as the word "null".
+ * "Enabled" and "working" are not the same thing for an integration: Content Safety can
+ * be switched on with no endpoint, in which case it silently does nothing. `unconfigured`
+ * is that state, and it is the whole reason this exists rather than a plain on/off.
  */
-export function readSecretValue(field: AdminField, draft: Json): unknown {
-    if (!field.key || !Object.prototype.hasOwnProperty.call(draft, field.key)) {
-        return '';
+export function evaluateSectionStatus(
+    rule: AdminSectionStatusRule | undefined,
+    settings: Json,
+    draft: Json,
+): SectionStatus | null {
+    if (!rule) {
+        return null;
     }
-    return draft[field.key];
+
+    const read = (key: string): unknown =>
+        Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key];
+
+    if (!asBoolean(read(rule.enabled_key))) {
+        return 'off';
+    }
+
+    for (const candidate of rule.configured ?? []) {
+        const applies = Object.entries(candidate.when ?? {}).every(
+            ([key, expected]) => asBoolean(read(key)) === expected,
+        );
+        if (!applies) {
+            continue;
+        }
+        // Blank means unset. A secret key would read as its placeholder here, which is
+        // correct: the placeholder means a value is stored, the browser just cannot see it.
+        const missing = candidate.requires.some((key) => !asString(read(key)).trim());
+        if (missing) {
+            return 'unconfigured';
+        }
+    }
+
+    return 'on';
 }
 
 /** Turn `enable_document_classification` into `Document classification`. */
@@ -273,7 +338,103 @@ export function countWords(text: string): number {
 
 /** Text a field contributes to the page search index. */
 export function fieldSearchText(field: AdminField): string {
-    return [field.key ?? '', field.label, field.help ?? '', field.component ?? '']
+    return [
+        field.key ?? '',
+        field.label,
+        field.help ?? '',
+        field.notice ?? '',
+        field.component ?? '',
+    ]
         .join(' ')
         .toLowerCase();
+}
+
+/** Settings that gate a capability behind an Entra app role. */
+export const APP_ROLE_KEY_PREFIX = 'require_member_of_';
+
+/**
+ * The other naming a role requirement uses.
+ *
+ * `file_sync_personal_require_app_role` is the reason this exists: it gates a capability
+ * behind an app role exactly like the `require_member_of_*` settings, but it is named
+ * after its feature instead, so a prefix test alone leaves it out of the roster.
+ */
+export const APP_ROLE_KEY_SUFFIX = '_require_app_role';
+
+export function isAppRoleKey(key: string | undefined): boolean {
+    return Boolean(
+        key && (key.startsWith(APP_ROLE_KEY_PREFIX) || key.endsWith(APP_ROLE_KEY_SUFFIX)),
+    );
+}
+
+/** One app role requirement, with the section that owns its primary control. */
+export interface AppRoleEntry {
+    key: string;
+    label: string;
+    help?: string;
+    groupLabel: string;
+    tabLabel: string;
+    sectionLabel: string;
+    sectionId: string;
+    /** From the server registry: the Entra role value to assign. */
+    role?: string;
+    /** What enforcing the requirement restricts. */
+    grants?: string;
+    /** Who keeps access while it is not enforced. */
+    whenOff?: string;
+    /** The capability this requirement is meaningless without, if any. */
+    dependsOn?: string | null;
+}
+
+/**
+ * Collect every declared app role requirement, in navigation order.
+ *
+ * The roster in Security mirrors switches that live on other tabs, so it has to know
+ * where each one really belongs -- an administrator who flips a role here should be able
+ * to find the feature it governs. Walking the navigation rather than the schema dict is
+ * what puts the entries in the order the rest of the page uses, and it silently drops a
+ * field filed under a section navigation does not define, which could never be reached.
+ *
+ * The schema is the source of which requirements exist, because the page's `enable_*`
+ * fallback scan cannot see a role key: an undeclared one appears nowhere at all. The
+ * server registry supplies what the schema does not carry -- the Entra role value, and
+ * what changes in each direction -- keyed by settings key, so a requirement missing from
+ * the registry still renders, just without that detail.
+ */
+export function collectAppRoleEntries(
+    nav: import('./types').AdminNavGroup[],
+    schema: AdminFieldSchema,
+    requirements: AppRoleRequirement[] = [],
+): AppRoleEntry[] {
+    const byKey = new Map(requirements.map((entry) => [entry.key, entry]));
+    const entries: AppRoleEntry[] = [];
+
+    for (const group of nav) {
+        for (const tab of group.tabs) {
+            for (const section of tab.sections) {
+                for (const field of schema[section.id] ?? []) {
+                    if (!isAppRoleKey(field.key)) {
+                        continue;
+                    }
+                    const key = field.key as string;
+                    const registered = byKey.get(key);
+                    entries.push({
+                        key,
+                        label: field.label,
+                        help: field.help,
+                        groupLabel: group.label,
+                        tabLabel: tab.label,
+                        sectionLabel: section.label,
+                        sectionId: section.id,
+                        role: registered?.role,
+                        grants: registered?.grants,
+                        whenOff: registered?.when_off,
+                        dependsOn: registered?.depends_on ?? null,
+                    });
+                }
+            }
+        }
+    }
+
+    return entries;
 }

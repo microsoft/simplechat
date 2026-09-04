@@ -1,16 +1,16 @@
 // test_v2_admin_field_visibility.mjs
 //
 // Runtime test for V2 admin field visibility and the deployment picker's pure logic.
-// Version: 0.261.082
-// Implemented in: 0.261.082
+// Version: 0.261.083
+// Implemented in: 0.261.083
 //
 // Two rules are exercised here because both are invisible until a specific combination
 // of settings is on screen, and both fail silently when wrong.
 //
 // Visibility. The server field schema is flat, but the panes it mirrors are nested: the
 // Azure OpenAI key sits inside the direct-connection block *and* inside the
-// key-authentication block. A single `depends_on` expresses one of those, so the other
-// has to be inherited from the field it depends on. Get that wrong and switching a
+// key-authentication block. Visibility is judged per field rather than recursively, so a
+// field in two nested blocks has to name both conditions. Get that wrong and switching a
 // section to APIM leaves a direct-connection credential on screen, next to fields that
 // are not being used -- which reads as though the direct connection is still live.
 //
@@ -26,9 +26,7 @@ import assert from 'node:assert/strict';
 
 import './test_support/tsResolve.mjs';
 
-const { hasStoredSecret, isFieldVisible, readSecretValue } = await import(
-    '../application/v2_ui/src/lib/adminFields.ts'
-);
+const { isFieldVisible } = await import('../application/v2_ui/src/lib/adminFields.ts');
 
 const {
     applyDiscoveredModels,
@@ -69,13 +67,17 @@ function embeddingFields() {
         },
         {
             key: 'azure_openai_embedding_key',
-            type: 'password',
+            type: 'secret',
             label: 'Key',
             default: '',
-            depends_on: {
-                key: 'azure_openai_embedding_authentication_type',
-                equals: 'key',
-            },
+            // Two conditions, because the control sits inside two nested blocks on the
+            // server-rendered page: the direct-connection card and the key-authentication
+            // card within it. Visibility is judged per field rather than recursively, so
+            // the outer gate has to be repeated here or it is not applied at all.
+            depends_on: [
+                { key: 'enable_embedding_apim', equals: false },
+                { key: 'azure_openai_embedding_authentication_type', equals: 'key' },
+            ],
         },
         {
             key: 'azure_apim_embedding_endpoint',
@@ -90,7 +92,7 @@ function embeddingFields() {
 const fieldsByKey = Object.fromEntries(embeddingFields().map((field) => [field.key, field]));
 
 function visible(key, settings, draft = {}) {
-    return isFieldVisible(fieldsByKey[key], settings, draft, embeddingFields());
+    return isFieldVisible(fieldsByKey[key], settings, draft);
 }
 
 /* ------------------------------- visibility -------------------------------- */
@@ -120,13 +122,21 @@ check('a string dependency compares the value, not its truthiness', () => {
     assert.equal(visible('azure_openai_embedding_key', withIdentity), false);
 });
 
-check('a field whose dependency is hidden is hidden too', () => {
-    // Authentication type is still 'key', but the whole direct-connection block is gone.
+check('every condition on a multi-gated field has to hold', () => {
+    // Authentication is still 'key', but the whole direct-connection block is gone.
+    // Judging only the authentication condition would leave the credential on screen
+    // beside APIM fields it has nothing to do with.
     const apim = {
         enable_embedding_apim: true,
         azure_openai_embedding_authentication_type: 'key',
     };
     assert.equal(visible('azure_openai_embedding_key', apim), false);
+
+    const direct = {
+        enable_embedding_apim: false,
+        azure_openai_embedding_authentication_type: 'key',
+    };
+    assert.equal(visible('azure_openai_embedding_key', direct), true);
 });
 
 check('an unsaved edit decides visibility before the save lands', () => {
@@ -146,62 +156,8 @@ check('an unsaved edit decides visibility before the save lands', () => {
     );
 });
 
-check('an absent value falls back to the declared default', () => {
-    // A settings document that predates a key has no value for it. Reading that as empty
-    // would hide the API key permanently, because the default authentication is 'key'.
-    assert.equal(visible('azure_openai_embedding_key', {}), true);
-    assert.equal(visible('azure_apim_embedding_endpoint', {}), false);
-});
-
 check('a field with no dependency is always visible', () => {
     assert.equal(visible('enable_embedding_apim', {}), true);
-});
-
-check('a dependency cycle terminates instead of hanging the page', () => {
-    const a = { key: 'a', type: 'switch', label: 'A', default: true, depends_on: { key: 'b', equals: true } };
-    const b = { key: 'b', type: 'switch', label: 'B', default: true, depends_on: { key: 'a', equals: true } };
-    assert.equal(isFieldVisible(a, { a: true, b: true }, {}, [a, b]), true);
-});
-
-check('visibility works without siblings, using the stored value alone', () => {
-    // The page passes the section's declared list, but the helper must not require it.
-    const field = fieldsByKey.azure_openai_embedding_key;
-    assert.equal(
-        isFieldVisible(field, { azure_openai_embedding_authentication_type: 'key' }, {}),
-        true,
-    );
-    assert.equal(
-        isFieldVisible(
-            field,
-            { azure_openai_embedding_authentication_type: 'managed_identity' },
-            {},
-        ),
-        false,
-    );
-});
-
-/* --------------------------------- secrets --------------------------------- */
-
-check('a stored secret is reported as present, never as its value', () => {
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: 'sk-live' }, 'azure_openai_embedding_key'), true);
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: '' }, 'azure_openai_embedding_key'), false);
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: '   ' }, 'azure_openai_embedding_key'), false);
-    assert.equal(hasStoredSecret({}, 'azure_openai_embedding_key'), false);
-    assert.equal(hasStoredSecret({ azure_openai_embedding_key: 'sk-live' }, undefined), false);
-});
-
-check('a password control shows only what was typed this session', () => {
-    const field = fieldsByKey.azure_openai_embedding_key;
-    const settings = { azure_openai_embedding_key: 'sk-live' };
-
-    // The stored secret must not reach the control, even though the admin settings
-    // payload carries it.
-    assert.equal(readSecretValue(field, {}), '');
-    assert.notEqual(readSecretValue(field, {}), settings.azure_openai_embedding_key);
-
-    assert.equal(readSecretValue(field, { azure_openai_embedding_key: 'typed' }), 'typed');
-    // An explicit removal is held as null so the control can say what will happen.
-    assert.equal(readSecretValue(field, { azure_openai_embedding_key: null }), null);
 });
 
 /* ---------------------------- deployment picker ---------------------------- */

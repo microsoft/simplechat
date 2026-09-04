@@ -11,6 +11,15 @@ from functions_content_safety import (
 )
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
+# Re-exported so callers keep importing these from functions_settings. They live
+# in a leaf module because admin_settings_fields needs them and cannot import
+# this one, which builds a Cosmos client at import time through config.
+from functions_group_assignment_ids import (
+    GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT,
+    _iter_group_workflow_allowed_group_id_candidates,
+    normalize_group_workflow_allowed_group_id,
+    normalize_group_workflow_allowed_group_ids,
+)
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_model_endpoint_identity_header import (
@@ -27,6 +36,7 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+import admin_settings_secret_utils as _secret_utils
 import app_settings_cache
 import inspect
 import copy
@@ -83,32 +93,10 @@ USER_UI_SETTINGS_KEYS = (
     "chatCompletionAudioSound",
     "chatCompletionAudioVolume",
 )
-ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
-ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
-    "azure_openai_gpt_key",
-    "azure_apim_gpt_subscription_key",
-    "azure_openai_embedding_key",
-    "azure_apim_embedding_subscription_key",
-    "azure_openai_image_gen_key",
-    "azure_apim_image_gen_subscription_key",
-    "redis_key",
-    "office_docs_storage_account_url",
-    "office_docs_storage_account_blob_endpoint",
-    "video_files_storage_account_url",
-    "audio_files_storage_account_url",
-    "content_safety_key",
-    "azure_apim_content_safety_subscription_key",
-    "azure_ai_search_key",
-    "azure_apim_ai_search_subscription_key",
-    "azure_document_intelligence_key",
-    "azure_apim_document_intelligence_subscription_key",
-    "azure_content_understanding_key",
-    "speech_service_key",
-    "model_endpoint_identity_header_hmac_secret",
-)
-ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
-    "web_search_agent.other_settings.azure_ai_foundry.client_secret",
-)
+ADMIN_SETTINGS_SECRET_REDACTED_VALUE = _secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+ADMIN_SETTINGS_FORM_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
+ADMIN_SETTINGS_NESTED_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_NESTED_SECRET_FIELDS
+ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'enable_analysis_deliverable_contract_telemetry',
     'analysis_deliverable_contract_mode',
@@ -151,33 +139,21 @@ PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
 
 
 def is_admin_settings_redacted_secret(value):
-    return str(value or '').strip() == ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+    return _secret_utils.is_admin_settings_redacted_secret(value)
 
 
 def _get_nested_setting_value(settings, field_path):
-    current = settings if isinstance(settings, dict) else {}
-    for part in str(field_path or '').split('.'):
-        if not isinstance(current, dict):
-            return ''
-        current = current.get(part)
-    return current if current is not None else ''
+    return _secret_utils.get_nested_setting_value(settings, field_path)
 
 
 def _set_nested_setting_value(settings, field_path, value):
-    current = settings
-    parts = str(field_path or '').split('.')
-    for part in parts[:-1]:
-        if not isinstance(current.get(part), dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
+    _secret_utils.set_nested_setting_value(settings, field_path, value)
 
 
 def resolve_admin_settings_secret_value(field_name, submitted_value, existing_settings):
-    submitted_text = str(submitted_value or '').strip()
-    if not is_admin_settings_redacted_secret(submitted_text):
-        return submitted_text
-    return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
+    return _secret_utils.resolve_admin_settings_secret_value(
+        field_name, submitted_value, existing_settings
+    )
 
 
 def normalize_public_workspace_display_name(value):
@@ -358,14 +334,15 @@ def normalize_model_endpoint_identity_header_settings(settings):
 
 
 def redact_admin_settings_secrets_for_form(settings):
-    redacted_settings = copy.deepcopy(settings or {})
-    for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
-        if redacted_settings.get(field_name):
-            redacted_settings[field_name] = ADMIN_SETTINGS_SECRET_REDACTED_VALUE
-    for field_path in ADMIN_SETTINGS_NESTED_SECRET_FIELDS:
-        if _get_nested_setting_value(redacted_settings, field_path):
-            _set_nested_setting_value(redacted_settings, field_path, ADMIN_SETTINGS_SECRET_REDACTED_VALUE)
-    return redacted_settings
+    return _secret_utils.redact_admin_settings_secrets_for_form(settings)
+
+
+def get_admin_settings_api_secret_fields():
+    return _secret_utils.get_admin_settings_api_secret_fields()
+
+
+def redact_admin_settings_secrets_for_api(settings):
+    return _secret_utils.redact_admin_settings_secrets_for_api(settings)
 
 
 def _clone_user_settings_doc(doc):
@@ -913,71 +890,6 @@ def has_workflow_user_app_role(user_roles):
     """Return True when authenticated claims include the workflow user app role."""
     normalized_roles = {role.lower() for role in normalize_app_role_claims(user_roles)}
     return WORKFLOW_USER_APP_ROLE.lower() in normalized_roles
-
-
-GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT = 5
-
-
-def _iter_group_workflow_allowed_group_id_candidates(value, depth=0):
-    """Yield raw assignment candidates from legacy text, JSON, and nested JSON strings."""
-    if value is None or depth > GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT:
-        return
-
-    if isinstance(value, str):
-        stripped_value = value.strip()
-        if not stripped_value:
-            return
-
-        if stripped_value.startswith('[') or stripped_value.startswith('"'):
-            try:
-                parsed_value = json.loads(stripped_value)
-            except (TypeError, ValueError):
-                parsed_value = None
-
-            if isinstance(parsed_value, list):
-                for candidate in parsed_value:
-                    yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
-                return
-
-            if isinstance(parsed_value, str) and parsed_value != stripped_value:
-                yield from _iter_group_workflow_allowed_group_id_candidates(parsed_value, depth + 1)
-                return
-
-        for candidate in stripped_value.replace('\r', '\n').replace(',', '\n').replace(';', '\n').split('\n'):
-            yield candidate
-        return
-
-    if isinstance(value, (list, tuple, set)):
-        for candidate in value:
-            yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
-        return
-
-    yield value
-
-
-def normalize_group_workflow_allowed_group_id(value):
-    """Return a canonical SimpleChat group id or an empty string for invalid values."""
-    group_id = str(value or '').strip()
-    if not group_id:
-        return ''
-
-    try:
-        return str(uuid.UUID(group_id))
-    except (AttributeError, TypeError, ValueError):
-        return ''
-
-
-def normalize_group_workflow_allowed_group_ids(value):
-    """Normalize group workflow assignment settings into unique group ids."""
-    normalized_ids = []
-    seen_ids = set()
-    for candidate in _iter_group_workflow_allowed_group_id_candidates(value):
-        group_id = normalize_group_workflow_allowed_group_id(candidate)
-        if not group_id or group_id in seen_ids:
-            continue
-        normalized_ids.append(group_id)
-        seen_ids.add(group_id)
-    return normalized_ids
 
 
 def normalize_group_workflow_assignment_settings(settings):

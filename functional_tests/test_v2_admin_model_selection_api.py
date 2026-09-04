@@ -2,8 +2,8 @@
 # test_v2_admin_model_selection_api.py
 """
 Functional test for the V2 admin embedding and image deployment selection API.
-Version: 0.261.082
-Implemented in: 0.261.082
+Version: 0.261.083
+Implemented in: 0.261.083
 
 ``embedding_model`` and ``image_gen_model`` are stored as
 ``{"selected": [...], "all": [...]}`` -- the deployments discovery last returned, plus
@@ -153,7 +153,7 @@ def test_routes_exist_and_are_admin_gated():
     """These routes read and write stored endpoint configuration."""
     print("Testing model selection route declarations...")
 
-    assert_app_version_at_least("0.261.082")
+    assert_app_version_at_least("0.261.083")
 
     functions = _find_functions(_parse(ROUTES_FILE))
 

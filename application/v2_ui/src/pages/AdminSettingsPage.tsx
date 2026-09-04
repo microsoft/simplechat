@@ -33,14 +33,23 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
+import { AppRoleRoster } from '../components/admin/AppRoleRoster';
+import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
+import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
+import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
+import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
+import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { SaveBar } from '../components/admin/SaveBar';
+import { SecretField } from '../components/admin/SecretField';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -50,18 +59,19 @@ import {
     asBoolean,
     asNumber,
     asString,
+    collectAppRoleEntries,
+    evaluateSectionStatus,
     extractFieldErrors,
     fieldSearchText,
-    hasStoredSecret,
     humanizeKey,
     isFieldVisible,
     readFieldValue,
-    readSecretValue,
     type AdminField,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
     type BrandingAssets,
     type BrandingUploadResponse,
+    type SectionStatus,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
@@ -93,6 +103,50 @@ interface RenderedSection {
 /** Synthetic field definitions used to read a sibling's current value for a preview. */
 const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: '' });
 
+/** How each section status reads, and how strongly it is drawn. */
+const STATUS_PRESENTATION: Record<SectionStatus, { label: string; className: string }> = {
+    off: { label: 'Off', className: 'bg-surface-2 text-text-3' },
+    unconfigured: { label: 'Needs configuration', className: 'bg-warn-soft text-warn' },
+    on: { label: 'On', className: 'bg-ok-soft text-ok' },
+};
+
+function SectionStatusPill({ status }: { status: SectionStatus }) {
+    const presentation = STATUS_PRESENTATION[status];
+    return (
+        <span
+            className={clsx(
+                'shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none font-medium',
+                presentation.className,
+            )}
+        >
+            {presentation.label}
+        </span>
+    );
+}
+
+/**
+ * Split a section's fields into the labelled runs its schema asks for.
+ *
+ * A section with eleven controls reads as one undifferentiated list, which is how the
+ * Key Vault connection settings and its expiration reminder settings ended up looking
+ * like one decision. Consecutive fields sharing a `group` become a labelled run; fields
+ * with no `group` keep the plain layout, so nothing changes for sections that never
+ * asked for this.
+ */
+function groupFields(fields: AdminField[]): { group: string | null; fields: AdminField[] }[] {
+    const runs: { group: string | null; fields: AdminField[] }[] = [];
+    for (const field of fields) {
+        const group = field.group ?? null;
+        const last = runs[runs.length - 1];
+        if (last && last.group === group) {
+            last.fields.push(field);
+        } else {
+            runs.push({ group, fields: [field] });
+        }
+    }
+    return runs;
+}
+
 /**
  * Associate each undeclared `enable_*` setting with a section.
  *
@@ -100,11 +154,15 @@ const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: 
  * belong to them, so keys are matched to the section whose id shares the most leading
  * word stems. Anything with no reasonable match is collected under "Other capabilities"
  * rather than being hidden, because a silently missing toggle is worse than a misfiled one.
+ *
+ * `suppressed` names keys that must not be drawn at all -- derived values and staged
+ * rollout flags, which would render a switch that appears to save and then reverts.
  */
 function buildCapabilityIndex(
     nav: AdminNavGroup[],
     settings: Json,
     declaredKeys: Set<string>,
+    suppressedKeys: Set<string>,
 ): CapabilityRow[] {
     const capabilityKeys = Object.keys(settings)
         .filter(
@@ -113,7 +171,8 @@ function buildCapabilityIndex(
                 typeof settings[key] === 'boolean' &&
                 // A key with a proper field is rendered by the schema path; rendering it
                 // here as well would put two controls on one value.
-                !declaredKeys.has(key),
+                !declaredKeys.has(key) &&
+                !suppressedKeys.has(key),
         )
         .sort();
 
@@ -194,6 +253,7 @@ export function AdminSettingsPage() {
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
+    const [pendingScroll, setPendingScroll] = useState<string | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -249,6 +309,7 @@ export function AdminSettingsPage() {
 
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+    const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
@@ -262,9 +323,22 @@ export function AdminSettingsPage() {
         return keys;
     }, [schema]);
 
+    const suppressedKeys = useMemo(
+        () => new Set(data?.suppressed_capabilities ?? []),
+        [data],
+    );
+
     const capabilityRows = useMemo(
-        () => (data ? buildCapabilityIndex(data.admin_nav, data.settings, declaredKeys) : []),
-        [data, declaredKeys],
+        () =>
+            data
+                ? buildCapabilityIndex(
+                      data.admin_nav,
+                      data.settings,
+                      declaredKeys,
+                      suppressedKeys,
+                  )
+                : [],
+        [data, declaredKeys, suppressedKeys],
     );
 
     /** Every section that has something to show, in navigation order. */
@@ -355,6 +429,39 @@ export function AdminSettingsPage() {
     const settingCount = declaredKeys.size + capabilityRows.length;
 
     /**
+     * App role requirements, for the roster that mirrors them into Security.
+     *
+     * Built from the navigation and the schema together so each entry can say which tab
+     * really owns it, and so the order matches the rest of the page. The server registry
+     * is merged in for the Entra role value and the before/after description, which the
+     * field schema has nowhere to put.
+     */
+    const appRoleEntries = useMemo(
+        () =>
+            data
+                ? collectAppRoleEntries(data.admin_nav, schema, data.app_role_requirements)
+                : [],
+        [data, schema],
+    );
+
+    const appRoleValues = useMemo(() => {
+        const values: Record<string, boolean> = {};
+        const read = (key: string) =>
+            asBoolean(
+                Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
+            );
+        for (const entry of appRoleEntries) {
+            values[entry.key] = read(entry.key);
+            // The capability each requirement guards, so the roster can say when one is
+            // enforced but currently doing nothing.
+            if (entry.dependsOn) {
+                values[entry.dependsOn] = read(entry.dependsOn);
+            }
+        }
+        return values;
+    }, [appRoleEntries, draft, settings]);
+
+    /**
      * Keys that gate a save rather than being stored.
      *
      * They ride along in the draft so they reach the PATCH, but they are not changes an
@@ -379,32 +486,6 @@ export function AdminSettingsPage() {
 
     const setValue = useCallback((key: string, value: unknown) => {
         setDraft((current) => ({ ...current, [key]: value }));
-        setFieldErrors((current) => {
-            if (!(key in current)) {
-                return current;
-            }
-            const next = { ...current };
-            delete next[key];
-            return next;
-        });
-    }, []);
-
-    /**
-     * Drop a key from the draft entirely, so there is nothing left to save.
-     *
-     * Used when a control returns to the state it started in and that state is not a
-     * value: emptying a password box means "nothing typed", which must not be counted as
-     * a pending change or sent to the server.
-     */
-    const unsetValue = useCallback((key: string) => {
-        setDraft((current) => {
-            if (!Object.prototype.hasOwnProperty.call(current, key)) {
-                return current;
-            }
-            const next = { ...current };
-            delete next[key];
-            return next;
-        });
         setFieldErrors((current) => {
             if (!(key in current)) {
                 return current;
@@ -535,20 +616,45 @@ export function AdminSettingsPage() {
     const readSibling = (key: string, fallback = '') =>
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
+    /** Read another field's raw current value, preferring an unsaved edit. */
+    const readRaw = useCallback(
+        (key: string): unknown =>
+            Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
+        [draft, settings],
+    );
+
+    /**
+     * Move the page to a section, from a cross-reference elsewhere on it.
+     *
+     * The role catalog links to settings that live in other groups, so clearing the
+     * filters is part of the jump: with a group selected or a search active, the target
+     * section may not be on screen to scroll to. The scroll itself is deferred to an
+     * effect, because the element only exists once that filter change has rendered.
+     */
+    const goToSection = useCallback((sectionId: string) => {
+        setQuery('');
+        setActiveGroup(null);
+        setPendingScroll(sectionId);
+    }, []);
+
+    useEffect(() => {
+        if (!pendingScroll) {
+            return;
+        }
+        document
+            .getElementById(`admin-section-${pendingScroll}`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setPendingScroll(null);
+    }, [pendingScroll]);
+
     /** Render one declared field, dispatching the types the page owns. */
-    const renderField = (field: AdminField, siblings: AdminField[]) => {
-        if (!isFieldVisible(field, settings, draft, siblings)) {
+    const renderField = (field: AdminField) => {
+        if (!isFieldVisible(field, settings, draft)) {
             return null;
         }
 
         const key = field.key ?? field.component ?? field.label;
-        // A password field is write-only: seeding it from the settings document would put
-        // a live credential into a form control, where autofill, browser form restore and
-        // a screen recording can all reach it. It shows only what has been typed.
-        const isSecret = field.type === 'password';
-        const value = isSecret
-            ? readSecretValue(field, draft)
-            : readFieldValue(field, settings, draft);
+        const value = readFieldValue(field, settings, draft);
         const error = field.key ? fieldErrors[field.key] : undefined;
         const warning = field.key ? fieldWarnings[field.key] : undefined;
 
@@ -578,6 +684,49 @@ export function AdminSettingsPage() {
                     field={field}
                     value={value}
                     error={error}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'secret') {
+            return (
+                <SecretField
+                    key={key}
+                    field={field}
+                    value={value}
+                    // The saved value, not the draft: only that says whether a credential
+                    // exists, which is what tells an empty box apart from a pending delete.
+                    storedValue={field.key ? settings[field.key] : undefined}
+                    error={error}
+                    warning={warning}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'id_list') {
+            return (
+                <AssignmentPicker
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'group_picker') {
+            return (
+                <GroupAssignmentField
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
                     onChange={(next) => field.key && setValue(field.key, next)}
                 />
             );
@@ -646,6 +795,20 @@ export function AdminSettingsPage() {
                             )}
                         />
                     );
+                case 'global-identities-list':
+                    return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'app-role-requirements-roster':
+                    return (
+                        <AppRoleRoster
+                            key={key}
+                            entries={appRoleEntries}
+                            values={appRoleValues}
+                            help={field.help}
+                            disabled={saving}
+                            onChange={setValue}
+                            onNavigate={goToSection}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
@@ -665,6 +828,36 @@ export function AdminSettingsPage() {
                             text={readSibling('user_agreement_text')}
                         />
                     );
+                case 'enhanced-citations-storage-test':
+                    return (
+                        <EnhancedCitationsStorageTest
+                            key={key}
+                            help={field.help}
+                            authenticationType={readSibling(
+                                'office_docs_authentication_type',
+                                'key',
+                            )}
+                            connectionString={readSibling('office_docs_storage_account_url')}
+                            blobEndpoint={readSibling(
+                                'office_docs_storage_account_blob_endpoint',
+                            )}
+                        />
+                    );
+                case 'connection-test':
+                    return <ConnectionTest key={key} field={field} read={readRaw} />;
+                case 'key-vault-secret-reminders':
+                    return (
+                        <KeyVaultReminders key={key} label={field.label} help={field.help} />
+                    );
+                case 'front-door-redirect-preview':
+                    return (
+                        <FrontDoorRedirectPreview
+                            key={key}
+                            origin={readSibling('front_door_url')}
+                            label={field.label}
+                            help={field.help}
+                        />
+                    );
                 default:
                     return null;
             }
@@ -677,18 +870,10 @@ export function AdminSettingsPage() {
                 error={error}
                 warning={warning}
                 disabled={saving}
-                hasStoredValue={isSecret ? hasStoredSecret(settings, field.key) : undefined}
                 onChange={(next) => {
                     if (field.type === 'switch') {
                         onSwitchChange(field, asBoolean(next));
-                    } else if (!field.key) {
-                        // Nothing to record against.
-                    } else if (isSecret && next === '') {
-                        // An empty secret box is "nothing typed", not "clear it", so it
-                        // leaves no pending change behind. Removal is its own action and
-                        // sends null.
-                        unsetValue(field.key);
-                    } else {
+                    } else if (field.key) {
                         setValue(field.key, next);
                     }
                 }}
@@ -837,51 +1022,76 @@ export function AdminSettingsPage() {
                                 </p>
                             )}
 
-                            {visibleSections.map((section) => (
-                                <GlassPanel key={section.sectionId} edge className="p-4">
-                                    <div className="mb-1">
-                                        <h2 className="text-sm font-semibold text-text-1">
-                                            {section.label}
-                                        </h2>
-                                        <p className="text-xs text-text-3">
-                                            {section.groupLabel}
-                                            {section.tabLabel ? ` · ${section.tabLabel}` : ''}
-                                        </p>
-                                    </div>
+                            {visibleSections.map((section) => {
+                                const status = evaluateSectionStatus(
+                                    sectionStatus[section.sectionId],
+                                    settings,
+                                    draft,
+                                );
+                                const runs = groupFields(section.fields);
 
-                                    <div className="divide-y divide-edge">
-                                        {/* The section's full declared list, not the
-                                            search-narrowed one: visibility is judged
-                                            against sibling fields, and a filtered list
-                                            would drop the field a condition names. */}
-                                        {section.fields.map((field) =>
-                                            renderField(
-                                                field,
-                                                schema[section.sectionId] ?? section.fields,
-                                            ),
-                                        )}
+                                return (
+                                    <GlassPanel
+                                        key={section.sectionId}
+                                        id={`admin-section-${section.sectionId}`}
+                                        edge
+                                        className="scroll-mt-4 p-4"
+                                    >
+                                        <div className="mb-1 flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <h2 className="text-sm font-semibold text-text-1">
+                                                    {section.label}
+                                                </h2>
+                                                <p className="text-xs text-text-3">
+                                                    {section.groupLabel}
+                                                    {section.tabLabel
+                                                        ? ` · ${section.tabLabel}`
+                                                        : ''}
+                                                </p>
+                                            </div>
+                                            {status ? <SectionStatusPill status={status} /> : null}
+                                        </div>
 
-                                        {section.capabilities.map((row) => (
-                                            <div key={row.key} className="py-1">
-                                                <Toggle
-                                                    label={row.label}
-                                                    description={row.key}
-                                                    checked={asBoolean(
-                                                        Object.prototype.hasOwnProperty.call(
-                                                            draft,
-                                                            row.key,
-                                                        )
-                                                            ? draft[row.key]
-                                                            : settings[row.key],
-                                                    )}
-                                                    disabled={saving}
-                                                    onChange={(next) => setValue(row.key, next)}
-                                                />
+                                        {runs.map((run, index) => (
+                                            <div key={run.group ?? `ungrouped-${index}`}>
+                                                {run.group ? (
+                                                    <h3 className="mt-3 mb-1 border-t border-edge pt-3 text-xs font-semibold tracking-wide text-text-2 uppercase">
+                                                        {run.group}
+                                                    </h3>
+                                                ) : null}
+                                                <div className="divide-y divide-edge">
+                                                    {run.fields.map(renderField)}
+                                                </div>
                                             </div>
                                         ))}
-                                    </div>
-                                </GlassPanel>
-                            ))}
+
+                                        {section.capabilities.length > 0 && (
+                                            <div className="divide-y divide-edge">
+                                                {section.capabilities.map((row) => (
+                                                    <div key={row.key} className="py-1">
+                                                        <Toggle
+                                                            label={row.label}
+                                                            description={row.key}
+                                                            checked={asBoolean(
+                                                                Object.prototype.hasOwnProperty.call(
+                                                                    draft,
+                                                                    row.key,
+                                                                )
+                                                                    ? draft[row.key]
+                                                                    : settings[row.key],
+                                                            )}
+                                                            disabled={saving}
+                                                            onChange={(next) =>
+                                                                setValue(row.key, next)
+                                                            }
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </GlassPanel>
+                                );
+                            })}
 
                             {!loading && activeGroupUsesFallback && (
                                 <p className="pb-6 text-center text-xs text-text-3">

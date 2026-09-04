@@ -632,7 +632,8 @@ def test_invalid_requests_are_refused():
     try:
         message = _new_message()
         cases = [
-            ('simplechart', 0, 'unsupported kind'),
+            ('sql', 0, 'unsupported kind'),
+            ('', 0, 'empty kind'),
             ('mermaid', -1, 'negative index'),
             ('mermaid', 10_000, 'index out of range'),
             ('mermaid', True, 'boolean index'),

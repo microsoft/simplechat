@@ -10,7 +10,7 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { AlertCircle, Check, Info, KeyRound, RotateCcw } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import {
     asBoolean,
@@ -18,6 +18,7 @@ import {
     asString,
     asStringArray,
     countWords,
+    SECRET_PLACEHOLDER,
     type AdminField,
 } from '../../lib/adminFields';
 import { Toggle } from '../ui/primitives';
@@ -28,6 +29,38 @@ const inputClass = clsx(
     'focus:border-accent focus:outline-none',
     'disabled:cursor-not-allowed disabled:opacity-60',
 );
+
+export { inputClass };
+
+/**
+ * Standing operational guidance a field carries, drawn beneath its control.
+ *
+ * Separate from `help`, which says what the setting does, and from the server's
+ * per-save warnings, which react to a value that was just submitted. A notice is true
+ * whenever the setting is on screen, so it renders regardless of the current value.
+ */
+export function FieldNotice({ field }: { field: AdminField }) {
+    if (!field.notice) {
+        return null;
+    }
+
+    const isWarning = field.notice_level === 'warning';
+    const Icon = isWarning ? AlertCircle : Info;
+
+    return (
+        <div
+            className={clsx(
+                'mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed',
+                isWarning
+                    ? 'border-warn/40 bg-warn-soft text-warn'
+                    : 'border-edge bg-surface-2 text-text-2',
+            )}
+        >
+            <Icon size={13} className="mt-0.5 shrink-0" />
+            <span>{field.notice}</span>
+        </div>
+    );
+}
 
 /** Label, help text, control and error, laid out consistently for every field type. */
 export function FieldShell({
@@ -63,6 +96,8 @@ export function FieldShell({
                 <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
             ) : null}
 
+            <FieldNotice field={field} />
+
             {warning ? (
                 <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
                     <AlertCircle size={13} className="mt-0.5 shrink-0" />
@@ -89,8 +124,6 @@ export interface FieldControlProps {
     error?: string;
     warning?: string;
     disabled?: boolean;
-    /** Password fields only: whether a secret is already stored under this key. */
-    hasStoredValue?: boolean;
     onChange: (next: unknown) => void;
 }
 
@@ -100,7 +133,7 @@ function TextControl({ field, value, error, warning, disabled, onChange }: Field
         <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
             <input
                 id={id}
-                type="text"
+                type={field.input_type ?? 'text'}
                 className={inputClass}
                 value={asString(value)}
                 maxLength={field.max_length}
@@ -108,6 +141,188 @@ function TextControl({ field, value, error, warning, disabled, onChange }: Field
                 disabled={disabled}
                 onChange={(event) => onChange(event.target.value)}
             />
+        </FieldShell>
+    );
+}
+
+/**
+ * A write-only credential.
+ *
+ * The server sends a placeholder rather than the stored value, so there is nothing to
+ * reveal and no toggle to reveal it. What an administrator actually needs to know is
+ * whether a secret is stored at all, and to be able to replace it without being able to
+ * clear it by accident — hence the explicit Replace step rather than an editable input
+ * pre-filled with something that is not the real value.
+ */
+function SecretControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const current = asString(value);
+    const isStored = current === SECRET_PLACEHOLDER;
+
+    // Replace only switches this control into entry mode; it deliberately stages
+    // nothing. Staging an empty value there would queue a deletion of a working
+    // credential from a click that means "let me type a new one" -- and this control can
+    // unmount before anything is typed, because moving between groups, searching, or
+    // flipping a switch this field depends on all drop it. The escape hatch would go
+    // with it and the queued deletion would not.
+    const [replacing, setReplacing] = useState(false);
+    const [emitted, setEmitted] = useState(current);
+
+    if (current !== emitted) {
+        // Changed for a reason other than typing here: a save that restored the
+        // placeholder, or a discarded draft. Either way this edit is over.
+        setEmitted(current);
+        setReplacing(false);
+    }
+
+    const commit = (next: string) => {
+        setEmitted(next);
+        onChange(next);
+    };
+
+    if (isStored && !replacing) {
+        return (
+            <FieldShell field={field} error={error} warning={warning}>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-2">
+                        <Check size={14} className="text-ok" />
+                        Stored
+                    </span>
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => setReplacing(true)}
+                        className={clsx(
+                            'inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2',
+                            'text-sm text-text-2 transition-colors',
+                            disabled
+                                ? 'cursor-not-allowed opacity-60'
+                                : 'hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <RotateCcw size={14} />
+                        Replace
+                    </button>
+                </div>
+                <p className="mt-1.5 text-xs text-text-3">
+                    The stored value is never sent to the browser, so it cannot be shown
+                    here. Replacing it overwrites it.
+                </p>
+            </FieldShell>
+        );
+    }
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                replacing ? (
+                    <button
+                        type="button"
+                        className="text-xs text-text-3 transition-colors hover:text-text-1"
+                        onClick={() => setReplacing(false)}
+                    >
+                        Cancel
+                    </button>
+                ) : null
+            }
+        >
+            <div className="flex items-center gap-2">
+                <KeyRound size={15} className="shrink-0 text-text-3" />
+                <input
+                    id={id}
+                    type="password"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    className={inputClass}
+                    // While replacing, the placeholder is the untouched stored value, and
+                    // showing it in the box would invite someone to edit a string that is
+                    // not their secret.
+                    value={isStored ? '' : current}
+                    placeholder={field.placeholder ?? 'Paste the new value'}
+                    disabled={disabled}
+                    onChange={(event) => commit(event.target.value)}
+                />
+            </div>
+            {replacing ? (
+                <p className="mt-1.5 text-xs text-text-3">
+                    Left blank, the stored value is kept. Type a value to replace it, or
+                    clear a typed value to remove the secret entirely.
+                </p>
+            ) : null}
+        </FieldShell>
+    );
+}
+
+/**
+ * A short list of tokens, edited as comma-separated text.
+ *
+ * Stored as an array, so the control parses on the way out and joins on the way in. The
+ * chips below the input show what will actually be saved, which is the only way to see
+ * that stray whitespace and duplicates were folded away.
+ */
+function StringListControl({
+    field,
+    value,
+    error,
+    warning,
+    disabled,
+    onChange,
+}: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const items = asStringArray(value);
+    const incoming = items.join('\u0000');
+
+    const [text, setText] = useState(() => items.join(', '));
+    const [emitted, setEmitted] = useState(incoming);
+
+    if (incoming !== emitted) {
+        // The value changed for a reason other than typing here — a discarded draft, or
+        // a save that normalized the list. The text has to follow, or it keeps showing
+        // an edit that no longer exists anywhere.
+        setEmitted(incoming);
+        setText(items.join(', '));
+    }
+
+    const commit = (next: string) => {
+        setText(next);
+        const parsed: string[] = [];
+        for (const part of next.split(/[,;]/)) {
+            const item = part.trim().replace(/\s+/g, ' ').slice(0, field.max_item_length ?? 80);
+            if (item && !parsed.includes(item)) {
+                parsed.push(item);
+            }
+        }
+        setEmitted(parsed.join('\u0000'));
+        onChange(parsed);
+    };
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+            <input
+                id={id}
+                type="text"
+                className={inputClass}
+                value={text}
+                placeholder={field.placeholder}
+                disabled={disabled}
+                onChange={(event) => commit(event.target.value)}
+            />
+            {items.length ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {items.map((item) => (
+                        <span
+                            key={item}
+                            className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-xs text-text-2"
+                        >
+                            {item}
+                        </span>
+                    ))}
+                </div>
+            ) : null}
         </FieldShell>
     );
 }
@@ -186,6 +401,13 @@ function SwitchControl({ field, value, error, warning, disabled, onChange }: Fie
                 disabled={disabled}
                 onChange={(next) => onChange(next)}
             />
+            {/* Indented to the switch's text column so a notice reads as part of the row
+                rather than as a page-level banner. */}
+            {field.notice ? (
+                <div className="ml-14">
+                    <FieldNotice field={field} />
+                </div>
+            ) : null}
             {warning ? (
                 <p className="mt-1 ml-14 text-xs text-warn">{warning}</p>
             ) : null}
@@ -348,109 +570,11 @@ function CheckboxSetControl({
 }
 
 /**
- * A secret, entered but never displayed.
- *
- * The control is write-only: it starts empty whatever is stored, so a live credential is
- * never placed in a form control where autofill, browser form restore, a password
- * manager or a screen recording can pick it up. An empty box therefore means "nothing
- * typed here", and the server keeps the stored secret rather than overwriting it with
- * nothing.
- *
- * That leaves removal with no natural gesture, so it gets an explicit one. The button
- * sends `null`, which is the only value the server reads as "clear this".
- *
- * Reveal shows what has been typed this session, which is the difference between
- * trusting a paste and re-doing it.
- */
-function PasswordControl({
-    field,
-    value,
-    error,
-    warning,
-    disabled,
-    hasStoredValue,
-    onChange,
-}: FieldControlProps) {
-    const id = `admin-field-${field.key}`;
-    const [revealed, setRevealed] = useState(false);
-    const pendingRemoval = value === null;
-    const typed = asString(value);
-
-    return (
-        <FieldShell
-            field={field}
-            error={error}
-            warning={warning}
-            htmlFor={id}
-            trailing={
-                hasStoredValue && !pendingRemoval ? (
-                    <button
-                        type="button"
-                        className="text-xs text-text-3 underline hover:text-danger disabled:cursor-not-allowed"
-                        disabled={disabled}
-                        onClick={() => onChange(null)}
-                    >
-                        Remove stored value
-                    </button>
-                ) : null
-            }
-        >
-            <div className="flex items-center gap-2">
-                <input
-                    id={id}
-                    type={revealed ? 'text' : 'password'}
-                    autoComplete="new-password"
-                    spellCheck={false}
-                    className={inputClass}
-                    value={typed}
-                    maxLength={field.max_length}
-                    placeholder={
-                        pendingRemoval
-                            ? 'Will be removed on save'
-                            : hasStoredValue
-                              ? '••••••••  (stored)'
-                              : field.placeholder
-                    }
-                    disabled={disabled}
-                    onChange={(event) => onChange(event.target.value)}
-                />
-                <button
-                    type="button"
-                    aria-label={revealed ? 'Hide value' : 'Show value'}
-                    aria-pressed={revealed}
-                    className={clsx(
-                        'shrink-0 rounded-lg border border-edge bg-surface-1 p-2 text-text-3',
-                        'hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-60',
-                    )}
-                    disabled={disabled}
-                    onClick={() => setRevealed((current) => !current)}
-                >
-                    {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
-            </div>
-
-            {pendingRemoval ? (
-                <p className="mt-1.5 flex items-center gap-2 text-xs text-warn">
-                    The stored value is removed when you save.
-                    <button
-                        type="button"
-                        className="underline hover:text-text-1"
-                        disabled={disabled}
-                        onClick={() => onChange('')}
-                    >
-                        Keep it
-                    </button>
-                </p>
-            ) : null}
-        </FieldShell>
-    );
-}
-
-/**
  * Render one declared field.
  *
- * `image`, `link_list` and `component` fields are handled by the page, which owns the
- * upload endpoint and the bespoke widgets, so they are not reached here.
+ * `image`, `link_list`, `secret` and `component` fields are handled by the page, which
+ * owns the upload endpoint, the bespoke widgets, and the stored value a secret needs to
+ * distinguish "not configured" from "configured but hidden".
  */
 export function SettingField(props: FieldControlProps) {
     switch (props.field.type) {
@@ -458,6 +582,8 @@ export function SettingField(props: FieldControlProps) {
             return <TextControl {...props} />;
         case 'textarea':
             return <TextAreaControl {...props} />;
+        case 'secret':
+            return <SecretControl {...props} />;
         case 'select':
             return <SelectControl {...props} />;
         case 'switch':
@@ -468,8 +594,8 @@ export function SettingField(props: FieldControlProps) {
             return <RangeControl {...props} />;
         case 'number':
             return <NumberControl {...props} />;
-        case 'password':
-            return <PasswordControl {...props} />;
+        case 'string_list':
+            return <StringListControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
         default:
