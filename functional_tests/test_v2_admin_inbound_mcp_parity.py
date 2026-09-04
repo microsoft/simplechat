@@ -2,8 +2,8 @@
 # test_v2_admin_inbound_mcp_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Inbound MCP tab.
-Version: 0.261.063
-Implemented in: 0.261.063
+Version: 0.261.064
+Implemented in: 0.261.064
 
 Two things about this tab are unusual, and both fail silently.
 
@@ -91,7 +91,7 @@ def test_inbound_mcp_section_is_declared():
     """An undeclared section falls back to rendering two bare switches."""
     print("Testing the Inbound MCP section declaration...")
 
-    assert_app_version_at_least("0.261.063")
+    assert_app_version_at_least("0.261.064")
 
     tab = next(
         (

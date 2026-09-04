@@ -299,9 +299,6 @@ def _normalize_export_chart_spec(raw_spec: Dict[str, Any]) -> Optional[Dict[str,
         _sanitize_text(label, 80)
         for label in raw_data.get('labels', [])[:200]
     ] if isinstance(raw_data.get('labels'), list) else []
-    datasets = _normalize_export_datasets(chart_kind, raw_data.get('datasets'), labels)
-    if not datasets:
-        return None
 
     raw_options = raw_spec.get('options') if isinstance(raw_spec.get('options'), dict) else {}
     raw_plugins = raw_options.get('plugins') if isinstance(raw_options.get('plugins'), dict) else {}
@@ -312,6 +309,8 @@ def _normalize_export_chart_spec(raw_spec: Dict[str, Any]) -> Optional[Dict[str,
     ).lower()
     if legend_position not in {'top', 'bottom', 'left', 'right'}:
         legend_position = 'top'
+
+    tick_limit = _coerce_float(raw_options.get('xTickLimit'))
 
     normalized_options = {
         'legendPosition': legend_position,
@@ -325,7 +324,30 @@ def _normalize_export_chart_spec(raw_spec: Dict[str, Any]) -> Optional[Dict[str,
         'xAxisLabel': _sanitize_text(raw_options.get('xAxisLabel'), 80),
         'yAxisLabel': _sanitize_text(raw_options.get('yAxisLabel'), 80),
         'cutout': _sanitize_text(raw_options.get('cutout') or '60%', 20),
+        # Added with the chart editor. Every default here is what charts written before it
+        # already did, so an untouched payload renders exactly as it always has.
+        'yMin': _coerce_float(raw_options.get('yMin')),
+        'yMax': _coerce_float(raw_options.get('yMax')),
+        'yScale': 'logarithmic'
+            if _sanitize_text(raw_options.get('yScale'), 20).lower() == 'logarithmic'
+            else 'linear',
+        'xTickRotation': _coerce_bounded_float(raw_options.get('xTickRotation'), 0, 90, 0),
+        'xTickLimit': None if tick_limit is None else int(min(max(round(tick_limit), 2), 200)),
+        'barWidth': _coerce_bounded_float(raw_options.get('barWidth'), 0.1, 1, 0.9),
+        'lineWidth': _coerce_bounded_float(raw_options.get('lineWidth'), 0, 10, 2),
+        'pointRadius': _coerce_bounded_float(raw_options.get('pointRadius'), 0, 20, 3),
+        'showGridX': raw_options.get('showGridX') is not False,
+        'showGridY': raw_options.get('showGridY') is not False,
     }
+
+    # Built after the options, because three of them — smoothing, fill and stroke width —
+    # describe the series rather than the chart, and the chart-wide choice has to be reconciled
+    # with whatever each dataset asked for.
+    datasets = _normalize_export_datasets(
+        chart_kind, raw_data.get('datasets'), labels, normalized_options
+    )
+    if not datasets:
+        return None
 
     return {
         'version': _coerce_int(raw_spec.get('version'), 1),
@@ -345,7 +367,12 @@ def _normalize_export_chart_spec(raw_spec: Dict[str, Any]) -> Optional[Dict[str,
     }
 
 
-def _normalize_export_datasets(chart_kind: str, raw_datasets: Any, labels: Sequence[str]) -> List[Dict[str, Any]]:
+def _normalize_export_datasets(
+    chart_kind: str,
+    raw_datasets: Any,
+    labels: Sequence[str],
+    options: Dict[str, Any],
+) -> List[Dict[str, Any]]:
     if not isinstance(raw_datasets, list):
         return []
 
@@ -359,7 +386,7 @@ def _normalize_export_datasets(chart_kind: str, raw_datasets: Any, labels: Seque
             'label': _sanitize_text(raw_dataset.get('label') or f'Series {dataset_index + 1}', 80),
             'borderColor': _sanitize_color(raw_dataset.get('borderColor'), palette['border']),
             'backgroundColor': _sanitize_color(raw_dataset.get('backgroundColor'), palette['background']),
-            'borderWidth': 2,
+            'borderWidth': options.get('lineWidth', 2),
         }
 
         raw_data = raw_dataset.get('data') if isinstance(raw_dataset.get('data'), list) else []
@@ -373,11 +400,23 @@ def _normalize_export_datasets(chart_kind: str, raw_datasets: Any, labels: Seque
             normalized_dataset['data'] = raw_data[:200]
 
         if chart_kind in {'line', 'area', 'stacked_line'}:
-            normalized_dataset['fill'] = raw_dataset.get('fill') is True or chart_kind == 'area'
-            normalized_dataset['tension'] = 0 if raw_dataset.get('tension') == 0 else 0.35
+            normalized_dataset['fill'] = (
+                raw_dataset.get('fill') is True
+                or bool(options.get('fill'))
+                or chart_kind == 'area'
+            )
+            # Smoothing off is a deliberate chart-wide choice and overrides the dataset;
+            # smoothing on leaves a dataset that asked for straight segments alone.
+            normalized_dataset['tension'] = (
+                0 if not options.get('smooth', True) or raw_dataset.get('tension') == 0 else 0.35
+            )
 
         if chart_kind == 'radar':
-            normalized_dataset['fill'] = raw_dataset.get('fill') is True
+            normalized_dataset['fill'] = raw_dataset.get('fill') is True or bool(options.get('fill'))
+
+        # Bubbles are sized by each point's own radius, so a marker size would fight it.
+        if chart_kind not in {'bubble', 'bar', 'stacked_bar'}:
+            normalized_dataset['pointRadius'] = options.get('pointRadius', 3)
 
         if chart_kind in {'pie', 'doughnut', 'polar_area'} and labels:
             normalized_dataset['backgroundColor'] = _sanitize_color_list(
@@ -496,6 +535,14 @@ def _coerce_int(value: Any, fallback: int) -> int:
         return fallback
 
 
+def _coerce_bounded_float(value: Any, minimum: float, maximum: float, fallback: float) -> float:
+    """Return a number clamped into a range, falling back when the payload has no usable one."""
+    parsed = _coerce_float(value)
+    if parsed is None:
+        return fallback
+    return min(max(parsed, minimum), maximum)
+
+
 def _build_chart_alt_text(chart_spec: Dict[str, Any]) -> str:
     for field_name in ('title', 'subtitle', 'summary', 'description'):
         value = str(chart_spec.get(field_name) or '').strip()
@@ -560,18 +607,12 @@ def _render_chart_spec_to_png_bytes(chart_spec: Dict[str, Any]) -> bytes:
         _render_cartesian_chart(axis, chart_spec, chart_kind)
 
     if chart_kind not in {'pie', 'doughnut'}:
-        axis.grid(True, alpha=0.25)
+        _apply_grid_visibility(axis, options, chart_kind)
     _apply_chart_titles(figure, axis, chart_spec)
     _apply_axis_labels(axis, options, chart_kind)
     _apply_legend(axis, options, datasets, chart_kind, labels)
-
-    if chart_kind not in {'pie', 'doughnut', 'polar_area'} and bool(options.get('beginAtZero', True)):
-        try:
-            _, current_upper = axis.get_ylim()
-            lower_bound = 0 if current_upper >= 0 else current_upper
-            axis.set_ylim(bottom=lower_bound)
-        except Exception:
-            pass
+    _apply_value_axis_scale(axis, options, chart_kind)
+    _apply_category_tick_style(axis, options, chart_kind, labels)
 
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     canvas = FigureCanvasAgg(figure)
@@ -579,6 +620,122 @@ def _render_chart_spec_to_png_bytes(chart_spec: Dict[str, Any]) -> bytes:
     canvas.print_png(buffer)
     buffer.seek(0)
     return buffer.read()
+
+
+def _apply_grid_visibility(axis, options: Dict[str, Any], chart_kind: str):
+    """Draw the gridlines the chart asked for.
+
+    The line properties are only passed when the grid is being turned on, because matplotlib
+    treats ``grid(False, alpha=...)`` as a request to style the grid and enables it anyway — so
+    supplying them unconditionally would make "hide the gridlines" do nothing.
+
+    A polar chart has one grid rather than two, so it follows the horizontal setting: on a radar
+    the rings are what a value is read against, and the spokes are the category labels.
+    """
+    show_x = bool(options.get('showGridX', True))
+    show_y = bool(options.get('showGridY', True))
+
+    if chart_kind in {'radar', 'polar_area'}:
+        if show_y:
+            axis.grid(True, alpha=0.25)
+        else:
+            axis.grid(False)
+        return
+
+    if show_x:
+        axis.grid(True, axis='x', alpha=0.25)
+    else:
+        axis.grid(False, axis='x')
+
+    if show_y:
+        axis.grid(True, axis='y', alpha=0.25)
+    else:
+        axis.grid(False, axis='y')
+
+
+def _apply_value_axis_scale(axis, options: Dict[str, Any], chart_kind: str):
+    """Apply the requested bounds and scale to whichever axis carries the values.
+
+    A horizontal bar chart draws its values along the bottom, so the axis being described is x
+    rather than y — the same swap ``_apply_axis_labels`` has always made for the axis titles.
+
+    A logarithmic axis cannot show zero, so "start at zero" is dropped for one and a lower bound
+    of zero or less is ignored. Every setter is guarded because matplotlib raises rather than
+    clamping when a request cannot be satisfied, and a chart drawn with its default scale is a
+    far better outcome than an export that fails.
+
+    The bounds are passed positionally, with ``None`` for the end being left alone, because the
+    x and y setters name their arguments differently — ``left``/``right`` against
+    ``bottom``/``top``. Naming one would raise a ``TypeError`` on the other axis, and the guard
+    below would swallow it, leaving the bounds silently ignored on horizontal bar charts.
+    """
+    if chart_kind in {'pie', 'doughnut', 'polar_area'}:
+        return
+
+    logarithmic = options.get('yScale') == 'logarithmic'
+    minimum = options.get('yMin')
+    maximum = options.get('yMax')
+    horizontal = bool(options.get('horizontal')) and chart_kind in {'bar', 'stacked_bar'}
+
+    if chart_kind != 'radar' and horizontal:
+        set_scale, set_limit, get_limit = axis.set_xscale, axis.set_xlim, axis.get_xlim
+    else:
+        set_scale, set_limit, get_limit = axis.set_yscale, axis.set_ylim, axis.get_ylim
+
+    if logarithmic and chart_kind != 'radar':
+        try:
+            set_scale('log')
+        except Exception:
+            logarithmic = False
+
+    if not logarithmic and bool(options.get('beginAtZero', True)):
+        try:
+            _, current_upper = get_limit()
+            set_limit(0 if current_upper >= 0 else current_upper, None)
+        except Exception:
+            pass
+
+    try:
+        if minimum is not None and (not logarithmic or minimum > 0):
+            set_limit(minimum, None)
+        if maximum is not None:
+            set_limit(None, maximum)
+    except Exception:
+        pass
+
+
+def _apply_category_tick_style(axis, options: Dict[str, Any], chart_kind: str, labels: Sequence[Any]):
+    """Angle and thin the category labels, for an axis with more of them than will fit.
+
+    Only the cartesian charts have a category axis to crowd; a scatter's x axis is numeric and
+    matplotlib already chooses sensible ticks for it.
+    """
+    if chart_kind in {'pie', 'doughnut', 'polar_area', 'radar', 'scatter', 'bubble'}:
+        return
+
+    horizontal = bool(options.get('horizontal')) and chart_kind in {'bar', 'stacked_bar'}
+    rotation = options.get('xTickRotation') or 0
+    limit = options.get('xTickLimit')
+
+    if rotation:
+        try:
+            for tick in (axis.get_yticklabels() if horizontal else axis.get_xticklabels()):
+                tick.set_rotation(rotation)
+                tick.set_horizontalalignment('right')
+        except Exception:
+            pass
+
+    # Thinning is done by hiding ticks rather than by asking matplotlib for a locator, because
+    # the positions are fixed category slots and moving them would detach the labels from the
+    # bars they name.
+    if limit and len(labels) > limit:
+        step = max(1, -(-len(labels) // limit))
+        try:
+            for index, tick in enumerate(axis.get_yticklabels() if horizontal else axis.get_xticklabels()):
+                if index % step:
+                    tick.set_visible(False)
+        except Exception:
+            pass
 
 
 def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
@@ -597,6 +754,13 @@ def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
     x_positions = list(range(len(labels)))
     is_horizontal = bool(options.get('horizontal', False)) and chart_kind in {'bar', 'stacked_bar'}
     is_stacked = bool(options.get('stacked', False)) or chart_kind in {'stacked_bar', 'stacked_line'}
+    line_width = float(options.get('lineWidth', 2))
+    point_size = float(options.get('pointRadius', 3))
+    point_marker = 'o' if point_size > 0 else 'None'
+    # matplotlib's own default bar width is 0.8 of the category slot and Chart.js's default
+    # barPercentage is 0.9. Scaling between the two keeps a chart nobody has adjusted looking
+    # exactly as it did, while one that was widened or narrowed moves the same way here.
+    bar_width = float(options.get('barWidth', 0.9)) / 0.9 * 0.8
 
     if chart_kind == 'stacked_line':
         cumulative_values = [0.0] * len(labels)
@@ -623,9 +787,9 @@ def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
                 cumulative_values,
                 label=legend_labels[dataset_index],
                 color=_resolve_chart_color(dataset.get('borderColor'), '#1c6ea4'),
-                linewidth=2,
-                marker='o',
-                markersize=3,
+                linewidth=line_width,
+                marker=point_marker,
+                markersize=point_size,
             )
     else:
         stack_offsets = [0.0] * len(labels)
@@ -648,6 +812,7 @@ def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
                     axis.barh(
                         x_positions,
                         values,
+                        height=bar_width,
                         left=stack_offsets if is_stacked else None,
                         label=label,
                         color=background_color,
@@ -658,6 +823,7 @@ def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
                     axis.bar(
                         x_positions,
                         values,
+                        width=bar_width,
                         bottom=stack_offsets if is_stacked else None,
                         label=label,
                         color=background_color,
@@ -673,15 +839,19 @@ def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
                     values,
                     label=label,
                     color=border_color,
-                    linewidth=2,
-                    marker='o',
-                    markersize=3,
+                    linewidth=line_width,
+                    marker=point_marker,
+                    markersize=point_size,
                 )
                 if chart_kind == 'area' or bool(dataset.get('fill')):
                     fill_values = [0.0 if _is_nan(value) else value for value in values]
                     axis.fill_between(x_positions, fill_values, color=background_color, alpha=0.35)
 
-    should_rotate_labels = _should_rotate_axis_labels(labels)
+    # An explicit angle is a deliberate choice and wins; without one the renderer still falls
+    # back to tilting labels that would otherwise collide.
+    requested_rotation = options.get('xTickRotation') or 0
+    should_rotate_labels = bool(requested_rotation) or _should_rotate_axis_labels(labels)
+    rotation = requested_rotation or (30 if should_rotate_labels else 0)
     if is_horizontal:
         axis.set_yticks(x_positions)
         axis.set_yticklabels([str(label) for label in labels])
@@ -689,7 +859,7 @@ def _render_cartesian_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
             [str(label) for label in labels],
-            rotation=30 if should_rotate_labels else 0,
+            rotation=rotation,
             ha='right' if should_rotate_labels else 'center',
         )
 
@@ -751,6 +921,7 @@ def _render_radar_chart(axis, chart_spec: Dict[str, Any]):
     chart_data = chart_spec.get('data') if isinstance(chart_spec.get('data'), dict) else {}
     datasets = chart_data.get('datasets') if isinstance(chart_data.get('datasets'), list) else []
     labels = chart_data.get('labels') if isinstance(chart_data.get('labels'), list) else []
+    options = chart_spec.get('options') if isinstance(chart_spec.get('options'), dict) else {}
     if not datasets:
         raise ValueError('Chart specification does not contain datasets.')
 
@@ -761,6 +932,7 @@ def _render_radar_chart(axis, chart_spec: Dict[str, Any]):
     if not labels:
         labels = [f'Item {index + 1}' for index in range(label_count)]
 
+    line_width = float(options.get('lineWidth', 2))
     angles = [2 * math.pi * index / label_count for index in range(label_count)]
     angles.append(angles[0])
 
@@ -771,7 +943,7 @@ def _render_radar_chart(axis, chart_spec: Dict[str, Any]):
         background_color = _resolve_chart_color(dataset.get('backgroundColor'), 'rgba(28, 110, 164, 0.18)')
         label = str(dataset.get('label') or f'Series {dataset_index + 1}').strip() or f'Series {dataset_index + 1}'
 
-        axis.plot(angles, values, color=border_color, linewidth=2, label=label)
+        axis.plot(angles, values, color=border_color, linewidth=line_width, label=label)
         axis.fill(angles, values, color=background_color, alpha=0.25)
 
     axis.set_xticks(angles[:-1])
@@ -781,8 +953,14 @@ def _render_radar_chart(axis, chart_spec: Dict[str, Any]):
 def _render_scatter_like_chart(axis, chart_spec: Dict[str, Any], chart_kind: str):
     chart_data = chart_spec.get('data') if isinstance(chart_spec.get('data'), dict) else {}
     datasets = chart_data.get('datasets') if isinstance(chart_data.get('datasets'), list) else []
+    options = chart_spec.get('options') if isinstance(chart_spec.get('options'), dict) else {}
     if not datasets:
         raise ValueError('Chart specification does not contain datasets.')
+
+    # A bubble is sized by each point's own radius, so only a plain scatter takes the chart-wide
+    # marker size. The scale keeps the default of 3 producing the area a scatter point has
+    # always been drawn at.
+    scatter_area = max(1.0, (float(options.get('pointRadius', 3)) / 3.0) ** 2 * 108.0)
 
     for dataset_index, dataset in enumerate(datasets):
         points = dataset.get('data') if isinstance(dataset.get('data'), list) else []
@@ -798,8 +976,11 @@ def _render_scatter_like_chart(axis, chart_spec: Dict[str, Any], chart_kind: str
                 continue
             x_values.append(x_value)
             y_values.append(y_value)
-            radius = _coerce_float(point.get('r')) if chart_kind == 'bubble' else None
-            point_sizes.append(max(24.0, (radius or 6.0) * 18.0))
+            if chart_kind == 'bubble':
+                radius = _coerce_float(point.get('r'))
+                point_sizes.append(max(24.0, (radius or 6.0) * 18.0))
+            else:
+                point_sizes.append(scatter_area)
 
         if not x_values:
             continue
