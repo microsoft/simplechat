@@ -1,8 +1,8 @@
 // test_v2_chart_editor_logic.ts
 // Behavioural checks for the chart payload transforms and edit validation.
 //
-// Version: 0.261.059
-// Implemented in: 0.261.059
+// Version: 0.261.061
+// Implemented in: 0.261.061
 //
 // The V2 interface has no unit test runner, so this follows test_v2_diagram_editor_logic.ts:
 // bundled with the esbuild Vite already brings in, run under node by test_v2_chart_editor.py,

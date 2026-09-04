@@ -24,7 +24,10 @@ It is the sibling of [V2 Inline Diagram Editing](V2_INLINE_DIAGRAM_EDITING.md) a
 storage, its routes and its guarantees. The message's stored content is never rewritten, and
 only the version currently on screen is ever sent to the model.
 
-**Implemented in version: 0.261.059**
+**Implemented in version: 0.261.061**
+
+<!-- Developed as 0.261.059, renumbered to 0.261.061 when merged, since the base branch had
+     reached 0.261.060 in the meantime. -->
 
 ### Dependencies
 
