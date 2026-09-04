@@ -61,6 +61,41 @@ enablement lives in a nested capability record rather than a flag.
   question reuse earlier findings instead of repeating them, and what stops an elicitation
   asking the same question twice.
 
+#### What the context picker contributes
+
+The composer's context picker lets a user name documents, tags and whole workspaces before
+asking. Each reaches the plan differently, and the difference is the point.
+
+| Picked | Seed | Effect on planning |
+|---|---|---|
+| A document | `document_ids` | Replaces the candidate probe. The user answered "which documents", so probing would only offer alternatives to a decision already made. |
+| A tag | `tags` | **Scopes** the probe. A tag answers "which shelf", not "which document" — the probe still decides which documents on that shelf are worth naming. |
+| A workspace | `doc_scope`, `active_group_ids`, `active_public_workspace_ids` | Bounds where the probe and every search step may look. |
+
+Treating a tag as an explicit choice would hand the planner every document carrying it,
+which is the opposite of narrowing. `seeds_are_explicit` therefore tests documents alone.
+
+Tags are carried on `RunContext` for the whole run rather than per step, because a tag is a
+standing narrowing of what the turn is about: a step is free to choose its own query, but
+not to widen the shelf the user narrowed to. `document_filter_mode` travels with them —
+without it a picked document beside an unrelated tag intersects to nothing.
+
+#### Document names
+
+`resolve_candidate_documents` used to return seeded documents with an empty `file_name`,
+so a picked document reached the planner as a bare uuid. That breaks two things: the
+planner cannot write "compare the Q3 and Q4 contracts" if it was never told which document
+is which, and the approval card — whose entire purpose is letting someone confirm the
+planner picked the right document — showed a row of identifiers.
+
+The composer had those names on screen when the user clicked them, so it sends them as
+`context_documents` rather than making the server resolve across three containers to
+recover what was just discarded.
+
+**Names are display; authorization is by id.** `_authorized_document_ids` reads
+`document_ids` and nothing else, so a client that renamed a document mislabels its own plan
+card and reaches nothing new. `test_orchestration_context_picker.py` asserts this directly.
+
 ### Plan
 
 `functions_orchestration_planner.py` triages first. The point of triage is to stop a
@@ -289,6 +324,7 @@ to the front.
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
 | `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list, and document and web citations are separated |
+| `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from |
 
 ## Known limitations
 

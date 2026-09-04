@@ -880,6 +880,8 @@ def register_route_backend_orchestration(bp):
                 invoke_prompt=invoke_prompt,
                 user_message=user_message,
                 doc_scope=seeds.get('doc_scope') or 'all',
+                tags=seeds.get('tags') or None,
+                document_filter_mode=seeds.get('document_filter_mode') or None,
                 active_group_ids=seeds.get('active_group_ids') or None,
                 active_public_workspace_id=(
                     (seeds.get('active_public_workspace_ids') or [None])[0]
