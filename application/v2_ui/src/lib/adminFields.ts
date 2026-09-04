@@ -142,6 +142,14 @@ export interface AdminField {
     required?: boolean;
     /** Lifts a field into the section header. See `FIELD_ROLES`. */
     role?: 'capability';
+    /**
+     * Where the value is stored, when that is not a top-level key named by `key`.
+     *
+     * The save handler assembles some settings into a nested object, so a field named
+     * after its V1 form input would otherwise write a top-level key nothing reads. The
+     * first path is the one read back.
+     */
+    paths?: string[];
     depends_on?: AdminFieldDependency;
     requires?: AdminFieldRequirement;
     group?: AdminFieldGroup;
@@ -164,6 +172,14 @@ export interface AdminSettingsResponse {
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
     branding_assets: BrandingAssets;
+    /**
+     * Server-computed readouts a `status` field renders, keyed by `status_source`.
+     *
+     * These are not settings: whether the browser runtime can render JavaScript, whether
+     * audio transcoding is available. The tone is carried alongside the text because
+     * inferring it from the wording would be guesswork.
+     */
+    status_readouts?: Record<string, { ok: boolean; message: string }>;
     version: string;
 }
 
@@ -205,6 +221,11 @@ export function extractFieldErrors(payload: unknown): Record<string, string> {
  * Falls back to the schema default rather than `undefined` so a control is never
  * uncontrolled on first render, which React would warn about and which would lose the
  * first keystroke.
+ *
+ * A field may declare `paths` when its value is not stored under its own key -- the Web
+ * Search Foundry connection is assembled into a nested `web_search_agent` object by the
+ * save handler. The draft is always keyed flat, because that is what the PATCH sends and
+ * what the server unpacks; only the stored read follows the path.
  */
 export function readFieldValue(field: AdminField, settings: Json, draft: Json): unknown {
     if (!field.key) {
@@ -213,8 +234,22 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
     if (Object.prototype.hasOwnProperty.call(draft, field.key)) {
         return draft[field.key];
     }
-    const stored = settings[field.key];
+    const stored = field.paths?.length
+        ? readNestedSetting(settings, field.paths[0])
+        : settings[field.key];
     return stored === undefined || stored === null ? field.default : stored;
+}
+
+/** Read a dotted path out of the settings document. */
+export function readNestedSetting(settings: Json, path: string): unknown {
+    let cursor: unknown = settings;
+    for (const part of path.split('.')) {
+        if (typeof cursor !== 'object' || cursor === null) {
+            return undefined;
+        }
+        cursor = (cursor as Record<string, unknown>)[part];
+    }
+    return cursor;
 }
 
 export function asString(value: unknown, fallback = ''): string {
@@ -350,19 +385,15 @@ export function isRedactedSecret(value: unknown): boolean {
     return asString(value).trim() === SECRET_REDACTED_VALUE;
 }
 
-/** Newline-delimited storage shape shared with the server-rendered textareas. */
+/** Entries of a `string_list`, tolerating the newline-joined shape V1 stores. */
 export function parseStringList(value: unknown): string[] {
     if (Array.isArray(value)) {
         return value.filter((item): item is string => typeof item === 'string');
     }
     return asString(value)
-        .split('\n')
+        .split(/[\n,;]+/)
         .map((entry) => entry.trim())
         .filter(Boolean);
-}
-
-export function serializeStringList(entries: string[]): string {
-    return entries.join('\n');
 }
 
 /** Fields in declared order, clustered by group, with ungrouped fields kept first. */

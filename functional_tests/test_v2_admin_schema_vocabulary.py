@@ -150,7 +150,7 @@ def test_changed_secret_is_trimmed_and_bounded():
 
 
 def test_string_list_round_trips_the_v1_shape():
-    """Domain lists are stored newline-delimited, matching the V1 textareas."""
+    """Domain lists are stored as arrays, matching the settings document."""
     print("\nTesting string_list coercion...")
 
     field = {
@@ -162,20 +162,27 @@ def test_string_list_round_trips_the_v1_shape():
     }
 
     entries, error = fields_module._normalize_string_list(
-        "example.com\n  *.contoso.com  \n\nexample.com\n", field
+        "example.com\n  *.contoso.com  \n\nEXAMPLE.com\n", field
     )
     assert error is None, error
-    assert entries == "example.com\n*.contoso.com", (
-        "Entries should be trimmed, blank lines dropped and duplicates removed, "
-        f"in the order given. Got {entries!r}."
+    assert entries == ["example.com", "*.contoso.com"], (
+        "Entries should be trimmed, blank lines dropped and duplicates removed "
+        "case-insensitively, in the order given. A list holding both Example.com "
+        f"and example.com would behave unpredictably. Got {entries!r}."
     )
 
-    # The V2 editor works with an array; the stored shape stays the same.
+    # The server-rendered form splits on commas and semicolons too, so a value
+    # saved there has to read back the same way.
+    split, error = fields_module._normalize_string_list("a.example, b.example; c.example", field)
+    assert error is None, error
+    assert split == ["a.example", "b.example", "c.example"], split
+
+    # The V2 editor works with an array; the stored shape is the same.
     from_array, error = fields_module._normalize_string_list(
         ["a.example", "b.example"], field
     )
     assert error is None, error
-    assert from_array == "a.example\nb.example", from_array
+    assert from_array == ["a.example", "b.example"], from_array
 
     _, error = fields_module._normalize_string_list("not a domain", field)
     assert error, "A value failing entry_pattern should be refused."
@@ -183,9 +190,9 @@ def test_string_list_round_trips_the_v1_shape():
 
     empty, error = fields_module._normalize_string_list("", field)
     assert error is None, error
-    assert empty == "", repr(empty)
+    assert empty == [], empty
 
-    print("  string_list trims, dedupes, validates and stores newline-delimited.")
+    print("  string_list trims, dedupes, validates and stores as an array.")
     return True
 
 

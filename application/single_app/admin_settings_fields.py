@@ -51,6 +51,14 @@ Beyond a field's type, three optional descriptors shape how a section reads:
     Sync needs Redis Cache, which lives under Scale, and saying so where the
     dependency is felt beats discovering it from a flash message after saving.
 
+``paths``
+    Where the value actually lives, when that is not a top-level settings key.
+    Most settings are flat, but a few are assembled into a nested object by the
+    server-rendered form's save handler -- the Web Search Foundry connection is
+    built into ``web_search_agent`` -- so a field whose key matches the V1 form
+    input would otherwise save to a top-level key nothing reads. See
+    ``_apply_nested_paths``.
+
 Only the Appearance group is described in full so far. Sections with no entry
 here fall back to the V2 surface's ``enable_*`` scan, so undescribed groups keep
 working exactly as they did. A handful of individual fields outside Appearance
@@ -58,6 +66,7 @@ are also declared: that scan places a key by guessing from shared word stems,
 and declaring a field is the only way to stop it guessing wrong.
 """
 
+import copy
 import json
 import re
 from urllib.parse import urlparse
@@ -162,6 +171,16 @@ SECRET_MAX_LENGTH = 4096
 # then dropped rather than written, so a save that touches one toggle cannot
 # overwrite every key on the page with "***REDACTED***".
 SECRET_UNCHANGED = object()
+
+# Mirrors ``functions_settings.WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT``, for the same
+# reason ``SECRET_REDACTED_VALUE`` is mirrored: this module stays importable
+# without ``config``. The schema test compares declared defaults against the
+# application, so the two cannot drift.
+WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
+    "Your current message will be sent to Microsoft Bing for web search. Conversation "
+    "history is not sent for web search, but any sensitive content you paste into this "
+    "message may be sent."
+)
 
 
 ADMIN_SETTINGS_FIELDS = {
@@ -686,16 +705,6 @@ ADMIN_SETTINGS_FIELDS = {
         },
     ],
     # The first Knowledge section described, and the reference for the rest.
-    #
-    # Azure AI Search can be reached directly or through API Management, and the
-    # server-rendered pane shows that as two sibling blocks with a switch above
-    # them, so an administrator sees fields for the path they are not using and
-    # has to work out which half matters. Declaring it as one connection choice
-    # with two branches means only the path in use is on screen.
-    #
-    # There is no capability toggle here. Search is core infrastructure rather
-    # than an optional feature, so the section reports configured or not on the
-    # strength of its connection fields alone.
     "azure-ai-search-section": [
         {
             "key": "enable_ai_search_apim",
@@ -810,6 +819,691 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
         },
     ],
+    # ------------------------------------------------------------------
+    # Knowledge / Web & Research
+    #
+    # Web Search reaches outside the tenant, so consent comes before
+    # configuration: the Grounding with Bing terms move customer data outside the
+    # Azure compliance boundary, and the server-rendered pane gates the toggle on
+    # accepting them. The same acknowledgement mechanism Custom Pages uses
+    # carries that here.
+    #
+    # The Foundry connection is stored inside `web_search_agent` rather than as
+    # top-level keys, so every field in the connection group declares `paths`.
+    # ------------------------------------------------------------------
+    "web-search-section": [
+        {
+            "key": "enable_web_search",
+            "type": "switch",
+            "label": "Enable Web Search via Foundry Agent",
+            "help": (
+                "Routes web search queries through an Azure AI Foundry agent. Only the "
+                "user's current message is sent; conversation history is not."
+            ),
+            "default": False,
+            "role": "capability",
+            "requires_acknowledgement": {
+                "key": "web_search_consent_accepted",
+                "when": "enabled",
+                "title": "Web Search Consent Required",
+                "message": (
+                    "When you use Grounding with Bing Search, your customer data is "
+                    "transferred outside of the Azure compliance boundary to the "
+                    "Grounding with Bing Search service. Grounding with Bing Search is "
+                    "not subject to the same data processing terms (including location "
+                    "of processing) and does not have the same compliance standards and "
+                    "certifications as the Azure AI Agent Service. It is your "
+                    "responsibility to assess whether use of Grounding with Bing Search "
+                    "in your agent meets your needs and requirements."
+                ),
+            },
+        },
+        {
+            "key": "web_search_foundry_endpoint",
+            "type": "text",
+            "label": "Foundry Project Endpoint",
+            "help": (
+                "The project endpoint, not the inference endpoint: "
+                "https://<foundry-resource>.services.ai.azure.com/api/projects/<project-name>."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "https://<resource>.services.ai.azure.com/api/projects/<project-name>",
+            # Written to both locations because the save handler does, and the
+            # runtime still reads the legacy one.
+            "paths": [
+                "web_search_agent.other_settings.azure_ai_foundry.endpoint",
+                "web_search_agent.azure_openai_gpt_endpoint",
+            ],
+            "group": {
+                "id": "connection",
+                "label": "Foundry connection",
+                "variant": "connection",
+            },
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_api_version",
+            "type": "text",
+            "label": "Foundry API Version",
+            "default": "",
+            "required": True,
+            "placeholder": "2025-05-01",
+            "paths": [
+                "web_search_agent.other_settings.azure_ai_foundry.api_version",
+                "web_search_agent.azure_openai_gpt_api_version",
+            ],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_agent_id",
+            "type": "text",
+            "label": "Foundry Agent ID",
+            "help": "Typically starts with asst_.",
+            "default": "",
+            "required": True,
+            "placeholder": "asst_...",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.agent_id"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_auth_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "The identity must hold Cognitive Services User and AI Developer roles "
+                "on the Foundry project."
+            ),
+            "default": "managed_identity",
+            "options": [
+                {"value": "managed_identity", "label": "Managed Identity"},
+                {"value": "service_principal", "label": "Service Principal"},
+            ],
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.authentication_type"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_managed_identity_type",
+            "type": "select",
+            "label": "Managed Identity Type",
+            "default": "system_assigned",
+            "options": [
+                {"value": "system_assigned", "label": "System-assigned (SAMI)"},
+                {"value": "user_assigned", "label": "User-assigned (UAMI)"},
+            ],
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.managed_identity_type"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "managed_identity"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_managed_identity_client_id",
+            "type": "text",
+            "label": "Managed Identity Client ID",
+            "help": "Only needed for a user-assigned managed identity.",
+            "default": "",
+            "required": True,
+            "placeholder": "Client ID for user-assigned managed identity",
+            "paths": [
+                "web_search_agent.other_settings.azure_ai_foundry.managed_identity_client_id"
+            ],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "managed_identity"},
+                    {
+                        "key": "web_search_foundry_managed_identity_type",
+                        "equals": "user_assigned",
+                    },
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_tenant_id",
+            "type": "text",
+            "label": "Tenant ID",
+            "default": "",
+            "required": True,
+            "placeholder": "Entra tenant ID",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.tenant_id"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_client_id",
+            "type": "text",
+            "label": "Client ID",
+            "default": "",
+            "required": True,
+            "placeholder": "App registration client ID",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.client_id"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_client_secret",
+            "type": "secret",
+            "label": "Client Secret",
+            "help": "A secret value or a Key Vault reference.",
+            "required": True,
+            "placeholder": "Secret or Key Vault reference",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.client_secret"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_cloud",
+            "type": "select",
+            "label": "Cloud",
+            "default": "",
+            "options": [
+                {"value": "", "label": "Azure Public"},
+                {"value": "usgov", "label": "Azure Government"},
+                {"value": "custom", "label": "Custom"},
+            ],
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.cloud"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_authority",
+            "type": "text",
+            "label": "Authority Endpoint",
+            "help": "Only needed for a custom cloud.",
+            "default": "",
+            "required": True,
+            "placeholder": "https://login.microsoftonline.com/",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.authority"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                    {"key": "web_search_foundry_cloud", "equals": "custom"},
+                ]
+            },
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test web search",
+            "help": "Runs a search through the configured agent using the values above.",
+            "test_type": "web_search",
+            "test_payload": {
+                "enabled": {"key": "enable_web_search"},
+                "consent_accepted": {"value": True},
+                "query": {"value": "What is Azure AI Foundry?"},
+                "foundry.endpoint": {"key": "web_search_foundry_endpoint"},
+                "foundry.api_version": {"key": "web_search_foundry_api_version"},
+                "foundry.agent_id": {"key": "web_search_foundry_agent_id"},
+                "foundry.authentication_type": {"key": "web_search_foundry_auth_type"},
+                "foundry.managed_identity_type": {
+                    "key": "web_search_foundry_managed_identity_type",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "managed_identity",
+                    },
+                },
+                "foundry.managed_identity_client_id": {
+                    "key": "web_search_foundry_managed_identity_client_id",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "managed_identity",
+                    },
+                },
+                "foundry.tenant_id": {
+                    "key": "web_search_foundry_tenant_id",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.client_id": {
+                    "key": "web_search_foundry_client_id",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.client_secret": {
+                    "key": "web_search_foundry_client_secret",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.cloud": {
+                    "key": "web_search_foundry_cloud",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.authority": {
+                    "key": "web_search_foundry_authority",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+            },
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "enable_web_search_user_notice",
+            "type": "switch",
+            "label": "Show data notice to users when web search is used",
+            "help": (
+                "Tells users their message leaves the tenant, which is the only warning "
+                "they get before it does."
+            ),
+            "default": False,
+            "group": {
+                "id": "notice",
+                "label": "User notice",
+                "variant": "behavior",
+            },
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_user_notice_text",
+            "type": "textarea",
+            "label": "Notice Text",
+            "help": "Shown once per session, the first time a user runs a web search.",
+            "default": WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+            "rows": 3,
+            "max_length": 1000,
+            "fallback_when_empty": True,
+            "group": {"id": "notice", "label": "User notice", "variant": "behavior"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "enable_web_search_user_notice", "equals": True},
+                ]
+            },
+        },
+    ],
+    # URL Access is genuinely shared policy: chat, workflows and Deep Research all
+    # fetch through it, and the allow and block lists below are the same lists
+    # Deep Research reads. The role requirement comes first because it decides who
+    # can reach the capability at all.
+    "url-access-section": [
+        {
+            "key": "enable_url_access",
+            "type": "switch",
+            "label": "Enable URL Access for chat and workflows",
+            "help": (
+                "Lets pasted links be fetched and read. Non-HTTP(S) URLs, credentialed "
+                "URLs, literal IPs, localhost, metadata hosts, unsafe redirects and "
+                "oversized pages are refused before any fetch is made."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "require_member_of_url_access_user",
+            "type": "switch",
+            "label": "Require UrlAccessUser App Role",
+            "help": (
+                "Required app role value: UrlAccessUser. Assign it in the Enterprise App "
+                "before turning this on, or nobody will be able to use URL Access."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+        },
+        {
+            "key": "url_access_max_chat_urls_per_turn",
+            "type": "number",
+            "label": "Chat URL Limit",
+            "help": "Direct URLs read per chat message. Hard limit 100.",
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_url_access", "equals": True},
+        },
+        {
+            "key": "url_access_max_workflow_urls_per_run",
+            "type": "number",
+            "label": "Workflow URL Limit",
+            "help": "Direct URLs read per workflow prompt. Hard limit 500.",
+            "default": 50,
+            "min": 1,
+            "max": 500,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_url_access", "equals": True},
+        },
+        {
+            "key": "url_access_allowed_domains",
+            "type": "string_list",
+            "label": "Allowed Domains",
+            "help": (
+                "Leave empty to allow any public domain that passes the safety checks. "
+                "Deep Research reads this same list."
+            ),
+            "default": [],
+            "placeholder": "example.com or *.contoso.com",
+            "entry_pattern": r"^[A-Za-z0-9*][A-Za-z0-9*.\-]*$",
+            "entry_label": "domain",
+            # Stored twice, because Deep Research reads the source_review copy and
+            # the save handler writes both.
+            "paths": ["url_access_allowed_domains", "source_review_allowed_domains"],
+            "group": {"id": "policy", "label": "Domain policy", "variant": "access"},
+        },
+        {
+            "key": "url_access_blocked_domains",
+            "type": "string_list",
+            "label": "Blocked Domains",
+            "help": "Applies to URL Access and to Deep Research source-page review.",
+            "default": [],
+            "placeholder": "example.org or *.contoso.net",
+            "entry_pattern": r"^[A-Za-z0-9*][A-Za-z0-9*.\-]*$",
+            "entry_label": "domain",
+            "paths": ["url_access_blocked_domains", "source_review_blocked_domains"],
+            "group": {"id": "policy", "label": "Domain policy", "variant": "access"},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test URL policy",
+            "help": "Checks a URL against the allow and block lists above before saving.",
+            "test_type": "url_access_policy",
+            "test_payload": {
+                "enabled": {"key": "enable_url_access"},
+                "url": {"value": "https://example.com/"},
+                "source_review_allow_internal_hosts": {
+                    "key": "source_review_allow_internal_hosts"
+                },
+                "url_access_allowed_domains": {"key": "url_access_allowed_domains"},
+                "url_access_blocked_domains": {"key": "url_access_blocked_domains"},
+            },
+            "group": {"id": "policy", "label": "Domain policy", "variant": "access"},
+        },
+    ],
+    # Deep Research plans bounded searches and inspects pages. Its budgets are
+    # what keep it bounded, so they sit together and above the behaviour switches
+    # rather than being interleaved with them as they are in the V1 pane.
+    #
+    # Direct pasted URLs are governed by URL Access, not here, and the allow and
+    # block lists are shared with it.
+    "source-review-section": [
+        {
+            "key": "enable_source_review",
+            "type": "switch",
+            "label": "Enable Deep Research for chat",
+            "help": (
+                "Plans bounded web searches, inspects source pages, and keeps a research "
+                "ledger. Runs only when a user selects it for a message."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "require_member_of_deep_research_user",
+            "type": "switch",
+            "label": "Require DeepResearchUser App Role",
+            "help": (
+                "Required app role value: DeepResearchUser. Assign it in the Enterprise "
+                "App before turning this on, or nobody will be able to use Deep Research."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_allow_internal_hosts",
+            "type": "switch",
+            "label": "Allow internal network hostnames",
+            "help": (
+                "Permits DNS hostnames that resolve to private addresses. Literal IP "
+                "targets, localhost, metadata hosts, link-local and reserved addresses "
+                "stay blocked regardless."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_pages_per_turn",
+            "type": "number",
+            "label": "Max Pages per Turn",
+            "help": "Hard limit 10.",
+            "default": 10,
+            "min": 1,
+            "max": 10,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_seed_pages_per_turn",
+            "type": "number",
+            "label": "Max Seed Pages per Turn",
+            "help": (
+                "Caps initial search-result and direct URL pages so budget is left for "
+                "the pages they link to."
+            ),
+            "default": 10,
+            "min": 1,
+            "max": 10,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_max_user_urls_per_turn",
+            "type": "number",
+            "label": "Max User URLs per Turn",
+            "help": "Direct URLs past this cap are recorded as omitted in the ledger.",
+            "default": 100,
+            "min": 1,
+            "max": 100,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_max_search_queries_per_turn",
+            "type": "number",
+            "label": "Max Search Queries per Turn",
+            "help": "Includes the original current-message query.",
+            "default": 8,
+            "min": 1,
+            "max": 8,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_timeout_seconds",
+            "type": "number",
+            "label": "Timeout per Turn",
+            "help": "Hard limit 30 seconds.",
+            "default": 30,
+            "min": 3,
+            "max": 30,
+            "suffix": "s",
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_redirects",
+            "type": "number",
+            "label": "Max Redirects",
+            "help": "Every redirect target is revalidated against the URL policy.",
+            "default": 5,
+            "min": 0,
+            "max": 5,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_bytes_per_page_mb",
+            "type": "number",
+            "label": "Max MB per Page",
+            "help": "Hard limit 5 MB.",
+            "default": 5,
+            "min": 1,
+            "max": 5,
+            "suffix": " MB",
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_depth",
+            "type": "number",
+            "label": "Source Traversal Depth",
+            "help": "Depth 2 follows selected links from seed and child pages.",
+            "default": 2,
+            "min": 0,
+            "max": 2,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "enable_deep_source_review",
+            "type": "switch",
+            "label": "Inspect linked source pages",
+            "help": (
+                "Follows only scored, policy-approved links, within the page and depth "
+                "budgets above."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_enable_query_planning",
+            "type": "switch",
+            "label": "Plan multiple web search queries",
+            "help": (
+                "The selected chat model proposes bounded query variants, drawn from the "
+                "current message only, before any page is reviewed."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_enable_ledger_artifact",
+            "type": "switch",
+            "label": "Save research ledger artifacts",
+            "help": (
+                "Writes a Markdown artifact recording search queries, reviewed sources, "
+                "skipped URLs and coverage, so a result can be audited afterwards."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_enable_llm_planning",
+            "type": "switch",
+            "label": "Use model-assisted source link planning",
+            "help": (
+                "Lets the selected chat model rank candidate links a page exposes before "
+                "the server fetches any of them."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_respect_robots_txt",
+            "type": "switch",
+            "label": "Respect robots.txt",
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_audit_logging",
+            "type": "switch",
+            "label": "Log Deep Research activity",
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_allow_js_rendering",
+            "type": "switch",
+            "label": "Allow JavaScript rendering fallback",
+            "help": "Requires a verified Playwright browser runtime on the app host.",
+            "default": True,
+            "group": {
+                "id": "rendering",
+                "label": "JavaScript rendering",
+                "variant": "advanced",
+            },
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            # V1 disables the switch above and explains why in loose markup beneath
+            # it. Declaring the readout keeps the reason next to the control and
+            # makes it searchable, rather than leaving an option that looks broken.
+            "type": "status",
+            "label": "Browser runtime",
+            "status_source": "source_review_js_runtime",
+            "help": (
+                "Without the Playwright Chromium runtime, pages that build their content "
+                "in the browser are read as empty."
+            ),
+            "group": {
+                "id": "rendering",
+                "label": "JavaScript rendering",
+                "variant": "advanced",
+            },
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_js_load_more_clicks",
+            "type": "number",
+            "label": "Rendered Load More Clicks",
+            "help": (
+                "How many visible Load More controls Deep Research may click while "
+                "rendering a page."
+            ),
+            "default": 12,
+            "min": 0,
+            "max": 12,
+            "group": {
+                "id": "rendering",
+                "label": "JavaScript rendering",
+                "variant": "advanced",
+            },
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_source_review", "equals": True},
+                    {"key": "source_review_allow_js_rendering", "equals": True},
+                ]
+            },
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -846,12 +1540,24 @@ LEGACY_FIELD_NAMES = {
     "custom_favicon_base64": ["favicon_file"],
     # Collected as an acknowledgement on the toggle rather than a stored value.
     "enable_custom_pages": ["enable_custom_pages", "custom_pages_restart_acknowledged"],
+    # Same shape: the Grounding with Bing terms are accepted on the toggle, and
+    # the flag rides along with the save rather than being edited on its own.
+    "enable_web_search": ["enable_web_search", "web_search_consent_accepted"],
 }
 
-# Field names present in the V1 Appearance panes that intentionally have no V2
-# equivalent, with the reason. The parity test reads this, so an unexplained
-# omission fails rather than passing silently.
-LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {}
+# Field names present in the V1 panes that intentionally have no V2 equivalent,
+# with the reason. The parity test reads this, so an unexplained omission fails
+# rather than passing silently.
+LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
+    "source_review_default_mode": (
+        "Not a real choice. The V1 control is a permanently disabled select "
+        "offering one option, shadowed by a hidden input hard-coded to 'manual', "
+        "and get_source_review_config rewrites any other value back to 'manual' "
+        "on read. Reproducing it would add a control that cannot be changed and "
+        "implies a setting that does not exist. Deep Research states the "
+        "behaviour in its description instead."
+    ),
+}
 
 
 def get_admin_settings_fields():
@@ -906,6 +1612,36 @@ def get_secret_setting_keys():
         field["key"]
         for _section_id, field in iter_fields()
         if field.get("type") == "secret" and field.get("key")
+    }
+
+
+def get_secret_storage_paths():
+    """Return where each declared credential is actually stored.
+
+    A field's key names the control, which for historical reasons is the V1 form
+    input name. That is usually also the settings key, but not always: the Web
+    Search client secret is stored inside ``web_search_agent``. Redaction has to
+    follow the storage location, not the control name, or the secret is
+    protected in name only.
+    """
+    paths = set()
+    for _section_id, field in iter_fields():
+        if field.get("type") != "secret":
+            continue
+        declared = field.get("paths")
+        if declared:
+            paths.update(declared)
+        elif field.get("key"):
+            paths.add(field["key"])
+    return paths
+
+
+def get_nested_path_fields():
+    """Return ``{key: [storage paths]}`` for fields stored outside a top-level key."""
+    return {
+        field["key"]: list(field["paths"])
+        for _section_id, field in iter_fields()
+        if field.get("paths") and field.get("key")
     }
 
 
@@ -1088,34 +1824,41 @@ def _normalize_secret(value, field):
 
 
 def _normalize_string_list(value, field):
-    """Return ``(entries, error)`` for a newline-delimited list of strings.
+    """Return ``(entries, error)`` for a list of short strings.
 
-    Stored as a single newline-joined string rather than an array because that is
-    the shape the server-rendered textareas already write, and both interfaces
-    have to read the same setting.
+    Stored as a list, matching the settings document. The server-rendered form
+    round-trips these through a newline-joined textarea, so a string arriving
+    here is split the same way that form's handler splits it.
     """
     if isinstance(value, list):
         candidates = [str(item or "") for item in value]
     else:
-        candidates = str(value if value is not None else "").splitlines()
+        candidates = re.split(r"[\n,;]+", str(value if value is not None else ""))
 
     entries = []
+    seen = set()
     for candidate in candidates:
         entry = candidate.strip()
-        if not entry or entry in entries:
+        if not entry:
+            continue
+        # Case-insensitive, matching parse_source_review_list, so an allow list
+        # cannot hold both Example.com and example.com and behave unpredictably.
+        folded = entry.lower()
+        if folded in seen:
             continue
 
         pattern = field.get("entry_pattern")
         if pattern and not re.match(pattern, entry):
             return None, f"{entry!r} is not a valid {field.get('entry_label', 'entry')}."
 
+        seen.add(folded)
         entries.append(entry[: field.get("entry_max_length", 253)])
 
     maximum = field.get("max_entries")
     if maximum is not None and len(entries) > maximum:
         return None, f"Enter at most {maximum} entries."
 
-    return "\n".join(entries), None
+    return entries, None
 
 
 def _normalize_id_list(value, field):
@@ -1268,6 +2011,74 @@ def _validate_redirect_url(value):
     return normalized, None
 
 
+def read_nested_setting(document, path):
+    """Read a dotted path out of a settings document, or None."""
+    cursor = document if isinstance(document, dict) else {}
+    for part in str(path or "").split("."):
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(part)
+    return cursor
+
+
+def write_nested_setting(document, path, value):
+    """Write a dotted path into a document, creating intermediate objects."""
+    parts = str(path or "").split(".")
+    cursor = document
+    for part in parts[:-1]:
+        if not isinstance(cursor.get(part), dict):
+            cursor[part] = {}
+        cursor = cursor[part]
+    cursor[parts[-1]] = value
+
+
+def _apply_nested_paths(normalized, current_settings):
+    """Move path-declared values to where they are actually stored.
+
+    Most settings are top-level keys, so the normalized dict can be handed
+    straight to ``update_settings``. Two cases are not:
+
+    A value assembled into a nested object. The server-rendered form builds the
+    Web Search Foundry connection into a single ``web_search_agent`` object, so a
+    field named after the form input would write a top-level key nothing reads.
+
+    A value mirrored into more than one key. URL Access domain lists are stored
+    twice, once under ``url_access_*`` and once under ``source_review_*``, and
+    writing only one leaves Deep Research reading the stale copy.
+
+    A nested container is rebuilt from the stored one and handed back whole,
+    because ``update_settings`` merges at the top level only. Writing just the
+    changed leaf would replace the object and drop its siblings, so editing the
+    Foundry endpoint would silently discard the agent id and the credentials.
+    """
+    nested_fields = get_nested_path_fields()
+    if not nested_fields:
+        return normalized
+
+    pending = {key: normalized.pop(key) for key in list(normalized) if key in nested_fields}
+    if not pending:
+        return normalized
+
+    # One deep copy per containing object, seeded from what is stored so untouched
+    # siblings survive the write.
+    containers = {}
+    for key, value in pending.items():
+        for path in nested_fields[key]:
+            root, _, remainder = path.partition(".")
+            if not remainder:
+                # A plain mirror to another top-level key.
+                normalized[root] = value
+                continue
+
+            if root not in containers:
+                stored = current_settings.get(root)
+                containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+            write_nested_setting(containers[root], remainder, value)
+
+    normalized.update(containers)
+    return normalized
+
+
 def _check_acknowledgements(updates, current_settings, errors):
     """Enforce the acknowledgements a field requires before it may be enabled."""
     for _section_id, field in iter_fields():
@@ -1342,6 +2153,10 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # "At least one" style constraints can only be judged once the whole payload
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
+
+    # Applied last so the checks above still see flat keys, which is the shape
+    # they and the schema are written against.
+    _apply_nested_paths(normalized, current)
 
     return normalized, errors, warnings
 

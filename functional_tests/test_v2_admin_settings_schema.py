@@ -98,14 +98,23 @@ def test_fields_carry_required_properties():
     problems = []
     for section_id, field in fields_module.iter_fields():
         field_type = field.get("type")
-        identity = f"{section_id}.{field.get('key') or field.get('component')}"
+        identity = (
+            f"{section_id}."
+            f"{field.get('key') or field.get('component') or field.get('status_source')}"
+        )
 
         if not field.get("label"):
             problems.append(f"{identity}: missing label")
 
-        # Everything except a bespoke component must name the settings key it edits.
-        if field_type != "component" and not field.get("key"):
+        # Everything that edits a value must name the settings key it edits. A
+        # bespoke component owns its own persistence, and a status readout is
+        # computed by the server rather than stored, so neither has one.
+        if field_type not in ("component", "status") and not field.get("key"):
             problems.append(f"{identity}: missing key")
+
+        # A readout with no source would render permanently blank.
+        if field_type == "status" and not field.get("status_source"):
+            problems.append(f"{identity}: missing status_source")
 
         for prop in REQUIRED_PROPERTIES_BY_TYPE.get(field_type, ()):
             if prop not in field:

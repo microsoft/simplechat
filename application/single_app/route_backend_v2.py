@@ -30,9 +30,11 @@ from admin_settings_fields import (
     LOGO_SCALE_MIN_PERCENT,
     SECRET_REDACTED_VALUE,
     get_admin_settings_fields,
-    get_secret_setting_keys,
+    get_secret_storage_paths,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
+    read_nested_setting,
+    write_nested_setting,
 )
 from admin_settings_nav import ADMIN_NAV
 from config import (
@@ -80,6 +82,7 @@ from functions_settings import (
     update_settings,
 )
 from functions_source_review import (
+    get_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
     is_url_access_enabled_for_user,
 )
@@ -613,19 +616,67 @@ def register_route_backend_v2(bp):
 
 
 def register_route_backend_v2_admin(bp):
+    def _build_status_readouts():
+        """Return the server-computed readouts declared `status` fields render.
+
+        Some of what an administrator needs is not a setting: whether the Playwright
+        runtime can render JavaScript, which endpoint a cloud selection resolves to,
+        whether audio transcoding is available. The server-rendered panes pass these
+        into the template as loose context and print them as stray markup. Naming them
+        here lets the schema declare a readout, which keeps the reason a control is
+        unavailable next to the control and makes it findable by search.
+
+        Each entry is ``{ok, message}``: the renderer needs the tone as well as the
+        text, and inferring it from wording would be guesswork.
+        """
+        readouts = {}
+
+        try:
+            capabilities = get_source_review_runtime_capabilities()
+            readouts["source_review_js_runtime"] = {
+                "ok": bool(capabilities.get("js_rendering_available")),
+                "message": capabilities.get("message")
+                or "Runtime support has not been checked yet.",
+            }
+            if capabilities.get("sandbox_disabled"):
+                readouts["source_review_js_runtime"]["message"] += (
+                    " The Chromium sandbox is disabled by environment configuration."
+                )
+        except Exception as exc:
+            # A probe that launches a browser can fail for reasons that have nothing
+            # to do with the settings page, and it must not take the page down.
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Source review runtime probe failed: {exc}",
+                level=logging.WARNING,
+            )
+            readouts["source_review_js_runtime"] = {
+                "ok": False,
+                "message": "Runtime support could not be checked.",
+            }
+
+        return readouts
+
     def _redact_admin_settings_for_v2(settings):
         """Replace stored credentials with the redaction placeholder.
 
         Two lists feed this. ``redact_admin_settings_secrets_for_form`` covers the keys
         the server-rendered form already protects, including the nested Foundry client
-        secret. ``get_secret_setting_keys`` adds anything the V2 schema declares as a
+        secret. ``get_secret_storage_paths`` adds anything the V2 schema declares as a
         secret, so declaring a new credential field protects it without a second edit
         here.
+
+        Storage paths rather than field keys, because a field is named after its control
+        and a credential is not always stored under that name -- the Web Search client
+        secret lives inside ``web_search_agent``. Redacting the key alone would leave the
+        real value in place under its actual path.
         """
         redacted = redact_admin_settings_secrets_for_form(settings)
-        for key in get_secret_setting_keys():
-            if redacted.get(key):
-                redacted[key] = SECRET_REDACTED_VALUE
+        for path in get_secret_storage_paths():
+            if "." in path:
+                if read_nested_setting(redacted, path):
+                    write_nested_setting(redacted, path, SECRET_REDACTED_VALUE)
+            elif redacted.get(path):
+                redacted[path] = SECRET_REDACTED_VALUE
         return redacted
 
     @bp.route("/api/v2/admin/settings", methods=["GET"])
@@ -659,6 +710,7 @@ def register_route_backend_v2_admin(bp):
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "branding_assets": _build_branding_assets(settings),
+                        "status_readouts": _build_status_readouts(),
                         "version": VERSION,
                     }
                 ),
