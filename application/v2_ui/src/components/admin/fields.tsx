@@ -20,7 +20,6 @@ import {
     countWords,
     isRedactedSecret,
     parseStringList,
-    serializeStringList,
     type AdminField,
 } from '../../lib/adminFields';
 import { Toggle } from '../ui/primitives';
@@ -471,7 +470,7 @@ function StringListControl({
         }
         setEntryError(null);
         setPending('');
-        onChange(serializeStringList([...entries, candidate]));
+        onChange([...entries, candidate]);
     };
 
     return (
@@ -536,9 +535,7 @@ function StringListControl({
                                 disabled={disabled}
                                 onClick={() =>
                                     onChange(
-                                        serializeStringList(
-                                            entries.filter((item) => item !== entry),
-                                        ),
+                                        entries.filter((item) => item !== entry),
                                     )
                                 }
                             >
@@ -564,8 +561,8 @@ function StringListControl({
  * is unavailable next to the control itself.
  */
 function StatusControl({ field, value }: FieldControlProps) {
-    const text = asString(value);
     const tone = statusTone(value);
+    const text = readStatusMessage(value);
 
     return (
         <div className="py-3">
@@ -573,7 +570,7 @@ function StatusControl({ field, value }: FieldControlProps) {
             <div
                 className={clsx(
                     'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
-                    tone === 'ok' && 'border-edge bg-surface-1 text-text-2',
+                    tone === 'ok' && 'border-ok/40 bg-ok/5 text-text-2',
                     tone === 'warn' && 'border-warn/40 bg-warn/5 text-warn',
                     tone === 'unknown' && 'border-edge bg-surface-1 text-text-3',
                 )}
@@ -595,15 +592,22 @@ function StatusControl({ field, value }: FieldControlProps) {
 /**
  * Read the tone of a status value.
  *
- * The server may send either a plain string or `{ ok, message }`. Both shapes appear in
- * the V1 template context this replaces, so both are accepted rather than requiring the
- * backend to normalise first.
+ * The server sends `{ok, message}`, carrying the tone rather than leaving it to be
+ * inferred from the wording. A bare string is still accepted, because a readout added
+ * later should not have to be normalised before it can be shown.
  */
 function statusTone(value: unknown): 'ok' | 'warn' | 'unknown' {
     if (value && typeof value === 'object' && 'ok' in value) {
         return (value as { ok?: unknown }).ok ? 'ok' : 'warn';
     }
     return asString(value) ? 'ok' : 'unknown';
+}
+
+function readStatusMessage(value: unknown): string {
+    if (value && typeof value === 'object' && 'message' in value) {
+        return asString((value as { message?: unknown }).message);
+    }
+    return asString(value);
 }
 
 /**

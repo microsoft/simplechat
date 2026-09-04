@@ -102,10 +102,11 @@ def test_redaction_covers_both_the_form_list_and_the_schema():
         "The helper should reuse the server-rendered form's redaction list, which "
         "is what covers the nested Foundry client secret."
     )
-    assert "get_secret_setting_keys()" in body, (
+    assert "get_secret_storage_paths()" in body, (
         "The helper should also redact anything the V2 schema declares as a "
         "secret, so a newly declared credential is protected without a second "
-        "edit to the route."
+        "edit to the route. Storage paths rather than field keys, because a "
+        "credential is not always stored under the name of its control."
     )
 
     print("  Both the form list and the schema list are applied.")
@@ -204,29 +205,32 @@ def test_declared_secrets_are_known_to_the_form_redaction_list():
         r"ADMIN_SETTINGS_FORM_SECRET_FIELDS = \((.*?)\)", settings_source, re.DOTALL
     )
     assert form_list, "Could not read ADMIN_SETTINGS_FORM_SECRET_FIELDS"
-    form_keys = set(re.findall(r'"([^"]+)"', form_list.group(1)))
+    protected = set(re.findall(r'"([^"]+)"', form_list.group(1)))
 
     nested_list = re.search(
         r"ADMIN_SETTINGS_NESTED_SECRET_FIELDS = \((.*?)\)", settings_source, re.DOTALL
     )
     assert nested_list, "Could not read ADMIN_SETTINGS_NESTED_SECRET_FIELDS"
-    nested_keys = {path.split(".")[-1] for path in re.findall(r'"([^"]+)"', nested_list.group(1))}
+    protected |= set(re.findall(r'"([^"]+)"', nested_list.group(1)))
 
-    missing = sorted(
-        key
-        for key in fields_module.get_secret_setting_keys()
-        if key not in form_keys and key not in nested_keys
-    )
+    # Compared by storage path, not by field key. A field is named after its
+    # control, and the Web Search client secret is stored inside
+    # web_search_agent rather than under the form input's name.
+    missing = sorted(fields_module.get_secret_storage_paths() - protected)
 
     assert not missing, (
-        "These keys are declared as secrets in admin_settings_fields.py but are "
-        "not in the server-rendered form's redaction list, so the classic admin "
-        "page would still render them in plain text. Add them to "
-        "ADMIN_SETTINGS_FORM_SECRET_FIELDS in functions_settings.py:\n  "
-        + "\n  ".join(missing)
+        "These credentials are declared as secrets in admin_settings_fields.py "
+        "but are not in the server-rendered form's redaction list, so the "
+        "classic admin page would still render them in plain text. Add them to "
+        "ADMIN_SETTINGS_FORM_SECRET_FIELDS (or "
+        "ADMIN_SETTINGS_NESTED_SECRET_FIELDS for a dotted path) in "
+        "functions_settings.py:\n  " + "\n  ".join(missing)
     )
 
-    print(f"  All declared secrets are covered by both interfaces.")
+    print(
+        f"  All {len(fields_module.get_secret_storage_paths())} declared secret(s) "
+        "are covered by both interfaces."
+    )
     return True
 
 

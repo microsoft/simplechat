@@ -499,8 +499,11 @@ export function AdminSettingsPage() {
             return null;
         }
 
-        const key = field.key ?? field.component ?? field.label;
-        const value = readFieldValue(field, settings, draft);
+        const key = field.key ?? field.component ?? field.status_source ?? field.label;
+        const value =
+            field.type === 'status'
+                ? data?.status_readouts?.[field.status_source ?? '']
+                : readFieldValue(field, settings, draft);
         const error = field.key ? fieldErrors[field.key] : undefined;
         const warning = field.key ? fieldWarnings[field.key] : undefined;
 
