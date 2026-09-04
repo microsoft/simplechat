@@ -232,6 +232,14 @@ what it is for. To use one, add the agent capability and set "agent_name" to a n
 appears in that list, spelled exactly. Never name an agent that is not listed; if the list
 is empty you have no agent to call, so do not plan an agent step.
 
+You do not always know which documents matter before the run starts. Where a capability
+accepts "documents_from_step", you may give it the step_id of an earlier searching step
+instead of naming documents, and it will read whichever documents that step finds. Use this
+when the right documents depend on a search that has not run yet. When the documents are
+already known -- the user selected them, or they appear in "candidate_documents" -- name
+them directly, because a named document can be shown to the user for approval and a
+deferred one cannot.
+
 Return ONE JSON object with this shape:
 
 {

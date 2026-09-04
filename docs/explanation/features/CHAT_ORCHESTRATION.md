@@ -96,6 +96,39 @@ recover what was just discarded.
 `document_ids` and nothing else, so a client that renamed a document mislabels its own plan
 card and reaches nothing new. `test_orchestration_context_picker.py` asserts this directly.
 
+#### Reading what an earlier step found
+
+Every step's documents used to be fixed when the plan was written, which meant a plan could
+not express the most natural shape of all: search for the relevant material, then analyse
+what turned up. The planner had to guess document ids from the candidate probe, or the plan
+simply could not say it.
+
+A step may now set `documents_from_step` to an earlier step's `step_id` instead of naming
+documents. At run time the adapter resolves it from `RunContext.step_documents`, which
+records which documents each step reached.
+
+The reference is validated where the surviving step ids are known, because ids can be
+renamed during validation. It must name a step that exists, must not name the step itself,
+and must name a capability that *produces evidence* — pointing at a web search or at
+`respond` would resolve to nothing every time. A resolved reference is added to
+`depends_on`, and the topological pass is what guarantees ordering; positions are
+deliberately not checked here as well, since that would duplicate the cycle detection and
+disagree with it as soon as phase ordering moved a step.
+
+Two constraints are worth stating plainly:
+
+- **It widens nothing.** Documents arriving this way came from a search, which only returns
+  what the user can read, and the document functions resolve access again from the user id
+  and scope they are given.
+- **It does not dodge the administrator's ceiling.** The validator trims the documents a
+  plan *names*, but it cannot trim what a search has not run yet, so the limit is applied
+  again when the reference resolves.
+
+The cost is real and is the reason this is not the default: a plan that defers its
+documents cannot show the user which ones it will read. The approval card says "whatever
+the earlier step finds" rather than pretending to a list, and the planner is told to name
+documents directly whenever they are already known.
+
 ### Plan
 
 `functions_orchestration_planner.py` triages first. The point of triage is to stop a
@@ -324,7 +357,7 @@ to the front.
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
 | `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list, and document and web citations are separated |
-| `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from |
+| `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 
 ## Known limitations
 

@@ -297,13 +297,22 @@ CAPABILITY_REGISTRY = (
                     'minItems': 1,
                     'description': 'The documents to read. Must be named explicitly.',
                 },
+                'documents_from_step': {
+                    'type': 'string',
+                    'description': (
+                        'Instead of naming documents, read whichever ones an earlier '
+                        'step found. Give that step\'s step_id. Use this when the '
+                        'documents worth reading are not known until a search has run; '
+                        'name documents directly whenever they are already known.'
+                    ),
+                },
                 'doc_scope': {
                     'type': 'string',
                     'enum': ['all', 'personal', 'group', 'public'],
                     'default': 'all',
                 },
             },
-            'required': ['analysis_prompt', 'document_ids'],
+            'required': ['analysis_prompt'],
             'additionalProperties': False,
         },
         'produces': (PRODUCES_EVIDENCE, PRODUCES_CITATIONS),

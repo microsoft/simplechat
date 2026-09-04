@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.090)**
+### **(v0.261.091)**
 
 #### New Features
 
@@ -11,8 +11,9 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Tags now narrow a plan too, and stay in force for the whole run.** A later step can choose its own search query but cannot widen the shelf you narrowed to. Documents and tags picked together are combined additively, matching the chat path.
     *   **A document you picked now reaches the planner by name.** It previously arrived as a bare identifier, so the planner could not write "compare the Q3 and Q4 contracts" without being told which document was which, and the plan you were asked to approve listed a row of uuids. The composer sends the names it already had on screen.
     *   **The plan marks which documents were your choice.** A document you picked and one the planner found are both documents the plan will read, but only the second is a decision worth checking — so the two now look different on the card.
-    *   Names are display only. What a plan may read is still decided from the document ids, so a renamed document is exactly the document it was.
-    *   (Ref: `resolve_seeds`, `resolve_candidate_documents`, `RunContext.tags`, `contextDocumentDescriptors`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
+    *   **A step can act on what an earlier step finds.** A plan could previously only use documents whose ids were known when it was written, so it could not express "search for the relevant contracts, then analyse them" — the planner had to guess which contracts, or not plan it at all. A step can now defer to an earlier searching step instead. The plan says so plainly rather than showing an empty list, and the planner still names documents directly whenever they are already known, because a named document can be approved and a deferred one cannot.
+    *   Names are display only. What a plan may read is still decided from the document ids, so a renamed document is exactly the document it was. Documents that arrive mid-run are re-checked the same way, and still respect the administrator's per-action limit.
+    *   (Ref: `resolve_seeds`, `resolve_candidate_documents`, `RunContext.tags`, `RunContext.step_documents`, `documents_from_step`, `contextDocumentDescriptors`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
 
 #### Bug Fixes
 
