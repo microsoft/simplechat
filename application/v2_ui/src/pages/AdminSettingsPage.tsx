@@ -36,12 +36,15 @@ import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { AppRoleRoster } from '../components/admin/AppRoleRoster';
 import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
+import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
+import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -57,6 +60,7 @@ import {
     buildFieldIndex,
     buildSectionBlocks,
     collectAppRoleEntries,
+    evaluateSectionStatus,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
@@ -68,6 +72,7 @@ import {
     type AdminSettingsResponse,
     type BrandingAssets,
     type BrandingUploadResponse,
+    type SectionStatus,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
 import type { AdminNavGroup, Json } from '../lib/types';
@@ -96,6 +101,27 @@ interface RenderedSection {
 
 /** Synthetic field definitions used to read a sibling's current value for a preview. */
 const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: '' });
+
+/** How each section status reads, and how strongly it is drawn. */
+const STATUS_PRESENTATION: Record<SectionStatus, { label: string; className: string }> = {
+    off: { label: 'Off', className: 'bg-surface-2 text-text-3' },
+    unconfigured: { label: 'Needs configuration', className: 'bg-warn-soft text-warn' },
+    on: { label: 'On', className: 'bg-ok-soft text-ok' },
+};
+
+function SectionStatusPill({ status }: { status: SectionStatus }) {
+    const presentation = STATUS_PRESENTATION[status];
+    return (
+        <span
+            className={clsx(
+                'shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none font-medium',
+                presentation.className,
+            )}
+        >
+            {presentation.label}
+        </span>
+    );
+}
 
 /**
  * Associate each undeclared `enable_*` setting with a section.
@@ -198,6 +224,7 @@ export function AdminSettingsPage() {
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
+    const [pendingScroll, setPendingScroll] = useState<string | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -254,6 +281,7 @@ export function AdminSettingsPage() {
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
     const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
+    const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
@@ -383,21 +411,31 @@ export function AdminSettingsPage() {
      * App role requirements, for the roster that mirrors them into Security.
      *
      * Built from the navigation and the schema together so each entry can say which tab
-     * really owns it, and so the order matches the rest of the page.
+     * really owns it, and so the order matches the rest of the page. The server registry
+     * is merged in for the Entra role value and the before/after description, which the
+     * field schema has nowhere to put.
      */
     const appRoleEntries = useMemo(
-        () => (data ? collectAppRoleEntries(data.admin_nav, schema) : []),
+        () =>
+            data
+                ? collectAppRoleEntries(data.admin_nav, schema, data.app_role_requirements)
+                : [],
         [data, schema],
     );
 
     const appRoleValues = useMemo(() => {
         const values: Record<string, boolean> = {};
-        for (const entry of appRoleEntries) {
-            values[entry.key] = asBoolean(
-                Object.prototype.hasOwnProperty.call(draft, entry.key)
-                    ? draft[entry.key]
-                    : settings[entry.key],
+        const read = (key: string) =>
+            asBoolean(
+                Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
             );
+        for (const entry of appRoleEntries) {
+            values[entry.key] = read(entry.key);
+            // The capability each requirement guards, so the roster can say when one is
+            // enforced but currently doing nothing.
+            if (entry.dependsOn) {
+                values[entry.dependsOn] = read(entry.dependsOn);
+            }
         }
         return values;
     }, [appRoleEntries, draft, settings]);
@@ -546,6 +584,37 @@ export function AdminSettingsPage() {
     const readSibling = (key: string, fallback = '') =>
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
+    /** Read another field's raw current value, preferring an unsaved edit. */
+    const readRaw = useCallback(
+        (key: string): unknown =>
+            Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
+        [draft, settings],
+    );
+
+    /**
+     * Move the page to a section, from a cross-reference elsewhere on it.
+     *
+     * The role catalog links to settings that live in other groups, so clearing the
+     * filters is part of the jump: with a group selected or a search active, the target
+     * section may not be on screen to scroll to. The scroll itself is deferred to an
+     * effect, because the element only exists once that filter change has rendered.
+     */
+    const goToSection = useCallback((sectionId: string) => {
+        setQuery('');
+        setActiveGroup(null);
+        setPendingScroll(sectionId);
+    }, []);
+
+    useEffect(() => {
+        if (!pendingScroll) {
+            return;
+        }
+        document
+            .getElementById(`admin-section-${pendingScroll}`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setPendingScroll(null);
+    }, [pendingScroll]);
+
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
         if (!isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)) {
@@ -657,6 +726,7 @@ export function AdminSettingsPage() {
                             help={field.help}
                             disabled={saving}
                             onChange={setValue}
+                            onNavigate={goToSection}
                         />
                     );
                 case 'classification-banner-preview':
@@ -676,6 +746,21 @@ export function AdminSettingsPage() {
                         <UserAgreementPreview
                             key={key}
                             text={readSibling('user_agreement_text')}
+                        />
+                    );
+                case 'connection-test':
+                    return <ConnectionTest key={key} field={field} read={readRaw} />;
+                case 'key-vault-secret-reminders':
+                    return (
+                        <KeyVaultReminders key={key} label={field.label} help={field.help} />
+                    );
+                case 'front-door-redirect-preview':
+                    return (
+                        <FrontDoorRedirectPreview
+                            key={key}
+                            origin={readSibling('front_door_url')}
+                            label={field.label}
+                            help={field.help}
                         />
                     );
                 default:
@@ -877,42 +962,66 @@ export function AdminSettingsPage() {
                                 </p>
                             )}
 
-                            {visibleSections.map((section) => (
-                                <GlassPanel key={section.sectionId} edge className="p-4">
-                                    <div className="mb-1">
-                                        <h2 className="text-sm font-semibold text-text-1">
-                                            {section.label}
-                                        </h2>
-                                        <p className="text-xs text-text-3">
-                                            {section.groupLabel}
-                                            {section.tabLabel ? ` · ${section.tabLabel}` : ''}
-                                        </p>
-                                    </div>
+                            {visibleSections.map((section) => {
+                                const status = evaluateSectionStatus(
+                                    sectionStatus[section.sectionId],
+                                    settings,
+                                    draft,
+                                );
 
-                                    <div className="divide-y divide-edge">
-                                        {renderBlocks(section.fields)}
-
-                                        {section.capabilities.map((row) => (
-                                            <div key={row.key} className="py-1">
-                                                <Toggle
-                                                    label={row.label}
-                                                    description={row.key}
-                                                    checked={asBoolean(
-                                                        Object.prototype.hasOwnProperty.call(
-                                                            draft,
-                                                            row.key,
-                                                        )
-                                                            ? draft[row.key]
-                                                            : settings[row.key],
-                                                    )}
-                                                    disabled={saving}
-                                                    onChange={(next) => setValue(row.key, next)}
-                                                />
+                                return (
+                                    <GlassPanel
+                                        key={section.sectionId}
+                                        id={`admin-section-${section.sectionId}`}
+                                        edge
+                                        className="scroll-mt-4 p-4"
+                                    >
+                                        <div className="mb-1 flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <h2 className="text-sm font-semibold text-text-1">
+                                                    {section.label}
+                                                </h2>
+                                                <p className="text-xs text-text-3">
+                                                    {section.groupLabel}
+                                                    {section.tabLabel
+                                                        ? ` · ${section.tabLabel}`
+                                                        : ''}
+                                                </p>
                                             </div>
-                                        ))}
-                                    </div>
-                                </GlassPanel>
-                            ))}
+                                            {status ? <SectionStatusPill status={status} /> : null}
+                                        </div>
+
+                                        <div className="divide-y divide-edge">
+                                            {renderBlocks(section.fields)}
+                                        </div>
+
+                                        {section.capabilities.length > 0 && (
+                                            <div className="divide-y divide-edge">
+                                                {section.capabilities.map((row) => (
+                                                    <div key={row.key} className="py-1">
+                                                        <Toggle
+                                                            label={row.label}
+                                                            description={row.key}
+                                                            checked={asBoolean(
+                                                                Object.prototype.hasOwnProperty.call(
+                                                                    draft,
+                                                                    row.key,
+                                                                )
+                                                                    ? draft[row.key]
+                                                                    : settings[row.key],
+                                                            )}
+                                                            disabled={saving}
+                                                            onChange={(next) =>
+                                                                setValue(row.key, next)
+                                                            }
+                                                        />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </GlassPanel>
+                                );
+                            })}
 
                             {!loading && activeGroupUsesFallback && (
                                 <p className="pb-6 text-center text-xs text-text-3">

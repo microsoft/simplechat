@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -253,42 +254,44 @@ def test_dependencies_reference_real_fields():
     for section_id, field in fields_module.iter_fields():
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        # ``depends_on`` may be one condition or a chain of them, so the schema
-        # exposes an iterator rather than each caller re-deriving the shape.
-        for depends_on in fields_module.iter_dependencies(field):
+        # A field may carry one condition or a list of them, so both shapes are read
+        # through the schema's own iterator rather than assumed here.
+        for condition in fields_module.iter_field_dependencies(field):
             checked += 1
 
-            if depends_on.get("flag"):
+            if condition.get("flag"):
                 # A runtime flag is resolved by the server, not by another field,
                 # so there is no declaration to point at. It must still be a flag
                 # the settings API actually sends.
-                if depends_on["flag"] not in RUNTIME_FLAGS:
+                if condition["flag"] not in RUNTIME_FLAGS:
                     problems.append(
                         f"{identity}: depends on unknown runtime flag "
-                        f"{depends_on['flag']!r}"
+                        f"{condition['flag']!r}"
                     )
-                if not isinstance(depends_on.get("equals"), bool):
+                if not isinstance(condition.get("equals"), bool):
                     problems.append(f"{identity}: a flag condition must compare to a bool")
                 continue
 
-            if "key" not in depends_on:
+            if "key" not in condition:
                 problems.append(f"{identity}: depends_on names neither a key nor a flag")
                 continue
-            if depends_on["key"] not in declared:
-                problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
-            if field.get("key") == depends_on["key"]:
+            if condition["key"] not in declared:
+                problems.append(
+                    f"{identity}: depends on undeclared key {condition['key']!r}"
+                )
+            if field.get("key") == condition["key"]:
                 problems.append(f"{identity}: depends on itself")
 
             # A string comparison only makes sense against a value the gating
             # field can actually hold, and a typo there hides the dependent
             # field for good.
-            expected = depends_on.get("equals", True)
+            expected = condition.get("equals", True)
             if isinstance(expected, str):
-                gate = fields_module.get_field_definition(depends_on["key"]) or {}
+                gate = fields_module.get_field_definition(condition["key"]) or {}
                 allowed = {option["value"] for option in gate.get("options", [])}
                 if allowed and expected not in allowed:
                     problems.append(
-                        f"{identity}: depends on {depends_on['key']!r} == {expected!r}, "
+                        f"{identity}: depends on {condition['key']!r} == {expected!r}, "
                         f"which is not one of {sorted(allowed)}"
                     )
 
@@ -341,7 +344,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 

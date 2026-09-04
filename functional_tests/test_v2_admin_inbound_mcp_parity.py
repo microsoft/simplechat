@@ -147,7 +147,7 @@ def test_configuration_is_gated_on_the_runtime_flag():
     for field in mcp_fields():
         flags = {
             (dependency.get("flag"), dependency.get("equals"))
-            for dependency in fields_module.iter_dependencies(field)
+            for dependency in fields_module.iter_field_dependencies(field)
             if dependency.get("flag")
         }
         if ("mcp_ui_enabled", False) in flags:

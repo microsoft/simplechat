@@ -232,7 +232,7 @@ def test_the_agents_gate_chain_is_declared():
     def dependency_keys(field):
         return {
             dependency["key"]
-            for dependency in fields_module.iter_dependencies(field)
+            for dependency in fields_module.iter_field_dependencies(field)
         }
 
     runtime = {field["key"]: field for field in schema["agents-config"] if field.get("key")}
