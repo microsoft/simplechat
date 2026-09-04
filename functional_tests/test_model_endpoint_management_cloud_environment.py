@@ -1,8 +1,8 @@
 # test_model_endpoint_management_cloud_environment.py
 """
 Functional test for model endpoint management cloud environment normalization.
-Version: 0.250.172
-Implemented in: 0.250.004; updated in 0.250.172
+Version: 0.261.010
+Implemented in: 0.250.004; updated in 0.250.172, 0.261.010
 
 This test ensures model endpoint normalization derives non-editable management
 cloud settings from AZURE_ENVIRONMENT and preserves explicit service principal
@@ -189,7 +189,7 @@ def test_service_principal_preserves_explicit_cross_cloud_selection():
     functions_settings, original_modules = load_functions_settings_module()
     restore = run_with_environment(functions_settings, "usgovernment")
     try:
-        endpoint, changed = normalize_single_endpoint(functions_settings, {
+        endpoint, _ = normalize_single_endpoint(functions_settings, {
             "id": "public-foundry-sp",
             "provider": "new_foundry",
             "enabled": True,
@@ -199,12 +199,16 @@ def test_service_principal_preserves_explicit_cross_cloud_selection():
             },
             "models": [],
         })
+        # Normalization adds backend-owned defaults on first pass, so idempotency is
+        # what proves the explicit cross-cloud selection is never rewritten.
+        renormalized, changed = normalize_single_endpoint(functions_settings, endpoint)
     finally:
         restore()
         restore_modules(original_modules)
 
     assert changed is False
     assert endpoint["auth"]["management_cloud"] == "public"
+    assert renormalized["auth"]["management_cloud"] == "public"
 
 
 def test_missing_service_principal_cloud_defaults_to_environment():

@@ -681,7 +681,13 @@ def test_custom_endpoint_normalization_and_sanitization():
 def test_custom_endpoint_ui_contract():
     """Ensure both endpoint editors expose the same safe Custom workflow."""
     modal = (APP_DIR / "templates" / "_multiendpoint_modal.html").read_text(encoding="utf-8")
-    admin_template = (APP_DIR / "templates" / "admin_settings.html").read_text(encoding="utf-8")
+    admin_template = "\n".join(
+        [(APP_DIR / "templates" / "admin_settings.html").read_text(encoding="utf-8")]
+        + [
+            pane.read_text(encoding="utf-8")
+            for pane in sorted((APP_DIR / "templates" / "admin" / "_panes").glob("*.html"))
+        ]
+    )
     admin_js = (
         APP_DIR / "static" / "js" / "admin" / "admin_model_endpoints.js"
     ).read_text(encoding="utf-8")
