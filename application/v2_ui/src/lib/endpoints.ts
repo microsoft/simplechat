@@ -1387,6 +1387,59 @@ export const reprocessPersonalDocumentExtraction = (
         { document_ids: documentIds, extraction_mode: extractionMode },
     );
 
+/* --- Group and public workspace documents -------------------------------- */
+
+/**
+ * List documents in one or more groups.
+ *
+ * `group_ids` is honoured by `/api/group_documents` as a comma-separated multi-group mode,
+ * with each group validated against the caller's membership and non-members silently dropped.
+ * Passing them explicitly rather than relying on the active group is what lets the composer's
+ * picker search every group the user belongs to at once, instead of only the one the classic
+ * workspace happens to have selected.
+ */
+export function fetchGroupDocuments(
+    groupIds: readonly string[],
+    query: Partial<DocumentQuery> = {},
+    signal?: AbortSignal,
+) {
+    const params = buildDocumentListParams(query);
+    const ids = groupIds.filter(Boolean).join(',');
+    return api.get<DocumentListResponse>(
+        `/api/group_documents?${params}${ids ? `&group_ids=${encodeURIComponent(ids)}` : ''}`,
+        signal,
+    );
+}
+
+/**
+ * List documents across every public workspace the user has made visible.
+ *
+ * The route derives the set from `publicDirectorySettings` rather than taking ids, so a
+ * workspace the user has not surfaced in their directory is not searchable here — which
+ * matches what the rest of the interface shows them.
+ */
+export function fetchPublicWorkspaceDocuments(
+    query: Partial<DocumentQuery> = {},
+    signal?: AbortSignal,
+) {
+    return api.get<DocumentListResponse>(
+        `/api/public_workspace_documents?${buildDocumentListParams(query)}`,
+        signal,
+    );
+}
+
+export const fetchGroupDocumentTags = (signal?: AbortSignal) =>
+    api.get<{ tags?: WorkspaceTag[] }>('/api/group_documents/tags', signal);
+
+export const fetchGroupDocument = (documentId: string, signal?: AbortSignal) =>
+    api.get<WorkspaceDocument>(
+        `/api/group_documents/${encodeURIComponent(documentId)}`,
+        signal,
+    );
+
+export const fetchPublicWorkspaceDocumentTags = (signal?: AbortSignal) =>
+    api.get<{ tags?: WorkspaceTag[] }>('/api/public_workspace_documents/tags', signal);
+
 /* --- Tags ---------------------------------------------------------------- */
 
 export const fetchPersonalDocumentTags = (signal?: AbortSignal) =>
