@@ -43,6 +43,7 @@ import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectP
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
+import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingField } from '../components/admin/fields';
 import {
@@ -682,6 +683,8 @@ export function AdminSettingsPage() {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'model-connections-manager':
+                    return <ModelConnectionsManager key={key} help={field.help} />;
                 case 'global-identities-list':
                     return <GlobalIdentitiesList key={key} help={field.help} />;
                 case 'app-role-requirements-roster':
