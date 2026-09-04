@@ -476,8 +476,6 @@ def _format_model_provider_label(provider):
         return 'Foundry (classic)'
     if normalized_provider == 'new_foundry':
         return 'New Foundry'
-    if normalized_provider == 'custom':
-        return 'Custom'
     return 'Azure OpenAI'
 
 
