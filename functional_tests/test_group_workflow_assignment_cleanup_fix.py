@@ -2,15 +2,22 @@
 # test_group_workflow_assignment_cleanup_fix.py
 """
 Functional test for group workflow assignment cleanup.
-Version: 0.241.201
+Version: 0.261.059
 Implemented in: 0.241.201
 
 This test ensures malformed nested JSON strings cannot be persisted as group
 workflow assignment IDs and that valid group UUIDs are preserved.
+
+The normalizers are extracted from source and executed in isolation rather than
+imported, because importing ``functions_settings`` reaches ``config.py`` and a
+live Cosmos client. As of 0.261.059 the pure ones live in
+``functions_group_assignment_ids.py`` and are re-exported, so the extraction spans
+both modules and the re-export itself is asserted.
 """
 
 import ast
 import json
+import re
 import sys
 import traceback
 import uuid
@@ -19,9 +26,31 @@ from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-FUNCTIONS_SETTINGS_PATH = REPO_ROOT / "application" / "single_app" / "functions_settings.py"
-ADMIN_SETTINGS_JS_PATH = REPO_ROOT / "application" / "single_app" / "static" / "js" / "admin" / "admin_settings.js"
-CONFIG_PATH = REPO_ROOT / "application" / "single_app" / "config.py"
+APP_DIR = REPO_ROOT / "application" / "single_app"
+FUNCTIONS_SETTINGS_PATH = APP_DIR / "functions_settings.py"
+# The pure id normalizers were moved out of functions_settings.py so that
+# admin_settings_fields.py could reuse them: that module renders the V2 admin
+# surface and cannot import functions_settings, which builds a Cosmos client at
+# import time. functions_settings re-exports them, so callers are unchanged, but
+# the AST extraction below has to look in both files to find their definitions.
+GROUP_ASSIGNMENT_IDS_PATH = APP_DIR / "functions_group_assignment_ids.py"
+ADMIN_SETTINGS_JS_PATH = APP_DIR / "static" / "js" / "admin" / "admin_settings.js"
+CONFIG_PATH = APP_DIR / "config.py"
+
+# Where each symbol is defined. Pinning this rather than searching every module
+# keeps the test meaningful: a symbol that quietly moves again fails here with the
+# file it was expected in, instead of passing because some other copy was found.
+NORMALIZER_SYMBOL_SOURCES = {
+    GROUP_ASSIGNMENT_IDS_PATH: {
+        "GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT",
+        "_iter_group_workflow_allowed_group_id_candidates",
+        "normalize_group_workflow_allowed_group_id",
+        "normalize_group_workflow_allowed_group_ids",
+    },
+    FUNCTIONS_SETTINGS_PATH: {
+        "normalize_group_workflow_assignment_settings",
+    },
+}
 
 
 def read_text(path):
@@ -29,17 +58,9 @@ def read_text(path):
     return path.read_text(encoding="utf-8")
 
 
-def load_settings_normalizer_symbols():
-    """Load the pure group workflow assignment normalizer symbols from functions_settings.py."""
-    source = read_text(FUNCTIONS_SETTINGS_PATH)
+def _select_symbol_nodes(source, path, required_names):
+    """Return the AST nodes defining ``required_names``, asserting none are missing."""
     module_tree = ast.parse(source)
-    required_names = {
-        "GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT",
-        "_iter_group_workflow_allowed_group_id_candidates",
-        "normalize_group_workflow_allowed_group_id",
-        "normalize_group_workflow_allowed_group_ids",
-        "normalize_group_workflow_assignment_settings",
-    }
     selected_nodes = []
 
     for node in module_tree.body:
@@ -54,20 +75,40 @@ def load_settings_normalizer_symbols():
         elif isinstance(node, ast.FunctionDef) and node.name in required_names:
             selected_nodes.append(node)
 
-    missing_names = [
-        name for name in required_names
-        if name not in {
-            getattr(node, "name", None)
-            for node in selected_nodes
-        } and name not in {
-            target.id
-            for node in selected_nodes
-            if isinstance(node, ast.Assign)
-            for target in node.targets
-            if isinstance(target, ast.Name)
-        }
-    ]
-    assert not missing_names, f"Missing expected normalizer symbols: {missing_names}"
+    defined_names = {
+        getattr(node, "name", None) for node in selected_nodes
+    } | {
+        target.id
+        for node in selected_nodes
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+
+    missing_names = sorted(required_names - defined_names)
+    assert not missing_names, (
+        f"Missing expected normalizer symbols in {path.name}: {missing_names}. "
+        "An import does not count: this test executes the definitions in isolation "
+        "so the normalizers are exercised without standing up Azure clients."
+    )
+    return selected_nodes
+
+
+def load_settings_normalizer_symbols():
+    """Load the pure group workflow assignment normalizer symbols.
+
+    Returns ``(namespace, functions_settings_source)``. The namespace holds the
+    normalizers executed in isolation, which is how this test exercises them
+    without importing ``functions_settings`` and, through it, a live Cosmos client.
+    """
+    selected_nodes = []
+    settings_source = None
+
+    for path, required_names in NORMALIZER_SYMBOL_SOURCES.items():
+        source = read_text(path)
+        if path == FUNCTIONS_SETTINGS_PATH:
+            settings_source = source
+        selected_nodes.extend(_select_symbol_nodes(source, path, required_names))
 
     normalizer_module = ast.Module(body=selected_nodes, type_ignores=[])
     ast.fix_missing_locations(normalizer_module)
@@ -77,7 +118,34 @@ def load_settings_normalizer_symbols():
         "uuid": uuid,
     }
     exec(compile(normalizer_module, str(FUNCTIONS_SETTINGS_PATH), "exec"), namespace)
-    return namespace, source
+    return namespace, settings_source
+
+
+def test_normalizers_are_re_exported_by_functions_settings():
+    """Callers import these from functions_settings; the move must be invisible."""
+    print("Testing that functions_settings re-exports the moved normalizers...")
+
+    settings_source = read_text(FUNCTIONS_SETTINGS_PATH)
+    module_tree = ast.parse(settings_source)
+
+    imported_names = {
+        alias.asname or alias.name
+        for node in module_tree.body
+        if isinstance(node, ast.ImportFrom)
+        and node.module == GROUP_ASSIGNMENT_IDS_PATH.stem
+        for alias in node.names
+    }
+
+    expected = NORMALIZER_SYMBOL_SOURCES[GROUP_ASSIGNMENT_IDS_PATH]
+    missing = sorted(expected - imported_names)
+
+    assert not missing, (
+        "functions_settings.py no longer re-exports these normalizers from "
+        f"{GROUP_ASSIGNMENT_IDS_PATH.name}, so every existing caller that imports "
+        f"them from functions_settings breaks:\n  {missing}"
+    )
+
+    print(f"  All {len(expected)} moved normalizer(s) are re-exported.")
 
 
 def build_nested_json_list(value, depth):
@@ -167,11 +235,30 @@ def test_settings_and_admin_ui_wiring():
 
     required_settings_markers = [
         "assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)",
-        "if merge_changed or migration_updated or assignment_settings_updated:",
         "normalize_group_workflow_assignment_settings(settings_item)",
     ]
     for marker in required_settings_markers:
         assert marker in settings_source, f"Missing settings cleanup marker: {marker}"
+
+    # The cleanup only reaches Cosmos if its result is one of the reasons
+    # get_settings decides to write the merged document back. Matched as a clause
+    # rather than as a whole line: the condition has grown to a dozen terms across
+    # as many lines, and pinning its exact text made this assertion fail for
+    # formatting reasons rather than behavioural ones.
+    persistence_condition = re.search(
+        r"# If merging added anything new.*?\n\s*if \((?P<clauses>.*?)\n\s*\):",
+        settings_source,
+        re.DOTALL,
+    )
+    assert persistence_condition, (
+        "Could not find the condition in get_settings that upserts the merged "
+        "settings document; the cleanup wiring can no longer be verified."
+    )
+    assert "assignment_settings_updated" in persistence_condition.group("clauses"), (
+        "normalize_group_workflow_assignment_settings runs, but its result is no "
+        "longer one of the reasons the merged settings document is written back, so "
+        "a malformed stored assignment would be cleaned in memory and never saved."
+    )
 
     required_admin_js_markers = [
         "const GROUP_WORKFLOW_ASSIGNMENT_PARSE_DEPTH_LIMIT = 5;",
@@ -192,6 +279,7 @@ def run_tests():
     tests = [
         test_normalizer_removes_junk_and_preserves_valid_group_ids,
         test_assignment_settings_cleanup_is_idempotent,
+        test_normalizers_are_re_exported_by_functions_settings,
         test_settings_and_admin_ui_wiring,
     ]
     results = []
