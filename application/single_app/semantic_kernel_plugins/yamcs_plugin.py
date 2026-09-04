@@ -19,12 +19,15 @@ from functions_yamcs_operations import (
     YAMCS_AUTH_METHOD_BEARER_TOKEN,
     YAMCS_AUTH_METHOD_NONE,
     YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+    YAMCS_BASIC_AUTH_CONFLICT_MESSAGE,
     YAMCS_DEFAULT_PROCESSOR,
     YAMCS_PLUGIN_TYPE,
     YAMCS_SUPPORTED_AUTH_METHODS,
     YAMCS_SUPPORTED_AUTH_TYPES,
+    build_yamcs_basic_auth_header,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
+    yamcs_basic_auth_conflicts_with_auth_method,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
@@ -68,6 +71,9 @@ class YamcsPlugin(BasePlugin):
         self.auth_method = self._additional_fields.get("auth_method") or YAMCS_AUTH_METHOD_USERNAME_PASSWORD
         self.tls_verify = bool(self._additional_fields.get("tls_verify", True))
         self.enable_archive_sql = bool(self._additional_fields.get("enable_archive_sql", False))
+        self.enable_basic_auth = bool(self._additional_fields.get("enable_basic_auth", False))
+        self.basic_auth_username = str(self._additional_fields.get("basic_auth_username") or "")
+        self.basic_auth_password = str(self._additional_fields.get("basic_auth_password") or "")
         self.max_rows = int(self._additional_fields.get("max_rows") or 500)
         self.timeout = int(self._additional_fields.get("timeout") or 30)
         self.byte_limit = int(self._additional_fields.get("byte_limit") or 250000)
@@ -234,6 +240,7 @@ class YamcsPlugin(BasePlugin):
             raise ValueError(
                 "Yamcs action supports auth methods username_password, api_key, bearer_token, or none."
             )
+        self._validate_basic_auth_configuration()
         if self.auth_type == "identity":
             if not (self._auth.get("identity") or self.manifest.get("identity_id")):
                 raise ValueError("Yamcs reusable identity auth requires auth.identity or identity_id.")
@@ -247,10 +254,26 @@ class YamcsPlugin(BasePlugin):
             if not self._auth.get("key"):
                 raise ValueError("Yamcs API key and bearer token auth require auth.key.")
 
+    def _validate_basic_auth_configuration(self) -> None:
+        """Validate the optional reverse-proxy HTTP Basic authentication layer."""
+        if not self.enable_basic_auth:
+            return
+        if yamcs_basic_auth_conflicts_with_auth_method(self.auth_method):
+            raise ValueError(YAMCS_BASIC_AUTH_CONFLICT_MESSAGE)
+        if not self.basic_auth_username:
+            raise ValueError(
+                "Yamcs HTTP Basic authentication requires additionalFields.basic_auth_username."
+            )
+        if not self.basic_auth_password:
+            raise ValueError(
+                "Yamcs HTTP Basic authentication requires additionalFields.basic_auth_password."
+            )
+
     def _build_credentials(self):
         """Build a Yamcs credentials object for the configured auth method."""
         if self.auth_method == YAMCS_AUTH_METHOD_NONE:
-            return None
+            # Yamcs itself is unauthenticated, so a Basic header only satisfies the proxy.
+            return self._build_basic_auth_credentials() if self.enable_basic_auth else None
 
         try:
             from yamcs.client import APIKeyCredentials, Credentials
@@ -266,6 +289,22 @@ class YamcsPlugin(BasePlugin):
             return Credentials(access_token=auth_key)
         return Credentials(username=str(self._auth.get("identity") or ""), password=auth_key)
 
+    def _build_basic_auth_credentials(self):
+        """Build credentials that send only the reverse-proxy HTTP Basic header.
+
+        Imported lazily and separately from the other credential types so a deployment
+        running an older yamcs-client keeps working for every non-proxy auth method.
+        """
+        try:
+            from yamcs.client import BasicAuthCredentials
+        except ImportError as exc:
+            raise ImportError(
+                "Yamcs HTTP Basic authentication requires yamcs-client 1.8.8 or newer. "
+                "Upgrade yamcs-client to connect to a Yamcs server behind an authenticating proxy."
+            ) from exc
+
+        return BasicAuthCredentials(self.basic_auth_username, self.basic_auth_password)
+
     def _connect(self):
         try:
             from yamcs.client import YamcsClient
@@ -277,7 +316,8 @@ class YamcsPlugin(BasePlugin):
         debug_print(
             f"[YAMCS_PLUGIN] Opening Yamcs connection server_url={self.server_url} "
             f"instance={self.instance} processor={self.processor} auth_method={self.auth_method} "
-            f"tls_verify={self.tls_verify} timeout={self.timeout}"
+            f"tls_verify={self.tls_verify} timeout={self.timeout} "
+            f"basic_auth_enabled={self.enable_basic_auth}"
         )
         client = YamcsClient(
             self.server_url,
@@ -290,7 +330,23 @@ class YamcsPlugin(BasePlugin):
         session = getattr(getattr(client, "ctx", None), "session", None)
         if session is not None:
             session.request = self._with_timeout(session.request)
+            self._apply_basic_auth_header(session)
         return client
+
+    def _apply_basic_auth_header(self, session) -> None:
+        """Attach the proxy Basic header when Yamcs auth does not already own Authorization.
+
+        API key auth travels in ``x-api-key``, leaving the Authorization header free for the
+        reverse proxy. Unauthenticated Yamcs is handled by ``BasicAuthCredentials`` instead.
+        """
+        if not self.enable_basic_auth or self.auth_method != YAMCS_AUTH_METHOD_API_KEY:
+            return
+        session.headers.update({
+            "Authorization": build_yamcs_basic_auth_header(
+                self.basic_auth_username,
+                self.basic_auth_password,
+            )
+        })
 
     def _with_timeout(self, request_callable: Callable) -> Callable:
         configured_timeout = self.timeout

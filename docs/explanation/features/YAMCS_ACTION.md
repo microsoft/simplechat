@@ -87,6 +87,10 @@ Every retrieval is bounded before it reaches an agent:
 - `tls_verify`: verify the server TLS certificate; defaults to `true`.
 - `read_only`: always `true`; stored for parity with other connector actions.
 - `enable_archive_sql`: allow guarded read-only archive SQL; defaults to `false`.
+- `enable_basic_auth`: send an HTTP Basic `Authorization` header so a reverse proxy in front of Yamcs can authenticate the caller; defaults to `false`.
+- `basic_auth_username`: username presented to the reverse proxy.
+- `basic_auth_password`: password presented to the reverse proxy; stored in Key Vault.
+- `basic_auth_identity_id`: optional reusable identity supplying the proxy username and password.
 - `max_rows`: per-call row limit, bounded from 1 to 5000; defaults to 500.
 - `timeout`: HTTP request timeout in seconds, bounded from 1 to 300; defaults to 30.
 - `byte_limit`: approximate serialized result size limit, bounded from 1000 to 2000000.
@@ -103,11 +107,61 @@ Every retrieval is bounded before it reaches an agent:
 
 Reusable identities are accepted when their auth type is `api_key`, `bearer_token`, or `username_password`.
 
+### Reverse proxy HTTP Basic authentication
+
+Added in version 0.261.012.
+
+A ground segment commonly publishes Yamcs through a reverse proxy, such as Apache, that
+enforces HTTP Basic authentication against a directory before a request reaches Yamcs.
+Yamcs behind such a proxy often runs with no authentication of its own. `enable_basic_auth`
+addresses that topology as a layer independent of the Yamcs authentication method.
+
+| Yamcs `auth_method` | Allowed with `enable_basic_auth` | Runtime behavior |
+| --- | --- | --- |
+| `none` | Yes | `BasicAuthCredentials(username, password)` is passed to `YamcsClient`, which sends `Authorization: Basic …` on every request. |
+| `api_key` | Yes | `APIKeyCredentials` continues to send `x-api-key`, and the plugin sets the `Authorization` header on the client session. |
+| `username_password` | No | Yamcs exchanges the credential for a bearer token carried in `Authorization`, and the `/auth/token` request would itself be refused by the proxy. |
+| `bearer_token` | No | The bearer token also requires `Authorization`. |
+
+The blocked combinations are a property of HTTP rather than a limitation of the
+implementation: only one `Authorization` header can be sent. The rule is enforced in
+`YamcsPlugin._validate_basic_auth_configuration`, in `PluginHealthChecker` at save time, in
+the test-connection route, and in the action modal.
+
+`BasicAuthCredentials` is imported separately from the other credential classes so a
+deployment running a yamcs-client older than 1.8.8 keeps working for every non-proxy
+authentication method and receives an actionable upgrade message only when proxy
+authentication is actually requested.
+
+`basic_auth_password` is listed in `YAMCS_SENSITIVE_ADDITIONAL_FIELDS`, so it inherits the
+existing Key Vault storage, redaction, retrieval, and deletion behavior used by other action
+secrets.
+
+### Proxy credential identity mapping
+
+The proxy credential has its own reusable identity reference, separate from the Yamcs
+credential reference, so an action can use both at once. Because HTTP Basic authentication
+is always a username and password pair, only `username_password` identities are offered.
+
+| Reference | Manifest location | Accepted identity auth types |
+| --- | --- | --- |
+| Yamcs credential | `identity_id` | `api_key`, `bearer_token`, `username_password` |
+| Proxy credential | `additionalFields.basic_auth_identity_id` | `username_password` |
+
+Both references are resolved by `hydrate_action_identity_reference`, so every personal,
+group, and global action path picks up the proxy reference without further changes. UI
+hydration returns the identity's username but never its password; runtime hydration resolves
+both. An identity resolves within the workspace scope that owns the action, so a personal
+action paired with a personal identity uses that user's own credential. A shared group
+action resolves one group-scoped credential rather than a distinct credential per member.
+
 ## Usage Instructions
 
 Create a new action from a personal, group, or admin action surface and choose **Yamcs**. Enter the Yamcs server URL and the instance name, and optionally change the processor from the `realtime` default.
 
 Choose an authentication method and supply the matching credential, or select an action-capable reusable identity from the Yamcs identity selector. Choose **No Authentication** only for unsecured Yamcs instances such as a local simulator.
+
+If the server is published through a proxy that challenges callers, enable **Reverse Proxy Authentication** and supply the proxy username and password. Where that password is reissued periodically, select a reusable identity instead so the credential is rotated once under **Workspace → Identities** rather than by editing every action. Leave the option off when reaching Yamcs directly.
 
 Use **Test Yamcs Connection** to confirm the server is reachable, the credentials are accepted, and the configured instance exists. The test reports the Yamcs version and the number of available instances. When editing a saved action, the stored credential is resolved from Key Vault automatically, so the secret does not need to be re-entered to run a test.
 
@@ -118,6 +172,7 @@ After saving the action, assign it to agents that need Yamcs telemetry or archiv
 ## Testing and Validation
 
 - Functional coverage: `functional_tests/test_yamcs_action_plugin.py` (14 tests)
+- Reverse proxy coverage: `functional_tests/test_yamcs_basic_auth.py` (12 tests)
 - Route policy coverage: `functional_tests/route_tests/` — the new endpoint is covered by the existing authenticated-route prefix rules
 - JavaScript syntax checks: `plugin_modal_stepper.js` and `workspace/view-utils.js`
 - Python compile checks cover the Yamcs helper, plugin, factory, loaders, health checker, routes, identity, Key Vault, and governance updates
@@ -129,4 +184,6 @@ After saving the action, assign it to agents that need Yamcs telemetry or archiv
 - Yamcs permissions are enforced by Yamcs for the configured credentials.
 - Streaming and subscription APIs (parameter, packet, event, and alarm subscriptions) are not exposed, because agent tool calls are request/response.
 - Testing a connection that uses a reusable identity requires saving the action first.
+- Reverse proxy HTTP Basic authentication cannot be combined with Yamcs username/password or access token authentication, because only one `Authorization` header can be sent.
+- A shared group action resolves a single group-scoped proxy credential. Per-user credentials on one shared action are not supported; use a personal action with a personal identity where each operator must present their own credential.
 - Live connectivity is validated only when credentials and a reachable Yamcs server are configured in the running app.
