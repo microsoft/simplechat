@@ -90,3 +90,34 @@ def import_app_module(module_name):
         if not previously_loaded:
             sys.modules.pop(module_name, None)
         return module
+
+
+@contextmanager
+def stubbed_config(**values):
+    """Stand in for ``config`` so a module that reads a few constants can import.
+
+    ``config.py`` builds a Cosmos client at module scope, which is why nothing
+    that imports it can be loaded in a test process. A module that only needs a
+    handful of constants from it -- ``functions_mcp_server_config`` needs five --
+    can be imported for real against a stub carrying exactly those, which is
+    worth doing when the point of the test is to exercise that module's actual
+    behaviour rather than to read its source.
+
+    Every name the module asks for must be supplied. A missing one raises at
+    import, rather than silently producing a module that behaves differently
+    from the deployed one.
+    """
+    config = types.ModuleType("config")
+    for name, value in values.items():
+        setattr(config, name, value)
+
+    original = sys.modules.get("config", _MISSING)
+    sys.modules["config"] = config
+    try:
+        with stubbed_app_imports():
+            yield
+    finally:
+        if original is _MISSING:
+            sys.modules.pop("config", None)
+        else:
+            sys.modules["config"] = original

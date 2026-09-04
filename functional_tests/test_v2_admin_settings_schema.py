@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -40,6 +41,11 @@ APP_DEFAULT_RE = re.compile(
 
 fields_module = import_app_module("admin_settings_fields")
 
+# Runtime flags the settings API sends alongside the schema. A field may depend on
+# one of these instead of on another field, for a capability gated outside the
+# settings document.
+RUNTIME_FLAGS = {"mcp_ui_enabled"}
+
 # Properties every field type must carry beyond the common ones, because the
 # renderer cannot draw the control without them.
 REQUIRED_PROPERTIES_BY_TYPE = {
@@ -53,6 +59,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "secret": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
+    "entry_list": ("default", "value_label"),
     # An id_list resolves names through a search endpoint, so the renderer cannot
     # draw its picker without knowing where to search and what the response holds.
     "id_list": (
@@ -79,6 +86,7 @@ EXPECTED_DEFAULT_TYPES = {
     "number": int,
     "checkbox_set": list,
     "link_list": list,
+    "entry_list": list,
     "id_list": list,
     "group_picker": list,
 }
@@ -184,25 +192,56 @@ def test_select_defaults_are_offered_as_options():
     return True
 
 
-def test_setting_keys_are_unique():
-    """The same key in two sections would render two controls fighting over one value."""
-    print("\nTesting settings key uniqueness...")
+def test_setting_keys_have_one_owner():
+    """Two editable controls on one value would fight over it.
 
-    seen = {}
+    A key may appear more than once, but only as one writable declaration plus
+    read-only mirrors. Fact memory is edited under Chat and mirrored under
+    Actions, because it decides whether agents get a memory action; a second
+    editable control would let one surface silently overwrite the other.
+    """
+    print("\nTesting settings key ownership...")
+
+    writable = {}
+    mirrors = 0
     duplicates = []
+
     for section_id, field in fields_module.iter_fields():
         key = field.get("key")
         if not key:
             continue
-        if key in seen:
-            duplicates.append(f"{key}: {seen[key]} and {section_id}")
-        seen[key] = section_id
+        if field.get("readonly"):
+            mirrors += 1
+            if not field.get("managed_by"):
+                duplicates.append(
+                    f"{key}: read-only in {section_id} without naming its owner"
+                )
+            continue
+        if key in writable:
+            duplicates.append(f"{key}: editable in both {writable[key]} and {section_id}")
+        writable[key] = section_id
 
     assert not duplicates, (
-        "These keys are declared in more than one section:\n  " + "\n  ".join(duplicates)
+        "These keys do not have exactly one owner:\n  " + "\n  ".join(duplicates)
     )
 
-    print(f"  All {len(seen)} declared key(s) are unique.")
+    orphaned = sorted(
+        {
+            field["key"]
+            for _section_id, field in fields_module.iter_fields()
+            if field.get("readonly") and field.get("key") and field["key"] not in writable
+            # A derived key has no editable declaration anywhere, because
+            # something else computes it. Those are named in the mirror's help.
+            and field["key"]
+            not in {"enable_tabular_processing_plugin", "enable_multi_agent_orchestration"}
+        }
+    )
+    assert not orphaned, (
+        "These keys are only ever mirrored, so nothing can set them:\n  "
+        + "\n  ".join(orphaned)
+    )
+
+    print(f"  {len(writable)} owned key(s) and {mirrors} read-only mirror(s).")
     return True
 
 
@@ -216,18 +255,47 @@ def test_dependencies_reference_real_fields():
 
     for section_id, field in fields_module.iter_fields():
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
-        for depends_on in fields_module.iter_field_dependencies(field):
+
+        # A field may carry one condition or a list of them, so both shapes are read
+        # through the schema's own iterator rather than assumed here.
+        for condition in fields_module.iter_field_dependencies(field):
             checked += 1
 
-            if "key" not in depends_on:
-                problems.append(f"{identity}: depends_on has no key")
+            if condition.get("flag"):
+                # A runtime flag is resolved by the server, not by another field,
+                # so there is no declaration to point at. It must still be a flag
+                # the settings API actually sends.
+                if condition["flag"] not in RUNTIME_FLAGS:
+                    problems.append(
+                        f"{identity}: depends on unknown runtime flag "
+                        f"{condition['flag']!r}"
+                    )
+                if not isinstance(condition.get("equals"), bool):
+                    problems.append(f"{identity}: a flag condition must compare to a bool")
                 continue
-            if depends_on["key"] not in declared:
+
+            if "key" not in condition:
+                problems.append(f"{identity}: depends_on names neither a key nor a flag")
+                continue
+            if condition["key"] not in declared:
                 problems.append(
-                    f"{identity}: depends on undeclared key {depends_on['key']!r}"
+                    f"{identity}: depends on undeclared key {condition['key']!r}"
                 )
-            if field.get("key") == depends_on["key"]:
+            if field.get("key") == condition["key"]:
                 problems.append(f"{identity}: depends on itself")
+
+            # A string comparison only makes sense against a value the gating
+            # field can actually hold, and a typo there hides the dependent
+            # field for good.
+            expected = condition.get("equals", True)
+            if isinstance(expected, str):
+                gate = fields_module.get_field_definition(condition["key"]) or {}
+                allowed = {option["value"] for option in gate.get("options", [])}
+                if allowed and expected not in allowed:
+                    problems.append(
+                        f"{identity}: depends on {condition['key']!r} == {expected!r}, "
+                        f"which is not one of {sorted(allowed)}"
+                    )
 
     assert not problems, (
         "These visibility dependencies are broken:\n  " + "\n  ".join(problems)
@@ -396,7 +464,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 
@@ -439,7 +513,7 @@ if __name__ == "__main__":
         test_fields_carry_required_properties,
         test_defaults_match_their_field_type,
         test_select_defaults_are_offered_as_options,
-        test_setting_keys_are_unique,
+        test_setting_keys_have_one_owner,
         test_dependencies_reference_real_fields,
         test_string_dependencies_name_an_offered_option,
         test_gated_fields_inherit_their_gate_s_own_conditions,
