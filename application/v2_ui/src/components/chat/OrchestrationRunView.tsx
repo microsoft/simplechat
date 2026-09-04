@@ -32,6 +32,7 @@ import {
     TERMINAL_CAPABILITY_ID,
 } from '../../lib/orchestrationPlan';
 import type { CostClass, Json, OrchestrationStep, StepStatus } from '../../lib/orchestration';
+import { useDocumentTitles } from '../../lib/documentTitles';
 
 const statusTone: Record<StepStatus, string> = {
     pending: 'bg-surface-3 text-text-3',
@@ -95,6 +96,18 @@ export function OrchestrationRunView({
         () => (plan ? orderStepsForDisplay(plan.steps) : []),
         [plan],
     );
+
+    /**
+     * Names for every document the plan touches.
+     *
+     * Resolved across the whole plan rather than per step so a document used by two steps is
+     * looked up once, and so the lookup does not restart as steps re-render.
+     */
+    const planDocumentIds = useMemo(
+        () => [...new Set(orderedSteps.flatMap((step) => stepDocumentIds(step)))],
+        [orderedSteps],
+    );
+    const documentTitles = useDocumentTitles(planDocumentIds);
 
     if (!plan) {
         return (
@@ -193,6 +206,11 @@ export function OrchestrationRunView({
                                                 const isRemoved = removed.has(documentId);
                                                 const canRemove =
                                                     editable && removable.has(documentId);
+                                                // Falls back to the id while the lookup is in
+                                                // flight, or when the document cannot be read
+                                                // any more, so a chip is never blank.
+                                                const title =
+                                                    documentTitles.get(documentId) ?? documentId;
                                                 return (
                                                     <li
                                                         key={documentId}
@@ -205,10 +223,14 @@ export function OrchestrationRunView({
                                                     >
                                                         <FileText size={10} className="shrink-0" />
                                                         <span
-                                                            className="max-w-[9rem] truncate"
-                                                            title={documentId}
+                                                            className="max-w-[12rem] truncate"
+                                                            title={
+                                                                title === documentId
+                                                                    ? documentId
+                                                                    : `${title} · ${documentId}`
+                                                            }
                                                         >
-                                                            {documentId}
+                                                            {title}
                                                         </span>
                                                         {isRemoved ? (
                                                             <button

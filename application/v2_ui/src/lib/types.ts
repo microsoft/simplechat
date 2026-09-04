@@ -942,6 +942,20 @@ export interface ChatStreamRequest {
     doc_scope?: string;
     selected_document_id?: string | null;
     selected_document_ids?: string[];
+    /**
+     * Tag names to filter on, read as `tags_filter` by `hybrid_search`.
+     *
+     * Joined with `and` by `build_tags_filter`, so a document must carry every tag sent here.
+     */
+    tags?: string[];
+    /**
+     * How `selected_document_ids` and `tags` combine.
+     *
+     * `_build_document_content_filter` defaults to `intersection`, which requires a picked
+     * document to also carry every picked tag. The composer sends `union` when it has both,
+     * so its chips add context instead of cancelling each other out.
+     */
+    document_filter_mode?: 'union' | 'intersection';
     active_group_id?: string | null;
     active_group_ids?: string[];
     active_public_workspace_id?: string | null;

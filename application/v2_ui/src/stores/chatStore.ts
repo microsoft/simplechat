@@ -86,6 +86,13 @@ import {
 } from '../lib/conversationSelection';
 import type { ModelCatalogEntry } from '../lib/models';
 import { resolveDocumentScope } from '../lib/documentScope';
+import {
+    contextDocumentIds,
+    contextFilterMode,
+    contextScopes,
+    contextTags,
+    type ContextItem,
+} from '../lib/chatContext';
 import { messageThreadId } from '../lib/threads';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
@@ -176,7 +183,15 @@ export interface ComposerOptions {
     /** Deep research sets both source_review_enabled and deep_research_enabled. */
     deepResearch: boolean;
     urlAccess: boolean;
-    selectedDocumentIds: string[];
+    /**
+     * What this message is grounded in: documents, tags and workspaces chosen in the composer.
+     *
+     * Replaces the write-only `selectedDocumentIds` this interface shipped with, which was
+     * declared, forwarded to both the chat request and the orchestration seeds, and never
+     * populated by anything. The document ids are now derived from here at send time, so
+     * everything downstream that already reads `selected_document_ids` is unchanged.
+     */
+    contextItems: ContextItem[];
 }
 
 interface ChatState {
@@ -2283,9 +2298,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
 
+        // Derived once here rather than at each field: the chip row is the single source of
+        // truth for what this message is pointed at, and the request is three views of it.
+        const contextItems = options.contextItems ?? [];
+        const contextDocuments = contextDocumentIds(contextItems);
+        const contextTagNames = contextTags(contextItems);
+        const contextWorkspaces = contextScopes(contextItems);
+        const filterMode = contextFilterMode(contextItems);
+
         const scope = resolveDocumentScope({
             activeGroupId: bootstrap?.scope?.active_group_id,
             activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
+            contextGroupIds: contextWorkspaces.groupIds,
+            contextPublicWorkspaceIds: contextWorkspaces.publicWorkspaceIds,
         });
 
         const requestBody: ChatStreamRequest = {
@@ -2298,10 +2323,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // `window.activeChatTabType` is read in two places and assigned in none — so
             // 'user' is what it actually sends, and matching that is the real parity.
             chat_type: 'user',
-            hybrid_search: options.documentSearch,
+            // Naming a document is itself a request to search: a chip the user added while
+            // the toggle happened to be off would otherwise be collected, sent, and ignored.
+            hybrid_search: options.documentSearch || contextDocuments.length > 0,
             web_search_enabled: options.webSearch,
             image_generation: options.imageGeneration,
-            selected_document_ids: options.selectedDocumentIds,
+            selected_document_ids: contextDocuments,
             // The scope and its workspace ids travel together: the server filters the ids
             // down to what the caller may see, so a scope without them covers nothing.
             // Document search is widened to the group this way, without re-scoping the
@@ -2313,6 +2340,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
             deep_research_enabled: options.deepResearch,
             url_access_enabled: options.urlAccess,
         };
+
+        if (contextTagNames.length > 0) {
+            requestBody.tags = contextTagNames;
+        }
+        // Only when both kinds are present. With one kind the mode has no effect, and an
+        // unnecessary field in the request is one more thing to account for later.
+        if (filterMode) {
+            requestBody.document_filter_mode = filterMode;
+        }
 
         // Model identity, agent and reasoning level are mutually exclusive halves of the same
         // decision, resolved in one place. An agent answers with its own deployment, and a
