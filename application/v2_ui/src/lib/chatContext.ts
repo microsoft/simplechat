@@ -227,6 +227,44 @@ export function contextDocumentIds(items: readonly ContextItem[]): string[] {
     return items.filter((item) => item.kind === 'document').map((item) => item.id);
 }
 
+/** A picked document, described well enough for a plan to be read by a person. */
+export interface ContextDocumentDescriptor {
+    id: string;
+    label: string;
+    file_name?: string;
+    scope_kind: ContextScopeKind;
+    workspace_id?: string;
+}
+
+/**
+ * The picked documents with their names, for `resolve_seeds`.
+ *
+ * The ids alone are enough to *run* a plan and are the only thing authorization uses. They are
+ * not enough to *review* one: `resolve_candidate_documents` returns seeded documents with an
+ * empty `file_name`, so the planner is asked to choose between identifiers and the approval
+ * card -- whose entire purpose is letting someone confirm the right document was picked --
+ * shows `8f14e45f-ceea-467a-…`.
+ *
+ * The composer had these names on screen when the user clicked them, so it sends them rather
+ * than making the server resolve across three containers to recover what was just discarded.
+ *
+ * Display only. The server labels with these and authorizes from the ids, so a tampered label
+ * mislabels the sender's own plan card and reaches nothing new.
+ */
+export function contextDocumentDescriptors(
+    items: readonly ContextItem[],
+): ContextDocumentDescriptor[] {
+    return items
+        .filter((item) => item.kind === 'document')
+        .map((item) => ({
+            id: item.id,
+            label: item.label,
+            file_name: item.meta?.fileName,
+            scope_kind: item.scope.kind,
+            workspace_id: item.scope.id ?? undefined,
+        }));
+}
+
 /**
  * The tag names to filter on.
  *

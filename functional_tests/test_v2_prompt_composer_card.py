@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the attached-prompt card in the V2 composer.
-Version: 0.261.090
-Implemented in: 0.261.090
+Version: 0.261.092
+Implemented in: 0.261.092
 
 Picking a saved prompt used to paste its text into the composer. Everything below exists
 because of what that cost:
@@ -64,7 +64,7 @@ def _strip_comments(source):
 def test_version_is_at_least_the_implementing_release():
     """The card and its request contract landed together in one release."""
     print("Testing version...")
-    assert_app_version_at_least("0.261.090")
+    assert_app_version_at_least("0.261.092")
     print("  ok  version is at or past the implementing release")
     return True
 

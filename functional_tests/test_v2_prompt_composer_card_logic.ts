@@ -1,8 +1,8 @@
 // test_v2_prompt_composer_card_logic.ts
 //
 // Runtime test for the attached-prompt card's composition and recovery rules.
-// Version: 0.261.090
-// Implemented in: 0.261.090
+// Version: 0.261.092
+// Implemented in: 0.261.092
 //
 // The companion test, test_v2_prompt_composer_card.py, asserts that the pieces are wired
 // together. This file executes the behaviour, because these failure modes are all quiet ones

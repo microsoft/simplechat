@@ -132,9 +132,31 @@ def resolve_seeds(request_data):
     prompt = request_data.get('prompt_info')
     prompt = prompt if isinstance(prompt, dict) else None
 
+    # Display names for the picked documents, sent by the composer because it already knows
+    # them. Used for labels only -- what the user may actually read is decided from the ids
+    # against Cosmos, never from anything the browser asserts about them.
+    document_labels = {}
+    for entry in request_data.get('context_documents') or ():
+        if not isinstance(entry, dict):
+            continue
+        document_id = _text(entry.get('id') or entry.get('document_id'))
+        label = _text(entry.get('label') or entry.get('file_name'), 200)
+        if document_id and label:
+            document_labels[document_id] = label
+
     return {
         'document_ids': document_ids,
+        'document_labels': document_labels,
         'doc_scope': _text(request_data.get('doc_scope')) or 'all',
+        # Tags narrow a search rather than naming documents, so they are a separate seed
+        # from document_ids and are treated differently: a picked document replaces the
+        # candidate probe, a picked tag scopes it.
+        'tags': _string_list(request_data.get('tags')),
+        'document_filter_mode': (
+            'union'
+            if _text(request_data.get('document_filter_mode')).lower() in ('union', 'or', 'additive')
+            else ''
+        ),
         'agent': agent,
         'model': model or None,
         'prompt': prompt,
@@ -152,7 +174,13 @@ def resolve_seeds(request_data):
 
 
 def seeds_are_explicit(seeds):
-    """Whether the user named documents, which turns the candidate probe off."""
+    """Whether the user named documents, which turns the candidate probe off.
+
+    Naming a tag deliberately does not count. A document is an answer to "which documents";
+    a tag is an answer to "which shelf", and the probe is still the thing that decides which
+    documents on that shelf are worth naming. Treating a tag as explicit would hand the
+    planner every document carrying it, which is the opposite of narrowing.
+    """
     return bool((seeds or {}).get('document_ids'))
 
 
@@ -223,11 +251,18 @@ def resolve_candidate_documents(
     if seeds_are_explicit(seeds):
         # The user already answered this question. Probing would only offer alternatives
         # to a choice that has been made.
+        #
+        # The names come from the composer, which had them on screen when the user picked.
+        # Without them the planner reasons about bare uuids -- it cannot write "compare the
+        # Q3 and Q4 contracts" if it has never been told which document is which, and the
+        # approval card, whose whole purpose is letting someone check the planner picked the
+        # right document, would show a row of identifiers.
+        labels = seeds.get('document_labels') or {}
         return [
             {
                 'document_id': document_id,
-                'file_name': '',
-                'title': '',
+                'file_name': labels.get(document_id, ''),
+                'title': labels.get(document_id, ''),
                 'scope': seeds.get('doc_scope') or 'all',
                 'classification': '',
                 'tags': [],
@@ -253,6 +288,11 @@ def resolve_candidate_documents(
             active_public_workspace_id=(
                 (seeds.get('active_public_workspace_ids') or [None])[0]
             ),
+            # A picked tag is part of the question. Probing without it would offer the
+            # planner documents the user has already excluded, and the plan would then be
+            # built around a candidate they did not want considered.
+            tags_filter=seeds.get('tags') or None,
+            document_filter_mode=seeds.get('document_filter_mode') or 'intersection',
         )
     except Exception as exc:
         log_event(

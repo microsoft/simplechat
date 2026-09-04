@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for orchestration treating a selected prompt as an instruction.
-Version: 0.261.090
-Implemented in: 0.261.090
+Version: 0.261.092
+Implemented in: 0.261.092
 
 A saved prompt is a standing instruction: it says what kind of work this is. Orchestration used
 to be told only its name. "Quarterly review" says nothing about whether the work involves
@@ -72,7 +72,7 @@ def _extract(path, names, seed=None):
 
 def test_version_is_at_least_the_implementing_release():
     print("Testing version...")
-    assert_app_version_at_least("0.261.090")
+    assert_app_version_at_least("0.261.092")
     print("  ok  version is at or past the implementing release")
     return True
 

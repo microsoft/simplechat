@@ -38,7 +38,9 @@ import { resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
 import {
     addContextItem,
+    contextDocumentDescriptors,
     contextDocumentIds,
+    contextFilterMode,
     contextScopes,
     contextTags,
     hasContextItem,
@@ -867,6 +869,9 @@ export function Composer() {
         const seeds: Record<string, unknown> = {
             web_search_enabled: options.webSearch,
             selected_document_ids: contextDocumentIds(options.contextItems),
+            // Names for those ids, so the planner can reason about "the Q3 contract" and the
+            // approval card can be read. Display only -- the server authorizes from the ids.
+            context_documents: contextDocumentDescriptors(options.contextItems),
             // `resolve_seeds` reads doc_scope and the workspace ids alongside the document
             // ids, and `seeds_are_explicit` turns the planner's candidate probe off once
             // documents are named. Sending the ids without the scope that reaches them would
@@ -876,6 +881,12 @@ export function Composer() {
         const tags = contextTags(options.contextItems);
         if (tags.length > 0) {
             seeds.tags = tags;
+        }
+        // Without this a picked document beside an unrelated tag chip intersects to nothing,
+        // exactly as it did on the chat path before the same field was sent there.
+        const filterMode = contextFilterMode(options.contextItems);
+        if (filterMode) {
+            seeds.document_filter_mode = filterMode;
         }
         Object.assign(
             seeds,

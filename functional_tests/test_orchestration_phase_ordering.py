@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for chat orchestration phase ordering.
-Version: 0.261.087
+Version: 0.261.089
 Implemented in: 0.261.087
 
 A plan runs in three phases: collect knowledge, reason on it and answer, then create

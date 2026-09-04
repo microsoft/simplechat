@@ -1,7 +1,7 @@
 # Chat Orchestration
 
 **Implemented in version: 0.261.086**
-**Knowledge phase added in version: 0.261.087**
+**Knowledge phase added in version: 0.261.089**
 
 ## Overview
 
@@ -60,6 +60,74 @@ enablement lives in a nested capability record rather than a flag.
   This is a planner input rather than a display artefact: it is what lets a follow-up
   question reuse earlier findings instead of repeating them, and what stops an elicitation
   asking the same question twice.
+
+#### What the context picker contributes
+
+The composer's context picker lets a user name documents, tags and whole workspaces before
+asking. Each reaches the plan differently, and the difference is the point.
+
+| Picked | Seed | Effect on planning |
+|---|---|---|
+| A document | `document_ids` | Replaces the candidate probe. The user answered "which documents", so probing would only offer alternatives to a decision already made. |
+| A tag | `tags` | **Scopes** the probe. A tag answers "which shelf", not "which document" — the probe still decides which documents on that shelf are worth naming. |
+| A workspace | `doc_scope`, `active_group_ids`, `active_public_workspace_ids` | Bounds where the probe and every search step may look. |
+
+Treating a tag as an explicit choice would hand the planner every document carrying it,
+which is the opposite of narrowing. `seeds_are_explicit` therefore tests documents alone.
+
+Tags are carried on `RunContext` for the whole run rather than per step, because a tag is a
+standing narrowing of what the turn is about: a step is free to choose its own query, but
+not to widen the shelf the user narrowed to. `document_filter_mode` travels with them —
+without it a picked document beside an unrelated tag intersects to nothing.
+
+#### Document names
+
+`resolve_candidate_documents` used to return seeded documents with an empty `file_name`,
+so a picked document reached the planner as a bare uuid. That breaks two things: the
+planner cannot write "compare the Q3 and Q4 contracts" if it was never told which document
+is which, and the approval card — whose entire purpose is letting someone confirm the
+planner picked the right document — showed a row of identifiers.
+
+The composer had those names on screen when the user clicked them, so it sends them as
+`context_documents` rather than making the server resolve across three containers to
+recover what was just discarded.
+
+**Names are display; authorization is by id.** `_authorized_document_ids` reads
+`document_ids` and nothing else, so a client that renamed a document mislabels its own plan
+card and reaches nothing new. `test_orchestration_context_picker.py` asserts this directly.
+
+#### Reading what an earlier step found
+
+Every step's documents used to be fixed when the plan was written, which meant a plan could
+not express the most natural shape of all: search for the relevant material, then analyse
+what turned up. The planner had to guess document ids from the candidate probe, or the plan
+simply could not say it.
+
+A step may now set `documents_from_step` to an earlier step's `step_id` instead of naming
+documents. At run time the adapter resolves it from `RunContext.step_documents`, which
+records which documents each step reached.
+
+The reference is validated where the surviving step ids are known, because ids can be
+renamed during validation. It must name a step that exists, must not name the step itself,
+and must name a capability that *produces evidence* — pointing at a web search or at
+`respond` would resolve to nothing every time. A resolved reference is added to
+`depends_on`, and the topological pass is what guarantees ordering; positions are
+deliberately not checked here as well, since that would duplicate the cycle detection and
+disagree with it as soon as phase ordering moved a step.
+
+Two constraints are worth stating plainly:
+
+- **It widens nothing.** Documents arriving this way came from a search, which only returns
+  what the user can read, and the document functions resolve access again from the user id
+  and scope they are given.
+- **It does not dodge the administrator's ceiling.** The validator trims the documents a
+  plan *names*, but it cannot trim what a search has not run yet, so the limit is applied
+  again when the reference resolves.
+
+The cost is real and is the reason this is not the default: a plan that defers its
+documents cannot show the user which ones it will read. The approval card says "whatever
+the earlier step finds" rather than pretending to a list, and the planner is told to name
+documents directly whenever they are already known.
 
 ### Plan
 
@@ -124,6 +192,29 @@ So `agent_invoke`, `url_fetch` and `deep_research` produce `notes` and `citation
 This is not a workaround: `RunContext.merge_step_result` already accumulates notes, and the
 respond adapter already folds them into its prompt. A knowledge step that gathers *text*
 rather than *document evidence* reaches the answer through a path that already existed.
+
+### Two levels of gate
+
+A capability is gated twice, and the two answer different questions.
+
+| Gate | Question | Read by |
+|---|---|---|
+| `gate(settings)` | Does this deployment have the capability at all? | The admin page, the bootstrap payload, and planning |
+| `request_gate(settings, context)` | May *this caller, asking this question* use it? | Planning only |
+
+`resolve_available_capabilities` applies request gates **only when a request context is
+given**. That is deliberate: the admin page and the bootstrap payload describe a
+deployment, not a caller, and would be wrong to hide a capability because the administrator
+viewing the page happens to have no agents.
+
+But it means a caller that forgets to pass a context silently gets the deployment answer.
+`plan_request` takes `request_context` and forwards it, so one resolution narrows three
+things at once: what the planner is offered, what the validator accepts, and therefore what
+can reach an adapter. `test_orchestration_adapter_contract.py` asserts that the parameter
+exists, that it is forwarded, and that the route supplies one.
+
+Every request gate **fails closed** — a gate that raises withholds the capability. These
+read app roles, and an error resolving a role is not a reason to assume the caller holds it.
 
 ### Execute
 
@@ -266,6 +357,7 @@ to the front.
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
 | `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list, and document and web citations are separated |
+| `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 
 ## Known limitations
 

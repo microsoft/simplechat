@@ -113,17 +113,31 @@ happened to be off would otherwise be collected, sent, and ignored.
 
 ## Orchestration
 
-Chips travel to the planner as seeds. Naming documents explicitly also suppresses
-the planner's candidate probe, so it works from your choice rather than guessing
-at one.
+Chips travel to the planner as seeds, and each kind lands differently:
 
-In the other direction, documents the planner chose are listed on each step of
-the plan **by name** rather than by id — deciding whether it picked the right
-contract is the reason the plan is shown before it runs, and a bare uuid does not
-support that decision. Documents can be removed from a step, which narrows the
-plan. Adding one is deliberately not offered inline: widening a plan goes back
-through planning, so a request never skips the reasoning and permission check
-that produced it.
+| Chip kind | Effect on a plan |
+| --- | --- |
+| Document | Replaces the planner's candidate probe. You answered "which documents", so it works from your choice rather than guessing at one. |
+| Tag | **Scopes** the probe rather than replacing it. A tag says which shelf; the probe still decides which documents on that shelf are worth naming. |
+| Workspace | Bounds where the probe and every search step in the run may look. |
+
+Your tags stay in force for the whole run, not just the first step. A step is free
+to choose its own search query, but not to widen the shelf you narrowed to.
+
+In the other direction, documents are listed on each step of the plan **by name**
+rather than by id — deciding whether it picked the right contract is the reason
+the plan is shown before it runs, and a bare uuid does not support that decision.
+Documents you chose are marked as yours, so the ones actually worth checking are
+the ones the planner introduced. Documents can be removed from a step, which
+narrows the plan. Adding one is deliberately not offered inline: widening a plan
+goes back through planning, so a request never skips the reasoning and permission
+check that produced it.
+
+Names are display only. The server labels a plan with the names the composer sends
+and decides what you may read from the ids, so a renamed document is still exactly
+the document it was.
+
+See [Chat Orchestration](CHAT_ORCHESTRATION.md) for the planner side.
 
 ## Files
 

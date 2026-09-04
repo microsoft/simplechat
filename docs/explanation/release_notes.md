@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.090)**
+### **(v0.261.092)**
 
 #### New Features
 
@@ -26,6 +26,30 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
     *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
     *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+### **(v0.261.091)**
+
+#### New Features
+
+*   **Orchestration Uses The Documents And Tags You Picked**
+    *   The context picker's chips reached a plan only as document ids. A tag chip narrowed a normal chat message and did nothing at all in orchestration, so a plan searched more widely than you had asked it to — the one thing a chip is for.
+    *   **Tags now narrow a plan too, and stay in force for the whole run.** A later step can choose its own search query but cannot widen the shelf you narrowed to. Documents and tags picked together are combined additively, matching the chat path.
+    *   **A document you picked now reaches the planner by name.** It previously arrived as a bare identifier, so the planner could not write "compare the Q3 and Q4 contracts" without being told which document was which, and the plan you were asked to approve listed a row of uuids. The composer sends the names it already had on screen.
+    *   **The plan marks which documents were your choice.** A document you picked and one the planner found are both documents the plan will read, but only the second is a decision worth checking — so the two now look different on the card.
+    *   **A step can act on what an earlier step finds.** A plan could previously only use documents whose ids were known when it was written, so it could not express "search for the relevant contracts, then analyse them" — the planner had to guess which contracts, or not plan it at all. A step can now defer to an earlier searching step instead. The plan says so plainly rather than showing an empty list, and the planner still names documents directly whenever they are already known, because a named document can be approved and a deferred one cannot.
+    *   Names are display only. What a plan may read is still decided from the document ids, so a renamed document is exactly the document it was. Documents that arrive mid-run are re-checked the same way, and still respect the administrator's per-action limit.
+    *   (Ref: `resolve_seeds`, `resolve_candidate_documents`, `RunContext.tags`, `RunContext.step_documents`, `documents_from_step`, `contextDocumentDescriptors`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
+
+#### Bug Fixes
+
+*   **Plans No Longer Propose Work The User Cannot Do**
+    *   Whether a capability suits *this person, asking this question* — do they hold the app role, does their message actually contain a link, do they have an agent at all — was described for each capability but never consulted when a plan was made. The planner was shown every capability the deployment allowed, so it could propose reading links in a message containing none, or name an agent the user does not have. The step then failed at the point it ran, having promised something in a plan the user had already approved.
+    *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
+    *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
+    *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
+
+*   **Documents Found During A Run Had No Workspace**
+    *   A document discovered by a search step lost the workspace it came from, because the citation dropped `group_id` and `public_workspace_id` even though the search index returns them. Since context chips are grouped by workspace, a found document had no home to be offered back into.
+    *   (Ref: `_citations_from_search_results`)
 
 ### **(v0.261.089)**
 

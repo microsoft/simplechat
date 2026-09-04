@@ -3,7 +3,7 @@
 Attaching a saved prompt to the message you are writing, rather than pasting it
 into the box.
 
-**Implemented in version:** 0.261.090
+**Implemented in version:** 0.261.092
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal prompts,
 `enable_group_workspaces` and `enable_public_workspaces` to reach those scopes.

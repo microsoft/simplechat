@@ -167,6 +167,8 @@ class RunContext:
         chat_type='personal',
         selection_mode=None,
         doc_scope='all',
+        tags=None,
+        document_filter_mode=None,
         active_group_ids=None,
         active_group_id=None,
         active_public_workspace_id=None,
@@ -193,6 +195,11 @@ class RunContext:
 
         self.selection_mode = selection_mode
         self.doc_scope = doc_scope
+        # The tags the user picked in the composer. Carried for the whole run rather than
+        # per step: a tag is a standing narrowing of what this turn is about, so a step that
+        # searched without it would look more widely than the user asked.
+        self.tags = list(tags or [])
+        self.document_filter_mode = document_filter_mode or 'intersection'
         self.active_group_ids = list(active_group_ids or [])
         self.active_group_id = active_group_id
         self.active_public_workspace_id = active_public_workspace_id
@@ -239,17 +246,26 @@ class RunContext:
 
         # Documents any step produced evidence for, in first-seen order.
         self.documents_touched = []
+        # Which documents each step reached, keyed by step id. A later step can name an
+        # earlier one instead of naming documents, which is how a plan expresses "search,
+        # then analyse what you found" -- something it could not say while every step's
+        # documents had to be known when the plan was written.
+        self.step_documents = {}
 
         # The manifest captured when execution began, and the authorized manifest resolved
         # again before finalization; the second is what the handoff is built from.
         self.execution_manifest = []
         self.source_manifest = []
 
-    def merge_step_result(self, result):
+    def merge_step_result(self, result, step_id=None):
         """Fold one step's accumulables into the run.
 
         Failed steps return empty lists, so merging them is harmless; that is deliberate, so
         the caller never has to branch on status before merging.
+
+        ``step_id`` records which documents *this* step reached, which is what lets a later
+        step act on what an earlier one found rather than on what the planner guessed at
+        plan time.
         """
         if not isinstance(result, dict):
             return
@@ -257,10 +273,16 @@ class RunContext:
         self.citations.extend(result.get('citations') or [])
         self.artifacts.extend(result.get('artifacts') or [])
         self.notes.extend(result.get('notes') or [])
+
+        found_here = []
         for envelope in result.get('evidence') or []:
             document_id = _text((envelope or {}).get('document_id'))
             if document_id and document_id not in self.documents_touched:
                 self.documents_touched.append(document_id)
+            if document_id and document_id not in found_here:
+                found_here.append(document_id)
+        if step_id:
+            self.step_documents[step_id] = found_here
 
 
 # --------------------------------------------------------------------------------------
@@ -713,7 +735,7 @@ def execute_plan(
         else:
             # The terminal step's citations echo what the run already accumulated; merging
             # them would double every citation, so only non-terminal results are merged.
-            context.merge_step_result(result)
+            context.merge_step_result(result, step_id=step_id)
             executed_non_terminal += 1
 
         replan_hint = _text(result.get('replan_hint'))
