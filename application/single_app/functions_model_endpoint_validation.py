@@ -45,6 +45,16 @@ class ModelEndpointValidationError(ValueError):
     """Raised when a model endpoint configuration violates the saved policy."""
 
 
+class ModelEndpointUnresolvableError(ModelEndpointValidationError):
+    """Raised when a Custom endpoint hostname cannot be resolved right now.
+
+    This is distinct from a policy violation. A name that does not resolve yet is
+    tolerable when saving configuration -- the environment may not be reachable
+    from the application tier at configuration time -- but a policy violation
+    never is.
+    """
+
+
 def _is_ip_literal(hostname: str) -> bool:
     try:
         ipaddress.ip_address(hostname)
@@ -113,12 +123,12 @@ def resolve_custom_model_endpoint_addresses(
             type=socket.SOCK_STREAM,
         )
     except socket.gaierror as exc:
-        raise ModelEndpointValidationError(
+        raise ModelEndpointUnresolvableError(
             "Custom endpoint hostname could not be resolved."
         ) from exc
 
     if not resolved_addresses:
-        raise ModelEndpointValidationError(
+        raise ModelEndpointUnresolvableError(
             "Custom endpoint hostname did not resolve to an address."
         )
 
@@ -140,8 +150,21 @@ def validate_custom_model_endpoint_url(
     endpoint: Any,
     *,
     allow_private: bool = False,
+    allow_insecure: bool = False,
+    require_resolvable: bool = True,
 ) -> str:
-    """Validate and normalize a Custom endpoint URL before an outbound request."""
+    """Validate and normalize a Custom endpoint URL before an outbound request.
+
+    ``allow_private`` is the administrator's on-premises gate. With it enabled, an
+    endpoint may be an IP literal, a single-label host, or a private-range
+    address, because those are how on-premises inference is normally addressed.
+    Connect-time address validation still applies on every request.
+
+    ``require_resolvable`` is set to False on the configuration save path so that
+    an endpoint can be configured, seeded, or restored from backup before the
+    application tier can resolve it. The connect-time check is what actually
+    protects the request, and it always runs.
+    """
     endpoint_text = str(endpoint or "").strip()
     if not endpoint_text:
         raise ModelEndpointValidationError("Custom endpoint URL is required.")
@@ -154,11 +177,19 @@ def validate_custom_model_endpoint_url(
     except ValueError as exc:
         raise ModelEndpointValidationError("Custom endpoint URL is invalid.") from exc
 
-    if parsed_endpoint.scheme.lower() != "https":
+    scheme = parsed_endpoint.scheme.lower()
+    if scheme == "http":
+        if not (allow_private and allow_insecure):
+            raise ModelEndpointValidationError(
+                "Custom endpoint URL must use HTTPS. Plaintext HTTP requires the "
+                "administrator to enable both private hosts and insecure endpoints."
+            )
+    elif scheme != "https":
         raise ModelEndpointValidationError("Custom endpoint URL must use HTTPS.")
+
     if not parsed_endpoint.netloc or not parsed_endpoint.hostname:
         raise ModelEndpointValidationError(
-            "Custom endpoint URL must include a fully qualified domain name."
+            "Custom endpoint URL must include a host name."
         )
     if parsed_endpoint.username or parsed_endpoint.password:
         raise ModelEndpointValidationError(
@@ -182,26 +213,51 @@ def validate_custom_model_endpoint_url(
         or hostname.endswith(".localhost")
     ):
         raise ModelEndpointValidationError("Custom endpoint hostname is blocked.")
-    if _is_ip_literal(hostname) or "." not in hostname:
-        raise ModelEndpointValidationError(
-            "Custom endpoint URL must use a fully qualified domain name, not an IP address."
-        )
-    if not allow_private and hostname.endswith((".internal", ".local")):
+
+    is_ip_literal = _is_ip_literal(hostname)
+    is_single_label = not is_ip_literal and "." not in hostname
+
+    if is_ip_literal:
+        if not allow_private:
+            raise ModelEndpointValidationError(
+                "Custom endpoint URL must use a fully qualified domain name. "
+                "Enable private Custom endpoint hosts to use an IP address."
+            )
+        # An IP literal skips DNS entirely, so validate the address directly.
+        validate_custom_model_endpoint_address(hostname, allow_private=True)
+    elif is_single_label:
+        if not allow_private:
+            raise ModelEndpointValidationError(
+                "Custom endpoint URL must use a fully qualified domain name. "
+                "Enable private Custom endpoint hosts to use a short host name."
+            )
+    elif not allow_private and hostname.endswith((".internal", ".local")):
         raise ModelEndpointValidationError(
             "Private Custom endpoint hosts are not enabled by the administrator."
         )
 
-    resolve_custom_model_endpoint_addresses(
-        hostname,
-        port or 443,
-        allow_private=allow_private,
-    )
+    if not is_ip_literal:
+        default_port = 80 if scheme == "http" else 443
+        try:
+            resolve_custom_model_endpoint_addresses(
+                hostname,
+                port or default_port,
+                allow_private=allow_private,
+            )
+        except ModelEndpointUnresolvableError:
+            # A name that does not resolve yet is only fatal when the caller needs
+            # it resolvable now. Policy violations are a different exception and
+            # always propagate. The connect-time check re-resolves on every
+            # request, so nothing is skipped by tolerating this here.
+            if require_resolvable:
+                raise
 
+    default_port = 80 if scheme == "http" else 443
     normalized_netloc = hostname
-    if port and port != 443:
+    if port and port != default_port:
         normalized_netloc = f"{hostname}:{port}"
     return urlunparse((
-        "https",
+        scheme,
         normalized_netloc,
         parsed_endpoint.path or "",
         "",
@@ -254,10 +310,16 @@ def validate_custom_model_endpoint(
         if isinstance(endpoint.get("connection"), dict)
         else {}
     )
-    allow_private = bool((settings or {}).get("allow_private_custom_model_endpoints", False))
+    endpoint_settings = settings or {}
+    allow_private = bool(endpoint_settings.get("allow_private_custom_model_endpoints", False))
+    allow_insecure = bool(endpoint_settings.get("allow_insecure_custom_model_endpoints", False))
     connection["endpoint"] = validate_custom_model_endpoint_url(
         connection.get("endpoint"),
         allow_private=allow_private,
+        allow_insecure=allow_insecure,
+        # Configuration may be saved before the application tier can resolve the
+        # host, so saving does not require the name to resolve right now.
+        require_resolvable=False,
     )
 
     if registered_provider is not None and registered_provider.version_field:

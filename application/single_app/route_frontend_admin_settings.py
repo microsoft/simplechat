@@ -1731,6 +1731,9 @@ def register_route_frontend_admin_settings(bp):
             custom_endpoint_validation_settings['allow_private_custom_model_endpoints'] = (
                 form_data.get('allow_private_custom_model_endpoints') == 'on'
             )
+            custom_endpoint_validation_settings['allow_insecure_custom_model_endpoints'] = (
+                form_data.get('allow_insecure_custom_model_endpoints') == 'on'
+            )
             try:
                 validate_custom_model_endpoints(
                     parsed_model_endpoints,
@@ -2480,6 +2483,12 @@ def register_route_frontend_admin_settings(bp):
                 'model_endpoints': parsed_model_endpoints,
                 'allow_private_custom_model_endpoints': (
                     form_data.get('allow_private_custom_model_endpoints') == 'on'
+                ),
+                'allow_insecure_custom_model_endpoints': (
+                    form_data.get('allow_insecure_custom_model_endpoints') == 'on'
+                ),
+                'custom_model_endpoint_ca_bundle_path': (
+                    form_data.get('custom_model_endpoint_ca_bundle_path', '').strip()
                 ),
                 'model_endpoint_identity_header_enabled': model_endpoint_identity_header_enabled,
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,

@@ -31,7 +31,40 @@
                             Allow private Custom endpoint hosts
                         </label>
                         <div class="form-text">
-                            Custom endpoints require HTTPS. When disabled, hosts resolving to private addresses are rejected; loopback, link-local, metadata, and direct IP targets are always rejected.
+                            Enable this for on-premises inference. It permits IP addresses, short host names, and hosts resolving to private ranges. Loopback, link-local, and cloud metadata addresses are always rejected, and every address is revalidated when the connection is made.
+                        </div>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="allow_insecure_custom_model_endpoints"
+                            name="allow_insecure_custom_model_endpoints"
+                            {% if settings.allow_insecure_custom_model_endpoints %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="allow_insecure_custom_model_endpoints">
+                            Allow plaintext HTTP Custom endpoints
+                        </label>
+                        <div class="form-text text-danger">
+                            Prompts and API keys travel unencrypted. Only for an isolated network where TLS cannot be terminated. Requires private Custom endpoint hosts to also be enabled.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="custom_model_endpoint_ca_bundle_path" class="form-label">
+                            Custom endpoint CA bundle path
+                        </label>
+                        <input
+                            type="text"
+                            class="form-control"
+                            id="custom_model_endpoint_ca_bundle_path"
+                            name="custom_model_endpoint_ca_bundle_path"
+                            value="{{ settings.custom_model_endpoint_ca_bundle_path or '' }}"
+                            placeholder="/etc/ssl/certs/internal-ca.pem"
+                        >
+                        <div class="form-text">
+                            Custom endpoints trust only public certificate authorities, and deliberately ignore ambient environment variables so nothing can silently widen that trust. Name a PEM bundle here to trust an internally issued certificate, which an on-premises gateway normally uses.
                         </div>
                     </div>
 

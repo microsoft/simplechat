@@ -192,7 +192,7 @@ def test_custom_endpoint_url_policy():
         ("http://models.example.com", "must use HTTPS"),
         ("https://user:password@models.example.com", "embedded credentials"),
         ("https://models.example.com?key=value", "query string or fragment"),
-        ("https://127.0.0.1", "not an IP address"),
+        ("https://127.0.0.1", "fully qualified domain name"),
         ("https://single-label", "fully qualified domain name"),
         ("https://localhost", "hostname is blocked"),
     ):
@@ -585,6 +585,7 @@ def test_custom_runtime_client_construction():
             validate_url.assert_called_with(
                 "https://models.example.com",
                 allow_private=True,
+                allow_insecure=False,
             )
             openai_client._client.close()
 

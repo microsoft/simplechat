@@ -1383,6 +1383,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'allow_user_agents': False,
         'allow_user_custom_endpoints': False,
         'allow_private_custom_model_endpoints': False,
+        'allow_insecure_custom_model_endpoints': False,
+        'custom_model_endpoint_ca_bundle_path': '',
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_user_workflows': False,

@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.016 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.015 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.014 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.013 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -31,7 +32,7 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.006 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.005 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.004 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.003 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.003 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.002 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.001 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.260.025 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -81,6 +82,18 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.016)**
+
+#### New Features
+
+*   **On-Premises Custom Model Endpoints Now Work**
+    *   The administrator gate named "allow private Custom endpoint hosts" did not actually permit the two most common on-premises address forms. An IP address such as `https://10.20.30.40/v1` and a short host name such as `https://llm-gateway/v1` were both rejected even with the gate enabled, and both were refused with a message claiming the URL was an IP address, which was wrong for the short host name.
+    *   With the gate enabled, IP addresses, short host names, and hosts resolving to private ranges are now accepted. Loopback, link-local, and cloud metadata addresses remain rejected regardless of any setting, and every address is still revalidated at connection time.
+    *   **Added a CA bundle setting.** Custom endpoints trust only public certificate authorities and deliberately ignore ambient environment variables, so an on-premises gateway using an internally issued certificate previously could not be trusted at all. An administrator can now name a PEM bundle. A bundle that cannot be loaded fails loudly rather than silently falling back to weaker trust.
+    *   **Added a separate plaintext HTTP gate** for isolated networks where TLS cannot be terminated. It requires the private-hosts gate as well, and is labelled with its consequence: prompts and API keys travel unencrypted.
+    *   Saving an endpoint no longer requires the host name to resolve from the application tier, so configuration can be seeded or restored from backup ahead of connectivity. Policy violations are still refused at save time, and the connection-time check is unchanged.
+    *   (Ref: `functions_model_endpoint_validation.py`, `model_endpoint_clients.py`, `allow_insecure_custom_model_endpoints`, `custom_model_endpoint_ca_bundle_path`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
 ### **(v0.261.015)**
 
@@ -202,40 +215,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   Markdown processing now batches its chunk embeddings and Search upload instead of reserving the gate once per chunk, which reduces contention and avoids the intermittent `OrderedDict mutated during iteration` failures seen during concurrent Markdown ingestion.
     *   Added regression coverage for repeated transient gate conflicts, local worker serialization, and Markdown use of the batch chunk writer.
     *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
-
-### **(v0.261.003)**
-
-#### Bug Fixes
-
-*   **Broken Documentation Links Repaired**
-    *   Clicking the upgrade guide, Docker customization, or enterprise networking links from the repository README or the deployer READMEs led to a "page not found". Those pages were reorganized from `docs/how-to/<snake_case>.md` to `docs/guides/<kebab-case>.md`, and the site kept redirects, but redirects do not apply when browsing files on GitHub. No documentation was ever lost, only mislinked.
-    *   Repaired 46 broken relative links in total: 12 in the README and deployer READMEs, and 34 in archived per-version engineering notes. Archived links whose target was never migrated now keep the prose without a dead link, rather than pointing at a file that does not exist.
-    *   Also corrected the "Return to Main" link in the Azure CLI and Terraform deployer READMEs, which pointed one directory too shallow.
-    *   (Ref: `README.md`, `deployers/*/README.md`, `docs/explanation/features/`, `docs/explanation/fixes/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
-
-*   **Recovered 27 Release Note Sections Missing From The Source File**
-    *   `docs/explanation/release_notes.md` had been truncated from 46 version sections to 19, dropping every v0.260 entry along with v0.250.229 through v0.250.231. The published site still showed them, because the pages that render release notes are generated from this file and had not been rebuilt since the truncation.
-    *   That left the repository one routine `build_release_notes_pages.py` run away from erasing roughly 2,400 lines of release history from the site with no obvious cause. The sections have been restored from history and the pages regenerated, so the source and the site agree again.
-    *   (Ref: `docs/explanation/release_notes.md`, `scripts/build_release_notes_pages.py`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
-
-#### Documentation
-
-*   **Web Search Documentation Now Describes What Actually Happens**
-    *   The web search guide still described the Bing Web Search API integration that was removed back in v0.229.001. Web search has since run through an Azure AI Foundry agent using the Grounding with Bing Search tool, which is why an admin has to configure a Foundry project and agent ID before the **Web** control appears.
-    *   Added a dedicated **What leaves SimpleChat** section stating the egress boundary plainly: only the message the user just typed is sent to the external search service. Conversation history, workspace documents, attached file contents, system prompts, agent instructions, and workspace or document names are never included. This behavior was hardened in v0.241.022 but was previously mentioned only in passing.
-    *   Documented the Deep Research nuance: it runs several planned queries instead of one, but every query is still derived from the current message alone, so no conversation history is introduced.
-    *   Added the Grounding with Bing Search compliance-boundary notice to the user-facing guide, replaced the placeholder text in the admin Web Search settings table with real descriptions, and reused the existing web search flow diagram instead of leaving a "recording planned" video card.
-    *   (Ref: `docs/guides/use-web-search.md`, `docs/admin/knowledge.md`, `docs/reference/chat-controls.md`, `build_web_search_query_text`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
-
-*   **Documentation Link Rot Now Fails A Test**
-    *   Added `functional_tests/test_docs_link_integrity.py`, which fails when any relative markdown link in the README, `docs/`, or `deployers/` points at a missing file, when a Jekyll `relative_url` page link does not resolve, or when a media include names an unregistered slot. Outstanding screenshots are reported but never fail the run.
-    *   Added `functional_tests/test_docs_web_search_accuracy.py`, which ties the published privacy claim to the implementation. If the web search query builder ever starts folding conversation history back into the outbound query, the test fails and forces the documentation to be corrected with it.
-    *   (Ref: `test_docs_link_integrity.py`, `test_docs_web_search_accuracy.py`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
-
-*   **First Batch Of Documentation Screenshots**
-    *   Filled 54 empty screenshot slots, taking documentation screenshot coverage from 18 of 122 to 72 of 122. The Administration group is now fully illustrated.
-    *   Added the four admin settings overviews (Backup & Recovery, Data Lifecycle, Governance, Workflow), six chat control references (conversation list, conversation header, composer, selectors, grounded search, and advanced conversation search), thirty-three task guide steps, and configuration panes for eleven action types (Azure Maps, Blob Storage, Chart, Cosmos Query, Databricks, Document Search, Log Analytics, MCP, Microsoft Graph, OpenAPI, RocksDB, and SimpleChat).
-    *   The web search screenshot captures the live data notice, so the guide's claim that only the current message is sent is now visible rather than only asserted.
-    *   Action configuration panes were captured without saving any action, so every credential field shows only its placeholder text and no tenant values were recorded. Where an admin settings pane already held real values, those fields were replaced with example values before capture and the page was reloaded without saving.
-    *   Replaced the generated placeholder alt text on every filled slot with a description of what the reader actually learns from the image.
-    *   (Ref: `docs/images/admin/`, `docs/images/reference/`, `docs/images/guides/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))

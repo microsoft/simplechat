@@ -156,6 +156,8 @@ def build_model_endpoint_sync_chat_client(
     url_mode='',
     anthropic_version=DEFAULT_ANTHROPIC_VERSION,
     allow_private_custom_endpoints=False,
+    allow_insecure_custom_endpoints=False,
+    custom_endpoint_ca_bundle_path='',
     settings=None,
     endpoint_config=None,
     identity_context=None,
@@ -173,6 +175,7 @@ def build_model_endpoint_sync_chat_client(
         endpoint = validate_custom_model_endpoint_url(
             endpoint,
             allow_private=allow_private_custom_endpoints,
+            allow_insecure=allow_insecure_custom_endpoints,
         )
     runtime_protocol = infer_model_endpoint_protocol(
         normalized_provider,
@@ -195,6 +198,7 @@ def build_model_endpoint_sync_chat_client(
                 anthropic_version=anthropic_version,
                 direct_custom=direct_custom,
                 allow_private_custom_endpoints=allow_private_custom_endpoints,
+                custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
                 extra_headers=extra_headers,
             ), runtime_protocol
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
@@ -207,6 +211,7 @@ def build_model_endpoint_sync_chat_client(
                 default_headers=extra_headers,
                 api_type=api_type,
                 url_mode=url_mode,
+                ca_bundle_path=custom_endpoint_ca_bundle_path,
             ), runtime_protocol
         client_kwargs = {
             'api_version': api_version,
@@ -218,6 +223,7 @@ def build_model_endpoint_sync_chat_client(
         if direct_custom:
             client_kwargs['http_client'] = build_custom_openai_sync_http_client(
                 allow_private=allow_private_custom_endpoints,
+                ca_bundle_path=custom_endpoint_ca_bundle_path,
             )
         client = AzureOpenAI(**client_kwargs)
         if direct_custom:
@@ -427,10 +433,17 @@ def build_semantic_kernel_chat_service_for_model(
         allow_private_custom_endpoints = bool(
             settings.get('allow_private_custom_model_endpoints', False)
         )
+        allow_insecure_custom_endpoints = bool(
+            settings.get('allow_insecure_custom_model_endpoints', False)
+        )
+        custom_endpoint_ca_bundle_path = str(
+            settings.get('custom_model_endpoint_ca_bundle_path') or ''
+        ).strip()
         if direct_custom:
             endpoint = validate_custom_model_endpoint_url(
                 endpoint,
                 allow_private=allow_private_custom_endpoints,
+                allow_insecure=allow_insecure_custom_endpoints,
             )
         runtime_protocol = infer_model_endpoint_protocol(
             provider,
@@ -459,6 +472,7 @@ def build_semantic_kernel_chat_service_for_model(
                     anthropic_version=anthropic_version,
                     direct_custom=direct_custom,
                     allow_private_custom_endpoints=allow_private_custom_endpoints,
+                    custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
                     extra_headers=extra_headers,
                 ), runtime_protocol
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
@@ -474,6 +488,7 @@ def build_semantic_kernel_chat_service_for_model(
                 if direct_custom:
                     client_kwargs['http_client'] = build_custom_openai_async_http_client(
                         allow_private=allow_private_custom_endpoints,
+                        ca_bundle_path=custom_endpoint_ca_bundle_path,
                     )
                 if extra_headers:
                     client_kwargs['default_headers'] = extra_headers
@@ -499,6 +514,7 @@ def build_semantic_kernel_chat_service_for_model(
                     default_headers=extra_headers or None,
                     http_client=build_custom_openai_async_http_client(
                         allow_private=allow_private_custom_endpoints,
+                        ca_bundle_path=custom_endpoint_ca_bundle_path,
                     ),
                 )
                 async_client = sanitize_custom_async_openai_client(

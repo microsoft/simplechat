@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.016)**
+
+#### New Features
+
+*   **On-Premises Custom Model Endpoints Now Work**
+    *   The administrator gate named "allow private Custom endpoint hosts" did not actually permit the two most common on-premises address forms. An IP address such as `https://10.20.30.40/v1` and a short host name such as `https://llm-gateway/v1` were both rejected even with the gate enabled, and both were refused with a message claiming the URL was an IP address, which was wrong for the short host name.
+    *   With the gate enabled, IP addresses, short host names, and hosts resolving to private ranges are now accepted. Loopback, link-local, and cloud metadata addresses remain rejected regardless of any setting, and every address is still revalidated at connection time.
+    *   **Added a CA bundle setting.** Custom endpoints trust only public certificate authorities and deliberately ignore ambient environment variables, so an on-premises gateway using an internally issued certificate previously could not be trusted at all. An administrator can now name a PEM bundle. A bundle that cannot be loaded fails loudly rather than silently falling back to weaker trust.
+    *   **Added a separate plaintext HTTP gate** for isolated networks where TLS cannot be terminated. It requires the private-hosts gate as well, and is labelled with its consequence: prompts and API keys travel unencrypted.
+    *   Saving an endpoint no longer requires the host name to resolve from the application tier, so configuration can be seeded or restored from backup ahead of connectivity. Policy violations are still refused at save time, and the connection-time check is unchanged.
+    *   (Ref: `functions_model_endpoint_validation.py`, `model_endpoint_clients.py`, `allow_insecure_custom_model_endpoints`, `custom_model_endpoint_ca_bundle_path`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
+
 ### **(v0.261.015)**
 
 #### Bug Fixes

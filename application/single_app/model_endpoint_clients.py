@@ -4,6 +4,7 @@
 import json
 import asyncio
 import re
+import ssl
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Iterator, List
 from urllib.parse import urlparse
@@ -487,12 +488,34 @@ class _PinnedCustomEndpointAsyncBackend(httpcore.AsyncNetworkBackend):
         await self._backend.sleep(seconds)
 
 
+def build_custom_endpoint_ssl_context(ca_bundle_path: Any = ""):
+    """Return the TLS context for Custom endpoint requests.
+
+    The default context trusts only certifi's public roots, and deliberately does
+    not read SSL_CERT_FILE, so ambient environment variables cannot silently widen
+    what SimpleChat trusts. That leaves an on-premises gateway with an
+    enterprise-issued certificate untrustable, so an administrator may name a CA
+    bundle explicitly. Naming a bundle is an explicit decision, not an ambient one.
+    """
+    bundle_path = str(ca_bundle_path or "").strip()
+    if bundle_path:
+        try:
+            return ssl.create_default_context(cafile=bundle_path)
+        except (OSError, ssl.SSLError):
+            # A missing or unreadable bundle must not silently fall back to a
+            # weaker context, so the failure is surfaced to the caller.
+            raise ModelEndpointValidationError(
+                "The configured Custom endpoint CA bundle could not be loaded."
+            ) from None
+    return httpx.create_ssl_context(verify=True, trust_env=False)
+
+
 class _PinnedCustomEndpointHTTPTransport(httpx.HTTPTransport):
     """HTTPX transport whose TCP connection uses the validated DNS results."""
 
-    def __init__(self, *, allow_private=False):
+    def __init__(self, *, allow_private=False, ca_bundle_path=""):
         self._pool = httpcore.ConnectionPool(
-            ssl_context=httpx.create_ssl_context(verify=True, trust_env=False),
+            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path),
             max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
             max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
             keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
@@ -505,9 +528,9 @@ class _PinnedCustomEndpointHTTPTransport(httpx.HTTPTransport):
 class _PinnedCustomEndpointAsyncHTTPTransport(httpx.AsyncHTTPTransport):
     """Async HTTPX transport whose TCP connection uses validated DNS results."""
 
-    def __init__(self, *, allow_private=False):
+    def __init__(self, *, allow_private=False, ca_bundle_path=""):
         self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=httpx.create_ssl_context(verify=True, trust_env=False),
+            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path),
             max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
             max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
             keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
@@ -517,22 +540,24 @@ class _PinnedCustomEndpointAsyncHTTPTransport(httpx.AsyncHTTPTransport):
         )
 
 
-def build_custom_openai_sync_http_client(*, allow_private=False):
+def build_custom_openai_sync_http_client(*, allow_private=False, ca_bundle_path=""):
     """Return a no-redirect SDK transport pinned to validated DNS addresses."""
     return DefaultHttpxClient(
         transport=_PinnedCustomEndpointHTTPTransport(
             allow_private=allow_private,
+            ca_bundle_path=ca_bundle_path,
         ),
         follow_redirects=False,
         trust_env=False,
     )
 
 
-def build_custom_openai_async_http_client(*, allow_private=False):
+def build_custom_openai_async_http_client(*, allow_private=False, ca_bundle_path=""):
     """Return an async no-redirect transport pinned to validated DNS addresses."""
     return DefaultAsyncHttpxClient(
         transport=_PinnedCustomEndpointAsyncHTTPTransport(
             allow_private=allow_private,
+            ca_bundle_path=ca_bundle_path,
         ),
         follow_redirects=False,
         trust_env=False,
@@ -549,6 +574,7 @@ def build_openai_style_chat_client(
     allow_private_custom_endpoints: bool = False,
     api_type: Any = "",
     url_mode: Any = "",
+    ca_bundle_path: Any = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
@@ -563,6 +589,7 @@ def build_openai_style_chat_client(
     if direct_custom:
         client_kwargs["http_client"] = build_custom_openai_sync_http_client(
             allow_private=allow_private_custom_endpoints,
+            ca_bundle_path=ca_bundle_path,
         )
     if default_headers:
         client_kwargs["default_headers"] = default_headers
@@ -798,6 +825,7 @@ def build_anthropic_chat_client(
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
+    custom_endpoint_ca_bundle_path: str = "",
 ):
     """Build a chat-completions-shaped adapter over the Anthropic messages protocol."""
     return AnthropicChatCompletionClient(
@@ -809,6 +837,7 @@ def build_anthropic_chat_client(
         anthropic_version=anthropic_version,
         direct_custom=direct_custom,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
     )
 
 
@@ -826,6 +855,7 @@ class AnthropicChatCompletionClient:
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
         direct_custom: bool = False,
         allow_private_custom_endpoints: bool = False,
+        custom_endpoint_ca_bundle_path: str = "",
     ):
         self.endpoint = normalize_anthropic_messages_url(
             endpoint,
@@ -840,6 +870,7 @@ class AnthropicChatCompletionClient:
         ).strip()
         self.direct_custom = direct_custom
         self.allow_private_custom_endpoints = allow_private_custom_endpoints
+        self.custom_endpoint_ca_bundle_path = custom_endpoint_ca_bundle_path
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
@@ -867,6 +898,7 @@ class AnthropicChatCompletionClient:
     def _create_direct_custom(self, payload, *, stream):
         http_client = build_custom_openai_sync_http_client(
             allow_private=self.allow_private_custom_endpoints,
+            ca_bundle_path=self.custom_endpoint_ca_bundle_path,
         )
         request = http_client.build_request(
             "POST",
@@ -1289,6 +1321,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION
     direct_custom: bool = False
     allow_private_custom_endpoints: bool = False
+    custom_endpoint_ca_bundle_path: str = ""
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)
 
     def __init__(
@@ -1304,6 +1337,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
         direct_custom: bool = False,
         allow_private_custom_endpoints: bool = False,
+        custom_endpoint_ca_bundle_path: str = "",
     ):
         super().__init__(
             ai_model_id=deployment_name,
@@ -1316,6 +1350,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             anthropic_version=anthropic_version,
             direct_custom=direct_custom,
             allow_private_custom_endpoints=allow_private_custom_endpoints,
+            custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
         )
 
     def get_prompt_execution_settings_class(self):
@@ -1550,6 +1585,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             anthropic_version=self.anthropic_version,
             direct_custom=self.direct_custom,
             allow_private_custom_endpoints=self.allow_private_custom_endpoints,
+            custom_endpoint_ca_bundle_path=self.custom_endpoint_ca_bundle_path,
         )
 
     def _build_request_kwargs(self, chat_history, settings, *, stream: bool) -> Dict[str, Any]:
