@@ -2472,6 +2472,285 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
     ],
+    # ------------------------------------------------------------------
+    # Knowledge / File Sync
+    #
+    # File Sync needs Redis Cache, which lives under Scale, and the
+    # server-rendered card says so with data-requires attributes that
+    # admin_settings_dependencies.js reads. That is the first real use of the
+    # `requires` descriptor: without it an administrator turns File Sync on and
+    # nothing happens, with no visible reason until a flash message after saving.
+    #
+    # The three scope sections share one shape -- enable, access, assignment --
+    # so learning Personal is enough to read Group and Public.
+    # ------------------------------------------------------------------
+    "file-sync-section": [
+        {
+            "key": "enable_file_sync",
+            "type": "switch",
+            "label": "Enable File Sync",
+            "help": (
+                "Lets workspaces pull documents from a configured source on a schedule "
+                "instead of relying on manual upload."
+            ),
+            "default": False,
+            "role": "capability",
+            "requires": {
+                "key": "enable_redis_cache",
+                "label": "Redis Cache",
+                "mode": "warn",
+                "target_section": "redis-cache-section",
+                "description": (
+                    "File Sync settings can be saved now, but sync runs stay inactive "
+                    "until Redis Cache is enabled and configured."
+                ),
+            },
+        },
+        {
+            "key": "file_sync_max_sources_per_scope",
+            "type": "number",
+            "label": "Max Sources per Workspace",
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_min_schedule_interval_minutes",
+            "type": "number",
+            "label": "Minimum Schedule Interval",
+            "help": "The shortest gap a workspace may schedule between runs.",
+            "default": 15,
+            "min": 5,
+            "max": 1440,
+            "suffix": " min",
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_max_files_per_run",
+            "type": "number",
+            "label": "Max Files per Run",
+            "default": 1000,
+            "min": 1,
+            "max": 100000,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_max_gb_per_run",
+            "type": "number",
+            "label": "Max Size per Run",
+            "help": "Entered in gigabytes; stored in bytes.",
+            "default": 5,
+            "min": 1,
+            "max": 1024,
+            "suffix": " GB",
+            # 1 GiB, matching the conversion the server-rendered form applies.
+            "scale": 1073741824,
+            "paths": ["file_sync_max_bytes_per_run"],
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_max_concurrent_runs",
+            "type": "number",
+            "label": "Max Concurrent Runs",
+            "help": "How many workspaces may sync at once across the whole deployment.",
+            "default": 2,
+            "min": 1,
+            "max": 25,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_allow_recursive_sources",
+            "type": "switch",
+            "label": "Allow recursive sources",
+            "help": "Lets a source include subfolders rather than only its top level.",
+            "default": True,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+    ],
+    "file-sync-source-types-section": [
+        {
+            "key": "file_sync_visible_source_types",
+            "type": "checkbox_set",
+            "label": "Source types offered when adding a source",
+            "help": (
+                "Credentials for a source are held in Key Vault when Key Vault secret "
+                "storage is enabled, and in the encrypted settings path otherwise."
+            ),
+            "default": ["smb", "azure_files"],
+            "min_selected": 1,
+            "options": [
+                {"value": "smb", "label": "SMB Share", "description": "Available now."},
+                {
+                    "value": "azure_files",
+                    "label": "Azure Files",
+                    "description": "Available now.",
+                },
+                {
+                    "value": "azure_blob",
+                    "label": "Azure Blob Storage",
+                    "description": "Available now.",
+                },
+                {
+                    "value": "onedrive",
+                    "label": "OneDrive",
+                    "description": "Coming soon.",
+                    "disabled": True,
+                },
+                {
+                    "value": "sharepoint_on_prem",
+                    "label": "On-prem SharePoint",
+                    "description": "Coming soon.",
+                    "disabled": True,
+                },
+                {
+                    "value": "google_workspace",
+                    "label": "Google Workspace",
+                    "description": "Coming soon.",
+                    "disabled": True,
+                },
+            ],
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+    ],
+    "file-sync-personal-section": [
+        {
+            "key": "enable_file_sync_personal",
+            "type": "switch",
+            "label": "Enable sync for personal workspaces",
+            "default": True,
+            "role": "capability",
+        },
+        {
+            "key": "file_sync_personal_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "help": "Users keep their synced documents but cannot add or edit a source.",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
+        },
+        {
+            "key": "file_sync_personal_require_app_role",
+            "type": "switch",
+            "label": "Require the PersonalFileSyncUser app role",
+            "help": (
+                "Required app role value: PersonalFileSyncUser. Assign it in the "
+                "Enterprise App before turning this on, or no user will be able to "
+                "manage a personal source."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
+        },
+    ],
+    "file-sync-group-section": [
+        {
+            "key": "enable_file_sync_group",
+            "type": "switch",
+            "label": "Enable sync for group workspaces",
+            "default": True,
+            "role": "capability",
+        },
+        {
+            "key": "file_sync_group_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_group", "equals": True},
+        },
+        {
+            "key": "require_group_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned groups",
+            "help": "Only the groups listed below may use File Sync.",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_group", "equals": True},
+        },
+        {
+            "key": "file_sync_allowed_group_ids",
+            "type": "id_list",
+            "label": "Assigned groups",
+            "help": (
+                "Leaving this empty while the restriction is on means no group can use "
+                "File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search groups by name",
+            "search_endpoint": "/api/admin/file-sync/groups/search",
+            "results_key": "groups",
+            "value_field": "id",
+            "title_field": "name",
+            "subtitle_field": "description",
+            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_file_sync_group", "equals": True},
+                    {"key": "require_group_assignment_for_file_sync", "equals": True},
+                ]
+            },
+        },
+    ],
+    "file-sync-public-section": [
+        {
+            "key": "enable_file_sync_public",
+            "type": "switch",
+            "label": "Enable sync for public workspaces",
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "file_sync_public_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_public", "equals": True},
+        },
+        {
+            "key": "require_public_workspace_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned public workspaces",
+            "help": "Only the public workspaces listed below may use File Sync.",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_public", "equals": True},
+        },
+        {
+            "key": "file_sync_allowed_public_workspace_ids",
+            "type": "id_list",
+            "label": "Assigned public workspaces",
+            "help": (
+                "Leaving this empty while the restriction is on means no public "
+                "workspace can use File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search public workspaces by name",
+            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "results_key": "workspaces",
+            "value_field": "id",
+            "title_field": "name",
+            "subtitle_field": "description",
+            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_file_sync_public", "equals": True},
+                    {
+                        "key": "require_public_workspace_assignment_for_file_sync",
+                        "equals": True,
+                    },
+                ]
+            },
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -2916,7 +3195,15 @@ def _normalize_field_value(key, value, field):
 
     if field_type in ("range", "number"):
         number, error = _normalize_number(value, field)
-        return number, error, None
+        if error:
+            return None, error, None
+        # A field may be edited in one unit and stored in another -- File Sync's
+        # per-run limit is entered in GB and stored in bytes. Bounds are declared
+        # in the editing unit, so scaling happens after clamping.
+        scale = field.get("scale")
+        if scale:
+            number = int(number * scale)
+        return number, None, None
 
     if field_type == "checkbox_set":
         selection, error = _normalize_checkbox_set(value, field)
