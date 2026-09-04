@@ -174,15 +174,20 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 
 1. Enable Chat Orchestration in Admin Settings, under Orchestration.
 2. Choose an approval mode. Review is the default and the safest starting point.
-3. In a V2 chat, switch orchestration on in the composer. The capability toggles and the
-   model, agent and reasoning pickers collapse behind a disclosure; file upload and voice
-   input stay where they are.
+3. Open a V2 chat. Where orchestration is enabled the composer opens in it, with the
+   capability toggles and the model, agent and reasoning pickers folded behind **Manual
+   controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
+   turns it off again for anyone who wants the classic composer.
 4. Ask a question. A plan appears; approve, adjust or cancel it.
 5. Watch progress in the Plan panel of the right-hand drawer.
 
 Anything selected inside the manual controls is passed as a seed and constrains the plan,
 so a power user can still pin the work to a particular document or agent and let
 orchestration decide the rest.
+
+Administrators changing these settings from the classic Admin Settings page do not need to
+reload an open chat tab: the interface re-reads its configuration when the tab comes back
+to the front.
 
 ## Testing and validation
 
