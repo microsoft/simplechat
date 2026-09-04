@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.015)**
+
+#### Bug Fixes
+
+*   **Tool-Calling Responses Now Actually Stream**
+    *   SimpleChat only supports streaming responses, but tool calling cannot stream, because a tool call has to arrive whole. The completed answer was delivered through the streaming interface as a single chunk, so the user saw nothing at all and then the entire response at once, which reads as a hang. Because agents and plugins rely on tool calling, this was a common path rather than an edge case.
+    *   A completed answer is now split into chunks at word boundaries and delivered progressively, so it reads like a real stream. Chunking is lossless — the reassembled text is byte-for-byte identical.
+    *   Tool calls still arrive whole, on the final chunk, alongside the finish reason and usage metadata. Emitting metadata once means token usage is no longer at risk of being counted per chunk.
+    *   **Streaming responses can report token usage again.** `stream_options` was stripped from every OpenAI-compatible request, which suppressed usage reporting for all of them. It is now dropped only for surfaces that reject it.
+    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_providers.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
+
 ### **(v0.261.014)**
 
 #### Bug Fixes

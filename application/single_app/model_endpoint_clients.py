@@ -319,10 +319,44 @@ def resolve_openai_style_request_api_version(raw_api_version: Any) -> str:
     return ""
 
 
+SYNTHETIC_STREAM_CHUNK_CHARACTERS = 24
+_SYNTHETIC_STREAM_TOKEN_PATTERN = re.compile(r"\S+\s*|\s+")
+
+
+def iter_synthetic_stream_text_chunks(
+    text: Any,
+    chunk_characters: int = SYNTHETIC_STREAM_CHUNK_CHARACTERS,
+) -> Iterator[str]:
+    """Split a completed response into stream-sized chunks at word boundaries.
+
+    SimpleChat only supports streaming responses, so a provider or code path that
+    can only return a completed answer still has to deliver it through the stream.
+    Emitting the whole answer as one chunk technically satisfies that, but the user
+    sees nothing and then everything at once, which reads as a hang.
+
+    Chunking is lossless: concatenating every chunk reproduces the original text
+    exactly, including its whitespace, because the frontend accumulates chunks.
+    """
+    normalized_text = str(text or "")
+    if not normalized_text:
+        return
+    if chunk_characters < 1:
+        yield normalized_text
+        return
+
+    buffer = ""
+    for token in _SYNTHETIC_STREAM_TOKEN_PATTERN.findall(normalized_text):
+        buffer += token
+        if len(buffer) >= chunk_characters:
+            yield buffer
+            buffer = ""
+    if buffer:
+        yield buffer
+
+
 def normalize_chat_completion_text(content: Any) -> str:
     """Normalize text content returned by OpenAI-compatible chat responses."""
-    if content is None:
-        return ""
+    if content is None:        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, (list, tuple)):
@@ -557,11 +591,16 @@ class OpenAIStyleChatCompletionClient:
         self._sanitize_errors = sanitize_errors
         self._api_type = api_type
         self._request_url = request_url
+        provider = get_model_endpoint_provider(api_type) if sanitize_errors else None
+        self._supports_stream_options = bool(provider and provider.supports_stream_options)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
         request_kwargs = dict(kwargs)
-        request_kwargs.pop("stream_options", None)
+        # stream_options is how a streaming response reports token usage. It is
+        # dropped only for surfaces that reject it, rather than for everyone.
+        if not self._supports_stream_options:
+            request_kwargs.pop("stream_options", None)
         try:
             response = self._client.chat.completions.create(**request_kwargs)
         except Exception as exc:
@@ -1361,11 +1400,18 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         function_invoke_attempt: int = 0,
     ):
         if getattr(settings, "tools", None):
+            # Tool calling is answered without streaming, because a tool call has
+            # to arrive complete. The completed answer is still delivered through
+            # the stream, chunked so it reads like one.
             request_kwargs = self._build_request_kwargs(chat_history, settings, stream=False)
             client = self._build_client()
             response = await asyncio.to_thread(client.chat.completions.create, **request_kwargs)
             for message in self._create_chat_message_contents_from_response(response):
-                yield [self._to_streaming_chat_message_content(message, function_invoke_attempt)]
+                for streaming_message in self._iter_synthetic_stream_messages(
+                    message,
+                    function_invoke_attempt,
+                ):
+                    yield [streaming_message]
             return
 
         request_kwargs = self._build_request_kwargs(chat_history, settings, stream=True)
@@ -1409,6 +1455,61 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                         function_invoke_attempt=function_invoke_attempt,
                     )
                 ]
+
+    def _iter_synthetic_stream_messages(
+        self,
+        message: ChatMessageContent,
+        function_invoke_attempt: int,
+    ) -> Iterator[StreamingChatMessageContent]:
+        """Deliver a completed message through the streaming interface, in chunks.
+
+        Text is split so the response arrives progressively. Non-text items, such
+        as function calls, must arrive whole, so they ride on the final message
+        alongside the finish reason and usage metadata. Emitting metadata only
+        once keeps token usage from being counted per chunk.
+        """
+        text_items = [item for item in message.items or [] if isinstance(item, TextContent)]
+        other_items = [item for item in message.items or [] if not isinstance(item, TextContent)]
+
+        combined_text = "".join(item.text or "" for item in text_items)
+        text_chunks = list(iter_synthetic_stream_text_chunks(combined_text))
+
+        # Every chunk before the last carries text only.
+        for chunk_text in text_chunks[:-1]:
+            yield StreamingChatMessageContent(
+                role=message.role,
+                items=[StreamingTextContent(
+                    choice_index=0,
+                    text=chunk_text,
+                    ai_model_id=self.ai_model_id,
+                )],
+                choice_index=0,
+                ai_model_id=self.ai_model_id,
+                function_invoke_attempt=function_invoke_attempt,
+            )
+
+        final_items: List[Any] = []
+        if text_chunks:
+            final_items.append(StreamingTextContent(
+                choice_index=0,
+                text=text_chunks[-1],
+                ai_model_id=self.ai_model_id,
+                inner_content=text_items[-1].inner_content if text_items else None,
+                metadata=text_items[-1].metadata if text_items else {},
+                encoding=text_items[-1].encoding if text_items else None,
+            ))
+        final_items.extend(other_items)
+
+        yield StreamingChatMessageContent(
+            role=message.role,
+            items=final_items,
+            choice_index=0,
+            ai_model_id=self.ai_model_id,
+            inner_content=message.inner_content,
+            metadata=message.metadata,
+            finish_reason=message.finish_reason,
+            function_invoke_attempt=function_invoke_attempt,
+        )
 
     def _to_streaming_chat_message_content(
         self,

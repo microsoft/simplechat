@@ -88,6 +88,7 @@ class ModelEndpointProvider:
         default_version: str = "",
         supports_streaming: bool = True,
         supports_tools: bool = True,
+        supports_stream_options: bool = False,
         description: str = "",
     ):
         self.api_type = api_type
@@ -101,6 +102,7 @@ class ModelEndpointProvider:
         self.default_version = default_version
         self.supports_streaming = supports_streaming
         self.supports_tools = supports_tools
+        self.supports_stream_options = supports_stream_options
         self.description = description
 
     @property
@@ -129,6 +131,9 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_APPEND_V1_IF_MISSING,
+        # OpenAI accepts stream_options.include_usage, which is how a streaming
+        # response reports token usage. Providers that reject it keep the default.
+        supports_stream_options=True,
         description=(
             "OpenAI and any OpenAI-compatible surface, including gateways, "
             "vLLM, and LiteLLM."

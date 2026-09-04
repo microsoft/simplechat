@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.015 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.014 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.013 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.012 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -31,7 +32,7 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.005 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.004 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.003 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.002 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.002 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.001 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.260.025 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.024 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -80,6 +81,17 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.015)**
+
+#### Bug Fixes
+
+*   **Tool-Calling Responses Now Actually Stream**
+    *   SimpleChat only supports streaming responses, but tool calling cannot stream, because a tool call has to arrive whole. The completed answer was delivered through the streaming interface as a single chunk, so the user saw nothing at all and then the entire response at once, which reads as a hang. Because agents and plugins rely on tool calling, this was a common path rather than an edge case.
+    *   A completed answer is now split into chunks at word boundaries and delivered progressively, so it reads like a real stream. Chunking is lossless — the reassembled text is byte-for-byte identical.
+    *   Tool calls still arrive whole, on the final chunk, alongside the finish reason and usage metadata. Emitting metadata once means token usage is no longer at risk of being counted per chunk.
+    *   **Streaming responses can report token usage again.** `stream_options` was stripped from every OpenAI-compatible request, which suppressed usage reporting for all of them. It is now dropped only for surfaces that reject it.
+    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_providers.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
 ### **(v0.261.014)**
 
@@ -227,47 +239,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   Action configuration panes were captured without saving any action, so every credential field shows only its placeholder text and no tenant values were recorded. Where an admin settings pane already held real values, those fields were replaced with example values before capture and the page was reloaded without saving.
     *   Replaced the generated placeholder alt text on every filled slot with a description of what the reader actually learns from the image.
     *   (Ref: `docs/images/admin/`, `docs/images/reference/`, `docs/images/guides/`, [#1371](https://github.com/microsoft/simplechat/issues/1371))
-
-### **(v0.261.002)**
-
-#### User Interface Enhancements
-
-*   **Inbound MCP Enablement Guidance**
-    *   Added a visible **Inbound MCP** tab state for deployments where the preview admin UI is disabled by the missing `ENABLE_MCP_UI=true` App Service application setting.
-    *   The disabled-state card explains how to enable the preview UI while making clear that the inbound MCP runtime remains off until an admin turns on **Enable inbound MCP server** after authentication, client allowlist, source, and governance prerequisites are ready.
-    *   (Ref: `admin/_panes/inbound-mcp.html`, `admin_settings_nav.py`, [#1364](https://github.com/microsoft/simplechat/issues/1364))
-
-#### Bug Fixes
-
-*   **Delegated Governance New Policy Modal Opens On Split Governance Tabs**
-    *   Fixed the delegated item governance **New Policy** button so it opens the policy editor after Admin Settings governance was split into Feature Governance, Policies, and MCP Governance tabs.
-    *   Updated governance quick links to target the correct split tab panes instead of the retired aggregate Governance pane.
-    *   (Ref: `admin_governance.js`, delegated item policy editor, [#1362](https://github.com/microsoft/simplechat/issues/1362))
-
-*   **Large Markdown Files No Longer Fail To Upload**
-    *   Uploading a Markdown file could fail with `Failed processing Markdown file ...` and take down the whole document, not just the oversized part of it. Long pages with a big section under a single heading, such as a release notes file, were the usual trigger.
-    *   Markdown was the only ingestion path with no maximum chunk size. Its splitter divided the file on headings, and the step afterwards only ever merged chunks that were **too small** — nothing split a chunk that was too large. A heading with no subheading beneath it therefore became one chunk as large as all the text under it, which the embedding model refused.
-    *   Lowering **Markdown (words)** in Admin Settings did not work around this, because that value was only ever used as a minimum. It is now a real target, so the setting behaves the way its name implies.
-    *   Sections are now split to the configured size, a character limit is applied after merging to catch content such as tables and code blocks that take up more of the model's budget than their word count suggests, and a final safeguard keeps any remaining outlier inside the limit. That safeguard trims only the text used to build the chunk's search vector — the chunk itself is still stored in full, so citations and content are unaffected.
-    *   (Ref: `process_md`, `save_chunks`, `functions_content.py`, `functions_documents.py`)
-
-*   **Chunk Size Limits Now Respect Their Unit**
-    *   Chunk sizes are configured per file type in words, characters, or pages, but a single shared limit was applied to all of them. That let a word-based field be set to 16,384 words — far more than can be indexed — while implying the value was valid.
-    *   Word and character fields now have separate limits, both derived from the embedding model's context window, and the Document Extraction tab shows the current values. A value above its limit is reduced on save and the page names the fields it changed.
-    *   Page and slide counts are left uncapped here, since how much text a page holds is not known until extraction runs. They are bounded when the chunk is indexed instead.
-    *   No shipping default changed. Only custom overrides that could never have been indexed are affected.
-    *   (Ref: `get_chunk_size_cap`, `get_chunk_size_config`, Document Extraction settings, `admin_settings.js`)
-
-*   **Logout No Longer Redirects To A Missing Easy Auth Endpoint**
-    *   Logout could redirect to `/.auth/logout?post_logout_redirect_uri=%2Flogin` and return a 404 on Azure App Service deployments that were not actually serving App Service Easy Auth. This affected production deployments as well as development ones.
-    *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
-    *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
-    *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
-    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
-
-#### New Features
-
-*   **Opt-Out For App Service Easy Auth Logout**
-    *   Added the `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT` environment variable for deployments where Easy Auth is genuinely active but the platform `/.auth/logout` endpoint is not reachable on the public host, such as when a custom domain or gateway does not route `/.auth/*` to the App Service origin.
-    *   Setting it to `true` keeps logout on the local path instead of redirecting to the platform endpoint. Logout routing decisions are now also traced through debug logging, so `FLASK_DEBUG=1` shows which path was taken and why.
-    *   (Ref: `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT`, `config.py`, `example.env`, [Running SimpleChat Locally](running_simplechat_locally.md))
