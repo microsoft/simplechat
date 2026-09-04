@@ -1623,50 +1623,8 @@ def register_route_frontend_admin_settings(bp):
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
             if should_migrate_endpoints and not parsed_model_endpoints:
-                default_endpoint_id = str(uuid.uuid4())
-                migrated_models = []
-                for model in gpt_model_obj.get('selected', []):
-                    deployment_name = model.get('deploymentName') or model.get('deployment') or ''
-                    model_name = model.get('modelName') or model.get('name') or ''
-                    if not deployment_name:
-                        continue
-                    migrated_models.append({
-                        'id': str(uuid.uuid4()),
-                        'deploymentName': deployment_name,
-                        'modelName': model_name,
-                        'displayName': deployment_name,
-                        'description': '',
-                        'enabled': True
-                    })
-
-                legacy_auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
-                migrated_auth_type = 'api_key' if legacy_auth_type == 'key' else legacy_auth_type
-
-                parsed_model_endpoints = [{
-                    'id': default_endpoint_id,
-                    'name': 'Migrated Azure OpenAI Endpoint',
-                    'provider': 'aoai',
-                    'enabled': True,
-                    'auth': {
-                        'type': migrated_auth_type,
-                        'managed_identity_type': 'system_assigned',
-                        'managed_identity_client_id': '',
-                        'tenant_id': '',
-                        'client_id': '',
-                        'client_secret': '',
-                        'api_key': settings.get('azure_openai_gpt_key', '')
-                    },
-                    'connection': {
-                        'endpoint': settings.get('azure_openai_gpt_endpoint', ''),
-                        'api_version': settings.get('azure_openai_gpt_api_version', '')
-                    },
-                    'management': {
-                        'subscription_id': settings.get('azure_openai_gpt_subscription_id', ''),
-                        'resource_group': settings.get('azure_openai_gpt_resource_group', ''),
-                        'location': ''
-                    },
-                    'models': migrated_models
-                }]
+                parsed_model_endpoints = build_migrated_model_endpoints_from_legacy(settings)
+                migrated_models = parsed_model_endpoints[0]['models'] if parsed_model_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
                 debug_print(
                     f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
@@ -1745,53 +1703,15 @@ def register_route_frontend_admin_settings(bp):
                 flash(f"Error processing default model selection: {e}. Changes not saved.", 'danger')
                 parsed_default_model_selection = settings.get('default_model_selection', {})
 
-            normalized_default_model_selection = {
-                'endpoint_id': str(parsed_default_model_selection.get('endpoint_id') or '').strip(),
-                'model_id': str(parsed_default_model_selection.get('model_id') or '').strip(),
-                'provider': str(parsed_default_model_selection.get('provider') or '').strip().lower()
-            }
-
-            if not enable_multi_model_endpoints:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
-            elif normalized_default_model_selection['endpoint_id'] and normalized_default_model_selection['model_id']:
-                endpoint_cfg = next(
-                    (e for e in parsed_model_endpoints if e.get('id') == normalized_default_model_selection['endpoint_id']),
-                    None
+            normalized_default_model_selection, default_selection_warning = (
+                resolve_default_model_selection(
+                    parsed_default_model_selection,
+                    parsed_model_endpoints,
+                    multi_endpoint_enabled=enable_multi_model_endpoints,
                 )
-                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
-                    flash('Default model endpoint is not available. Please select a valid endpoint.', 'warning')
-                    normalized_default_model_selection = {
-                        'endpoint_id': '',
-                        'model_id': '',
-                        'provider': ''
-                    }
-                else:
-                    models = endpoint_cfg.get('models', []) or []
-                    model_cfg = next(
-                        (m for m in models if m.get('id') == normalized_default_model_selection['model_id']),
-                        None
-                    )
-                    if not model_cfg or not model_cfg.get('enabled', True):
-                        flash('Default model is not available. Please select a valid model.', 'warning')
-                        normalized_default_model_selection = {
-                            'endpoint_id': '',
-                            'model_id': '',
-                            'provider': ''
-                        }
-                    else:
-                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
-                        if endpoint_provider:
-                            normalized_default_model_selection['provider'] = endpoint_provider
-            else:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
+            )
+            if default_selection_warning:
+                flash(default_selection_warning, 'warning')
 
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}

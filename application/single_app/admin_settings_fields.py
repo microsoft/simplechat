@@ -66,6 +66,12 @@ from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
     normalize_content_safety_violation_message,
 )
+from functions_model_endpoint_identity_header import (
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+    normalize_model_endpoint_identity_header_name,
+    normalize_model_endpoint_identity_header_value_type,
+)
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
 )
@@ -1038,6 +1044,73 @@ ADMIN_SETTINGS_FIELDS = {
                 "already-stored documents in place but unreachable."
             ),
             "default": True,
+        },
+    ],
+    "multi-endpoint-configuration": [
+        {
+            "key": "enable_multi_model_endpoints",
+            "type": "switch",
+            "label": "Use connections for chat",
+            "help": (
+                "Routes chat through the connections listed below, so several Azure "
+                "OpenAI or Foundry resources can serve models at once. When off, chat "
+                "uses the single classic endpoint instead and these connections are "
+                "not consulted. Switching this on cannot be undone, and carries the "
+                "classic endpoint over as the first connection."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "model-connections-manager",
+            "label": "Connections",
+            "help": (
+                "Each connection is one Azure OpenAI or Foundry resource: where it is, "
+                "how SimpleChat authenticates to it, and which of its deployed models "
+                "may be used."
+            ),
+        },
+        {
+            "key": "model_endpoint_identity_header_enabled",
+            "type": "switch",
+            "label": "Send an identity header with model requests",
+            "help": (
+                "Adds a header identifying the signed-in user to every model request. "
+                "Gateways in front of a model endpoint use it to attribute usage or "
+                "apply per-user quotas, which they otherwise cannot do because the "
+                "request arrives under SimpleChat's own credentials."
+            ),
+            "default": False,
+        },
+        {
+            "key": "model_endpoint_identity_header_name",
+            "type": "text",
+            "label": "Header name",
+            "help": (
+                "Rejected if it collides with a header the model call already sets, "
+                "such as authorization or api-key."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+        },
+        {
+            "key": "model_endpoint_identity_header_value_type",
+            "type": "select",
+            "label": "Identity sent in the header",
+            "help": (
+                "Object id is stable when a user is renamed; UPN is readable in gateway "
+                "logs. The tenant variants qualify the value for a multi-tenant gateway."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+            "options": [
+                {"value": "user_oid_tenant_id", "label": "Object id and tenant id"},
+                {"value": "user_oid", "label": "Object id"},
+                {"value": "user_upn_tenant_id", "label": "User principal name and tenant id"},
+                {"value": "user_upn", "label": "User principal name"},
+            ],
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
         },
     ],
     "group-workspaces-section": [
@@ -2632,6 +2705,48 @@ def _validate_redirect_url(value):
     return normalized, None
 
 
+def _validate_identity_header_name(value):
+    """Return ``(normalized, error)`` for the model endpoint identity header name.
+
+    ``normalize_model_endpoint_identity_header_name`` answers "" for a name that
+    collides with a header the model call already sets, such as ``authorization`` or
+    ``api-key``. Storing that silently would turn the header off without saying so, so
+    an explicit save reports the refusal instead.
+    """
+    candidate = str(value or "").strip()
+    if not candidate:
+        return DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME, None
+
+    normalized = normalize_model_endpoint_identity_header_name(candidate)
+    if not normalized:
+        return None, (
+            "That header name is reserved or malformed. Use a token such as "
+            f"{DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME}."
+        )
+    return normalized, None
+
+
+def _validate_multi_model_endpoint_enablement(value, current_settings):
+    """Return ``(normalized, error)`` for the connections capability toggle.
+
+    ``update_settings`` runs this key through ``coerce_multi_model_endpoint_enablement``,
+    which is ``existing or requested`` -- so once connections are on they cannot be turned
+    off. The classic form reflects that by rendering the checkbox only while the flag is
+    off. The V2 surface has no such affordance, so without this an administrator could
+    switch it off, be told the save succeeded, and be shown the toggle in its new position,
+    while chat carried on routing through connections.
+    """
+    requested = _coerce_bool(value)
+    already_on = _coerce_bool(current_settings.get("enable_multi_model_endpoints", False))
+
+    if already_on and not requested:
+        return None, (
+            "Connections cannot be switched off once enabled, because existing chats, "
+            "agents and workflows may already reference a model published from one."
+        )
+    return requested, None
+
+
 def _check_acknowledgements(updates, current_settings, errors):
     """Enforce the acknowledgements a field requires before it may be enabled."""
     for _section_id, field in iter_fields():
@@ -2690,6 +2805,24 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 errors[key] = redirect_error
             else:
                 normalized[key] = redirect_value
+            continue
+
+        if key == "model_endpoint_identity_header_name":
+            header_value, header_error = _validate_identity_header_name(value)
+            if header_error:
+                errors[key] = header_error
+            else:
+                normalized[key] = header_value
+            continue
+
+        if key == "enable_multi_model_endpoints":
+            enablement, enablement_error = _validate_multi_model_endpoint_enablement(
+                value, current
+            )
+            if enablement_error:
+                errors[key] = enablement_error
+            else:
+                normalized[key] = enablement
             continue
 
         if key == "front_door_url":
