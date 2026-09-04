@@ -78,7 +78,6 @@ CAPABILITY_EXEMPTIONS = {
     "enable_startup_document_access_index_backfill": "Internal Cosmos access-index rollout flag.",
     "enable_mixed_source_manifest": "Internal mixed-source rollout flag.",
     "enable_mixed_source_relevance_candidates": "Internal mixed-source rollout flag.",
-    "enable_startup_app_maintenance": "Internal startup maintenance switch.",
     "enable_default_embedding_model_plugin": "Internal plugin registration default.",
 }
 
