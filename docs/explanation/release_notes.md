@@ -2,6 +2,74 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.059)**
+
+#### New Features
+
+*   **Chat Settings Are Fully Editable In The New Admin Interface**
+    *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
+    *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
+    *   **Two switches were invisible even though they are switches**, because their setting names do not begin with `enable_`. Workspace Scope Lock and the ChatFileUploadUser role requirement are now both present.
+    *   **Enhanced Citations came across in full**, including the storage authentication type, the storage credentials, the tabular preview size cap, the large-run confirmation thresholds, and the chunk processing model — plus a **Test storage connection** button. Startup deliberately skips storage checks so an outage cannot stop the application booting, which previously meant a wrong credential was only discovered when a citation failed to open.
+    *   (Ref: `admin_settings_fields.py`, `EnhancedCitationsStorageTest.tsx`, `AdminSettingsPage.tsx`, [V2 Admin Chat Settings](features/V2_ADMIN_CHAT_SETTINGS.md))
+
+*   **Conversation History Summarization Can Be Configured**
+    *   Three settings that control what happens to conversation history — summarizing messages that fall outside the history limit, summarizing recent turns into the document-search query, and how many messages that summary reads — have always been acted on by the chat backend but have never had a control anywhere.
+    *   All three are now editable in both the classic and the new admin interface, under Conversation History.
+    *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](../../admin/chat/))
+
+#### Bug Fixes
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Settings From Other Areas No Longer Appear Under Chat**
+    *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
+    *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
+    *   (Ref: `SUPPRESSED_CAPABILITY_KEYS`, `buildCapabilityIndex`, `test_v2_admin_capability_placement.py`)
+
+*   **Settings No Longer Linger After Their Feature Is Switched Off**
+    *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
+    *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
+### **(v0.261.058)**
+
+#### New Features
+
+*   **Generated Images Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated image used to be final. Changing one meant asking again, which cost another paid generation and added another image to the thread — so refining an image a few times left the conversation full of near-duplicates with no way to tell which was current.
+    *   Every generated image now has an **Edit** button, in the thread, in the full-size viewer, and on an approved image proposal card. The editor opens with four tabs: **Ask AI** for describing a change, **Prompt** for the wording that produced the image, **Controls** for shape, quality and background, and **History** for every version it has had.
+    *   **You can point at the part you want changed.** Select a region with a box or a freehand brush and the change is applied there, leaving the rest of the image alone. The editor reports how much of the image is selected, and says plainly that the selection guides the model rather than fixing every pixel outside it.
+    *   **Masking is not mouse-only.** A nine-region grid selects the same areas from the keyboard, producing exactly the shapes a drag would.
+    *   **Nothing is ever deleted.** History shows every version as a thumbnail with who made it and why, holding **compare** reveals the previous one, and restoring an older version moves a pointer rather than discarding newer ones. The image the model originally produced is always kept.
+    *   **Each change builds on the version you are looking at**, so successive edits accumulate instead of each one starting from the original.
+    *   **If your image model cannot edit, the editor says so.** Region editing needs a `gpt-image` deployment; DALL·E 3 has no editing capability at all. On a model that cannot, the selection tools are hidden and the panel names the model or the API version setting responsible, rather than failing after you have selected a region and waited.
+    *   Works in shared conversations as well as personal ones. Any participant can change an image, each change is attributed, and the edit is written through to the underlying image so the owner and exports see the same version; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same image.
+    *   (Ref: `functions_message_image_revisions.py`, `functions_image_edit.py`, `ImageEditor.tsx`, `ImageMaskCanvas.tsx`, `/api/message/<id>/image-revision`, `/api/collaboration/conversations/<id>/messages/<id>/image-revision`, [V2 Inline Image Editing](features/V2_INLINE_IMAGE_EDITING.md))
+
+#### Bug Fixes
+
+*   **Images In Shared Conversations Now Display In The New Interface**
+    *   An image in a shared conversation is served from a different address than one in a personal conversation, and the new interface only recognised the personal form. A shared image therefore rendered as "Image unavailable" rather than as a picture.
+    *   (Ref: `images.ts`, `resolveImageSource`, collaboration image URLs)
+
 ### **(v0.261.057)**
 
 #### New Features
