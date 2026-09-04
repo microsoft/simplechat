@@ -7,6 +7,7 @@ audience: admin
 admin_tab: security
 redirect_from:
   - /admin/safety/
+  - /admin/workspace-identities/
 ---
 
 
@@ -36,11 +37,27 @@ This group protects who can enter the app, what secrets the app can use, what co
 
 ### Permissions {#permissions-section}
 
-The Permissions section belongs to the Access & Roles tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Two administrative reports can be narrowed beyond the general Admin role: Safety Violations,
+which shows flagged message text, and User Feedback. Both are readable by any Admin unless a
+dedicated role is required here, so these are the settings to reach for when "administrator"
+and "may read what users typed" should not be the same group of people.
+
+The FeedbackAdmin requirement only governs the User Feedback report, so it does nothing until
+User Feedback is enabled under Chat.
 
 ### App Role Requirements {#app-role-requirements-section}
 
-The App Role Requirements section belongs to the Access & Roles tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Every setting in the application that can demand an Entra app role, gathered in one place.
+Each switch is the same stored value as the one on the tab that owns the feature, not a copy
+of it, so changing it here changes it there.
+
+The reason for the duplication is that a role requirement read on its own tells you very
+little. Read together they are the deployment's access policy, and deciding whether that
+policy is coherent -- whether the same people can create groups, publish public workspaces,
+run workflows and read the Control Center -- means seeing all of them at once.
+
+Assign a role in the Enterprise App before requiring it. Switching a requirement on before
+anyone holds the role removes the capability from everybody.
 
 ### Access Denied Message {#access-denied-message-section}
 
@@ -51,7 +68,8 @@ The Access Denied Message section belongs to the Access & Roles tab. Use it with
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Access Denied Message | Shown to signed-in users who lack the required roles. Use Enter for line breaks. | You are logged in but do not have the required permissions to access this application. Please contact an administrator for access. | `access_denied_message` |
-| Require SafetyViolationAdmin App Role | Requires the `SafetyViolationAdmin` app role before users can use this capability or view. | Off | `require_member_of_safety_violation_admin` |
+| Require SafetyViolationAdmin App Role | Narrows the Safety Violations report, including the flagged message text, to holders of the `SafetyViolationAdmin` role. | Off | `require_member_of_safety_violation_admin` |
+| Require FeedbackAdmin App Role | Narrows the User Feedback report to holders of the `FeedbackAdmin` role. Has no effect until User Feedback is enabled under Chat. | Off | `require_member_of_feedback_admin` |
 
 ## Secrets {#secrets}
 
@@ -75,6 +93,26 @@ The Key Vault section belongs to the Secrets tab. Use it with the adjacent setti
 | Include reminder contact email in external telemetry | Default off. Enable only when Azure Monitor, Logic Apps, Functions, or webhook automation needs the email address to route notifications directly. | Off | `key_vault_secret_expiration_emit_contact_email_in_telemetry` |
 | Key Vault Reminders Search | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
 | Key Vault Reminders Status | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | Runtime UI control |
+
+## Global Identities {#workspace-identities}
+
+### Global Identities {#workspace-identities-section}
+
+A global identity is a credential for a system SimpleChat connects out to -- a SharePoint
+site, an HTTP API behind a key, a database -- saved once and referenced by name everywhere it
+is used. It is not an account for signing in to SimpleChat. Two things consume them: File
+Sync sources, which authenticate when they pull documents, and actions, which authenticate
+when an agent calls out.
+
+Storing the credential once and referencing it by name means the secret itself never travels
+with a source or action configuration, never appears in an export, and can be rotated in one
+place. Where Key Vault is configured, the secret is held there rather than in the settings
+document, which is why this sits next to Secrets rather than with the features that use it.
+
+An identity that is still referenced by a File Sync source or an action cannot be deleted;
+remove the reference first.
+
+{% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities tab in Admin Settings." title="Global Identities" %}
 
 ## Content Safety {#content-safety}
 
