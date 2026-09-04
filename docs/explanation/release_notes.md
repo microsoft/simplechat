@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.086)**
+
+#### Bug Fixes
+
+*   **Orchestrated Answers Failed At The Last Step**
+    *   A plan would research correctly and then fail while writing the answer, reporting only "The answer could not be written". The same fault would have stopped document analysis and document comparison, which is every capability that reasons over what was gathered — web search and document search completed because they never call a model.
+    *   The step that writes the answer asks the model through a small function the request supplies, and SimpleChat has a long-standing convention for how that function is called. The orchestration request was supplying one with a different shape, so the call failed the moment a real step reached it.
+    *   Token usage is now also counted for orchestrated runs. It was previously reported as zero — not because the run was free, but because nothing was adding it up.
+    *   (Ref: `route_backend_orchestration._build_invoke_prompt`, `functions_orchestration_adapters.run_respond`, `functions_workflow_runner.invoke_model_prompt`)
+
 ### **(v0.261.085)**
 
 #### New Features
