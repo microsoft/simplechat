@@ -44,7 +44,7 @@ from test_support.versioning import assert_app_version_at_least
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
 V2_ROUTE = APP_ROOT / "route_backend_v2.py"
-SETTINGS_MODULE = APP_ROOT / "functions_settings.py"
+SETTINGS_MODULE = APP_ROOT / "admin_settings_secret_utils.py"
 
 # Credentials that must not reach the browser. The first two are declared by the field
 # schema; the rest are storage account keys that no admin template renders as a secret,
@@ -69,7 +69,7 @@ def read_secret_field_tuple(name):
     """Return the string entries of a secret-field tuple in functions_settings."""
     source = SETTINGS_MODULE.read_text(encoding="utf-8")
     match = re.search(TUPLE_RE.format(name=name), source, re.DOTALL)
-    assert match, f"Could not find {name} in functions_settings.py"
+    assert match, f"Could not find {name} in admin_settings_secret_utils.py"
     return set(re.findall(r'"([a-z0-9_.]+)"', match.group("body")))
 
 
@@ -137,7 +137,7 @@ def test_route_redacts_resolves_and_reredacts():
     required = (
         (
             "the GET redacts with the API list",
-            '"settings": redact_admin_settings_secrets_for_api(settings)',
+            "redact_admin_settings_secrets_for_api(settings)",
         ),
         (
             "the PATCH resolves every redacted key, not only declared ones",
@@ -173,13 +173,19 @@ def test_schema_secrets_are_declared_as_secret_type():
     """A credential declared as text renders in a plain input and round-trips as one."""
     print("\nTesting that schema-declared credentials use the secret type...")
 
-    declared = fields_module.get_secret_field_keys()
     form_fields = read_secret_field_tuple("ADMIN_SETTINGS_FORM_SECRET_FIELDS")
     api_only = read_secret_field_tuple("ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS")
+    nested = read_secret_field_tuple("ADMIN_SETTINGS_NESTED_SECRET_FIELDS")
 
-    # Every key the schema calls a secret must also be redacted, or the control would
-    # show a placeholder the endpoint never sends.
-    unredacted = sorted(declared - form_fields - api_only)
+    # Compared by storage location rather than field key. A field is named after
+    # its control, and a credential is not always stored under that name -- the
+    # Web Search client secret lives inside `web_search_agent`, so its field key
+    # would never appear in any of these lists while the value itself is covered.
+    declared = fields_module.get_secret_storage_paths()
+
+    # Every credential the schema names must be redacted somewhere, or the control
+    # would show a placeholder the endpoint never sends.
+    unredacted = sorted(declared - form_fields - api_only - nested)
 
     assert not unredacted, (
         "These fields are declared with the 'secret' type but are not redacted by the "

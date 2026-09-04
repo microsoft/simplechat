@@ -30,28 +30,64 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-The Appearance, Chat, Workflow, Workspaces, Security and Agents & Actions groups
-are described in
-full. Sections with no entry here fall back to the V2 surface's ``enable_*`` scan,
-so undescribed groups keep working exactly as they did. A handful of individual
-fields outside those groups are also declared: that scan places a key by guessing
-from shared word stems, and declaring a field is the only way to stop it guessing
-wrong, and the only way a ``require_member_of_*`` setting appears in V2 at all.
-Workflow had the opposite problem -- none of its settings are named ``enable_*``,
-so the scan had nothing to guess with and the group rendered empty.
+Beyond a field's type, four optional descriptors shape how a section reads:
+
+``group``
+    Names the cluster a field belongs to, either as a label or with a variant
+    from ``GROUP_VARIANTS``. The renderer opens the ``connection`` group first,
+    because an administrator arriving at an unconfigured capability needs the
+    endpoint before the tuning knobs. Without this, a section like Document
+    Intelligence is a flat run of forty controls in which the credential that
+    makes the rest work is simply the last one.
+
+``depends_on``
+    Shows a field only while a condition holds. See ``evaluate_dependency`` for
+    the supported shapes; ``any_of`` exists because the Speech resource block is
+    revealed by any of three independent capability toggles.
+
+``requires``
+    Declares a prerequisite owned by a different section, mirroring the
+    ``data-requires`` attributes ``admin_settings_dependencies.js`` reads. File
+    Sync needs Redis Cache, which lives under Scale, and saying so where the
+    dependency is felt beats discovering it from a flash message after saving.
+
+``paths``
+    Where the value actually lives, when that is not a top-level settings key.
+    Most settings are flat, but a few are assembled into a nested object by the
+    server-rendered form's save handler -- the Web Search Foundry connection is
+    built into ``web_search_agent`` -- so a field whose key matches the V1 form
+    input would otherwise save to a top-level key nothing reads. See
+    ``_apply_nested_paths``.
+
+The Appearance, Agents & Actions, Chat, Knowledge, Workflow, Workspaces and
+Security groups are described in full. Sections with no entry here fall back to the V2 surface's
+``enable_*`` scan, so undescribed groups keep working exactly as they did. A
+handful of individual fields outside those groups are also declared: that scan
+places a key by guessing from shared word stems, and declaring a field is the
+only way to stop it guessing wrong, and the only way a ``require_member_of_*``
+setting appears in V2 at all. Workflow had the opposite problem -- none of its
+settings are named ``enable_*``, so the scan had nothing to guess with and the
+group rendered empty.
 
 ``SUPPRESSED_CAPABILITY_KEYS`` covers the remaining case -- a boolean the scan
 would draw but which is not an editable setting at all.
 
-Secrets are declared with the ``secret`` type but are *not* resolved here. The
-browser is sent a placeholder rather than the stored value, and swapping the
-placeholder back for what is stored is a persistence concern that belongs with the
-route holding the current settings document -- which is where the server-rendered
-form does it too. This module only reports which keys are secrets, through
-``get_secret_field_keys``.
+Secrets are declared with the ``secret`` type. The browser is sent a placeholder
+rather than the stored value, so the module reports which keys are secrets --
+through ``get_secret_field_keys`` and ``get_secret_storage_paths`` -- and the
+route swaps the placeholder back for what is stored, which is a persistence
+concern belonging with the code holding the current settings document, and is
+where the server-rendered form does it too.
+
+The one exception is a secret declared with ``paths``. That value is folded into
+its containing object by ``_apply_nested_paths`` before the route sees it, so it
+never arrives as a settings key the route's key-based resolve can match. For
+those, and only those, the normalizer drops a submitted placeholder rather than
+letting it through to overwrite a stored credential.
 """
 
 import copy
+import json
 import re
 from urllib.parse import urlparse
 
@@ -76,6 +112,12 @@ from functions_model_endpoint_identity_header import (
 )
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
+)
+from functions_model_endpoint_identity_header import (
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+    normalize_model_endpoint_identity_header_name,
+    normalize_model_endpoint_identity_header_value_type,
 )
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_MAX_LENGTH,
@@ -110,14 +152,34 @@ FIELD_TYPES = (
     "image",
     "link_list",
     "entry_list",
+    "component",
     "id_list",
     "group_picker",
-    "component",
+    "status",
 )
 
 # Types that own their persistence outside the settings PATCH: image uploads go
-# through the multipart branding endpoint, and components talk to their own API.
-NON_PATCHABLE_TYPES = ("image", "component")
+# through the multipart branding endpoint, components talk to their own API, and
+# a status readout is computed by the server rather than stored at all.
+NON_PATCHABLE_TYPES = ("image", "component", "status")
+
+# Group variants. A section orders its fields into groups, and the variant is
+# what the renderer uses to decide which group opens first: an admin arriving at
+# an unconfigured capability needs the connection, not the tuning knobs.
+GROUP_VARIANTS = ("connection", "behavior", "limits", "access", "advanced")
+
+# Roles a field can play in its section's header rather than its body.
+#
+# "capability" marks the switch that turns the whole section on. The renderer
+# lifts it into the section header next to the status, so the one control that
+# decides whether anything else matters is never buried among forty others.
+FIELD_ROLES = ("capability",)
+
+# Modes for a cross-section prerequisite, matching the server-rendered
+# `data-requires-mode` contract in admin_settings_dependencies.js.
+#   block  disables the dependent controls until the prerequisite is on
+#   warn   leaves them usable, for prerequisites the backend accepts as intent
+REQUIRES_MODES = ("block", "warn")
 
 # Keys the settings PATCH must refuse outright.
 #
@@ -154,6 +216,21 @@ LOGO_SCALE_DEFAULT_PERCENT = 100
 # that already holds a longer agreement.
 USER_AGREEMENT_WORD_LIMIT = 200
 
+CLASSIFICATION_BANNER_DEFAULT_COLOR = "#ffc107"
+CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
+
+# Schemes permitted for administrator-configured navigation links. These render
+# into an anchor href, so allowing arbitrary schemes would let a saved link
+# carry javascript: into every page's navigation.
+EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
+
+# Placeholder a stored secret is replaced with before it is sent to a browser.
+#
+# This mirrors ``functions_settings.ADMIN_SETTINGS_SECRET_REDACTED_VALUE`` rather
+# than importing it. This module is a pure declaration that several functional
+# tests import directly, and ``functions_settings`` reaches ``config``, which
+# builds a Cosmos client at import time. The schema test pins the two values
+# together, so the duplication cannot drift.
 # Above this many automatic tool calls per workflow run, a run is capacity
 # sensitive rather than merely long. The server-rendered pane says so in a
 # warning block, so the same guidance is attached to the field here.
@@ -175,6 +252,29 @@ AZURE_OPENAI_AUTH_OPTIONS = [
 # of the modules the functional tests stub out. test_v2_admin_workspaces_parity.py
 # reads the value back out of that source and fails if the two drift apart.
 PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
+
+SECRET_REDACTED_VALUE = "***REDACTED***"
+
+# Longest value accepted for a secret. Generous enough for a certificate-bearing
+# connection string, short enough that a paste accident is refused rather than
+# stored.
+SECRET_MAX_LENGTH = 4096
+
+# Returned by the secret normalizer when the submitted value is the redaction
+# placeholder, meaning the administrator never touched the field. The update is
+# then dropped rather than written, so a save that touches one toggle cannot
+# overwrite every key on the page with "***REDACTED***".
+SECRET_UNCHANGED = object()
+
+# Mirrors ``functions_settings.WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT``, for the same
+# reason ``SECRET_REDACTED_VALUE`` is mirrored: this module stays importable
+# without ``config``. The schema test compares declared defaults against the
+# application, so the two cannot drift.
+WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
+    "Your current message will be sent to Microsoft Bing for web search. Conversation "
+    "history is not sent for web search, but any sensitive content you paste into this "
+    "message may be sent."
+)
 
 # Document action limits, mirrored from DOCUMENT_ACTION_LIMIT_BOUNDS and
 # DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py, which
@@ -674,145 +774,1923 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
-    "chat-file-uploads-section": [
+    # The sections below are not part of the Appearance group. They are described
+    # here because the V2 surface's `enable_*` fallback was filing their toggles
+    # under Appearance: it matches a key to a section by shared leading word
+    # stems and takes the first section that scores at all, so
+    # `enable_external_healthcheck` matched "external" in External Links long
+    # before it could reach Health Check, whose id splits into "health" and
+    # "check" and so never matches the single token "healthcheck". Declaring a
+    # key is what takes it out of that scan, so these five are declared rather
+    # than guessed at. Wording is taken from the V1 panes so both interfaces say
+    # the same thing.
+    "health-check-section": [
         {
-            "key": "enable_chat_file_uploads",
+            "key": "enable_external_healthcheck",
             "type": "switch",
-            "label": "Enable Chat File Uploads",
+            "label": "Enable /external/healthcheck",
             "help": (
-                "Lets users attach files directly to a conversation instead of "
-                "adding them to a workspace first."
-            ),
-            "default": True,
-        },
-        {
-            "key": "require_member_of_chat_file_upload_user",
-            "type": "switch",
-            "label": "Require ChatFileUploadUser App Role",
-            "help": (
-                "Restricts new uploads to users holding the ChatFileUploadUser "
-                "Enterprise App role. Files already attached stay visible."
-            ),
-            "default": False,
-            "depends_on": {"key": "enable_chat_file_uploads", "equals": True},
-        },
-    ],
-    "conversation-contents-drawer-section": [
-        {
-            "key": "enable_conversation_contents_drawer",
-            "type": "switch",
-            "label": "Enable Conversation Contents Drawer",
-            "help": (
-                "Adds a drawer listing a conversation's prompts so users can jump "
-                "back to an earlier turn. Users can turn it off for themselves in "
-                "their profile."
-            ),
-            "default": True,
-        },
-    ],
-    "workspace-scope-lock-section": [
-        {
-            "key": "enforce_workspace_scope_lock",
-            "type": "switch",
-            "label": "Enforce Workspace Scope Lock",
-            "help": (
-                "Keeps a conversation restricted to the workspaces that produced "
-                "its first search results. Turn this off to let users unlock the "
-                "scope and search elsewhere in the same conversation."
-            ),
-            "default": True,
-        },
-    ],
-    "conversation-history-section": [
-        {
-            "key": "conversation_history_limit",
-            "type": "number",
-            "label": "Conversation History Limit",
-            "help": (
-                "How many previous messages are carried into each new request. "
-                "Raising it preserves more context and costs more tokens per turn."
-            ),
-            "default": 10,
-            "min": 1,
-        },
-        {
-            "key": "enable_summarize_content_history_beyond_conversation_history_limit",
-            "type": "switch",
-            "label": "Summarize Messages Beyond the History Limit",
-            "help": (
-                "Replaces messages that fall outside the limit with a running "
-                "summary instead of dropping them, so older context survives a "
-                "long conversation."
+                "Authenticated endpoint for external monitoring systems. Best for "
+                "internal monitors or diagnostics tooling that already signs in to "
+                "the application."
             ),
             "default": False,
         },
         {
-            "key": "enable_summarize_content_history_for_search",
+            "key": "enable_no_auth_external_healthcheck",
             "type": "switch",
-            "label": "Summarize Conversation History for Search",
+            "label": "Enable /external/healthcheckz",
             "help": (
-                "Summarizes recent turns into the query used for hybrid document "
-                "search, so a follow-up question that relies on earlier context "
-                "still retrieves the right sources."
+                "Unauthenticated endpoint for platform probes that cannot sign in. "
+                "This route is intentionally unauthenticated, so only enable it for "
+                "trusted health probes or controlled network paths."
+            ),
+            "default": False,
+        },
+    ],
+    "user-facing-latest-features-section": [
+        {
+            "key": "enable_support_latest_feature_documentation_links",
+            "type": "switch",
+            "label": "Show Simple Chat Documentation Guide Links",
+            "help": (
+                "User-facing Latest Features cards show public documentation guide "
+                "buttons in addition to the direct in-app shortcuts."
+            ),
+            "default": False,
+            # V1 hides this control entirely while the Latest Features destination
+            # is off, because the cards it affects are not reachable then. The
+            # Support Menu condition is repeated because visibility is evaluated
+            # per field rather than recursively: `enable_support_latest_features`
+            # defaults to True, so gating on it alone would leave this on screen
+            # while the whole Support menu is off.
+            "depends_on": [
+                {"key": "enable_support_menu", "equals": True},
+                {"key": "enable_support_latest_features", "equals": True},
+            ],
+        },
+    ],
+    # Declared so the dependency above resolves to a control an administrator can
+    # actually find and flip, and so the Support Menu gate chain reads the same in
+    # both interfaces. The remaining fields in this section are still discovered
+    # by the fallback scan.
+    "support-menu-section": [
+        {
+            "key": "enable_support_menu",
+            "type": "switch",
+            "label": "Enable Support Menu for End Users",
+            "help": (
+                "Signed-in users with the User role get a Support menu in navigation, "
+                "leading to destinations such as Send Feedback and Latest Features."
             ),
             "default": False,
         },
         {
-            "key": "number_of_historical_messages_to_summarize",
-            "type": "number",
-            "label": "Historical Messages to Summarize",
+            "key": "enable_support_latest_features",
+            "type": "switch",
+            "label": "Enable Latest Features Destination",
+            "help": "Publishes a user-facing Latest Features page from the Support menu.",
+            "default": True,
+            "depends_on": {"key": "enable_support_menu", "equals": True},
+        },
+    ],
+    "personal-workspaces-section": [
+        {
+            "key": "enable_user_workspace",
+            "type": "switch",
+            "label": "Enable Personal Workspaces",
             "help": (
-                "How many recent messages are summarized into the search query. "
-                "Twice this many are read to build the summary."
+                "Users can create and manage their own private workspace for document "
+                "storage, knowledge bases and personal AI interactions."
             ),
-            "default": 10,
-            "min": 1,
-            "max": 100,
+            "default": True,
+        },
+    ],
+    "multi-endpoint-configuration": [
+        {
+            "key": "enable_multi_model_endpoints",
+            "type": "switch",
+            "label": "Use connections for chat",
+            "help": (
+                "Routes chat through the connections listed below, so several Azure "
+                "OpenAI or Foundry resources can serve models at once. When off, chat "
+                "uses the single classic endpoint instead and these connections are "
+                "not consulted. Switching this on cannot be undone, and carries the "
+                "classic endpoint over as the first connection."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "model-connections-manager",
+            "label": "Connections",
+            "help": (
+                "Each connection is one Azure OpenAI or Foundry resource: where it is, "
+                "how SimpleChat authenticates to it, and which of its deployed models "
+                "may be used."
+            ),
+        },
+        {
+            "key": "model_endpoint_identity_header_enabled",
+            "type": "switch",
+            "label": "Send an identity header with model requests",
+            "help": (
+                "Adds a header identifying the signed-in user to every model request. "
+                "Gateways in front of a model endpoint use it to attribute usage or "
+                "apply per-user quotas, which they otherwise cannot do because the "
+                "request arrives under SimpleChat's own credentials."
+            ),
+            "default": False,
+        },
+        {
+            "key": "model_endpoint_identity_header_name",
+            "type": "text",
+            "label": "Header name",
+            "help": (
+                "Rejected if it collides with a header the model call already sets, "
+                "such as authorization or api-key."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+        },
+        {
+            "key": "model_endpoint_identity_header_value_type",
+            "type": "select",
+            "label": "Identity sent in the header",
+            "help": (
+                "Object id is stable when a user is renamed; UPN is readable in gateway "
+                "logs. The tenant variants qualify the value for a multi-tenant gateway."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+            "options": [
+                {"value": "user_oid_tenant_id", "label": "Object id and tenant id"},
+                {"value": "user_oid", "label": "Object id"},
+                {"value": "user_upn_tenant_id", "label": "User principal name and tenant id"},
+                {"value": "user_upn", "label": "User principal name"},
+            ],
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+        },
+    ],
+    # The first Knowledge section described, and the reference for the rest.
+    "azure-ai-search-section": [
+        {
+            "key": "enable_ai_search_apim",
+            "type": "switch",
+            "label": "Route through API Management",
+            "help": (
+                "Send Azure AI Search requests through API Management for centralized "
+                "monitoring and control instead of reaching the service directly."
+            ),
+            "default": False,
+            "group": {
+                "id": "connection",
+                "label": "Connection",
+                "variant": "connection",
+                "help": (
+                    "Where the application sends search requests, and how it "
+                    "authenticates to them."
+                ),
+            },
+        },
+        {
+            "key": "azure_ai_search_endpoint",
+            "type": "text",
+            "label": "Search Endpoint",
+            "help": "For example https://your-service.search.windows.net.",
+            "default": "",
+            "required": True,
+            "placeholder": "https://your-service.search.windows.net",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": False},
+        },
+        {
+            "key": "azure_ai_search_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a key, and requires the app identity to "
+                "hold a Search Index Data Contributor role on the service."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": False},
+        },
+        {
+            "key": "azure_ai_search_key",
+            "type": "secret",
+            "default": "",
+            "label": "Search Key",
+            "help": "An admin key for the search service.",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
             "depends_on": {
-                "key": "enable_summarize_content_history_for_search",
-                "equals": True,
+                "all_of": [
+                    {"key": "enable_ai_search_apim", "equals": False},
+                    {"key": "azure_ai_search_authentication_type", "equals": "key"},
+                ]
+            },
+        },
+        {
+            "key": "azure_apim_ai_search_endpoint",
+            "type": "text",
+            "label": "API Management Endpoint",
+            "help": "The API Management URL that fronts Azure AI Search.",
+            "default": "",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_ai_search_subscription_key",
+            "type": "secret",
+            "default": "",
+            "label": "API Management Subscription Key",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test search connection",
+            "help": (
+                "Runs against the values above, so a connection can be checked before it "
+                "is saved."
+            ),
+            "test_type": "azure_ai_search",
+            "test_payload": {
+                "enable_apim": {"key": "enable_ai_search_apim"},
+                "direct.endpoint": {
+                    "key": "azure_ai_search_endpoint",
+                    "when": {"key": "enable_ai_search_apim", "equals": False},
+                },
+                "direct.auth_type": {
+                    "key": "azure_ai_search_authentication_type",
+                    "when": {"key": "enable_ai_search_apim", "equals": False},
+                },
+                "direct.key": {
+                    "key": "azure_ai_search_key",
+                    "when": {"key": "enable_ai_search_apim", "equals": False},
+                },
+                "apim.endpoint": {
+                    "key": "azure_apim_ai_search_endpoint",
+                    "when": {"key": "enable_ai_search_apim", "equals": True},
+                },
+                "apim.subscription_key": {
+                    "key": "azure_apim_ai_search_subscription_key",
+                    "when": {"key": "enable_ai_search_apim", "equals": True},
+                },
+            },
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+    ],
+    # ------------------------------------------------------------------
+    # Knowledge / Web & Research
+    #
+    # Web Search reaches outside the tenant, so consent comes before
+    # configuration: the Grounding with Bing terms move customer data outside the
+    # Azure compliance boundary, and the server-rendered pane gates the toggle on
+    # accepting them. The same acknowledgement mechanism Custom Pages uses
+    # carries that here.
+    #
+    # The Foundry connection is stored inside `web_search_agent` rather than as
+    # top-level keys, so every field in the connection group declares `paths`.
+    # ------------------------------------------------------------------
+    "web-search-section": [
+        {
+            "key": "enable_web_search",
+            "type": "switch",
+            "label": "Enable Web Search via Foundry Agent",
+            "help": (
+                "Routes web search queries through an Azure AI Foundry agent. Only the "
+                "user's current message is sent; conversation history is not."
+            ),
+            "default": False,
+            "role": "capability",
+            "requires_acknowledgement": {
+                "key": "web_search_consent_accepted",
+                "when": "enabled",
+                "title": "Web Search Consent Required",
+                "message": (
+                    "When you use Grounding with Bing Search, your customer data is "
+                    "transferred outside of the Azure compliance boundary to the "
+                    "Grounding with Bing Search service. Grounding with Bing Search is "
+                    "not subject to the same data processing terms (including location "
+                    "of processing) and does not have the same compliance standards and "
+                    "certifications as the Azure AI Agent Service. It is your "
+                    "responsibility to assess whether use of Grounding with Bing Search "
+                    "in your agent meets your needs and requirements."
+                ),
+            },
+        },
+        {
+            "key": "web_search_foundry_endpoint",
+            "type": "text",
+            "label": "Foundry Project Endpoint",
+            "help": (
+                "The project endpoint, not the inference endpoint: "
+                "https://<foundry-resource>.services.ai.azure.com/api/projects/<project-name>."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "https://<resource>.services.ai.azure.com/api/projects/<project-name>",
+            # Written to both locations because the save handler does, and the
+            # runtime still reads the legacy one.
+            "paths": [
+                "web_search_agent.other_settings.azure_ai_foundry.endpoint",
+                "web_search_agent.azure_openai_gpt_endpoint",
+            ],
+            "group": {
+                "id": "connection",
+                "label": "Foundry connection",
+                "variant": "connection",
+            },
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_api_version",
+            "type": "text",
+            "label": "Foundry API Version",
+            "default": "",
+            "required": True,
+            "placeholder": "2025-05-01",
+            "paths": [
+                "web_search_agent.other_settings.azure_ai_foundry.api_version",
+                "web_search_agent.azure_openai_gpt_api_version",
+            ],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_agent_id",
+            "type": "text",
+            "label": "Foundry Agent ID",
+            "help": "Typically starts with asst_.",
+            "default": "",
+            "required": True,
+            "placeholder": "asst_...",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.agent_id"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_auth_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "The identity must hold Cognitive Services User and AI Developer roles "
+                "on the Foundry project."
+            ),
+            "default": "managed_identity",
+            "options": [
+                {"value": "managed_identity", "label": "Managed Identity"},
+                {"value": "service_principal", "label": "Service Principal"},
+            ],
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.authentication_type"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_foundry_managed_identity_type",
+            "type": "select",
+            "label": "Managed Identity Type",
+            "default": "system_assigned",
+            "options": [
+                {"value": "system_assigned", "label": "System-assigned (SAMI)"},
+                {"value": "user_assigned", "label": "User-assigned (UAMI)"},
+            ],
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.managed_identity_type"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "managed_identity"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_managed_identity_client_id",
+            "type": "text",
+            "label": "Managed Identity Client ID",
+            "help": "Only needed for a user-assigned managed identity.",
+            "default": "",
+            "required": True,
+            "placeholder": "Client ID for user-assigned managed identity",
+            "paths": [
+                "web_search_agent.other_settings.azure_ai_foundry.managed_identity_client_id"
+            ],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "managed_identity"},
+                    {
+                        "key": "web_search_foundry_managed_identity_type",
+                        "equals": "user_assigned",
+                    },
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_tenant_id",
+            "type": "text",
+            "label": "Tenant ID",
+            "default": "",
+            "required": True,
+            "placeholder": "Entra tenant ID",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.tenant_id"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_client_id",
+            "type": "text",
+            "label": "Client ID",
+            "default": "",
+            "required": True,
+            "placeholder": "App registration client ID",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.client_id"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_client_secret",
+            "type": "secret",
+            "default": "",
+            "label": "Client Secret",
+            "help": "A secret value or a Key Vault reference.",
+            "required": True,
+            "placeholder": "Secret or Key Vault reference",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.client_secret"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_cloud",
+            "type": "select",
+            "label": "Cloud",
+            "default": "",
+            "options": [
+                {"value": "", "label": "Azure Public"},
+                {"value": "usgov", "label": "Azure Government"},
+                {"value": "custom", "label": "Custom"},
+            ],
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.cloud"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                ]
+            },
+        },
+        {
+            "key": "web_search_foundry_authority",
+            "type": "text",
+            "label": "Authority Endpoint",
+            "help": "Only needed for a custom cloud.",
+            "default": "",
+            "required": True,
+            "placeholder": "https://login.microsoftonline.com/",
+            "paths": ["web_search_agent.other_settings.azure_ai_foundry.authority"],
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "web_search_foundry_auth_type", "equals": "service_principal"},
+                    {"key": "web_search_foundry_cloud", "equals": "custom"},
+                ]
+            },
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test web search",
+            "help": "Runs a search through the configured agent using the values above.",
+            "test_type": "web_search",
+            "test_payload": {
+                "enabled": {"key": "enable_web_search"},
+                "consent_accepted": {"value": True},
+                "query": {"value": "What is Azure AI Foundry?"},
+                "foundry.endpoint": {"key": "web_search_foundry_endpoint"},
+                "foundry.api_version": {"key": "web_search_foundry_api_version"},
+                "foundry.agent_id": {"key": "web_search_foundry_agent_id"},
+                "foundry.authentication_type": {"key": "web_search_foundry_auth_type"},
+                "foundry.managed_identity_type": {
+                    "key": "web_search_foundry_managed_identity_type",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "managed_identity",
+                    },
+                },
+                "foundry.managed_identity_client_id": {
+                    "key": "web_search_foundry_managed_identity_client_id",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "managed_identity",
+                    },
+                },
+                "foundry.tenant_id": {
+                    "key": "web_search_foundry_tenant_id",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.client_id": {
+                    "key": "web_search_foundry_client_id",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.client_secret": {
+                    "key": "web_search_foundry_client_secret",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.cloud": {
+                    "key": "web_search_foundry_cloud",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+                "foundry.authority": {
+                    "key": "web_search_foundry_authority",
+                    "when": {
+                        "key": "web_search_foundry_auth_type",
+                        "equals": "service_principal",
+                    },
+                },
+            },
+            "group": {"id": "connection", "label": "Foundry connection", "variant": "connection"},
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "enable_web_search_user_notice",
+            "type": "switch",
+            "label": "Show data notice to users when web search is used",
+            "help": (
+                "Tells users their message leaves the tenant, which is the only warning "
+                "they get before it does."
+            ),
+            "default": False,
+            "group": {
+                "id": "notice",
+                "label": "User notice",
+                "variant": "behavior",
+            },
+            "depends_on": {"key": "enable_web_search", "equals": True},
+        },
+        {
+            "key": "web_search_user_notice_text",
+            "type": "textarea",
+            "label": "Notice Text",
+            "help": "Shown once per session, the first time a user runs a web search.",
+            "default": WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+            "rows": 3,
+            "max_length": 1000,
+            "fallback_when_empty": True,
+            "group": {"id": "notice", "label": "User notice", "variant": "behavior"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_web_search", "equals": True},
+                    {"key": "enable_web_search_user_notice", "equals": True},
+                ]
             },
         },
     ],
-    "default-system-prompt-section": [
+    # URL Access is genuinely shared policy: chat, workflows and Deep Research all
+    # fetch through it, and the allow and block lists below are the same lists
+    # Deep Research reads. The role requirement comes first because it decides who
+    # can reach the capability at all.
+    "url-access-section": [
         {
-            "key": "default_system_prompt",
-            "type": "textarea",
-            "label": "Default System Prompt",
+            "key": "enable_url_access",
+            "type": "switch",
+            "label": "Enable URL Access for chat and workflows",
             "help": (
-                "Applied to conversations that do not set their own. Agents and "
-                "conversations with a custom prompt are unaffected."
+                "Lets pasted links be fetched and read. Non-HTTP(S) URLs, credentialed "
+                "URLs, literal IPs, localhost, metadata hosts, unsafe redirects and "
+                "oversized pages are refused before any fetch is made."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "require_member_of_url_access_user",
+            "type": "switch",
+            "label": "Require UrlAccessUser App Role",
+            "help": (
+                "Narrows fetching a URL in chat, and enabling it for a workflow, to "
+                "holders of the UrlAccessUser app role. Assign the role in the "
+                "Enterprise App before turning this on, or nobody will be able to use "
+                "URL Access."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+        },
+        {
+            "key": "url_access_max_chat_urls_per_turn",
+            "type": "number",
+            "label": "Chat URL Limit",
+            "help": "Direct URLs read per chat message. Hard limit 100.",
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_url_access", "equals": True},
+        },
+        {
+            "key": "url_access_max_workflow_urls_per_run",
+            "type": "number",
+            "label": "Workflow URL Limit",
+            "help": "Direct URLs read per workflow prompt. Hard limit 500.",
+            "default": 50,
+            "min": 1,
+            "max": 500,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_url_access", "equals": True},
+        },
+        {
+            "key": "url_access_allowed_domains",
+            "type": "string_list",
+            "label": "Allowed Domains",
+            "help": (
+                "Leave empty to allow any public domain that passes the safety checks. "
+                "Deep Research reads this same list."
+            ),
+            "default": [],
+            "placeholder": "example.com or *.contoso.com",
+            "entry_pattern": r"^[A-Za-z0-9*][A-Za-z0-9*.\-]*$",
+            "entry_label": "domain",
+            # Stored twice, because Deep Research reads the source_review copy and
+            # the save handler writes both.
+            "paths": ["url_access_allowed_domains", "source_review_allowed_domains"],
+            "group": {"id": "policy", "label": "Domain policy", "variant": "access"},
+        },
+        {
+            "key": "url_access_blocked_domains",
+            "type": "string_list",
+            "label": "Blocked Domains",
+            "help": "Applies to URL Access and to Deep Research source-page review.",
+            "default": [],
+            "placeholder": "example.org or *.contoso.net",
+            "entry_pattern": r"^[A-Za-z0-9*][A-Za-z0-9*.\-]*$",
+            "entry_label": "domain",
+            "paths": ["url_access_blocked_domains", "source_review_blocked_domains"],
+            "group": {"id": "policy", "label": "Domain policy", "variant": "access"},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test URL policy",
+            "help": "Checks a URL against the allow and block lists above before saving.",
+            "test_type": "url_access_policy",
+            "test_payload": {
+                "enabled": {"key": "enable_url_access"},
+                "url": {"value": "https://example.com/"},
+                "source_review_allow_internal_hosts": {
+                    "key": "source_review_allow_internal_hosts"
+                },
+                "url_access_allowed_domains": {"key": "url_access_allowed_domains"},
+                "url_access_blocked_domains": {"key": "url_access_blocked_domains"},
+            },
+            "group": {"id": "policy", "label": "Domain policy", "variant": "access"},
+        },
+    ],
+    # Deep Research plans bounded searches and inspects pages. Its budgets are
+    # what keep it bounded, so they sit together and above the behaviour switches
+    # rather than being interleaved with them as they are in the V1 pane.
+    #
+    # Direct pasted URLs are governed by URL Access, not here, and the allow and
+    # block lists are shared with it.
+    "source-review-section": [
+        {
+            "key": "enable_source_review",
+            "type": "switch",
+            "label": "Enable Deep Research for chat",
+            "help": (
+                "Plans bounded web searches, inspects source pages, and keeps a research "
+                "ledger. Runs only when a user selects it for a message."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "require_member_of_deep_research_user",
+            "type": "switch",
+            "label": "Require DeepResearchUser App Role",
+            "help": (
+                "Narrows Deep Research to holders of the DeepResearchUser app role. "
+                "Worth using where the multi-step runs it performs are expensive enough "
+                "to want a named audience. Assign the role in the Enterprise App before "
+                "turning this on, or nobody will be able to use Deep Research."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_allow_internal_hosts",
+            "type": "switch",
+            "label": "Allow internal network hostnames",
+            "help": (
+                "Permits DNS hostnames that resolve to private addresses. Literal IP "
+                "targets, localhost, metadata hosts, link-local and reserved addresses "
+                "stay blocked regardless."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_pages_per_turn",
+            "type": "number",
+            "label": "Max Pages per Turn",
+            "help": "Hard limit 10.",
+            "default": 10,
+            "min": 1,
+            "max": 10,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_seed_pages_per_turn",
+            "type": "number",
+            "label": "Max Seed Pages per Turn",
+            "help": (
+                "Caps initial search-result and direct URL pages so budget is left for "
+                "the pages they link to."
+            ),
+            "default": 10,
+            "min": 1,
+            "max": 10,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_max_user_urls_per_turn",
+            "type": "number",
+            "label": "Max User URLs per Turn",
+            "help": "Direct URLs past this cap are recorded as omitted in the ledger.",
+            "default": 100,
+            "min": 1,
+            "max": 100,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_max_search_queries_per_turn",
+            "type": "number",
+            "label": "Max Search Queries per Turn",
+            "help": "Includes the original current-message query.",
+            "default": 8,
+            "min": 1,
+            "max": 8,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_timeout_seconds",
+            "type": "number",
+            "label": "Timeout per Turn",
+            "help": "Hard limit 30 seconds.",
+            "default": 30,
+            "min": 3,
+            "max": 30,
+            "suffix": "s",
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_redirects",
+            "type": "number",
+            "label": "Max Redirects",
+            "help": "Every redirect target is revalidated against the URL policy.",
+            "default": 5,
+            "min": 0,
+            "max": 5,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_bytes_per_page_mb",
+            "type": "number",
+            "label": "Max MB per Page",
+            "help": "Hard limit 5 MB.",
+            "default": 5,
+            "min": 1,
+            "max": 5,
+            "suffix": " MB",
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_max_depth",
+            "type": "number",
+            "label": "Source Traversal Depth",
+            "help": "Depth 2 follows selected links from seed and child pages.",
+            "default": 2,
+            "min": 0,
+            "max": 2,
+            "group": {"id": "budgets", "label": "Budgets", "variant": "limits"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "enable_deep_source_review",
+            "type": "switch",
+            "label": "Inspect linked source pages",
+            "help": (
+                "Follows only scored, policy-approved links, within the page and depth "
+                "budgets above."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_enable_query_planning",
+            "type": "switch",
+            "label": "Plan multiple web search queries",
+            "help": (
+                "The selected chat model proposes bounded query variants, drawn from the "
+                "current message only, before any page is reviewed."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "deep_research_enable_ledger_artifact",
+            "type": "switch",
+            "label": "Save research ledger artifacts",
+            "help": (
+                "Writes a Markdown artifact recording search queries, reviewed sources, "
+                "skipped URLs and coverage, so a result can be audited afterwards."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_enable_llm_planning",
+            "type": "switch",
+            "label": "Use model-assisted source link planning",
+            "help": (
+                "Lets the selected chat model rank candidate links a page exposes before "
+                "the server fetches any of them."
+            ),
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_respect_robots_txt",
+            "type": "switch",
+            "label": "Respect robots.txt",
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_audit_logging",
+            "type": "switch",
+            "label": "Log Deep Research activity",
+            "default": True,
+            "group": {"id": "behavior", "label": "Research behaviour", "variant": "behavior"},
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_allow_js_rendering",
+            "type": "switch",
+            "label": "Allow JavaScript rendering fallback",
+            "help": "Requires a verified Playwright browser runtime on the app host.",
+            "default": True,
+            "group": {
+                "id": "rendering",
+                "label": "JavaScript rendering",
+                "variant": "advanced",
+            },
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            # V1 disables the switch above and explains why in loose markup beneath
+            # it. Declaring the readout keeps the reason next to the control and
+            # makes it searchable, rather than leaving an option that looks broken.
+            "type": "status",
+            "label": "Browser runtime",
+            "status_source": "source_review_js_runtime",
+            "help": (
+                "Without the Playwright Chromium runtime, pages that build their content "
+                "in the browser are read as empty."
+            ),
+            "group": {
+                "id": "rendering",
+                "label": "JavaScript rendering",
+                "variant": "advanced",
+            },
+            "depends_on": {"key": "enable_source_review", "equals": True},
+        },
+        {
+            "key": "source_review_js_load_more_clicks",
+            "type": "number",
+            "label": "Rendered Load More Clicks",
+            "help": (
+                "How many visible Load More controls Deep Research may click while "
+                "rendering a page."
+            ),
+            "default": 12,
+            "min": 0,
+            "max": 12,
+            "group": {
+                "id": "rendering",
+                "label": "JavaScript rendering",
+                "variant": "advanced",
+            },
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_source_review", "equals": True},
+                    {"key": "source_review_allow_js_rendering", "equals": True},
+                ]
+            },
+        },
+    ],
+    # ------------------------------------------------------------------
+    # Knowledge / Document Extraction
+    #
+    # Reordered relative to the server-rendered pane, which is the point of
+    # describing it. There, "Enable Enhanced extraction" is the first control and
+    # the Document Intelligence endpoint and key are the last, several hundred
+    # lines below, after the extraction mode, formula extraction, Content
+    # Understanding and Office image options. An administrator turns a feature on
+    # and then scrolls past everything that depends on the connection before
+    # reaching the connection itself.
+    #
+    # Here the connection comes first and the behaviour that needs it follows,
+    # declaring `requires` so a toggle flipped without a configured endpoint says
+    # so rather than silently doing nothing.
+    # ------------------------------------------------------------------
+    "document-intelligence-section": [
+        {
+            "key": "enable_document_intelligence_apim",
+            "type": "switch",
+            "label": "Route through API Management",
+            "help": (
+                "Send Document Intelligence requests through API Management for "
+                "centralized monitoring and control instead of reaching the service "
+                "directly."
+            ),
+            "default": False,
+            "group": {
+                "id": "connection",
+                "label": "Connection",
+                "variant": "connection",
+                "help": (
+                    "Document Intelligence reads PDFs and images. Nothing else in this "
+                    "tab works until it is reachable."
+                ),
+            },
+        },
+        {
+            "key": "azure_document_intelligence_endpoint",
+            "type": "text",
+            "label": "Document Intelligence Endpoint",
+            "default": "",
+            "required": True,
+            "placeholder": "https://your-resource.cognitiveservices.azure.com/",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": False},
+        },
+        {
+            "key": "azure_document_intelligence_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity requires the app identity to hold Cognitive Services "
+                "User on the resource."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": False},
+        },
+        {
+            "key": "azure_document_intelligence_key",
+            "type": "secret",
+            "default": "",
+            "label": "Document Intelligence Key",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_document_intelligence_apim", "equals": False},
+                    {"key": "azure_document_intelligence_authentication_type", "equals": "key"},
+                ]
+            },
+        },
+        {
+            "key": "azure_apim_document_intelligence_endpoint",
+            "type": "text",
+            "label": "API Management Endpoint",
+            "default": "",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_document_intelligence_subscription_key",
+            "type": "secret",
+            "default": "",
+            "label": "API Management Subscription Key",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test Document Intelligence connection",
+            "help": "Analyses a small sample document using the values above.",
+            "test_type": "azure_doc_intelligence",
+            "test_payload": {
+                "enable_apim": {"key": "enable_document_intelligence_apim"},
+                "document_intelligence_pdf_image_extraction_mode": {
+                    "key": "document_intelligence_pdf_image_extraction_mode"
+                },
+                "document_intelligence_auto_sample_pages": {
+                    "key": "document_intelligence_auto_sample_pages"
+                },
+                "direct.endpoint": {
+                    "key": "azure_document_intelligence_endpoint",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": False},
+                },
+                "direct.auth_type": {
+                    "key": "azure_document_intelligence_authentication_type",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": False},
+                },
+                "direct.key": {
+                    "key": "azure_document_intelligence_key",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": False},
+                },
+                "apim.endpoint": {
+                    "key": "azure_apim_document_intelligence_endpoint",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": True},
+                },
+                "apim.subscription_key": {
+                    "key": "azure_apim_document_intelligence_subscription_key",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": True},
+                },
+            },
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "document_intelligence_pdf_image_extraction_mode",
+            "type": "select",
+            "label": "PDF and Image Extraction Mode",
+            "help": (
+                "Standard is Document Intelligence Read: fastest and cheapest for plain "
+                "text. Enhanced captures tables, page structure, forms and checkbox "
+                "states, at roughly six times the cost per thousand pages. Auto samples "
+                "the first pages and picks."
+            ),
+            "default": "read",
+            "options": [
+                {"value": "read", "label": "Standard — faster text extraction"},
+                {
+                    "value": "layout",
+                    "label": "Enhanced — richer structure, tables and checkbox states",
+                },
+                {
+                    "value": "auto",
+                    "label": "Auto — sample first pages, then choose",
+                },
+            ],
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+        },
+        {
+            "key": "document_intelligence_auto_sample_pages",
+            "type": "number",
+            "label": "Auto Sample Pages",
+            "help": (
+                "How many opening PDF pages Auto inspects. If it finds tables, selection "
+                "marks or figures the whole document uses Enhanced; otherwise it "
+                "finishes with Standard. Images always use Enhanced in Auto mode."
+            ),
+            "default": 3,
+            "min": 1,
+            "max": 20,
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": {
+                "key": "document_intelligence_pdf_image_extraction_mode",
+                "equals": "auto",
+            },
+        },
+        {
+            "key": "enable_enhanced_extraction",
+            "type": "switch",
+            "label": "Enable Enhanced extraction",
+            "help": (
+                "Uses Azure AI Content Understanding, which returns tables, page "
+                "structure, checkbox states and descriptions of figures and charts. "
+                "Falls back to Document Intelligence Layout where Content Understanding "
+                "is unavailable or unconfigured."
+            ),
+            "default": False,
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+        },
+        {
+            "key": "enable_document_intelligence_formula_extraction",
+            "type": "switch",
+            "label": "Extract mathematical formulas",
+            "help": (
+                "Captures equations as LaTeX rather than approximate OCR text. This is a "
+                "billed Document Intelligence add-on that adds per-page cost to every "
+                "Enhanced extraction, and it has no effect while extraction is Standard."
+            ),
+            "default": False,
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+        },
+    ],
+    # Its own section now. The card has always been in the extraction pane but
+    # was missing from ADMIN_NAV, so neither interface could navigate to it.
+    "content-understanding-section": [
+        {
+            "key": "azure_content_understanding_endpoint",
+            "type": "text",
+            "label": "Foundry Endpoint",
+            "help": (
+                "The Microsoft Foundry resource endpoint, with no trailing path. Leave "
+                "blank and Enhanced extraction falls back to Document Intelligence "
+                "Layout."
             ),
             "default": "",
-            "rows": 5,
+            "placeholder": "https://your-resource.services.ai.azure.com",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "azure_content_understanding_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity requires the Cognitive Services User role on the "
+                "Foundry resource."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "azure_content_understanding_key",
+            "type": "secret",
+            "default": "",
+            "label": "Content Understanding Key",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {
+                "key": "azure_content_understanding_authentication_type",
+                "equals": "key",
+            },
+        },
+        {
+            "key": "azure_content_understanding_api_version",
+            "type": "text",
+            "label": "API Version",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+        },
+        {
+            "key": "azure_content_understanding_analyzer_id",
+            "type": "text",
+            "label": "Document Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+        },
+        {
+            "key": "azure_content_understanding_image_analyzer_id",
+            "type": "text",
+            "label": "Image Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test Content Understanding connection",
+            "test_type": "content_understanding",
+            "test_payload": {
+                "endpoint": {"key": "azure_content_understanding_endpoint"},
+                "authentication_type": {
+                    "key": "azure_content_understanding_authentication_type"
+                },
+                "key": {"key": "azure_content_understanding_key"},
+                "api_version": {"key": "azure_content_understanding_api_version"},
+                "analyzer_id": {"key": "azure_content_understanding_analyzer_id"},
+                "image_analyzer_id": {
+                    "key": "azure_content_understanding_image_analyzer_id"
+                },
+            },
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
         },
     ],
-    "fact-memory-section": [
+    # Also promoted out of the extraction card into a section of its own. It is
+    # independent of Enhanced extraction despite sitting inside it in the V1
+    # markup, which is what made it read as part of that feature.
+    "office-embedded-image-section": [
         {
-            "key": "enable_fact_memory_plugin",
+            "key": "enable_office_embedded_image_analysis",
             "type": "switch",
-            "label": "Enable Fact Memory",
+            "label": "Analyze images embedded in DOCX and PPTX files",
             "help": (
-                "Lets the assistant carry durable context between conversations. "
-                "Instruction memories apply to every prompt; fact memories are "
-                "recalled only when relevant. This is a chat capability and does "
-                "not require agents or actions. Users manage their own entries "
-                "under Profile > Fact Memory. Existing entries are preserved while "
-                "this is off, but stay inactive."
+                "Neither extraction engine describes figures inside Word and PowerPoint "
+                "files. With this on, embedded images are pulled out, analysed with "
+                "whichever engine backs the selected extraction mode, and indexed as "
+                "their own citable chunks. Works with Standard extraction too."
             ),
             "default": True,
+            "role": "capability",
+        },
+        {
+            "key": "office_embedded_image_min_pixels",
+            "type": "number",
+            "label": "Minimum Image Size (pixels)",
+            "help": "Images narrower or shorter than this are skipped as icons or spacers.",
+            "default": 150,
+            "min": 1,
+            "max": 2000,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_office_embedded_image_analysis", "equals": True},
+        },
+        {
+            "key": "office_embedded_image_max_per_document",
+            "type": "number",
+            "label": "Maximum Images Per Document",
+            "help": "Caps per-document cost. Duplicate images are analysed once.",
+            "default": 25,
+            "min": 0,
+            "max": 200,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_office_embedded_image_analysis", "equals": True},
         },
     ],
-    "user-feedback-section": [
+    # Chunk sizes live in a single `chunk_size` object as {key: {value, unit}},
+    # so each field declares its path into it. The assembled object is clamped to
+    # the embedding model's budget on save by PATH_CONTAINER_NORMALIZERS, which
+    # is what the server-rendered form does too: a chunk larger than that budget
+    # can never embed, whatever an administrator saves.
+    #
+    # The cap is stated up front rather than as a warning that only appears once
+    # it has already been exceeded.
+    "chunk-size-section": [
         {
-            "key": "enable_user_feedback",
+            "key": "enable_chunk_size_override",
             "type": "switch",
-            "label": "Enable User Feedback (Thumbs Up/Down)",
+            "label": "Enable custom chunk sizes by file type",
             "help": (
-                "Adds thumbs up and down controls to AI responses and routes the "
-                "ratings to the feedback review workflow."
+                "Applies to new uploads only; documents already indexed keep the chunks "
+                "they were built with. Sizes are capped at what fits in one embedding "
+                "request for the deployed model, and anything larger is reduced on save."
             ),
-            "default": True,
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "chunk_size_txt",
+            "type": "number",
+            "label": "TXT (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.txt.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_log",
+            "type": "number",
+            "label": "LOG (words)",
+            "default": 1000,
+            "min": 1,
+            "paths": ["chunk_size.log.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_doc",
+            "type": "number",
+            "label": "DOC (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.doc.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_docm",
+            "type": "number",
+            "label": "DOCM (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.docm.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_docx",
+            "type": "number",
+            "label": "DOCX (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.docx.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_html",
+            "type": "number",
+            "label": "HTML (words)",
+            "default": 1200,
+            "min": 1,
+            "paths": ["chunk_size.html.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_md",
+            "type": "number",
+            "label": "Markdown (words)",
+            "default": 1200,
+            "min": 1,
+            "paths": ["chunk_size.md.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_xml",
+            "type": "number",
+            "label": "XML (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.xml.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_yaml",
+            "type": "number",
+            "label": "YAML (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.yaml.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_yml",
+            "type": "number",
+            "label": "YML (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.yml.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_json",
+            "type": "number",
+            "label": "JSON (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.json.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_csv",
+            "type": "number",
+            "label": "CSV (characters)",
+            "default": 800,
+            "min": 1,
+            "paths": ["chunk_size.csv.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_excel",
+            "type": "number",
+            "label": "Excel (characters)",
+            "default": 800,
+            "min": 1,
+            "paths": ["chunk_size.excel.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_transcript",
+            "type": "number",
+            "label": "Transcripts (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.transcript.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_pdf",
+            "type": "number",
+            "label": "PDF (pages)",
+            "default": 1,
+            "min": 1,
+            "paths": ["chunk_size.pdf.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_pptx",
+            "type": "number",
+            "label": "PPT/PPTX (slides)",
+            "default": 1,
+            "min": 1,
+            "paths": ["chunk_size.pptx.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+    ],
+    # The model picker itself arrives with the vision capability work, which
+    # replaces the name-matching heuristic both selectors use today.
+    "metadata-extraction-section": [
+        {
+            "key": "enable_extract_meta_data",
+            "type": "switch",
+            "label": "Enable metadata extraction",
+            "help": (
+                "Runs a model over each uploaded document to infer a title, authors, "
+                "subject and keywords, which are then searchable alongside the content."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "metadata_extraction_model",
+            "type": "component",
+            "component": "model-picker",
+            "label": "Extraction Model",
+            "help": (
+                "Uses Global Endpoints when multi-endpoint model management is on; "
+                "otherwise the legacy GPT or APIM deployment settings."
+            ),
+            "placeholder": "No metadata extraction model selected",
+            "required": True,
+            "group": {"id": "model", "label": "Model", "variant": "connection"},
+            "depends_on": {"key": "enable_extract_meta_data", "equals": True},
+        },
+    ],
+    # Vision analysis sends page images to a model, so the picker offers only
+    # models that read them. Which models those are used to be decided by
+    # matching the model's name against a pattern; it is now resolved from the
+    # shipped capability catalog, with an explicit per-model flag able to
+    # override it and the name pattern kept only as a last resort.
+    "multimodal-vision-section": [
+        {
+            "key": "enable_multimodal_vision",
+            "type": "switch",
+            "label": "Enable Multi-Modal Vision Analysis",
+            "help": (
+                "Sends page images to a vision-capable model so figures, charts and "
+                "scanned pages are described and indexed rather than skipped."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "multimodal_vision_model",
+            "type": "component",
+            "component": "model-picker",
+            "label": "Vision Model",
+            "help": (
+                "Only models that report image support are listed. If a model you expect "
+                "is missing, set its image support explicitly under AI Models."
+            ),
+            "placeholder": "Select a vision-capable model",
+            "requires_vision": True,
+            "required": True,
+            "group": {"id": "model", "label": "Model", "variant": "connection"},
+            "depends_on": {"key": "enable_multimodal_vision", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test vision analysis",
+            "help": "Sends a sample image to the selected model.",
+            "test_type": "multimodal_vision",
+            "test_payload": {
+                "vision_model": {"key": "multimodal_vision_model"},
+            },
+            "group": {"id": "model", "label": "Model", "variant": "connection"},
+            "depends_on": {"key": "enable_multimodal_vision", "equals": True},
+        },
+    ],
+    # ------------------------------------------------------------------
+    # Knowledge / Audio & Video
+    #
+    # Restructured relative to the server-rendered pane in two ways.
+    #
+    # The completion chime is gone from here. `enable_chat_completion_audio_cues`
+    # plays a bundled local sound when a response finishes; its own help text
+    # says it does not use Azure Speech Service, yet it is the first control in
+    # the AI Voice Conversations card, above the Speech resource configuration.
+    # It is declared under Chat > Feedback & Alerts instead, which is where the
+    # rest of the notification settings live. Declaring a key removes it from the
+    # V2 fallback scan, so it cannot appear in both places.
+    #
+    # The shared Speech resource is stated before the toggles rather than after.
+    # Three independent capabilities reveal the same configuration block, and V1
+    # explains that in an alert placed underneath them, so an administrator
+    # enabling the second one is surprised to find it already configured.
+    # ------------------------------------------------------------------
+    "ai-voice-chat-section": [
+        {
+            "key": "speech_service_endpoint",
+            "type": "text",
+            "label": "Speech Endpoint",
+            "help": (
+                "One Speech resource serves all three voice capabilities below. Use the "
+                "resource-specific custom domain endpoint when authenticating with a "
+                "managed identity."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "https://<location>.cognitiveservices.azure.com/",
+            "group": {
+                "id": "speech",
+                "label": "Speech resource",
+                "variant": "connection",
+                "help": (
+                    "Configure this once. Audio file uploads, voice input and voice "
+                    "responses all use it."
+                ),
+            },
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "speech_service_location",
+            "type": "text",
+            "label": "Location",
+            "help": (
+                "Needed for recognition locale defaults, and for text-to-speech when "
+                "using a managed identity."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "eastus",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "speech_service_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "speech_service_key",
+            "type": "secret",
+            "default": "",
+            "label": "API Key",
+            "required": True,
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "speech_service_authentication_type", "equals": "key"},
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "default": "",
+            "placeholder": "12345678-1234-1234-1234-123456789abc",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "default": "",
+            "placeholder": "rg-speech-prod",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_resource_name",
+            "type": "text",
+            "label": "Resource Name",
+            "help": (
+                "With a custom-domain Speech endpoint this is usually the first part of "
+                "that hostname."
+            ),
+            "default": "",
+            "placeholder": "my-speech-resource",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_resource_id",
+            "type": "component",
+            "component": "resource-id-builder",
+            "label": "Speech Resource ID",
+            "help": (
+                "Required for voice responses under a managed identity. Build it from "
+                "the fields above or paste it in full."
+            ),
+            "required": True,
+            "placeholder": (
+                "/subscriptions/<subscription>/resourceGroups/<resource-group>"
+                "/providers/Microsoft.CognitiveServices/accounts/<speech-resource>"
+            ),
+            "builder_template": (
+                "/subscriptions/{subscription}/resourceGroups/{resource_group}"
+                "/providers/Microsoft.CognitiveServices/accounts/{resource_name}"
+            ),
+            "builder_sources": {
+                "subscription": "speech_service_subscription_id",
+                "resource_group": "speech_service_resource_group",
+                "resource_name": "speech_service_resource_name",
+            },
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_locale",
+            "type": "text",
+            "label": "Locale",
+            "help": "Default recognition locale, for example en-US.",
+            "default": "en-US",
+            "fallback_when_empty": True,
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "enable_audio_file_support",
+            "type": "switch",
+            "label": "Audio file upload and transcription",
+            "help": (
+                "Uploaded audio is transcribed and indexed, so recordings of meetings, "
+                "interviews and lectures become searchable and citable."
+            ),
+            "default": False,
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+        },
+        {
+            "key": "enable_speech_to_text_input",
+            "type": "switch",
+            "label": "Voice input (speech-to-text)",
+            "help": "Users can record up to 90 seconds in the chat box instead of typing.",
+            "default": False,
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+        },
+        {
+            "key": "enable_text_to_speech",
+            "type": "switch",
+            "label": "Voice responses (text-to-speech)",
+            "help": "Each message gains a speaker button that reads the response aloud.",
+            "default": False,
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+        },
+        {
+            # V1 prints this under the toggles as loose markup. Declaring it keeps
+            # the reason a format is unsupported next to the capability that
+            # would otherwise silently skip the file.
+            "type": "status",
+            "label": "Audio runtime",
+            "status_source": "audio_runtime",
+            "help": (
+                "Transcoding breadth depends on whether FFmpeg is present in this "
+                "deployment. Without it, only formats that transcribe directly are "
+                "accepted."
+            ),
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+            "depends_on": {"key": "enable_audio_file_support", "equals": True},
+        },
+    ],
+    "video-intelligence-section": [
+        {
+            "key": "enable_video_file_support",
+            "type": "switch",
+            "label": "Video file upload and processing",
+            "help": (
+                "Uploaded video is processed by Azure Video Indexer, which extracts "
+                "spoken content, speakers, faces and brands into searchable metadata."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "video_indexer_endpoint",
+            "type": "text",
+            "label": "API Endpoint",
+            "help": (
+                "https://api.videoindexer.ai for Azure Public, or "
+                "https://api.videoindexer.ai.azure.us for Azure Government. Use another "
+                "value only for a non-standard deployment."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "https://api.videoindexer.ai",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "default": "",
+            "required": True,
+            "placeholder": "12345678-1234-1234-1234-123456789abc",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "help": "The resource group containing the Video Indexer account.",
+            "default": "",
+            "required": True,
+            "placeholder": "rg-videoindexer-prod",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_account_name",
+            "type": "text",
+            "label": "Account Name",
+            "default": "",
+            "required": True,
+            "placeholder": "my-video-indexer",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_account_id",
+            "type": "text",
+            "label": "Account ID",
+            "help": "Shown on the Video Indexer account overview page in the Azure portal.",
+            "default": "",
+            "required": True,
+            "placeholder": "12345678-abcd-1234-abcd-123456789abc",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_location",
+            "type": "text",
+            "label": "Location",
+            "help": "The Azure region the account is deployed in, for example eastus.",
+            "default": "",
+            "required": True,
+            "placeholder": "eastus",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_arm_api_version",
+            "type": "text",
+            "label": "ARM API Version",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "advanced", "label": "Advanced", "variant": "advanced"},
+        },
+        {
+            "key": "video_index_timeout",
+            "type": "number",
+            "label": "Indexing Timeout",
+            "help": "How long to wait for Video Indexer to finish processing one file.",
+            "default": 600,
+            "min": 30,
+            "max": 7200,
+            "suffix": "s",
+            "group": {"id": "advanced", "label": "Advanced", "variant": "advanced"},
         },
     ],
     "desktop-notifications-section": [
@@ -825,6 +2703,17 @@ ADMIN_SETTINGS_FIELDS = {
                 "response finishes in a hidden or unfocused tab. Requires browser "
                 "permission, stops when the tab is closed, and users can turn it "
                 "off in their profile."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_chat_completion_audio_cues",
+            "type": "switch",
+            "label": "AI response completion sounds",
+            "help": (
+                "Lets users opt in to a short bundled sound when a response finishes "
+                "while they are looking elsewhere. Played locally by the browser; no "
+                "Azure Speech resource is involved."
             ),
             "default": False,
         },
@@ -976,167 +2865,495 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
     ],
-    # The sections below are not part of the Appearance group. They are described
-    # here because the V2 surface's `enable_*` fallback was filing their toggles
-    # under Appearance: it matches a key to a section by shared leading word
-    # stems and takes the first section that scores at all, so
-    # `enable_external_healthcheck` matched "external" in External Links long
-    # before it could reach Health Check, whose id splits into "health" and
-    # "check" and so never matches the single token "healthcheck". Declaring a
-    # key is what takes it out of that scan, so these five are declared rather
-    # than guessed at. Wording is taken from the V1 panes so both interfaces say
-    # the same thing.
-    "health-check-section": [
+    # ------------------------------------------------------------------
+    # Knowledge / File Sync
+    #
+    # File Sync needs Redis Cache, which lives under Scale, and the
+    # server-rendered card says so with data-requires attributes that
+    # admin_settings_dependencies.js reads. That is the first real use of the
+    # `requires` descriptor: without it an administrator turns File Sync on and
+    # nothing happens, with no visible reason until a flash message after saving.
+    #
+    # The three scope sections share one shape -- enable, access, assignment --
+    # so learning Personal is enough to read Group and Public.
+    # ------------------------------------------------------------------
+    "file-sync-section": [
         {
-            "key": "enable_external_healthcheck",
+            "key": "enable_file_sync",
             "type": "switch",
-            "label": "Enable /external/healthcheck",
+            "label": "Enable File Sync",
             "help": (
-                "Authenticated endpoint for external monitoring systems. Best for "
-                "internal monitors or diagnostics tooling that already signs in to "
-                "the application."
+                "Lets workspaces pull documents from a configured source on a schedule "
+                "instead of relying on manual upload."
             ),
             "default": False,
+            "role": "capability",
+            "requires": {
+                "key": "enable_redis_cache",
+                "label": "Redis Cache",
+                "mode": "warn",
+                "target_section": "redis-cache-section",
+                "description": (
+                    "File Sync settings can be saved now, but sync runs stay inactive "
+                    "until Redis Cache is enabled and configured."
+                ),
+            },
         },
         {
-            "key": "enable_no_auth_external_healthcheck",
+            "key": "file_sync_max_sources_per_scope",
+            "type": "number",
+            "label": "Max Sources per Workspace",
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_min_schedule_interval_minutes",
+            "type": "number",
+            "label": "Minimum Schedule Interval",
+            "help": "The shortest gap a workspace may schedule between runs.",
+            "default": 15,
+            "min": 5,
+            "max": 1440,
+            "suffix": " min",
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_max_files_per_run",
+            "type": "number",
+            "label": "Max Files per Run",
+            "default": 1000,
+            "min": 1,
+            "max": 100000,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_max_gb_per_run",
+            "type": "number",
+            "label": "Max Size per Run",
+            "help": "Entered in gigabytes; stored in bytes.",
+            "default": 5,
+            "min": 1,
+            "max": 1024,
+            "suffix": " GB",
+            # 1 GiB, matching the conversion the server-rendered form applies.
+            "scale": 1073741824,
+            "paths": ["file_sync_max_bytes_per_run"],
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_max_concurrent_runs",
+            "type": "number",
+            "label": "Max Concurrent Runs",
+            "help": "How many workspaces may sync at once across the whole deployment.",
+            "default": 2,
+            "min": 1,
+            "max": 25,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            "key": "file_sync_allow_recursive_sources",
             "type": "switch",
-            "label": "Enable /external/healthcheckz",
-            "help": (
-                "Unauthenticated endpoint for platform probes that cannot sign in. "
-                "This route is intentionally unauthenticated, so only enable it for "
-                "trusted health probes or controlled network paths."
-            ),
-            "default": False,
+            "label": "Allow recursive sources",
+            "help": "Lets a source include subfolders rather than only its top level.",
+            "default": True,
+            "group": {"id": "limits", "label": "Run limits", "variant": "limits"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
         },
     ],
-    "user-facing-latest-features-section": [
+    "file-sync-source-types-section": [
         {
-            "key": "enable_support_latest_feature_documentation_links",
-            "type": "switch",
-            "label": "Show Simple Chat Documentation Guide Links",
+            "key": "file_sync_visible_source_types",
+            "type": "checkbox_set",
+            "label": "Source types offered when adding a source",
             "help": (
-                "User-facing Latest Features cards show public documentation guide "
-                "buttons in addition to the direct in-app shortcuts."
+                "Credentials for a source are held in Key Vault when Key Vault secret "
+                "storage is enabled, and in the encrypted settings path otherwise."
             ),
-            "default": False,
-            # V1 hides this control entirely while the Latest Features destination
-            # is off, because the cards it affects are not reachable then. The
-            # Support Menu condition is repeated because visibility is evaluated
-            # per field rather than recursively: `enable_support_latest_features`
-            # defaults to True, so gating on it alone would leave this on screen
-            # while the whole Support menu is off.
-            "depends_on": [
-                {"key": "enable_support_menu", "equals": True},
-                {"key": "enable_support_latest_features", "equals": True},
+            "default": ["smb", "azure_files"],
+            "min_selected": 1,
+            "options": [
+                {"value": "smb", "label": "SMB Share", "description": "Available now."},
+                {
+                    "value": "azure_files",
+                    "label": "Azure Files",
+                    "description": "Available now.",
+                },
+                {
+                    "value": "azure_blob",
+                    "label": "Azure Blob Storage",
+                    "description": "Available now.",
+                },
+                {
+                    "value": "onedrive",
+                    "label": "OneDrive",
+                    "description": "Coming soon.",
+                    "disabled": True,
+                },
+                {
+                    "value": "sharepoint_on_prem",
+                    "label": "On-prem SharePoint",
+                    "description": "Coming soon.",
+                    "disabled": True,
+                },
+                {
+                    "value": "google_workspace",
+                    "label": "Google Workspace",
+                    "description": "Coming soon.",
+                    "disabled": True,
+                },
             ],
+            "depends_on": {"key": "enable_file_sync", "equals": True},
         },
     ],
-    # Declared so the dependency above resolves to a control an administrator can
-    # actually find and flip, and so the Support Menu gate chain reads the same in
-    # both interfaces. The remaining fields in this section are still discovered
-    # by the fallback scan.
-    "support-menu-section": [
+    "file-sync-personal-section": [
         {
-            "key": "enable_support_menu",
+            "key": "enable_file_sync_personal",
             "type": "switch",
-            "label": "Enable Support Menu for End Users",
+            "label": "Enable sync for personal workspaces",
+            "default": True,
+            "role": "capability",
+        },
+        {
+            "key": "file_sync_personal_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "help": "Users keep their synced documents but cannot add or edit a source.",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
+        },
+        {
+            "key": "file_sync_personal_require_app_role",
+            "type": "switch",
+            "label": "Require the PersonalFileSyncUser app role",
             "help": (
-                "Signed-in users with the User role get a Support menu in navigation, "
-                "leading to destinations such as Send Feedback and Latest Features."
+                "Required app role value: PersonalFileSyncUser. Assign it in the "
+                "Enterprise App before turning this on, or no user will be able to "
+                "manage a personal source."
+            ),
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_personal", "equals": True},
+        },
+    ],
+    "file-sync-group-section": [
+        {
+            "key": "enable_file_sync_group",
+            "type": "switch",
+            "label": "Enable sync for group workspaces",
+            "default": True,
+            "role": "capability",
+        },
+        {
+            "key": "file_sync_group_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_group", "equals": True},
+        },
+        {
+            "key": "require_group_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned groups",
+            "help": "Only the groups listed below may use File Sync.",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_group", "equals": True},
+        },
+        {
+            "key": "file_sync_allowed_group_ids",
+            "type": "id_list",
+            "label": "Assigned groups",
+            "help": (
+                "Leaving this empty while the restriction is on means no group can use "
+                "File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search groups by name",
+            "search_endpoint": "/api/admin/file-sync/groups/search",
+            "search_param": "q",
+            "results_key": "groups",
+            "item_noun": "group",
+            "item_noun_plural": "groups",
+            # Group ids are canonical UUIDs, and the shared normalizer drops
+            # anything else, matching what the server-rendered form stores.
+            "id_kind": "group",
+            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_file_sync_group", "equals": True},
+                    {"key": "require_group_assignment_for_file_sync", "equals": True},
+                ]
+            },
+        },
+    ],
+    "file-sync-public-section": [
+        {
+            "key": "enable_file_sync_public",
+            "type": "switch",
+            "label": "Enable sync for public workspaces",
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "file_sync_public_admin_only",
+            "type": "switch",
+            "label": "Only administrators manage sources",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_public", "equals": True},
+        },
+        {
+            "key": "require_public_workspace_assignment_for_file_sync",
+            "type": "switch",
+            "label": "Restrict to assigned public workspaces",
+            "help": "Only the public workspaces listed below may use File Sync.",
+            "default": False,
+            "group": {"id": "access", "label": "Access", "variant": "access"},
+            "depends_on": {"key": "enable_file_sync_public", "equals": True},
+        },
+        {
+            "key": "file_sync_allowed_public_workspace_ids",
+            "type": "id_list",
+            "label": "Assigned public workspaces",
+            "help": (
+                "Leaving this empty while the restriction is on means no public "
+                "workspace can use File Sync."
+            ),
+            "default": [],
+            "placeholder": "Search public workspaces by name",
+            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "search_param": "q",
+            "results_key": "workspaces",
+            "item_noun": "public workspace",
+            "item_noun_plural": "public workspaces",
+            # Public workspace ids are not UUID-constrained, so they are only
+            # trimmed and deduplicated.
+            "id_kind": "opaque",
+            "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_file_sync_public", "equals": True},
+                    {
+                        "key": "require_public_workspace_assignment_for_file_sync",
+                        "equals": True,
+                    },
+                ]
+            },
+        },
+    ],
+    "permissions-section": [
+        {
+            "key": "require_member_of_safety_violation_admin",
+            "type": "switch",
+            "label": "Require SafetyViolationAdmin App Role",
+            "help": (
+                "Narrows the Safety Violations report to holders of the "
+                "SafetyViolationAdmin app role. Left off, anyone with the general "
+                "Admin role can read it, including the flagged message text."
             ),
             "default": False,
         },
         {
-            "key": "enable_support_latest_features",
+            "key": "require_member_of_feedback_admin",
             "type": "switch",
-            "label": "Enable Latest Features Destination",
-            "help": "Publishes a user-facing Latest Features page from the Support menu.",
-            "default": True,
-            "depends_on": {"key": "enable_support_menu", "equals": True},
-        },
-    ],
-    "personal-workspaces-section": [
-        {
-            "key": "enable_user_workspace",
-            "type": "switch",
-            "label": "Enable Personal Workspaces",
+            "label": "Require FeedbackAdmin App Role",
             "help": (
-                "Gives every user a private space for their own documents, prompts, "
-                "agents and actions, which only they can reach. The new interface "
-                "presents it to end users as \"My Workspace\"; admin settings and "
-                "internal references call it the personal workspace. Turning this off "
-                "hides the destination and the personal scope in chat, and leaves "
-                "already-stored documents in place but unreachable."
-            ),
-            "default": True,
-        },
-    ],
-    "multi-endpoint-configuration": [
-        {
-            "key": "enable_multi_model_endpoints",
-            "type": "switch",
-            "label": "Use connections for chat",
-            "help": (
-                "Routes chat through the connections listed below, so several Azure "
-                "OpenAI or Foundry resources can serve models at once. When off, chat "
-                "uses the single classic endpoint instead and these connections are "
-                "not consulted. Switching this on cannot be undone, and carries the "
-                "classic endpoint over as the first connection."
+                "Narrows the User Feedback report to holders of the FeedbackAdmin app "
+                "role. It only governs that report, so it has no effect until User "
+                "Feedback is enabled under Chat."
             ),
             "default": False,
         },
+    ],
+    "app-role-requirements-section": [
         {
             "type": "component",
-            "component": "model-connections-manager",
-            "label": "Connections",
+            "component": "app-role-requirements-roster",
+            "label": "App Role Requirements",
             "help": (
-                "Each connection is one Azure OpenAI or Foundry resource: where it is, "
-                "how SimpleChat authenticates to it, and which of its deployed models "
-                "may be used."
+                "Every setting that can demand an Entra app role, gathered so the "
+                "whole access policy reads in one place. Each switch is the same value "
+                "as the one on its own tab, so changing it here changes it there."
             ),
         },
+    ],
+    "chat-file-uploads-section": [
         {
-            "key": "model_endpoint_identity_header_enabled",
+            "key": "enable_chat_file_uploads",
             "type": "switch",
-            "label": "Send an identity header with model requests",
+            "label": "Enable Chat File Uploads",
             "help": (
-                "Adds a header identifying the signed-in user to every model request. "
-                "Gateways in front of a model endpoint use it to attribute usage or "
-                "apply per-user quotas, which they otherwise cannot do because the "
-                "request arrives under SimpleChat's own credentials."
+                "Lets users attach files directly to a conversation instead of "
+                "adding them to a workspace first."
+            ),
+            "default": True,
+        },
+        {
+            "key": "require_member_of_chat_file_upload_user",
+            "type": "switch",
+            "label": "Require ChatFileUploadUser App Role",
+            "help": (
+                "Restricts new uploads to users holding the ChatFileUploadUser "
+                "Enterprise App role. Files already attached stay visible."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_chat_file_uploads", "equals": True},
+        },
+    ],
+    "conversation-contents-drawer-section": [
+        {
+            "key": "enable_conversation_contents_drawer",
+            "type": "switch",
+            "label": "Enable Conversation Contents Drawer",
+            "help": (
+                "Adds a drawer listing a conversation's prompts so users can jump "
+                "back to an earlier turn. Users can turn it off for themselves in "
+                "their profile."
+            ),
+            "default": True,
+        },
+    ],
+    "workspace-scope-lock-section": [
+        {
+            "key": "enforce_workspace_scope_lock",
+            "type": "switch",
+            "label": "Enforce Workspace Scope Lock",
+            "help": (
+                "Keeps a conversation restricted to the workspaces that produced "
+                "its first search results. Turn this off to let users unlock the "
+                "scope and search elsewhere in the same conversation."
+            ),
+            "default": True,
+        },
+    ],
+    "conversation-history-section": [
+        {
+            "key": "conversation_history_limit",
+            "type": "number",
+            "label": "Conversation History Limit",
+            "help": (
+                "How many previous messages are carried into each new request. "
+                "Raising it preserves more context and costs more tokens per turn."
+            ),
+            "default": 10,
+            "min": 1,
+        },
+        {
+            "key": "enable_summarize_content_history_beyond_conversation_history_limit",
+            "type": "switch",
+            "label": "Summarize Messages Beyond the History Limit",
+            "help": (
+                "Replaces messages that fall outside the limit with a running "
+                "summary instead of dropping them, so older context survives a "
+                "long conversation."
             ),
             "default": False,
         },
         {
-            "key": "model_endpoint_identity_header_name",
-            "type": "text",
-            "label": "Header name",
+            "key": "enable_summarize_content_history_for_search",
+            "type": "switch",
+            "label": "Summarize Conversation History for Search",
             "help": (
-                "Rejected if it collides with a header the model call already sets, "
-                "such as authorization or api-key."
+                "Summarizes recent turns into the query used for hybrid document "
+                "search, so a follow-up question that relies on earlier context "
+                "still retrieves the right sources."
             ),
-            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
-            "max_length": 128,
-            "fallback_when_empty": True,
-            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+            "default": False,
         },
         {
-            "key": "model_endpoint_identity_header_value_type",
-            "type": "select",
-            "label": "Identity sent in the header",
+            "key": "number_of_historical_messages_to_summarize",
+            "type": "number",
+            "label": "Historical Messages to Summarize",
             "help": (
-                "Object id is stable when a user is renamed; UPN is readable in gateway "
-                "logs. The tenant variants qualify the value for a multi-tenant gateway."
+                "How many recent messages are summarized into the search query. "
+                "Twice this many are read to build the summary."
             ),
-            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
-            "options": [
-                {"value": "user_oid_tenant_id", "label": "Object id and tenant id"},
-                {"value": "user_oid", "label": "Object id"},
-                {"value": "user_upn_tenant_id", "label": "User principal name and tenant id"},
-                {"value": "user_upn", "label": "User principal name"},
-            ],
-            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "depends_on": {
+                "key": "enable_summarize_content_history_for_search",
+                "equals": True,
+            },
+        },
+    ],
+    "default-system-prompt-section": [
+        {
+            "key": "default_system_prompt",
+            "type": "textarea",
+            "label": "Default System Prompt",
+            "help": (
+                "Applied to conversations that do not set their own. Agents and "
+                "conversations with a custom prompt are unaffected."
+            ),
+            "default": "",
+            "rows": 5,
+        },
+    ],
+    "fact-memory-section": [
+        {
+            "key": "enable_fact_memory_plugin",
+            "type": "switch",
+            "label": "Enable Fact Memory",
+            "help": (
+                "Lets the assistant carry durable context between conversations. "
+                "Instruction memories apply to every prompt; fact memories are "
+                "recalled only when relevant. This is a chat capability and does "
+                "not require agents or actions. Users manage their own entries "
+                "under Profile > Fact Memory. Existing entries are preserved while "
+                "this is off, but stay inactive."
+            ),
+            "default": True,
+        },
+    ],
+    "user-feedback-section": [
+        {
+            "key": "enable_user_feedback",
+            "type": "switch",
+            "label": "Enable User Feedback (Thumbs Up/Down)",
+            "help": (
+                "Adds thumbs up and down controls to AI responses and routes the "
+                "ratings to the feedback review workflow."
+            ),
+            "default": True,
+        },
+    ],
+    # `chat-file-uploads-section` is declared in full in the Chat group above,
+    # including this role requirement gated on the capability itself. A second
+    # declaration here would override that one and silently drop
+    # `enable_chat_file_uploads`, because a later key wins in a dict literal.
+    "control-center-overview-section": [
+        {
+            "key": "require_member_of_control_center_admin",
+            "type": "switch",
+            "label": "Require ControlCenterAdmin App Role",
+            "help": (
+                "Narrows the Control Center -- user management, group oversight, "
+                "public workspace control and activity logs -- to holders of the "
+                "ControlCenterAdmin app role. Note that this takes it away from "
+                "general Admins, so assign the role before switching it on."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_member_of_control_center_dashboard_reader",
+            "type": "switch",
+            "label": "Allow ControlCenterDashboardReader App Role",
+            "help": (
+                "Grants the Control Center dashboard, and nothing else, to holders of "
+                "the ControlCenterDashboardReader app role. Useful for giving someone "
+                "the usage picture without any management ability."
+            ),
+            "default": False,
         },
     ],
     "group-workspaces-section": [
@@ -1235,6 +3452,19 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": False,
             "depends_on": {"key": "enable_public_workspaces", "equals": True},
+        },
+    ],
+    "workspace-identities-section": [
+        {
+            "type": "component",
+            "component": "global-identities-list",
+            "label": "Global Identities",
+            "help": (
+                "Credentials saved once and reused by File Sync sources and Actions, "
+                "referenced by name so the secret itself never travels with a "
+                "configuration. Each one stores its secret in Key Vault when Key Vault "
+                "is configured."
+            ),
         },
     ],
     "file-download-settings-section": [
@@ -1355,22 +3585,6 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
     ],
-    "shared-conversation-file-approvals-section": [
-        {
-            "key": "require_shared_conversation_file_approval",
-            "type": "switch",
-            "label": "Require approval for participant-generated files",
-            "help": (
-                "Files a participant generates in someone else's shared conversation "
-                "are saved into the owner's storage. With this on they are withheld "
-                "until the owner approves them -- in a group conversation any Owner, "
-                "Admin or Document Manager can. Anything left unapproved is declined "
-                "and deleted after three days. Covers CSV, XLSX, DOCX, PDF, JSON and "
-                "XML; generated images and charts are never held."
-            ),
-            "default": True,
-        },
-    ],
     "file-size-limit-section": [
         {
             "key": "max_file_size_mb",
@@ -1387,171 +3601,18 @@ ADMIN_SETTINGS_FIELDS = {
             "suffix": " MB",
         },
     ],
-    "workspace-identities-section": [
+    "shared-conversation-file-approvals-section": [
         {
-            "type": "component",
-            "component": "global-identities-list",
-            "label": "Global Identities",
-            "help": (
-                "Credentials saved once and reused by File Sync sources and Actions, "
-                "referenced by name so the secret itself never travels with a "
-                "configuration. Each one stores its secret in Key Vault when Key Vault "
-                "is configured."
-            ),
-        },
-    ],
-    "permissions-section": [
-        {
-            "key": "require_member_of_safety_violation_admin",
+            "key": "require_shared_conversation_file_approval",
             "type": "switch",
-            "label": "Require SafetyViolationAdmin App Role",
+            "label": "Require approval for participant-generated files",
             "help": (
-                "Narrows the Safety Violations report to holders of the "
-                "SafetyViolationAdmin app role. Left off, anyone with the general "
-                "Admin role can read it, including the flagged message text."
-            ),
-            "default": False,
-        },
-        {
-            "key": "require_member_of_feedback_admin",
-            "type": "switch",
-            "label": "Require FeedbackAdmin App Role",
-            "help": (
-                "Narrows the User Feedback report to holders of the FeedbackAdmin app "
-                "role. It only governs that report, so it has no effect until User "
-                "Feedback is enabled under Chat."
-            ),
-            "default": False,
-        },
-    ],
-    "app-role-requirements-section": [
-        {
-            "type": "component",
-            "component": "app-role-requirements-roster",
-            "label": "App Role Requirements",
-            "help": (
-                "Every setting that can demand an Entra app role, gathered so the "
-                "whole access policy reads in one place. Each switch is the same value "
-                "as the one on its own tab, so changing it here changes it there."
-            ),
-        },
-    ],
-    # `chat-file-uploads-section` is declared in full in the Chat group above,
-    # including this role requirement gated on the capability itself. A second
-    # declaration here would override that one and silently drop
-    # `enable_chat_file_uploads`, because a later key wins in a dict literal.
-    "control-center-overview-section": [
-        {
-            "key": "require_member_of_control_center_admin",
-            "type": "switch",
-            "label": "Require ControlCenterAdmin App Role",
-            "help": (
-                "Narrows the Control Center -- user management, group oversight, "
-                "public workspace control and activity logs -- to holders of the "
-                "ControlCenterAdmin app role. Note that this takes it away from "
-                "general Admins, so assign the role before switching it on."
-            ),
-            "default": False,
-        },
-        {
-            "key": "require_member_of_control_center_dashboard_reader",
-            "type": "switch",
-            "label": "Allow ControlCenterDashboardReader App Role",
-            "help": (
-                "Grants the Control Center dashboard, and nothing else, to holders of "
-                "the ControlCenterDashboardReader app role. Useful for giving someone "
-                "the usage picture without any management ability."
-            ),
-            "default": False,
-        },
-    ],
-    "url-access-section": [
-        {
-            "key": "require_member_of_url_access_user",
-            "type": "switch",
-            "label": "Require UrlAccessUser App Role",
-            "help": (
-                "Narrows fetching a URL in chat, and enabling it for a workflow, to "
-                "holders of the UrlAccessUser app role."
-            ),
-            "default": False,
-        },
-    ],
-    "source-review-section": [
-        {
-            "key": "require_member_of_deep_research_user",
-            "type": "switch",
-            "label": "Require DeepResearchUser App Role",
-            "help": (
-                "Narrows Deep Research to holders of the DeepResearchUser app role. "
-                "Worth using where the multi-step runs it performs are expensive "
-                "enough to want a named audience."
-            ),
-            "default": False,
-        },
-    ],
-    # The three sections below belong to Knowledge, not Chat. They are declared
-    # for the same reason as Health Check above: the fallback scan matched their
-    # keys to a Chat section by shared word stems -- "audio" and "video" and
-    # "file" reaching chat-file-uploads-section, "enhanced" reaching
-    # enhanced-citations-section -- and put audio, video and extraction toggles on
-    # the Chat page. Declaring a key is what takes it out of that scan.
-    "ai-voice-chat-section": [
-        {
-            "key": "enable_audio_file_support",
-            "type": "switch",
-            "label": "Enable Audio File Support",
-            "help": (
-                "Allows audio files to be uploaded and transcribed so their spoken "
-                "content becomes searchable and citable."
-            ),
-            "default": False,
-        },
-        {
-            "key": "enable_chat_completion_audio_cues",
-            "type": "switch",
-            "label": "Enable Chat Completion Audio Cues",
-            "help": (
-                "Plays a short sound when a response finishes. Users choose their "
-                "own sound and volume, or mute it, in their profile."
-            ),
-            "default": False,
-        },
-    ],
-    "video-intelligence-section": [
-        {
-            "key": "enable_video_file_support",
-            "type": "switch",
-            "label": "Enable Video File Support",
-            "help": (
-                "Allows video files to be uploaded and indexed so their spoken and "
-                "on-screen content becomes searchable and citable."
-            ),
-            "default": False,
-        },
-    ],
-    "document-intelligence-section": [
-        {
-            "key": "enable_enhanced_extraction",
-            "type": "switch",
-            "label": "Enable Enhanced Extraction",
-            "help": (
-                "Uses richer Document Intelligence extraction for layout, tables and "
-                "structure, at a higher processing cost per document."
-            ),
-            "default": False,
-        },
-        {
-            "key": "enable_office_embedded_image_analysis",
-            "type": "switch",
-            "label": "Analyze images embedded in DOCX and PPTX files",
-            "help": (
-                "Neither extraction engine describes figures inside Word and PowerPoint "
-                "files. With this on, embedded images are pulled out of the file, analyzed "
-                "with whichever engine backs the selected extraction mode, and indexed as "
-                "their own citable chunks. It works with Standard extraction too, using "
-                "Document Intelligence. The minimum image size and the per-document cap "
-                "are on the classic admin page."
+                "Files a participant generates in someone else's shared conversation "
+                "are saved into the owner's storage. With this on they are withheld "
+                "until the owner approves them -- in a group conversation any Owner, "
+                "Admin or Document Manager can. Anything left unapproved is declined "
+                "and deleted after three days. Covers CSV, XLSX, DOCX, PDF, JSON and "
+                "XML; generated images and charts are never held."
             ),
             "default": True,
         },
@@ -2539,6 +4600,10 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "component",
             "component": "connection-test",
             "test_type": "key_vault",
+            "test_payload": {
+                "vault_name": {"key": "key_vault_name"},
+                "client_id": {"key": "key_vault_identity"},
+            },
             "group": "Vault connection",
             "label": "Test Key Vault connection",
             "help": (
@@ -2788,6 +4853,21 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "component",
             "component": "connection-test",
             "test_type": "safety",
+            "test_payload": {
+                "enabled": {"value": True},
+                "enable_apim": {"key": "enable_content_safety_apim"},
+                "apim.endpoint": {"key": "azure_apim_content_safety_endpoint"},
+                "apim.subscription_key": {
+                    "key": "azure_apim_content_safety_subscription_key"
+                },
+                "direct.endpoint": {"key": "content_safety_endpoint"},
+                "direct.key": {"key": "content_safety_key"},
+                # The endpoint reads `auth_type`, not the settings key name. Sending
+                # the settings name would leave the managed identity branch
+                # unreachable, so the probe would test the key path on a deployment
+                # that does not use it.
+                "direct.auth_type": {"key": "content_safety_authentication_type"},
+            },
             "group": "Connection",
             "label": "Test Content Safety connection",
             "help": (
@@ -3292,6 +5372,9 @@ ADMIN_SETTINGS_FIELDS = {
 # two shapes genuinely differ, and the parity test uses them to resolve a V1
 # form field to its V2 equivalent.
 LEGACY_FIELD_NAMES = {
+    # Same shape: the Grounding with Bing terms are accepted on the toggle, and
+    # the flag rides along with the save rather than being edited on its own.
+    "enable_web_search": ["enable_web_search", "web_search_consent_accepted"],
     # V1 submits four independent checkboxes and assembles the array server-side.
     "user_agreement_apply_to": [
         "user_agreement_apply_personal",
@@ -3327,6 +5410,14 @@ LEGACY_FIELD_NAMES = {
 # have no V2 equivalent, with the reason. The parity test reads this, so an
 # unexplained omission fails rather than passing silently.
 LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
+    "source_review_default_mode": (
+        "Not a real choice. The V1 control is a permanently disabled select "
+        "offering one option, shadowed by a hidden input hard-coded to 'manual', "
+        "and get_source_review_config rewrites any other value back to 'manual' "
+        "on read. Reproducing it would add a control that cannot be changed and "
+        "implies a setting that does not exist. Deep Research states the "
+        "behaviour in its description instead."
+    ),
     "orchestration_type": (
         "Saved through POST /api/orchestration_settings, not the settings PATCH. "
         "V2 renders it from the agent-orchestration component, which reads the "
@@ -3555,6 +5646,102 @@ def get_legacy_field_names():
     return claimed
 
 
+def get_secret_setting_keys():
+    """Return every settings key the schema declares as a credential.
+
+    The V2 settings endpoint uses this to replace stored secrets with
+    ``SECRET_REDACTED_VALUE`` before the document reaches a browser, which is the
+    same protection the server-rendered form gets from
+    ``redact_admin_settings_secrets_for_form``.
+    """
+    return {
+        field["key"]
+        for _section_id, field in iter_fields()
+        if field.get("type") == "secret" and field.get("key")
+    }
+
+
+def get_secret_storage_paths():
+    """Return where each declared credential is actually stored.
+
+    A field's key names the control, which for historical reasons is the V1 form
+    input name. That is usually also the settings key, but not always: the Web
+    Search client secret is stored inside ``web_search_agent``. Redaction has to
+    follow the storage location, not the control name, or the secret is
+    protected in name only.
+    """
+    paths = set()
+    for _section_id, field in iter_fields():
+        if field.get("type") != "secret":
+            continue
+        declared = field.get("paths")
+        if declared:
+            paths.update(declared)
+        elif field.get("key"):
+            paths.add(field["key"])
+    return paths
+
+
+def get_nested_path_fields():
+    """Return ``{key: [storage paths]}`` for fields stored outside a top-level key."""
+    return {
+        field["key"]: list(field["paths"])
+        for _section_id, field in iter_fields()
+        if field.get("paths") and field.get("key")
+    }
+
+
+def evaluate_dependency(dependency, read_value):
+    """Whether a ``depends_on`` condition holds, given a value reader.
+
+    ``read_value`` takes a settings key and returns its current value, so the
+    same rules apply whether the caller is reading a stored document or a draft
+    that has not been saved yet.
+
+    Four shapes are supported, and they compose:
+
+    ``{"key": k, "equals": v}``      k currently equals v
+    ``{"key": k, "not_equals": v}``  k currently differs from v
+    ``{"any_of": [...]}``            at least one nested condition holds
+    ``{"all_of": [...]}``            every nested condition holds
+
+    ``equals`` against a boolean compares truthiness rather than identity,
+    because a settings document written by the server-rendered form stores
+    checkbox state as the string ``"on"``.
+    """
+    if not dependency:
+        return True
+
+    # A list means every condition has to hold. It is the shorthand the Security
+    # and Workspaces sections declare, and is equivalent to ``all_of``.
+    if isinstance(dependency, list):
+        return all(evaluate_dependency(nested, read_value) for nested in dependency)
+
+    if "any_of" in dependency:
+        return any(
+            evaluate_dependency(nested, read_value) for nested in dependency["any_of"]
+        )
+
+    if "all_of" in dependency:
+        return all(
+            evaluate_dependency(nested, read_value) for nested in dependency["all_of"]
+        )
+
+    current = read_value(dependency["key"])
+
+    if "not_equals" in dependency:
+        return not _dependency_values_match(current, dependency["not_equals"])
+
+    return _dependency_values_match(current, dependency.get("equals", True))
+
+
+def _dependency_values_match(current, expected):
+    """Compare a stored value against a declared one, tolerating form shapes."""
+    if isinstance(expected, bool):
+        return _coerce_bool(current) is expected
+    return str(current if current is not None else "").strip() == str(expected)
+
+
 def _coerce_bool(value):
     """Coerce a JSON or form-shaped truthy value into a bool."""
     if isinstance(value, bool):
@@ -3575,31 +5762,6 @@ def _normalize_text(value, field):
     return text
 
 
-def _normalize_string_list(value, field):
-    """Return ``(items, error)`` for a comma-separated list of short tokens.
-
-    Accepts the list the V2 control sends and the comma string the server-rendered
-    form stores, because both shapes already exist in saved settings documents.
-    """
-    if isinstance(value, str):
-        raw_items = value.replace(";", ",").split(",")
-    elif isinstance(value, list):
-        raw_items = value
-    elif value is None:
-        raw_items = []
-    else:
-        return None, "Expected a list of values."
-
-    max_item_length = field.get("max_item_length", 80)
-    items = []
-    for raw_item in raw_items:
-        item = " ".join(str(raw_item or "").split())[:max_item_length]
-        if item and item not in items:
-            items.append(item)
-
-    if not items and field.get("fallback_when_empty"):
-        items = list(field.get("default") or [])
-    return items, None
 
 
 def _validate_front_door_url(value):
@@ -3680,45 +5842,6 @@ def _normalize_link_list(value):
     return links, None
 
 
-def _normalize_id_list(value, field):
-    """Return ``(ids, error)`` for a list of assigned group or workspace ids.
-
-    What counts as a valid id depends on the record being assigned, and the two
-    cases genuinely differ in the application:
-
-    ``id_kind: "group"``
-        Delegated to ``normalize_group_workflow_allowed_group_ids``, which is what
-        ``functions_settings.normalize_file_download_allowed_group_ids`` calls. It
-        requires a canonical group UUID and silently drops anything else, so
-        normalizing here instead would let V2 store an id the server-rendered form
-        would have discarded.
-
-    ``id_kind: "opaque"``
-        Public workspace ids are not UUID-constrained --
-        ``normalize_file_sync_allowed_public_workspace_ids`` only trims and
-        deduplicates -- so imposing a UUID check would reject valid assignments.
-
-    The delegation is possible because ``functions_group_assignment_ids`` was split
-    out of ``functions_settings`` precisely so this module can reach it: the parent
-    builds a Cosmos client at import time and is stubbed by the functional tests.
-    """
-    if not isinstance(value, list):
-        return None, "Expected a list of ids."
-
-    if field.get("id_kind") == "group":
-        return normalize_group_workflow_allowed_group_ids(value), None
-
-    ids = []
-    seen = set()
-    for item in value:
-        candidate = str(item or "").strip()
-        if not candidate or candidate in seen:
-            continue
-        ids.append(candidate)
-        seen.add(candidate)
-    return ids, None
-
-
 def _normalize_checkbox_set(value, field):
     """Return ``(selection, error)`` for a multi-select checkbox group."""
     if isinstance(value, str):
@@ -3754,6 +5877,143 @@ def _normalize_number(value, field):
     return number, None
 
 
+def is_redacted_secret(value):
+    """Whether a submitted value is the placeholder shown in place of a secret."""
+    return str(value if value is not None else "").strip() == SECRET_REDACTED_VALUE
+
+
+def _normalize_secret(value, field):
+    """Return ``(secret, error)`` for a credential field.
+
+    A browser is never sent a stored secret; it is sent ``SECRET_REDACTED_VALUE``
+    instead. Submitting that placeholder back therefore means "unchanged", and
+    the only safe response is to drop the key from the update entirely. Writing
+    the placeholder through would destroy the credential, and writing the
+    resolved value through would echo the real secret in the PATCH response.
+    """
+    if is_redacted_secret(value):
+        return SECRET_UNCHANGED, None
+
+    secret = str(value if value is not None else "").strip()
+    if len(secret) > SECRET_MAX_LENGTH:
+        return None, f"Value is longer than {SECRET_MAX_LENGTH} characters."
+    return secret, None
+
+
+def _normalize_string_list(value, field):
+    """Return ``(entries, error)`` for a list of short strings.
+
+    Stored as a list, matching the settings document. The server-rendered form
+    round-trips these through a newline-joined textarea, so a string arriving
+    here is split the same way that form's handler splits it.
+
+    Two sets of descriptors are honoured because the two admin groups introduced
+    them separately and both are in use: ``entry_pattern``/``entry_label`` and
+    ``max_entries`` validate the URL Access domain lists, while
+    ``max_item_length`` and ``fallback_when_empty`` bound the Key Vault reminder
+    roles and restore their default when the list is emptied.
+    """
+    if isinstance(value, list):
+        candidates = [str(item or "") for item in value]
+    else:
+        candidates = re.split(r"[\n,;]+", str(value if value is not None else ""))
+
+    # `entry_max_length` and `max_item_length` name the same cap. The default is
+    # generous enough for a fully qualified domain, which is the longest thing
+    # any declared list holds.
+    max_length = field.get("entry_max_length", field.get("max_item_length", 253))
+
+    entries = []
+    seen = set()
+    for candidate in candidates:
+        # Collapse internal whitespace as well as trimming, so a value pasted out
+        # of a document does not become a distinct entry from the typed one.
+        entry = " ".join(candidate.split())
+        if not entry:
+            continue
+        # Case-insensitive, matching parse_source_review_list, so an allow list
+        # cannot hold both Example.com and example.com and behave unpredictably.
+        folded = entry.lower()
+        if folded in seen:
+            continue
+
+        pattern = field.get("entry_pattern")
+        if pattern and not re.match(pattern, entry):
+            return None, f"{entry!r} is not a valid {field.get('entry_label', 'entry')}."
+
+        seen.add(folded)
+        entries.append(entry[:max_length])
+
+    maximum = field.get("max_entries")
+    if maximum is not None and len(entries) > maximum:
+        return None, f"Enter at most {maximum} entries."
+
+    if not entries and field.get("fallback_when_empty"):
+        # Emptying the list means "use the default" rather than "allow nobody",
+        # which for the Key Vault reminder roles would silence the reminders.
+        entries = list(field.get("default") or [])
+
+    return entries, None
+
+
+def _normalize_id_list(value, field):
+    """Return ``(ids, error)`` for a list of assigned group or workspace ids.
+
+    What counts as a valid id depends on the record being assigned, and the two
+    cases genuinely differ in the application:
+
+    ``id_kind: "group"``
+        Delegated to ``normalize_group_workflow_allowed_group_ids``, which is what
+        ``functions_settings.normalize_file_download_allowed_group_ids`` calls. It
+        requires a canonical group UUID and silently drops anything else, so
+        normalizing here instead would let V2 store an id the server-rendered form
+        would have discarded.
+
+    ``id_kind: "opaque"``
+        Public workspace ids are not UUID-constrained --
+        ``normalize_file_sync_allowed_public_workspace_ids`` only trims and
+        deduplicates -- so imposing a UUID check would reject valid assignments.
+
+    The delegation is possible because ``functions_group_assignment_ids`` was split
+    out of ``functions_settings`` precisely so this module can reach it: the parent
+    builds a Cosmos client at import time and is stubbed by the functional tests.
+
+    A string is also accepted. The server-rendered File Sync pane round-trips these
+    lists through a hidden textarea holding a JSON array, so a value read back from
+    a document that form wrote arrives serialized rather than as a list.
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return [], None
+        try:
+            value = json.loads(stripped)
+        except ValueError:
+            return None, "Expected a list of ids."
+
+    if not isinstance(value, list):
+        return None, "Expected a list of ids."
+
+    if field.get("id_kind") == "group":
+        return normalize_group_workflow_allowed_group_ids(value), None
+
+    ids = []
+    seen = set()
+    for item in value:
+        # The assignment picker holds records, not bare ids.
+        if isinstance(item, dict):
+            item = item.get("id")
+        candidate = str(item or "").strip()
+        if not candidate or candidate in seen:
+            continue
+        ids.append(candidate)
+        seen.add(candidate)
+
+    maximum = field.get("max_entries")
+    if maximum is not None and len(ids) > maximum:
+        return None, f"Assign at most {maximum} entries."
+
+    return ids, None
 def _normalize_promoted_popular_agents(value):
     """Normalize the Agents page promotion list.
 
@@ -3896,43 +6156,6 @@ def _apply_inbound_mcp_derivations(normalized, current_settings):
         )
 
 
-def _apply_nested_paths(normalized, current_settings):
-    """Fold ``settings_path`` values into the container key they belong to.
-
-    A few settings are stored as one nested object rather than as top-level
-    keys. ``document_action_capabilities`` holds six values across two action
-    types, and nothing reads a flattened form of them, so writing the flat keys
-    through would save a setting the application never looks at.
-
-    The container is rebuilt from the stored object so that saving one limit does
-    not discard the other five, then handed to the function that owns it.
-    """
-    containers = {}
-
-    for key in list(normalized):
-        field = get_field_definition(key)
-        path = (field or {}).get("settings_path")
-        if not path:
-            continue
-
-        value = normalized.pop(key)
-        root = path[0]
-        if root not in containers:
-            stored = current_settings.get(root)
-            containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
-
-        node = containers[root]
-        for segment in path[1:-1]:
-            child = node.get(segment)
-            if not isinstance(child, dict):
-                child = {}
-                node[segment] = child
-            node = child
-        node[path[-1]] = value
-
-    for root, value in containers.items():
-        container_normalizer = _CONTAINER_NORMALIZERS.get(root)
-        normalized[root] = container_normalizer(value) if container_normalizer else value
 
 
 # Keys whose normalization already exists elsewhere. Reusing those functions is
@@ -3990,7 +6213,17 @@ def _normalize_field_value(key, value, field):
         # Whitespace only, and no length cap: the value is an opaque credential,
         # and the placeholder standing in for a stored secret is resolved by the
         # route that holds the settings document, not here.
-        return str(value if value is not None else "").strip(), None, None
+        #
+        # One exception. That route resolves by settings key, and a field declaring
+        # `paths` is folded into its containing object by _apply_nested_paths before
+        # the route ever sees it -- the Foundry client secret arrives as part of
+        # `web_search_agent`, never as a key of its own. The route cannot reach it,
+        # so an untouched placeholder has to be dropped here or it would be written
+        # over the stored credential.
+        secret = str(value if value is not None else "").strip()
+        if field.get("paths") and secret == SECRET_REDACTED_VALUE:
+            return SECRET_UNCHANGED, None, None
+        return secret, None, None
 
     if field_type == "string_list":
         items, error = _normalize_string_list(value, field)
@@ -4011,15 +6244,23 @@ def _normalize_field_value(key, value, field):
 
     if field_type in ("range", "number"):
         number, error = _normalize_number(value, field)
-        return number, error, None
+        if error:
+            return None, error, None
+        # A field may be edited in one unit and stored in another -- File Sync's
+        # per-run limit is entered in GB and stored in bytes. Bounds are declared
+        # in the editing unit, so scaling happens after clamping.
+        scale = field.get("scale")
+        if scale:
+            number = int(number * scale)
+        return number, None, None
 
     if field_type == "checkbox_set":
         selection, error = _normalize_checkbox_set(value, field)
         return selection, error, None
 
-    if field_type == "link_list":
-        links, error = _normalize_link_list(value)
-        return links, error, None
+    if field_type == "string_list":
+        entries, error = _normalize_string_list(value, field)
+        return entries, error, None
 
     if field_type == "entry_list":
         return _normalize_entry_list(value), None, None
@@ -4033,6 +6274,10 @@ def _normalize_field_value(key, value, field):
         # server-rendered form would have stored, including how it drops ids that
         # are not canonical group UUIDs.
         return normalize_group_workflow_allowed_group_ids(value), None, None
+
+    if field_type == "link_list":
+        links, error = _normalize_link_list(value)
+        return links, error, None
 
     if field_type == "textarea":
         text = str(value if value is not None else "")
@@ -4073,6 +6318,168 @@ def _validate_redirect_url(value):
             "Use a local path such as / or an HTTPS URL without credentials."
         )
     return normalized, None
+
+
+def read_nested_setting(document, path):
+    """Read a dotted path out of a settings document, or None."""
+    cursor = document if isinstance(document, dict) else {}
+    for part in str(path or "").split("."):
+        if not isinstance(cursor, dict):
+            return None
+        cursor = cursor.get(part)
+    return cursor
+
+
+def write_nested_setting(document, path, value):
+    """Write a dotted path into a document, creating intermediate objects."""
+    parts = str(path or "").split(".")
+    cursor = document
+    for part in parts[:-1]:
+        if not isinstance(cursor.get(part), dict):
+            cursor[part] = {}
+        cursor = cursor[part]
+    cursor[parts[-1]] = value
+
+
+def _normalize_chunk_size_container(container, current_settings):
+    """Clamp assembled chunk sizes to the caps the embedding model allows.
+
+    A chunk has to fit in one embedding request, so a size above the model's
+    budget can never embed no matter what is saved. The server-rendered form
+    computes those caps from the deployed embedding model and clamps on save;
+    doing the same here is what stops the two interfaces accepting different
+    values for the same setting.
+
+    Imported lazily because the cap depends on the live settings document, and
+    this module is otherwise a pure declaration that several tests import
+    without ``config`` available.
+    """
+    try:
+        from functions_settings import get_chunk_size_defaults, get_chunk_size_cap
+    except Exception:
+        # Without the caps the safe thing is to leave the values alone rather
+        # than write unclamped ones; the embed path bounds them again anyway.
+        return container, {}
+
+    defaults = get_chunk_size_defaults()
+    warnings = {}
+
+    for key, meta in list(container.items()):
+        if not isinstance(meta, dict) or "value" not in meta:
+            continue
+
+        unit = meta.get("unit") or defaults.get(key, {}).get("unit")
+        if unit:
+            meta["unit"] = unit
+
+        try:
+            value = int(meta["value"])
+        except (TypeError, ValueError):
+            value = defaults.get(key, {}).get("value", 1)
+
+        cap = get_chunk_size_cap(current_settings, unit)
+        clamped = max(1, min(value, cap) if cap else max(1, value))
+        if clamped != value:
+            warnings[f"chunk_size_{key}"] = (
+                f"Reduced to {clamped}, the largest {unit or 'value'} that fits in one "
+                "embedding request for the deployed model."
+            )
+        meta["value"] = clamped
+
+    return container, warnings
+
+
+# Assembled containers that need a final pass once every declared leaf has been
+# written into them. Keyed by the top-level settings key the container lives at.
+PATH_CONTAINER_NORMALIZERS = {
+    "chunk_size": _normalize_chunk_size_container,
+}
+
+
+def _apply_nested_paths(normalized, current_settings, warnings=None):
+    """Move values to where they are actually stored, when that is not their own key.
+
+    Most settings are top-level keys, so the normalized dict can be handed
+    straight to ``update_settings``. Three cases are not, and two different
+    descriptors express them because the two admin surfaces grew them
+    separately:
+
+    ``paths`` names one or more dotted destinations. A value assembled into a
+    nested object -- the server-rendered form builds the Web Search Foundry
+    connection into a single ``web_search_agent`` object -- or mirrored into
+    more than one key, as URL Access domain lists are stored twice, once under
+    ``url_access_*`` and once under ``source_review_*``. Writing only one leaves
+    Deep Research reading the stale copy.
+
+    ``settings_path`` names a single destination as a list of segments.
+    ``document_action_capabilities`` holds six values across two action types,
+    and nothing reads a flattened form of them, so writing the flat keys through
+    would save a setting the application never looks at.
+
+    Either way the container is rebuilt from the stored object and handed back
+    whole, because ``update_settings`` merges at the top level only. Writing just
+    the changed leaf would replace the object and drop its siblings, so editing
+    the Foundry endpoint would silently discard the agent id and the credentials.
+    """
+    containers = {}
+
+    # `settings_path`: a list of segments naming one destination.
+    for key in list(normalized):
+        field = get_field_definition(key)
+        path = (field or {}).get("settings_path")
+        if not path:
+            continue
+
+        value = normalized.pop(key)
+        root = path[0]
+        if root not in containers:
+            stored = current_settings.get(root)
+            containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+
+        node = containers[root]
+        for segment in path[1:-1]:
+            child = node.get(segment)
+            if not isinstance(child, dict):
+                child = {}
+                node[segment] = child
+            node = child
+        node[path[-1]] = value
+
+    # `paths`: one or more dotted destinations, possibly mirroring to several.
+    nested_fields = get_nested_path_fields()
+    pending = {
+        key: normalized.pop(key) for key in list(normalized) if key in nested_fields
+    }
+    for key, value in pending.items():
+        for path in nested_fields[key]:
+            root, _, remainder = path.partition(".")
+            if not remainder:
+                # A plain mirror to another top-level key.
+                normalized[root] = value
+                continue
+
+            if root not in containers:
+                stored = current_settings.get(root)
+                containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+            write_nested_setting(containers[root], remainder, value)
+
+    for root, container in containers.items():
+        # Two registries, because the two descriptors were introduced with
+        # different normalizer signatures: one reports warnings back to the
+        # caller, the other validates the whole object and returns it.
+        path_normalizer = PATH_CONTAINER_NORMALIZERS.get(root)
+        if path_normalizer:
+            container, container_warnings = path_normalizer(container, current_settings)
+            if warnings is not None:
+                warnings.update(container_warnings)
+
+        container_normalizer = _CONTAINER_NORMALIZERS.get(root)
+        if container_normalizer:
+            container = container_normalizer(container)
+
+        normalized[root] = container
+
+    return normalized
 
 
 def _validate_identity_header_name(value):
@@ -4216,6 +6623,11 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         if error:
             errors[key] = error
             continue
+        if field_value is SECRET_UNCHANGED:
+            # The administrator never touched this credential. Dropping it keeps
+            # the stored value intact and keeps the real secret out of the
+            # response, which echoes back whatever lands in ``normalized``.
+            continue
         if warning:
             warnings[key] = warning
         normalized[key] = field_value
@@ -4225,6 +6637,10 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # "At least one" style constraints can only be judged once the whole payload
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
+
+    # Applied last so the checks above still see flat keys, which is the shape
+    # they and the schema are written against.
+    _apply_nested_paths(normalized, current, warnings)
 
     # Same reasoning for settings that constrain each other: the pair may be edited
     # together or one at a time, so the merged state is the only thing worth
@@ -4276,7 +6692,8 @@ def _apply_cross_field_rules(normalized, current_settings, warnings):
 
 def _check_minimum_selections(normalized, current_settings, errors):
     """Enforce ``min_selected`` once the merged state of a save is known."""
-    merged = {**current_settings, **normalized}
+    def read_value(key):
+        return normalized[key] if key in normalized else current_settings.get(key)
 
     for _section_id, field in iter_fields():
         key = field.get("key")
@@ -4284,9 +6701,9 @@ def _check_minimum_selections(normalized, current_settings, errors):
         if not key or not minimum:
             continue
 
-        # A hidden field is not one the administrator declined to fill in, so a
-        # gated selection is only judged while its gate is open.
-        if not field_dependencies_are_satisfied(field, merged):
+        # A constraint on a hidden field would reject a save for a control the
+        # administrator cannot even see.
+        if not evaluate_dependency(field.get("depends_on"), read_value):
             continue
 
         selection = (

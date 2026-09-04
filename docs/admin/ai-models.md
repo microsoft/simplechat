@@ -55,6 +55,27 @@ Model requests reach a gateway under SimpleChat's own credentials, so a gateway 
 
 Individual connections can override the global choice, which is useful when only some of them sit behind a gateway that expects the header.
 
+#### Image support
+
+Each model within a connection also records whether it can accept image input. This is what
+[Multi-Modal Vision Analysis](knowledge.md#multimodal-vision-section) filters on, and
+getting it wrong is only discovered when a document fails to process.
+
+The checkbox arrives pre-filled. The application ships capability data for known models and
+uses it to answer the question before you are asked, and the field says where its answer
+came from:
+
+- **Set here** — recorded on this model. This wins over everything else.
+- **From the built-in model capability data** — matched against the shipped catalog, by
+  model id or a declared alias, including deployments named after a known model with a
+  suffix such as a date or region.
+- **Inferred from the model name** — neither of the above matched, so the name was used as
+  a guess. This is the case worth reviewing: a self-hosted or internally named model may
+  well read images without its name saying so.
+
+Correcting the checkbox records your answer on the model, and it is then used in preference
+to the catalog from that point on.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |

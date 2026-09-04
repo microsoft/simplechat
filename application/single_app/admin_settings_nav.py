@@ -248,6 +248,12 @@ ADMIN_NAV = [
                 "icon": "bi-file-earmark-text",
                 "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
+                    # These two cards have always existed in the extraction pane but
+                    # were absent from this list, so neither interface could
+                    # navigate to them. Their ids are the ones already in the
+                    # markup, so the server-rendered sidebar resolves them as-is.
+                    {"id": "content-understanding-section", "label": "Content Understanding", "icon": "bi-stars"},
+                    {"id": "office-embedded-image-section", "label": "Images Inside Office Files", "icon": "bi-images"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
                     # The upload ceiling belongs with the extraction pipeline it
                     # feeds rather than with Workspaces, because it caps chat

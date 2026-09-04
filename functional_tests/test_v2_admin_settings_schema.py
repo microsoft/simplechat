@@ -123,14 +123,23 @@ def test_fields_carry_required_properties():
     problems = []
     for section_id, field in fields_module.iter_fields():
         field_type = field.get("type")
-        identity = f"{section_id}.{field.get('key') or field.get('component')}"
+        identity = (
+            f"{section_id}."
+            f"{field.get('key') or field.get('component') or field.get('status_source')}"
+        )
 
         if not field.get("label"):
             problems.append(f"{identity}: missing label")
 
-        # Everything except a bespoke component must name the settings key it edits.
-        if field_type != "component" and not field.get("key"):
+        # Everything that edits a value must name the settings key it edits. A
+        # bespoke component owns its own persistence, and a status readout is
+        # computed by the server rather than stored, so neither has one.
+        if field_type not in ("component", "status") and not field.get("key"):
             problems.append(f"{identity}: missing key")
+
+        # A readout with no source would render permanently blank.
+        if field_type == "status" and not field.get("status_source"):
+            problems.append(f"{identity}: missing status_source")
 
         for prop in REQUIRED_PROPERTIES_BY_TYPE.get(field_type, ()):
             if prop not in field:
@@ -247,6 +256,41 @@ def test_setting_keys_have_one_owner():
     return True
 
 
+def _walk_dependency_conditions(dependency, path="depends_on"):
+    """Yield every leaf condition in a dependency tree, with a readable path.
+
+    A dependency is a single ``{key, equals}`` condition, a list of them meaning
+    all must hold, or an ``any_of`` / ``all_of`` composition, and the composed
+    forms nest. Walking the tree is what lets these checks reach a condition
+    buried two levels down, which is where a typo would otherwise sit undetected
+    and hide a control forever.
+    """
+    if isinstance(dependency, list):
+        if not dependency:
+            yield path, {"__error": "an empty condition list is always satisfied"}
+            return
+        for index, condition in enumerate(dependency):
+            yield from _walk_dependency_conditions(condition, f"{path}[{index}]")
+        return
+
+    if not isinstance(dependency, dict):
+        return
+
+    for combinator in ("any_of", "all_of"):
+        if combinator in dependency:
+            nested = dependency[combinator]
+            if not isinstance(nested, list) or not nested:
+                yield path, {"__error": f"{combinator} must be a non-empty list"}
+                return
+            for index, condition in enumerate(nested):
+                yield from _walk_dependency_conditions(
+                    condition, f"{path}.{combinator}[{index}]"
+                )
+            return
+
+    yield path, dependency
+
+
 def test_dependencies_reference_real_fields():
     """A dependency on an undeclared key would hide the field permanently."""
     print("\nTesting visibility dependencies...")
@@ -263,10 +307,17 @@ def test_dependencies_reference_real_fields():
     for section_id, field in fields_module.iter_fields():
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        # A field may carry one condition or a list of them, so both shapes are read
-        # through the schema's own iterator rather than assumed here.
-        for condition in fields_module.iter_field_dependencies(field):
+        if not field.get("depends_on"):
+            continue
+
+        # A field may carry one condition, a list of them, or an any_of/all_of
+        # composition, so the tree is walked rather than any one shape assumed.
+        for path, condition in _walk_dependency_conditions(field["depends_on"]):
             checked += 1
+
+            if "__error" in condition:
+                problems.append(f"{identity}: {path}: {condition['__error']}")
+                continue
 
             if condition.get("flag"):
                 # A runtime flag is resolved by the server, not by another field,
@@ -286,10 +337,14 @@ def test_dependencies_reference_real_fields():
                 continue
             if condition["key"] not in declared:
                 problems.append(
-                    f"{identity}: depends on undeclared key {condition['key']!r}"
+                    f"{identity}: {path} depends on undeclared key {condition['key']!r}"
                 )
             if field.get("key") == condition["key"]:
-                problems.append(f"{identity}: depends on itself")
+                problems.append(f"{identity}: {path} depends on itself")
+            if "equals" not in condition and "not_equals" not in condition:
+                problems.append(
+                    f"{identity}: {path} states neither equals nor not_equals"
+                )
 
             # A string comparison only makes sense against a value the gating
             # field can actually hold, and a typo there hides the dependent
@@ -308,7 +363,58 @@ def test_dependencies_reference_real_fields():
         "These visibility dependencies are broken:\n  " + "\n  ".join(problems)
     )
 
-    print(f"  All {checked} dependency reference(s) resolve to declared fields.")
+    print(f"  All {checked} dependency condition(s) resolve to declared fields.")
+    return True
+
+
+def test_connection_tests_read_declared_keys():
+    """A test payload naming a key that does not exist would send an empty value."""
+    print("\nTesting connection test payloads...")
+
+    declared = fields_module.get_declared_setting_keys()
+    problems = []
+    checked = 0
+
+    for section_id, field in fields_module.iter_fields():
+        if field.get("component") != "connection-test":
+            continue
+        identity = f"{section_id}.connection-test"
+        checked += 1
+
+        if not field.get("test_type"):
+            problems.append(f"{identity}: no test_type declared")
+
+        payload = field.get("test_payload") or {}
+        if not payload:
+            problems.append(f"{identity}: no test_payload declared")
+
+        for path, source in payload.items():
+            if not isinstance(source, dict):
+                problems.append(f"{identity}: {path} is not an object")
+                continue
+            if "key" not in source and "value" not in source:
+                problems.append(f"{identity}: {path} names neither a key nor a value")
+                continue
+            key = source.get("key")
+            if key and key not in declared:
+                problems.append(f"{identity}: {path} reads undeclared key {key!r}")
+
+            for condition_path, condition in _walk_dependency_conditions(
+                source.get("when"), f"{path}.when"
+            ):
+                if "__error" in condition:
+                    problems.append(f"{identity}: {condition_path}: {condition['__error']}")
+                elif condition.get("key") not in declared:
+                    problems.append(
+                        f"{identity}: {condition_path} reads undeclared key "
+                        f"{condition.get('key')!r}"
+                    )
+
+    assert not problems, (
+        "These connection tests would send the wrong payload:\n  " + "\n  ".join(problems)
+    )
+
+    print(f"  {checked} connection test(s) read only declared keys.")
     return True
 
 
@@ -522,6 +628,7 @@ if __name__ == "__main__":
         test_select_defaults_are_offered_as_options,
         test_setting_keys_have_one_owner,
         test_dependencies_reference_real_fields,
+        test_connection_tests_read_declared_keys,
         test_string_dependencies_name_an_offered_option,
         test_gated_fields_inherit_their_gate_s_own_conditions,
         test_option_values_are_unique_within_a_field,

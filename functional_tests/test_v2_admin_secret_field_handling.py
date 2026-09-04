@@ -90,11 +90,26 @@ def test_every_declared_secret_field_is_a_known_secret():
     )
     assert declared_secrets, "No secret fields are declared; the extraction likely broke."
 
-    unmasked = [
-        key
-        for key in declared_secrets
-        if key not in secret_utils.get_admin_settings_api_secret_fields()
-    ]
+    # A secret is masked by where it is *stored*, not by the name of its control.
+    # The Web Search client secret is a field named `web_search_foundry_client_secret`
+    # that lives at `web_search_agent.other_settings.azure_ai_foundry.client_secret`,
+    # so checking the field key against the top-level list would report it unmasked
+    # while the value is in fact redacted through the nested list.
+    storage_paths = fields_module.get_secret_storage_paths()
+    masked = set(secret_utils.get_admin_settings_api_secret_fields())
+    masked |= set(secret_utils.ADMIN_SETTINGS_NESTED_SECRET_FIELDS)
+    masked |= {path for path in storage_paths if "." not in path}
+
+    declared_paths = {}
+    for _section_id, field in fields_module.iter_fields():
+        if field.get("type") == "secret" and field.get("key"):
+            declared_paths[field["key"]] = list(field.get("paths") or [])
+
+    unmasked = []
+    for key in declared_secrets:
+        locations = declared_paths.get(key) or [key]
+        if not any(location in masked for location in locations):
+            unmasked.append(f"{key} (stored at {', '.join(locations)})")
 
     assert not unmasked, (
         "These fields are declared as secrets but are not masked by the API "
@@ -184,39 +199,46 @@ def test_the_settings_endpoints_mask_before_responding():
     assert ROUTE_MODULE.is_file(), f"Missing the V2 route module: {ROUTE_MODULE}"
     source = ROUTE_MODULE.read_text(encoding="utf-8")
 
-    # The GET must not hand the raw document straight to jsonify. The API list is
-    # wider than the form's, because this endpoint returns the whole document.
+    # Both endpoints hand their payload through one helper, so the guarantee is
+    # pinned there rather than at each call site. The GET must not hand the raw
+    # document to jsonify, and the PATCH echo must be re-masked after it resolved
+    # the placeholder back to the real credential.
     assert re.search(
-        r"safe_settings\s*=\s*redact_admin_settings_secrets_for_api\(settings\)", source
+        r'"settings":\s*_redact_admin_settings_for_v2\(settings\)', source
     ), (
         "GET /api/v2/admin/settings no longer masks its response. Returning "
         "get_settings() unchanged sends every stored API key and connection "
         "string to the admin browser."
     )
+    assert re.search(
+        r'"settings":\s*_redact_admin_settings_for_v2\(normalized\)', source
+    ), (
+        "PATCH /api/v2/admin/settings no longer echoes a re-masked payload. A "
+        "resolved secret would be returned to the browser, defeating the mask on "
+        "the GET."
+    )
+
+    # The API list is wider than the form's, because these endpoints return the
+    # whole settings document rather than the subset a template draws.
+    assert re.search(
+        r"redact_admin_settings_secrets_for_api\(settings\)", source
+    ), "The V2 redaction helper no longer applies the API secret list."
 
     # Model endpoint credentials are nested inside a list, so the key-based mask
     # cannot reach them and they need stripping separately.
     assert re.search(
-        r'safe_settings\["model_endpoints"\]\s*=\s*sanitize_model_endpoints_for_frontend',
-        source,
+        r"sanitize_model_endpoints_for_frontend", source
     ), (
         "GET /api/v2/admin/settings no longer strips model endpoint credentials. "
         "Each entry in model_endpoints carries auth.api_key and auth.client_secret, "
         "which the key-based mask does not reach."
     )
 
-    # The PATCH echoes what it saved, and it resolves the placeholder back to the
-    # real credential before saving, so the echo has to be re-masked.
-    assert re.search(r'"settings":\s*echoed', source), (
-        "PATCH /api/v2/admin/settings no longer echoes a re-masked payload. A "
-        "resolved secret would be returned to the browser, defeating the mask on "
-        "the GET."
-    )
+    # The PATCH resolves a submitted placeholder against the stored document
+    # before saving, so an untouched secret is not written over with the mask.
     assert re.search(
-        r"ADMIN_SETTINGS_SECRET_REDACTED_VALUE\s*\n?\s*if key in secret_keys", source
-    ), (
-        "The PATCH echo no longer replaces secret values with the placeholder."
-    )
+        r"resolve_admin_settings_secret_value\(", source
+    ), "The PATCH no longer resolves submitted placeholders against stored secrets."
 
     print("  Both endpoints mask before responding.")
     return True
