@@ -73,6 +73,7 @@ FIELD_TYPES = (
     "number",
     "image",
     "link_list",
+    "entry_list",
     "component",
 )
 
@@ -1154,6 +1155,243 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Managed elsewhere",
         },
     ],
+    # --- Inbound MCP ------------------------------------------------------
+    #
+    # The whole card is gated by ENABLE_MCP_UI, an App Service application
+    # setting with no entry in the settings document, so the fields depend on a
+    # runtime flag rather than a settings key. When the flag is off the section
+    # still renders, showing only the notice that explains how to turn it on --
+    # which is why the notice depends on the same flag being false.
+    "inbound-mcp-configuration": [
+        {
+            "type": "component",
+            "component": "inbound-mcp-disabled-notice",
+            "label": "Inbound MCP preview",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": False},
+        },
+        {
+            "key": "enable_inbound_mcp_server",
+            "type": "switch",
+            "label": "Enable Inbound MCP Server",
+            "help": (
+                "Accepts requests from external MCP clients such as an editor. "
+                "Access stays deny-by-default afterwards: a request must also pass "
+                "the delegated scope, the Entra role, the client allowlist, the "
+                "source allowlist, and a governance policy. Turn this on last."
+            ),
+            "default": False,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_required_scope",
+            "type": "text",
+            "label": "Required Delegated Scope",
+            "help": (
+                "The delegated scope a user's client must present. It has to match "
+                "the scope exposed on the Entra application registration, or every "
+                "request is refused."
+            ),
+            "default": "DelegatedMcpServerAccess",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_required_user_role",
+            "type": "text",
+            "label": "Required Delegated User Role",
+            "help": (
+                "The Entra app role a signed-in user must hold. This decides who "
+                "may connect at all; which tools they then get is decided by "
+                "governance policy."
+            ),
+            "default": "InboundMCPUserAccess",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_required_app_role",
+            "type": "text",
+            "label": "Required App-Only Role",
+            "help": (
+                "Reserved for future service-to-service tools. No tool uses it "
+                "today; personal tools require a delegated user token."
+            ),
+            "default": "InboundMCPAppAccess",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "enable_inbound_mcp_rate_limits",
+            "type": "switch",
+            "label": "Enable Tool Throttles",
+            "help": (
+                "Caps how often one caller may invoke each category of tool. On by "
+                "default, and enforced across app instances, so a client stuck in a "
+                "loop cannot exhaust the deployment. It has no effect until the "
+                "server itself is enabled."
+            ),
+            "default": True,
+            "group": "Request limits",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_max_request_bytes",
+            "type": "number",
+            "label": "Max Request Bytes",
+            "help": "Largest request body accepted. Anything bigger is refused unread.",
+            "default": 65536,
+            "min": 1024,
+            "max": 1048576,
+            "group": "Request limits",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_rate_limit_window_seconds",
+            "type": "number",
+            "label": "Throttle Window (Seconds)",
+            "help": "The period each of the three limits below is counted over.",
+            "default": 60,
+            "min": 10,
+            "max": 3600,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_rate_limit_read_per_window",
+            "type": "number",
+            "label": "Read Calls Per Window",
+            "help": "Reads are cheap, so this is the most permissive of the three.",
+            "default": 120,
+            "min": 1,
+            "max": 10000,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_rate_limit_search_per_window",
+            "type": "number",
+            "label": "Search Calls Per Window",
+            "help": "Searches cost an index query each, so they are limited harder than reads.",
+            "default": 30,
+            "min": 1,
+            "max": 10000,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_rate_limit_write_per_window",
+            "type": "number",
+            "label": "Write Calls Per Window",
+            "help": "Writes change stored data, so this is the tightest limit.",
+            "default": 10,
+            "min": 1,
+            "max": 10000,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_allowed_client_app_entries",
+            "type": "entry_list",
+            "label": "Allowed Client App IDs",
+            "help": (
+                "The Entra application ids permitted to connect. This list is "
+                "required: while it is empty no MCP client can reach the endpoint, "
+                "whatever else is configured."
+            ),
+            "default": [],
+            "value_label": "Client app ID",
+            "placeholder": "00000000-0000-0000-0000-000000000000",
+            "empty_text": "No client apps allowed, so nothing can connect.",
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_allow_external_tenants",
+            "type": "switch",
+            "label": "Allow Additional Tenant IDs",
+            "help": (
+                "Off restricts callers to this deployment's own tenant. Turn it on "
+                "only to admit a named partner tenant; the deployment's own tenant "
+                "is always included."
+            ),
+            "default": False,
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_allowed_tenant_entries",
+            "type": "entry_list",
+            "label": "Allowed Tenant IDs",
+            "help": "Additional tenants whose users may connect.",
+            "default": [],
+            "value_label": "Tenant ID",
+            "placeholder": "00000000-0000-0000-0000-000000000000",
+            "empty_text": "Only this deployment's tenant is allowed.",
+            "group": "Allowlists",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "inbound_mcp_allow_external_tenants", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_allow_all_source_ids",
+            "type": "switch",
+            "label": "Allow All Source IDs",
+            "help": (
+                "The source is a client-supplied header, so it identifies rather "
+                "than authenticates. Leaving this on accepts any value at this "
+                "layer; a governance policy still decides who gets tools. Turn it "
+                "off only where a gateway sets and enforces the header."
+            ),
+            "default": True,
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_source_header",
+            "type": "text",
+            "label": "Source Header Name",
+            "help": "The request header the source value is read from.",
+            "default": "X-SimpleChat-MCP-Source",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_allowed_source_entries",
+            "type": "entry_list",
+            "label": "Allowed Source IDs",
+            "help": "The source values accepted when not allowing all of them.",
+            "default": [],
+            "value_label": "Source value",
+            "empty_text": "No source values allowed, so no request passes this check.",
+            "group": "Allowlists",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "inbound_mcp_allow_all_source_ids", "equals": False},
+            ],
+        },
+    ],
     # Declared so the Actions surface keeps the editable Fact Memory control where
     # it belongs. Without it the mirror above would claim the key and remove the
     # real toggle from Chat.
@@ -1198,6 +1436,10 @@ LEGACY_FIELD_NAMES = {
     # V1 round-trips the promoted agent list through a hidden JSON field that its
     # script maintains; V2 edits the stored list directly.
     "agents_page_promoted_popular_agents": ["agents_page_promoted_popular_agents_json"],
+    # The inbound MCP allowlists take the same shape: a hidden JSON field in V1.
+    "inbound_mcp_allowed_client_app_entries": ["inbound_mcp_allowed_client_app_entries_json"],
+    "inbound_mcp_allowed_tenant_entries": ["inbound_mcp_allowed_tenant_entries_json"],
+    "inbound_mcp_allowed_source_entries": ["inbound_mcp_allowed_source_entries_json"],
 }
 
 # Field names present in the V1 panes that intentionally have no V2 equivalent,
@@ -1428,6 +1670,117 @@ _CONTAINER_NORMALIZERS = {
 }
 
 
+def _normalize_entry_list(value):
+    """Normalize a ``{value, description}`` allowlist.
+
+    Delegated to ``functions_mcp_server_config`` so both admin surfaces agree on
+    what a row is worth keeping. Imported lazily for the reason given above.
+    """
+    from functions_mcp_server_config import normalize_inbound_mcp_value_entries
+
+    return normalize_inbound_mcp_value_entries(value)
+
+
+def _apply_inbound_mcp_derivations(normalized, current_settings):
+    """Write the flat lists the inbound MCP runtime reads.
+
+    The runtime does not read the ``*_entries`` lists an administrator edits. It
+    reads ``*_ids`` lists, and single-role settings are mirrored into
+    ``*_roles`` arrays. The server-rendered form derives all of those on every
+    save; without the same derivation here, an allowlist edited in V2 would be
+    stored and then ignored.
+
+    The rules are not a straight mapping, which is why this reproduces the whole
+    block rather than a per-key transform: the tenant list only takes effect when
+    additional tenants are allowed and always gains the deployment's own tenant,
+    and the source list collapses to ``*`` when all sources are allowed.
+    """
+    if not any(key.startswith("inbound_mcp_") for key in normalized):
+        return
+
+    from functions_mcp_server_config import (
+        INBOUND_MCP_SETTINGS_DEFAULTS,
+        ensure_inbound_mcp_default_tenant_entry,
+        inbound_mcp_entry_values,
+        normalize_inbound_mcp_single_value,
+        normalize_inbound_mcp_value_entries,
+    )
+
+    def merged(key):
+        """The value this save will leave behind, edited or not."""
+        if key in normalized:
+            return normalized[key]
+        if key in current_settings:
+            return current_settings[key]
+        return INBOUND_MCP_SETTINGS_DEFAULTS.get(key)
+
+    for role_key, roles_key in (
+        ("inbound_mcp_required_user_role", "inbound_mcp_required_user_roles"),
+        ("inbound_mcp_required_app_role", "inbound_mcp_required_app_roles"),
+    ):
+        if role_key not in normalized:
+            continue
+        role = normalize_inbound_mcp_single_value(
+            normalized[role_key],
+            default_value=INBOUND_MCP_SETTINGS_DEFAULTS[role_key],
+            max_length=128,
+        )
+        normalized[role_key] = role
+        normalized[roles_key] = [role] if role else []
+
+    if "inbound_mcp_allowed_client_app_entries" in normalized:
+        entries = normalize_inbound_mcp_value_entries(
+            normalized["inbound_mcp_allowed_client_app_entries"], lowercase=True
+        )
+        normalized["inbound_mcp_allowed_client_app_entries"] = entries
+        normalized["inbound_mcp_allowed_client_app_ids"] = inbound_mcp_entry_values(
+            entries, lowercase=True
+        )
+
+    if (
+        "inbound_mcp_allowed_tenant_entries" in normalized
+        or "inbound_mcp_allow_external_tenants" in normalized
+    ):
+        entries = normalize_inbound_mcp_value_entries(
+            merged("inbound_mcp_allowed_tenant_entries"), lowercase=True
+        )
+        if _coerce_bool(merged("inbound_mcp_allow_external_tenants")):
+            entries = ensure_inbound_mcp_default_tenant_entry(entries)
+            tenant_ids = inbound_mcp_entry_values(entries, lowercase=True)
+        else:
+            # Restricting to the deployment's own tenant is expressed by the id
+            # list, not by clearing the entries, so a partner tenant an admin
+            # added is still there when they turn the switch back on.
+            from config import TENANT_ID
+
+            own_tenant = str(TENANT_ID or "").strip().lower()
+            tenant_ids = [own_tenant] if own_tenant else []
+        normalized["inbound_mcp_allowed_tenant_entries"] = entries
+        normalized["inbound_mcp_allowed_tenant_ids"] = tenant_ids
+
+    if (
+        "inbound_mcp_allowed_source_entries" in normalized
+        or "inbound_mcp_allow_all_source_ids" in normalized
+    ):
+        allow_all = _coerce_bool(merged("inbound_mcp_allow_all_source_ids"))
+        entries = normalize_inbound_mcp_value_entries(
+            merged("inbound_mcp_allowed_source_entries"),
+            default=(
+                INBOUND_MCP_SETTINGS_DEFAULTS["inbound_mcp_allowed_source_entries"]
+                if allow_all
+                else None
+            ),
+        )
+        if not allow_all:
+            # The wildcard row belongs to the allow-all mode. Leaving it in a
+            # controlled list would silently keep accepting every source.
+            entries = [entry for entry in entries if entry.get("value") != "*"]
+        normalized["inbound_mcp_allowed_source_entries"] = entries
+        normalized["inbound_mcp_allowed_source_ids"] = (
+            ["*"] if allow_all else inbound_mcp_entry_values(entries)
+        )
+
+
 def _apply_nested_paths(normalized, current_settings):
     """Fold ``settings_path`` values into the container key they belong to.
 
@@ -1538,6 +1891,9 @@ def _normalize_field_value(key, value, field):
     if field_type == "link_list":
         links, error = _normalize_link_list(value)
         return links, error, None
+
+    if field_type == "entry_list":
+        return _normalize_entry_list(value), None, None
 
     if field_type == "textarea":
         text = str(value if value is not None else "")
@@ -1663,6 +2019,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # against, and so a rejected save never assembles a container.
     if not errors:
         _apply_nested_paths(normalized, current)
+        _apply_inbound_mcp_derivations(normalized, current)
 
     return normalized, errors, warnings
 
@@ -1677,7 +2034,11 @@ def _check_minimum_selections(normalized, current_settings, errors):
 
         gated_off = False
         for depends_on in iter_dependencies(field):
-            gate_key = depends_on["key"]
+            gate_key = depends_on.get("key")
+            if not gate_key:
+                # A runtime-flag condition is resolved in the browser; the server
+                # cannot judge it here and does not need to.
+                continue
             gate_value = (
                 normalized[gate_key] if gate_key in normalized
                 else current_settings.get(gate_key, False)

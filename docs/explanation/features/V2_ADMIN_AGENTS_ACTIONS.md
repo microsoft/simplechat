@@ -12,7 +12,8 @@ almost empty tab. This feature declares the Agents & Actions group properly, and
 adds the small number of schema and renderer capabilities the group needs that
 the Appearance group never exercised.
 
-**Implemented in version:** 0.261.059 (phase 1, Agents), 0.261.060 (phase 2, Actions)
+**Implemented in version:** 0.261.059 (phase 1, Agents), 0.261.060 (phase 2,
+Actions), 0.261.061 (phase 3, Inbound MCP)
 
 **Dependencies:** `admin_settings_fields.py`, `admin_settings_nav.py`,
 `route_backend_v2.py`, `application/v2_ui`.
@@ -71,6 +72,8 @@ server-rendered page. Every id below already exists in `templates/admin/_panes/`
 | `collapsed` | Starts a group closed. Only the first field of a group decides this. |
 | `settings_path` | Reads and writes a value stored inside a nested object. `document_action_capabilities` holds six values across two action types, and nothing reads a flattened form of them. |
 | `readonly` + `managed_by` | Reports a value another surface owns, and names where it is set. |
+| `depends_on` naming a `flag` | Gates a field on a server-resolved runtime flag rather than a settings key, for a capability gated outside the settings document. |
+| `entry_list` | A repeatable `{value, description}` allowlist. |
 
 `iter_dependencies(field)` yields each condition regardless of which shape was
 declared, so no caller re-derives it.
@@ -111,6 +114,33 @@ that actually sets it.
 Before this, `enable_tabular_processing_plugin` was rendered by the fallback scan
 as a live switch under Chat › Processing Thoughts, purely because "processing"
 matched that section id. Flipping it did nothing.
+
+### Runtime-flag gates and derived keys
+
+Inbound MCP is gated by `ENABLE_MCP_UI`, an App Service application setting. It
+has no entry in the settings document, so a `depends_on` may name a `flag`
+instead of a `key`; the flag is answered from `runtime_flags` and cannot be
+changed from the page at all. The section itself stays unconditional so the
+`inbound-mcp-disabled-notice` component can explain how to turn the gate on —
+that notice is simply the one field gated on the flag being *false*.
+
+The inbound MCP settings are also the first where one edit has to produce several
+stored keys. The runtime does not read the `*_entries` lists an administrator
+edits; it reads `*_ids` lists, and single-role settings are mirrored into
+`*_roles` arrays. `_apply_inbound_mcp_derivations` reproduces the block the
+server-rendered form runs on save, reusing
+`normalize_inbound_mcp_value_entries`, `inbound_mcp_entry_values`,
+`ensure_inbound_mcp_default_tenant_entry` and
+`normalize_inbound_mcp_single_value` rather than restating the rules, because
+those rules are not a straight mapping:
+
+- the tenant id list only reflects the entries while additional tenants are
+  allowed, and always includes the deployment's own tenant. Restricting tenants
+  changes the id list and keeps the entries, so a partner tenant survives the
+  switch being turned off and on again;
+- the source id list collapses to `["*"]` when all sources are allowed, and the
+  wildcard row is stripped when they are not — otherwise a controlled list would
+  keep accepting every source while the screen showed a restriction.
 
 ### Section conditions
 
@@ -199,19 +229,20 @@ Enable Agents  (enable_semantic_kernel, default off)
 |---|---|
 | `functional_tests/test_v2_admin_agents_parity.py` | Every V1 field name in the Agents pane is claimed by the schema; the gate chain is declared; conditional sections name their gate; tracks which panes remain undeclared |
 | `functional_tests/test_v2_admin_actions_parity.py` | Every V1 field name in the Actions pane is claimed; document action paths, bounds and defaults match the application; the container is rebuilt without losing siblings; mirrors name their owner and the derived one refuses writes |
-| `functional_tests/test_v2_admin_agents_logic.mjs` | Executes group layout, dependency chains, string dependencies, section conditions, nested value reads, field-index ownership, orchestration visibility, and promotion normalization |
-| `functional_tests/test_v2_admin_settings_schema.py` | Field shape, defaults matching the application, key ownership, dependency references including string comparisons |
-| `functional_tests/test_v2_admin_field_renderer_coverage.py` | Both new components have a renderer branch |
+| `functional_tests/test_v2_admin_inbound_mcp_parity.py` | Every V1 field name in the Inbound MCP pane is claimed; every setting is gated on the runtime flag and the notice covers the disabled state; the derivations are executed against the real helpers, loaded through `stubbed_config` |
+| `functional_tests/test_v2_admin_agents_logic.mjs` | Executes group layout, dependency chains, string and flag dependencies, section conditions, nested value reads, field-index ownership, allowlist normalization, orchestration visibility, and promotion normalization |
+| `functional_tests/test_v2_admin_settings_schema.py` | Field shape, defaults matching the application, key ownership, dependency references including string comparisons and runtime flags |
+| `functional_tests/test_v2_admin_field_renderer_coverage.py` | Every field type and every named component has a renderer branch |
 
 ## Known limitations
 
-- The Inbound MCP tab still uses the `enable_*` fallback. Phase 3 declares it;
-  `PANES_PENDING_DECLARATION` in the agents parity test tracks this.
 - Global agent and global action authoring stays in the classic interface until
   phases 4 and 5, so the Global Actions section currently declares no fields.
 - `functions_document_actions` reaches `config.py` and a live Cosmos client, so
   its normalizer is imported lazily and cannot be exercised in a test process.
   The tests read its bounds from source and pin the delegation instead.
+  `functions_mcp_server_config` needs only five constants from `config`, so its
+  real behaviour is exercised through `stubbed_config`.
 - The V1 sidebar cannot render a section whose `condition` is not one of the two
   names hard-coded in its template, so the two Workspace Mode sections do not
   appear as sidebar links there. The V1 cards themselves are unaffected, and V2

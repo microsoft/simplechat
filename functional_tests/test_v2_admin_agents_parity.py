@@ -55,14 +55,13 @@ DECLARED_PANES = {
         "core-plugin-toggles",
         "actions-config",
     ),
+    "inbound-mcp": ("inbound-mcp-configuration",),
 }
 
 # Tabs still served by the fallback scan, with the phase that declares them. The
 # test asserts this is exactly the remainder, so declaring one of them fails here
 # until it is moved into DECLARED_PANES with its sections.
-PANES_PENDING_DECLARATION = {
-    "inbound-mcp": "Phase 3 -- inbound MCP runtime, throttles and allowlists",
-}
+PANES_PENDING_DECLARATION = {}
 
 # Declared sections that hold no settings, because what belongs in them is a
 # table rather than a field. The V2 surface skips a section with nothing in it,

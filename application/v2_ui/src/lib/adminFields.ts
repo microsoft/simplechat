@@ -20,6 +20,7 @@ export type AdminFieldType =
     | 'number'
     | 'image'
     | 'link_list'
+    | 'entry_list'
     | 'component';
 
 export interface AdminFieldOption {
@@ -28,14 +29,20 @@ export interface AdminFieldOption {
 }
 
 /**
- * Shows a field only while another field holds a given value.
+ * Shows a field only while a condition holds.
+ *
+ * `key` names another settings field. `flag` names a server-resolved runtime
+ * flag instead, for a capability that is gated outside the settings document --
+ * Inbound MCP is gated by an App Service application setting, so there is no
+ * settings key to depend on.
  *
  * `equals` is usually a boolean, because most gates are switches. A string
  * compares against a select's value, which is how the Agents page hides its
  * gradient colour unless the two-tone mode is chosen.
  */
 export interface AdminFieldDependency {
-    key: string;
+    key?: string;
+    flag?: string;
     equals: boolean | string;
 }
 
@@ -91,6 +98,10 @@ export interface AdminField {
     managed_by?: string;
     /** Optional sub-heading grouping several fields inside one section. */
     group?: string;
+    /** Entry list fields only: what one row's identifier is called. */
+    value_label?: string;
+    /** Entry list fields only: what to say when the list is empty. */
+    empty_text?: string;
     /** Group fields only: start the group closed. Rarely-changed settings. */
     collapsed?: boolean;
     /** One condition, or a chain that must all hold. */
@@ -271,14 +282,23 @@ function readDependencyValue(
  *
  * Each condition is judged against the unsaved draft first, so a field appears
  * or disappears as soon as its gate is flipped rather than only after a save.
+ * A condition naming a `flag` is answered from the server's runtime flags, which
+ * an administrator cannot change from this page at all.
  */
 export function isFieldVisible(
     field: AdminField,
     settings: Json,
     draft: Json,
     fieldsByKey?: Map<string, AdminField>,
+    runtimeFlags?: Record<string, boolean>,
 ): boolean {
     return fieldDependencies(field).every((dependency) => {
+        if (dependency.flag) {
+            return Boolean(runtimeFlags?.[dependency.flag]) === dependency.equals;
+        }
+        if (!dependency.key) {
+            return true;
+        }
         const current = readDependencyValue(dependency.key, settings, draft, fieldsByKey);
         return typeof dependency.equals === 'string'
             ? asString(current) === dependency.equals
