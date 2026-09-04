@@ -2,6 +2,59 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.011)**
+
+#### New Features
+
+*   **Configurable DLP Control Plane**
+    *   Added admin-configurable regex DLP rules with bounded regex execution, optional Luhn validation, and keyword-proximity confidence shaping.
+    *   Added web-search egress enforcement and upload-ingestion enforcement so administrators can monitor, redact, or block configured sensitive content before it leaves SimpleChat or enters embeddings/search indexing.
+    *   Kept default rules intentionally narrow with U.S. SSN and Luhn-valid credit-card detection only.
+    *   (Ref: configurable DLP rules, web-search DLP egress, upload DLP ingestion, Admin Settings DLP controls)
+
+*   **External Presidio DLP Endpoint**
+    *   Added optional support for a Presidio Analyzer-compatible endpoint as an advanced DLP engine without embedding Presidio packages in the SimpleChat app image.
+    *   Added server-side endpoint calls with configurable timeout, score threshold, entity allowlist, and API-key header name sourced from an environment variable.
+    *   Reused existing DLP monitor, redact, block, counts-only telemetry, upload, and web-search enforcement behavior.
+    *   Documented local Docker smoke testing and production private-network plus API-key deployment patterns.
+    *   (Ref: external Presidio DLP endpoint, Admin Settings DLP controls, Presidio deployment how-to)
+
+#### Bug Fixes
+
+*   **Presidio DLP Endpoint No Longer Depends On A Private urllib3 Symbol**
+    *   The Presidio Analyzer adapter imported `urllib3.util.timeout._DEFAULT_TIMEOUT`, a private symbol that only exists on urllib3 2.x, and referenced `NameResolutionError`, which was also added in 2.x. `urllib3` is not pinned and is resolved through `requests`, so on urllib3 1.x this raised `ImportError` during application start-up, because document processing imports the DLP module.
+    *   The adapter now resolves the sentinel through urllib3's public `Timeout.DEFAULT_TIMEOUT`, which is the same object as the 2.x private sentinel and as `socket._GLOBAL_DEFAULT_TIMEOUT` on 1.x, so connect-timeout behavior on the DLP request path is unchanged. DNS failures raise `NameResolutionError` where available and its base `NewConnectionError` otherwise.
+    *   (Ref: `functions_dlp_presidio.py`, `test_dlp_presidio_urllib3_compatibility.py`)
+
+*   **Presidio Endpoint Authentication Guardrails**
+    *   Requires non-loopback Presidio Analyzer endpoints to resolve the configured env-backed auth secret before SimpleChat sends raw scan text.
+    *   Keeps unauthenticated Presidio calls limited to localhost development endpoints.
+    *   Validates custom Presidio auth header names and rejects reserved HTTP headers such as `Host`, `Content-Type`, and `Connection`.
+    *   (Ref: Presidio endpoint auth headers, DLP admin settings, Presidio deployment guidance)
+
+*   **Presidio Endpoint Runtime Safety Hardening**
+    *   Rejects Presidio Analyzer hostnames whose DNS answers include loopback, link-local, private, or otherwise non-global addresses unless the exact endpoint host is explicitly allowlisted.
+    *   Normalizes untrusted Presidio entity labels to safe uppercase identifiers before redaction output, match counts, match summaries, and telemetry are built.
+    *   Strips Presidio endpoint and private-host settings from non-admin settings sanitization output.
+    *   (Ref: Presidio endpoint DNS validation, DLP entity label normalization, user settings sanitization)
+
+*   **Presidio Endpoint Configuration Hardening**
+    *   Rejects Presidio Analyzer endpoint URLs with userinfo, fragments, credential-like query parameters, or private/link-local/loopback hosts that are not explicitly allowlisted.
+    *   Adds an admin-configurable `Allowed Private Hosts` allowlist for private Presidio deployments and preserves only validated endpoint settings.
+    *   Disables redirects for Presidio analyzer calls and treats redirect responses as scanner errors under the existing fail-open/fail-closed policy.
+    *   Restricts Presidio auth secret environment variable names to blank, `PRESIDIO_DLP_API_KEY`, or the `DLP_PRESIDIO_` namespace.
+    *   (Ref: Presidio endpoint URL validation, Admin Settings DLP controls, Presidio deployment how-to)
+
+*   **DLP Egress Bypass Closure**
+    *   Applies DLP checks to Deep Research planned web-search queries immediately before outbound search.
+    *   Prevents batch upload indexing from reintroducing raw vision text after DLP redaction.
+    *   (Ref: Deep Research web-search DLP, upload DLP indexing redaction)
+
+*   **Upload DLP Enforcement Edge Cases**
+    *   Treats fail-on-match, fail-closed scanner errors, and truncated scans as enforced upload DLP paths when deciding whether content may be indexed or retained for enhanced citations.
+    *   Sanitizes selected upload metadata before prompts, Search payloads, Cosmos updates, and logs while preserving counts-only DLP telemetry summaries.
+    *   (Ref: upload DLP redaction, scanner failure handling, enhanced-citation safety)
+
 ### **(v0.261.009)**
 
 #### Bug Fixes

@@ -170,6 +170,183 @@
                     </div>
                 </div>
 
+                <div class="card p-3 mb-3" id="dlp-section">
+                    <h5>
+                        <i class="bi bi-shield-lock me-2"></i>Data Loss Prevention
+                    </h5>
+                    <p class="text-muted">Configure DLP controls for upload ingestion and web-search egress.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_dlp_control_plane"
+                            name="enable_dlp_control_plane"
+                            {% if settings.enable_dlp_control_plane %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_dlp_control_plane">
+                            Enable DLP Control Plane
+                        </label>
+                    </div>
+
+                    <div id="dlp_control_plane_settings" class="{% if not settings.enable_dlp_control_plane %}d-none{% endif %}">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <label for="dlp_default_engine" class="form-label">Default Engine</label>
+                                <select class="form-select" id="dlp_default_engine" name="dlp_default_engine">
+                                    <option value="regex" {% if settings.dlp_default_engine == 'regex' %}selected{% endif %}>Regex structured identifier scan</option>
+                                    <option value="presidio_endpoint" {% if settings.dlp_default_engine == 'presidio_endpoint' %}selected{% endif %}>External Presidio Analyzer endpoint</option>
+                                </select>
+                                <div class="form-text">Use regex for lightweight built-in scanning or Presidio for an admin-managed external analyzer.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="dlp_max_scan_chars" class="form-label">Maximum Scan Characters</label>
+                                <input type="number" min="1000" class="form-control" id="dlp_max_scan_chars" name="dlp_max_scan_chars" value="{{ settings.dlp_max_scan_chars or 200000 }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="dlp_review_destination" class="form-label">Review Events</label>
+                                <select class="form-select" id="dlp_review_destination" name="dlp_review_destination">
+                                    <option value="none" {% if settings.dlp_review_destination == 'none' %}selected{% endif %}>Do not write review records</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="border-top pt-3 mt-3 {% if settings.dlp_default_engine != 'presidio_endpoint' %}d-none{% endif %}" id="dlp_presidio_endpoint_settings">
+                            <h6 class="mb-2">Presidio Analyzer Endpoint</h6>
+                            <div class="alert alert-warning py-2 mb-3" role="alert">
+                                Use a private Presidio endpoint with an env-backed API key in production. Localhost endpoints may run without auth for local testing only.
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="dlp_presidio_analyzer_endpoint" class="form-label">Analyzer Endpoint</label>
+                                    <input type="url" class="form-control" id="dlp_presidio_analyzer_endpoint" name="dlp_presidio_analyzer_endpoint" value="{{ settings.dlp_presidio_analyzer_endpoint or '' }}" placeholder="https://presidio.internal/analyze">
+                                    <div class="form-text">Do not include credentials, fragments, or API keys in the URL.</div>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="dlp_presidio_allowed_private_hosts" class="form-label">Allowed Private Hosts</label>
+                                    <textarea class="form-control" id="dlp_presidio_allowed_private_hosts" name="dlp_presidio_allowed_private_hosts" rows="2" placeholder="presidio.internal, 10.1.2.3">{{ settings.dlp_presidio_allowed_private_hosts or '' }}</textarea>
+                                    <div class="form-text">Comma- or newline-separated hostnames/IPs for private, loopback, or link-local Presidio endpoints.</div>
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-1">
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_auth_header_name" class="form-label">Auth Header</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_auth_header_name" name="dlp_presidio_auth_header_name" value="{{ settings.dlp_presidio_auth_header_name or 'X-DLP-API-Key' }}">
+                                    <div class="form-text">Use a custom auth header such as X-DLP-API-Key; connection and content headers are rejected.</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_auth_secret_env_var" class="form-label">Secret Env Var</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_auth_secret_env_var" name="dlp_presidio_auth_secret_env_var" value="{{ settings.dlp_presidio_auth_secret_env_var or 'PRESIDIO_DLP_API_KEY' }}">
+                                    <div class="form-text">Use PRESIDIO_DLP_API_KEY or a DLP_PRESIDIO_ env var. Store the value in App Service settings or Key Vault.</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_timeout_seconds" class="form-label">Timeout Seconds</label>
+                                    <input type="number" min="1" max="30" class="form-control" id="dlp_presidio_timeout_seconds" name="dlp_presidio_timeout_seconds" value="{{ settings.dlp_presidio_timeout_seconds or 5 }}">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="dlp_presidio_score_threshold" class="form-label">Score Threshold</label>
+                                    <input type="number" min="0" max="1" step="0.05" class="form-control" id="dlp_presidio_score_threshold" name="dlp_presidio_score_threshold" value="{{ settings.dlp_presidio_score_threshold or 0.5 }}">
+                                </div>
+                                <div class="col-md-2">
+                                    <label for="dlp_presidio_language" class="form-label">Language</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_language" name="dlp_presidio_language" value="{{ settings.dlp_presidio_language or 'en' }}">
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="dlp_presidio_entities" class="form-label">Entities</label>
+                                    <input type="text" class="form-control" id="dlp_presidio_entities" name="dlp_presidio_entities" value="{{ (settings.dlp_presidio_entities or ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']) | join(', ') }}">
+                                    <div class="form-text">Comma-separated Presidio entity names such as CREDIT_CARD, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN, PERSON, LOCATION.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <label for="dlp_audit_level" class="form-label">Audit Level</label>
+                                <select class="form-select" id="dlp_audit_level" name="dlp_audit_level">
+                                    <option value="counts_only" selected>Counts only</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mt-4 pt-2">
+                                    <input type="checkbox" class="form-check-input" id="dlp_enable_structured_telemetry" name="dlp_enable_structured_telemetry" {% if settings.dlp_enable_structured_telemetry %}checked{% endif %}>
+                                    <label class="form-check-label" for="dlp_enable_structured_telemetry">Emit Structured DLP Telemetry</label>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="form-check form-switch mt-4 pt-2">
+                                    <input type="checkbox" class="form-check-input" id="dlp_fail_closed_on_scanner_error" name="dlp_fail_closed_on_scanner_error" {% if settings.dlp_fail_closed_on_scanner_error %}checked{% endif %}>
+                                    <label class="form-check-label" for="dlp_fail_closed_on_scanner_error">Fail Closed On Scanner Error</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input type="checkbox" class="form-check-input" id="dlp_telemetry_sample_allow_events" name="dlp_telemetry_sample_allow_events" {% if settings.dlp_telemetry_sample_allow_events %}checked{% endif %}>
+                            <label class="form-check-label" for="dlp_telemetry_sample_allow_events">Sample Allow Events</label>
+                        </div>
+
+                        <div class="border-top pt-3 mt-3" id="dlp_regex_rules_settings">
+                            <h6 class="mb-3">Custom Regex Rules</h6>
+                            <label for="dlp_regex_rules_json" class="form-label">Regex rule JSON</label>
+                            <textarea
+                                class="form-control font-monospace"
+                                id="dlp_regex_rules_json"
+                                name="dlp_regex_rules_json"
+                                rows="12"
+                                spellcheck="false"
+                            >{{ dlp_regex_rules_json }}</textarea>
+                            <div class="form-text">
+                                Rules support surfaces, Luhn validation, and keyword proximity confidence. Defaults include U.S. SSN and Luhn-valid credit card detection.
+                            </div>
+                        </div>
+
+                        <div class="border-top pt-3 mt-3" id="web_search_dlp_settings">
+                            <h6 class="mb-3">Web Search DLP</h6>
+                            <div class="form-check form-switch mb-3">
+                                <input type="checkbox" class="form-check-input" id="enable_web_search_dlp" name="enable_web_search_dlp" {% if settings.enable_web_search_dlp %}checked{% endif %}>
+                                <label class="form-check-label" for="enable_web_search_dlp">Enable Web Search DLP</label>
+                            </div>
+                            <div id="web_search_dlp_mode_settings" class="{% if not settings.enable_web_search_dlp %}d-none{% endif %}">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label for="web_search_dlp_mode" class="form-label">Mode</label>
+                                        <select class="form-select" id="web_search_dlp_mode" name="web_search_dlp_mode">
+                                            <option value="monitor" {% if settings.web_search_dlp_mode == 'monitor' %}selected{% endif %}>Monitor</option>
+                                            <option value="redact" {% if settings.web_search_dlp_mode == 'redact' %}selected{% endif %}>Redact</option>
+                                            <option value="block" {% if settings.web_search_dlp_mode == 'block' %}selected{% endif %}>Block</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-top pt-3 mt-3" id="upload_dlp_settings">
+                            <h6 class="mb-3">Upload DLP</h6>
+                            <div class="form-check form-switch mb-3">
+                                <input type="checkbox" class="form-check-input" id="enable_upload_dlp" name="enable_upload_dlp" {% if settings.enable_upload_dlp %}checked{% endif %}>
+                                <label class="form-check-label" for="enable_upload_dlp">Enable Upload DLP</label>
+                            </div>
+                            <div id="upload_dlp_mode_settings" class="{% if not settings.enable_upload_dlp %}d-none{% endif %}">
+                                <div class="row g-3">
+                                    <div class="col-md-4">
+                                        <label for="upload_dlp_mode" class="form-label">Mode</label>
+                                        <select class="form-select" id="upload_dlp_mode" name="upload_dlp_mode">
+                                            <option value="monitor" {% if settings.upload_dlp_mode == 'monitor' %}selected{% endif %}>Monitor</option>
+                                            <option value="redact" {% if settings.upload_dlp_mode == 'redact' %}selected{% endif %}>Redact</option>
+                                            <option value="block" {% if settings.upload_dlp_mode == 'block' %}selected{% endif %}>Block</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <div class="form-check mt-4 pt-2">
+                                            <input type="checkbox" class="form-check-input" id="upload_dlp_fail_upload_on_match" name="upload_dlp_fail_upload_on_match" {% if settings.upload_dlp_fail_upload_on_match %}checked{% endif %}>
+                                            <label class="form-check-label" for="upload_dlp_fail_upload_on_match">Fail upload on match</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
 
 
 

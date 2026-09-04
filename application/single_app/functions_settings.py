@@ -10,6 +10,7 @@ from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
+from functions_dlp_rules import get_default_dlp_regex_rules
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
@@ -1693,6 +1694,37 @@ def get_settings(use_cosmos=False, include_source=False):
         'azure_apim_content_safety_endpoint': '',
         'azure_apim_content_safety_subscription_key': '',
 
+        # Data Loss Prevention (DLP) Settings
+        'enable_dlp_control_plane': False,
+        'dlp_default_engine': 'regex',
+        'dlp_regex_rules': get_default_dlp_regex_rules(),
+        'dlp_max_scan_chars': 200000,
+        'dlp_fail_closed_on_scanner_error': True,
+        'dlp_audit_level': 'counts_only',
+        'dlp_enable_structured_telemetry': True,
+        'dlp_telemetry_sample_allow_events': False,
+        'dlp_review_destination': 'none',
+        'dlp_presidio_analyzer_endpoint': '',
+        'dlp_presidio_allowed_private_hosts': '',
+        'dlp_presidio_auth_header_name': 'X-DLP-API-Key',
+        'dlp_presidio_auth_secret_env_var': 'PRESIDIO_DLP_API_KEY',
+        'dlp_presidio_timeout_seconds': 5,
+        'dlp_presidio_score_threshold': 0.5,
+        'dlp_presidio_language': 'en',
+        'dlp_presidio_entities': [
+            'CREDIT_CARD',
+            'EMAIL_ADDRESS',
+            'PHONE_NUMBER',
+            'US_SSN',
+            'PERSON',
+            'LOCATION',
+        ],
+        'enable_web_search_dlp': False,
+        'web_search_dlp_mode': 'monitor',
+        'enable_upload_dlp': False,
+        'upload_dlp_mode': 'monitor',
+        'upload_dlp_fail_upload_on_match': False,
+
         # User Feedback / Conversation Archiving
         'enable_user_feedback': True,
         'enable_desktop_notifications': False,
@@ -3246,12 +3278,20 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         return full_settings
 
     sensitive_terms = ("key", "secret", "password", "connection", "base64", "storage_account_url")
+    sensitive_setting_names = {
+        "dlp_presidio_analyzer_endpoint",
+        "dlp_presidio_allowed_private_hosts",
+        "dlp_presidio_auth_header_name",
+        "dlp_presidio_auth_secret_env_var",
+    }
     sanitized = {}
 
     for k, v in full_settings.items():
         if k == 'support_feedback_recipient_email':
             continue
         if k == 'agents_page_promoted_popular_agents':
+            continue
+        if k in sensitive_setting_names:
             continue
         if k in TABULAR_GENERATION_BACKEND_SETTING_KEYS:
             continue

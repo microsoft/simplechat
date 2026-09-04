@@ -20,6 +20,12 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.009 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.007 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.006 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.005 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.004 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.003 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.002 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.001 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
@@ -70,6 +76,113 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.011)**
+
+#### New Features
+
+*   **Configurable DLP Control Plane**
+    *   Added admin-configurable regex DLP rules with bounded regex execution, optional Luhn validation, and keyword-proximity confidence shaping.
+    *   Added web-search egress enforcement and upload-ingestion enforcement so administrators can monitor, redact, or block configured sensitive content before it leaves SimpleChat or enters embeddings/search indexing.
+    *   Kept default rules intentionally narrow with U.S. SSN and Luhn-valid credit-card detection only.
+    *   (Ref: configurable DLP rules, web-search DLP egress, upload DLP ingestion, Admin Settings DLP controls)
+
+*   **External Presidio DLP Endpoint**
+    *   Added optional support for a Presidio Analyzer-compatible endpoint as an advanced DLP engine without embedding Presidio packages in the SimpleChat app image.
+    *   Added server-side endpoint calls with configurable timeout, score threshold, entity allowlist, and API-key header name sourced from an environment variable.
+    *   Reused existing DLP monitor, redact, block, counts-only telemetry, upload, and web-search enforcement behavior.
+    *   Documented local Docker smoke testing and production private-network plus API-key deployment patterns.
+    *   (Ref: external Presidio DLP endpoint, Admin Settings DLP controls, Presidio deployment how-to)
+
+#### Bug Fixes
+
+*   **Presidio DLP Endpoint No Longer Depends On A Private urllib3 Symbol**
+    *   The Presidio Analyzer adapter imported `urllib3.util.timeout._DEFAULT_TIMEOUT`, a private symbol that only exists on urllib3 2.x, and referenced `NameResolutionError`, which was also added in 2.x. `urllib3` is not pinned and is resolved through `requests`, so on urllib3 1.x this raised `ImportError` during application start-up, because document processing imports the DLP module.
+    *   The adapter now resolves the sentinel through urllib3's public `Timeout.DEFAULT_TIMEOUT`, which is the same object as the 2.x private sentinel and as `socket._GLOBAL_DEFAULT_TIMEOUT` on 1.x, so connect-timeout behavior on the DLP request path is unchanged. DNS failures raise `NameResolutionError` where available and its base `NewConnectionError` otherwise.
+    *   (Ref: `functions_dlp_presidio.py`, `test_dlp_presidio_urllib3_compatibility.py`)
+
+*   **Presidio Endpoint Authentication Guardrails**
+    *   Requires non-loopback Presidio Analyzer endpoints to resolve the configured env-backed auth secret before SimpleChat sends raw scan text.
+    *   Keeps unauthenticated Presidio calls limited to localhost development endpoints.
+    *   Validates custom Presidio auth header names and rejects reserved HTTP headers such as `Host`, `Content-Type`, and `Connection`.
+    *   (Ref: Presidio endpoint auth headers, DLP admin settings, Presidio deployment guidance)
+
+*   **Presidio Endpoint Runtime Safety Hardening**
+    *   Rejects Presidio Analyzer hostnames whose DNS answers include loopback, link-local, private, or otherwise non-global addresses unless the exact endpoint host is explicitly allowlisted.
+    *   Normalizes untrusted Presidio entity labels to safe uppercase identifiers before redaction output, match counts, match summaries, and telemetry are built.
+    *   Strips Presidio endpoint and private-host settings from non-admin settings sanitization output.
+    *   (Ref: Presidio endpoint DNS validation, DLP entity label normalization, user settings sanitization)
+
+*   **Presidio Endpoint Configuration Hardening**
+    *   Rejects Presidio Analyzer endpoint URLs with userinfo, fragments, credential-like query parameters, or private/link-local/loopback hosts that are not explicitly allowlisted.
+    *   Adds an admin-configurable `Allowed Private Hosts` allowlist for private Presidio deployments and preserves only validated endpoint settings.
+    *   Disables redirects for Presidio analyzer calls and treats redirect responses as scanner errors under the existing fail-open/fail-closed policy.
+    *   Restricts Presidio auth secret environment variable names to blank, `PRESIDIO_DLP_API_KEY`, or the `DLP_PRESIDIO_` namespace.
+    *   (Ref: Presidio endpoint URL validation, Admin Settings DLP controls, Presidio deployment how-to)
+
+*   **DLP Egress Bypass Closure**
+    *   Applies DLP checks to Deep Research planned web-search queries immediately before outbound search.
+    *   Prevents batch upload indexing from reintroducing raw vision text after DLP redaction.
+    *   (Ref: Deep Research web-search DLP, upload DLP indexing redaction)
+
+*   **Upload DLP Enforcement Edge Cases**
+    *   Treats fail-on-match, fail-closed scanner errors, and truncated scans as enforced upload DLP paths when deciding whether content may be indexed or retained for enhanced citations.
+    *   Sanitizes selected upload metadata before prompts, Search payloads, Cosmos updates, and logs while preserving counts-only DLP telemetry summaries.
+    *   (Ref: upload DLP redaction, scanner failure handling, enhanced-citation safety)
+
+### **(v0.261.009)**
+
+#### Bug Fixes
+
+*   **Shared Workspace File Approvals Are Visible To Approvers Again**
+    *   Fixed document access index candidate selection for workspace scope projections so pending-approval records are considered alongside already granted records.
+    *   Shared files staged for approval are intentionally not granted yet, so filtering only on `access_granted = true` could hide those files from approval experiences even though they were eligible for review.
+    *   The projection query now includes `approval_status = not_approved` rows while still requiring current-version projection records.
+    *   (Ref: `functions_document_access_index.py`, [Workspace Shared File Approval Visibility Fix](../fixes/WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md))
+
+*   **Distroless Runtime Copy No Longer Fails On `/usr/lib64` Overlay Conflicts**
+    *   Fixed Docker BuildKit failures where `COPY --from=builder /odbc-runtime/ /` or `COPY --from=builder /playwright-runtime/ /` could abort with `cannot copy to non-directory ... /usr/lib64` when the distroless base exposes `/usr/lib64` as a non-directory entry.
+    *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
+    *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
+    *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](../fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
+
+### **(v0.261.007)**
+
+#### Bug Fixes
+
+*   **Markdown Retry Helper Return Contract Clarified**
+    *   Added an explicit defensive exception at the end of the Markdown `OrderedDict` retry helper so static analysis no longer sees a possible implicit `None` return.
+    *   Runtime behavior is unchanged for normal success and retry-exhaustion paths.
+    *   (Ref: `functions_documents.py`, [Markdown Retry Return Contract Fix](../fixes/MARKDOWN_RETRY_RETURN_CONTRACT_FIX.md))
+
+### **(v0.261.006)**
+
+#### Bug Fixes
+
+*   **Markdown Uploads Retry Transient OrderedDict Parser Failures**
+    *   Markdown document processing now retries the known transient `OrderedDict mutated during iteration` parser failure before marking a document failed.
+    *   The retry is limited to this specific Markdown failure signature, so unrelated parsing, validation, or service errors still fail normally with their original error.
+    *   (Ref: Markdown upload processing, `functions_documents.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](../fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+
+### **(v0.261.005)**
+
+#### User Interface Enhancements
+
+*   **Workspace Upload Progress Now Separates Request Status From Document Processing Status**
+    *   The temporary upload summary no longer labels unconfirmed browser upload requests as final document failures. This avoids misleading summaries such as `Uploaded 77/204, Failed: 127` when the document list later shows that most documents were queued and processed successfully.
+    *   Personal, group, and public workspace uploads now use `Queued` for confirmed upload requests and direct users to the refreshed document list for final processing status.
+    *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](../fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
+
+### **(v0.261.004)**
+
+#### Bug Fixes
+
+*   **Large Workspace Uploads No Longer Fail On Search Write Gate Contention**
+    *   Fixed partial failures when uploading many small Markdown, JSON, or YAML files to personal, group, or public workspaces at once. Document processing could fail with a message that the Data Management Search write gate changed too often to reserve a write slot.
+    *   The shared write gate now waits within the existing request timeout budget, briefly backs off after transient Cosmos ETag conflicts, and serializes Search writes inside each worker process. This prevents local upload threads from stampeding the same gate document while preserving the migration freeze protection for Azure AI Search writes.
+    *   Markdown processing now batches its chunk embeddings and Search upload instead of reserving the gate once per chunk, which reduces contention and avoids the intermittent `OrderedDict mutated during iteration` failures seen during concurrent Markdown ingestion.
+    *   Added regression coverage for repeated transient gate conflicts, local worker serialization, and Markdown use of the batch chunk writer.
+    *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](../fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
 
 ### **(v0.261.003)**
 
@@ -137,3 +250,17 @@ This page includes the latest release notes inline. Older release sections are s
     *   Page and slide counts are left uncapped here, since how much text a page holds is not known until extraction runs. They are bounded when the chunk is indexed instead.
     *   No shipping default changed. Only custom overrides that could never have been indexed are affected.
     *   (Ref: `get_chunk_size_cap`, `get_chunk_size_config`, Document Extraction settings, `admin_settings.js`)
+
+*   **Logout No Longer Redirects To A Missing Easy Auth Endpoint**
+    *   Logout could redirect to `/.auth/logout?post_logout_redirect_uri=%2Flogin` and return a 404 on Azure App Service deployments that were not actually serving App Service Easy Auth. This affected production deployments as well as development ones.
+    *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
+    *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
+    *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
+    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](../fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
+
+#### New Features
+
+*   **Opt-Out For App Service Easy Auth Logout**
+    *   Added the `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT` environment variable for deployments where Easy Auth is genuinely active but the platform `/.auth/logout` endpoint is not reachable on the public host, such as when a custom domain or gateway does not route `/.auth/*` to the App Service origin.
+    *   Setting it to `true` keeps logout on the local path instead of redirecting to the platform endpoint. Logout routing decisions are now also traced through debug logging, so `FLASK_DEBUG=1` shows which path was taken and why.
+    *   (Ref: `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT`, `config.py`, `example.env`, [Running SimpleChat Locally](../running_simplechat_locally.md))

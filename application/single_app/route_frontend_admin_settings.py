@@ -2,6 +2,7 @@
 
 import os
 import re
+import secrets
 
 from config import *
 from functions_documents import *
@@ -41,6 +42,15 @@ from functions_activity_logging import log_web_search_consent_acceptance, log_ge
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
+from functions_dlp_rules import get_default_dlp_regex_rules, validate_dlp_regex_rules
+from functions_dlp_presidio import (
+    PresidioEndpointConfigurationError,
+    DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR,
+    normalize_presidio_auth_header_name,
+    normalize_presidio_allowed_private_hosts,
+    normalize_presidio_secret_env_var_name,
+    validate_presidio_endpoint_url,
+)
 from functions_model_capabilities import is_vision_capable_model
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
@@ -88,6 +98,7 @@ AGENTS_PAGE_DEFAULTS = {
     'agents_page_promoted_popular_tag_label': AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT,
 }
 HEX_COLOR_PATTERN = re.compile(r'^#[0-9a-fA-F]{6}$')
+ADMIN_SETTINGS_CSRF_SESSION_KEY = "admin_settings_csrf_token"
 AZURE_SUBSCRIPTION_ID_PATTERN = re.compile(
     r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
 )
@@ -97,9 +108,33 @@ AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
 }
 
 
+def _new_admin_settings_csrf_token():
+    token = secrets.token_urlsafe(32)
+    session[ADMIN_SETTINGS_CSRF_SESSION_KEY] = token
+    return token
+
+
+def _get_admin_settings_csrf_token():
+    token = session.get(ADMIN_SETTINGS_CSRF_SESSION_KEY)
+    if not token:
+        token = _new_admin_settings_csrf_token()
+    return token
+
+
+def _validate_admin_settings_csrf_token(form_data):
+    submitted_token = str(form_data.get("admin_settings_csrf_token") or "")
+    expected_token = str(session.get(ADMIN_SETTINGS_CSRF_SESSION_KEY) or "")
+    return bool(
+        submitted_token
+        and expected_token
+        and secrets.compare_digest(submitted_token, expected_token)
+    )
+
+
 def _is_update_version_newer(latest_version, current_version):
     """Return True only when the discovered release version is newer than the running version."""
     return compare_versions(latest_version, current_version) == 1
+
 
 
 def allowed_file(filename, allowed_extensions):
@@ -995,6 +1030,8 @@ def register_route_frontend_admin_settings(bp):
                 source_review_runtime_capabilities,
             )
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
+            dlp_regex_rules_for_template, _ = validate_dlp_regex_rules(settings.get('dlp_regex_rules'))
+            dlp_regex_rules_json = json.dumps(dlp_regex_rules_for_template, indent=2)
             settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
 
@@ -1033,6 +1070,8 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
                 inbound_mcp_tools=get_inbound_mcp_tool_registry(),
+                admin_settings_csrf_token=_get_admin_settings_csrf_token(),
+                dlp_regex_rules_json=dlp_regex_rules_json,
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
                 # embedding_deployments=embedding_deployments,
@@ -1042,6 +1081,11 @@ def register_route_frontend_admin_settings(bp):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+
+            if not _validate_admin_settings_csrf_token(form_data):
+                _new_admin_settings_csrf_token()
+                flash("Admin settings request could not be verified. Please reload the page and try again.", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             def admin_secret(field_name, form_field_name=None):
                 submitted_value = form_data.get(form_field_name or field_name, '').strip()
@@ -1261,6 +1305,138 @@ def register_route_frontend_admin_settings(bp):
                     consent_text=web_search_consent_message,
                     source='admin_settings'
                 )
+
+            dlp_max_scan_chars, _ = safe_int_with_source(
+                form_data.get('dlp_max_scan_chars'),
+                settings.get('dlp_max_scan_chars', 200000),
+                200000
+            )
+            dlp_max_scan_chars = max(1000, dlp_max_scan_chars)
+            dlp_review_destination = form_data.get('dlp_review_destination', 'none')
+            if dlp_review_destination not in ('none',):
+                dlp_review_destination = 'none'
+            dlp_default_engine = form_data.get('dlp_default_engine', settings.get('dlp_default_engine', 'regex'))
+            if dlp_default_engine not in ('regex', 'presidio_endpoint'):
+                dlp_default_engine = 'regex'
+            dlp_presidio_allowed_private_hosts = normalize_presidio_allowed_private_hosts(
+                form_data.get(
+                    'dlp_presidio_allowed_private_hosts',
+                    settings.get('dlp_presidio_allowed_private_hosts', '')
+                )
+            )
+            submitted_dlp_presidio_analyzer_endpoint = form_data.get(
+                'dlp_presidio_analyzer_endpoint',
+                settings.get('dlp_presidio_analyzer_endpoint', '')
+            ).strip()
+            dlp_presidio_analyzer_endpoint = submitted_dlp_presidio_analyzer_endpoint
+            if dlp_presidio_analyzer_endpoint:
+                try:
+                    validate_presidio_endpoint_url(
+                        dlp_presidio_analyzer_endpoint,
+                        dlp_presidio_allowed_private_hosts,
+                    )
+                except PresidioEndpointConfigurationError as exc:
+                    existing_dlp_presidio_analyzer_endpoint = str(
+                        settings.get('dlp_presidio_analyzer_endpoint', '')
+                    ).strip()
+                    dlp_presidio_analyzer_endpoint = ''
+                    if existing_dlp_presidio_analyzer_endpoint:
+                        try:
+                            validate_presidio_endpoint_url(
+                                existing_dlp_presidio_analyzer_endpoint,
+                                dlp_presidio_allowed_private_hosts,
+                            )
+                            dlp_presidio_analyzer_endpoint = existing_dlp_presidio_analyzer_endpoint
+                        except PresidioEndpointConfigurationError:
+                            dlp_presidio_analyzer_endpoint = ''
+                    flash(f"Presidio analyzer endpoint was not saved: {exc}", "warning")
+            submitted_dlp_presidio_auth_header_name = form_data.get(
+                'dlp_presidio_auth_header_name',
+                settings.get('dlp_presidio_auth_header_name', 'X-DLP-API-Key')
+            ).strip()
+            dlp_presidio_auth_header_name = normalize_presidio_auth_header_name(
+                submitted_dlp_presidio_auth_header_name
+            )
+            if not dlp_presidio_auth_header_name:
+                dlp_presidio_auth_header_name = normalize_presidio_auth_header_name(
+                    settings.get('dlp_presidio_auth_header_name', 'X-DLP-API-Key')
+                ) or 'X-DLP-API-Key'
+                flash(
+                    "Presidio auth header was not saved. Use a valid custom header such as X-DLP-API-Key.",
+                    "warning"
+                )
+            submitted_dlp_presidio_auth_secret_env_var = form_data.get(
+                'dlp_presidio_auth_secret_env_var',
+                settings.get('dlp_presidio_auth_secret_env_var', DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR)
+            ).strip()
+            dlp_presidio_auth_secret_env_var = normalize_presidio_secret_env_var_name(
+                submitted_dlp_presidio_auth_secret_env_var
+            )
+            if submitted_dlp_presidio_auth_secret_env_var and not dlp_presidio_auth_secret_env_var:
+                dlp_presidio_auth_secret_env_var = normalize_presidio_secret_env_var_name(
+                    settings.get('dlp_presidio_auth_secret_env_var', DEFAULT_PRESIDIO_AUTH_SECRET_ENV_VAR)
+                )
+                flash(
+                    "Presidio auth secret env var was not saved. Use PRESIDIO_DLP_API_KEY or a DLP_PRESIDIO_ name.",
+                    "warning"
+                )
+            dlp_presidio_timeout_seconds, _ = safe_int_with_source(
+                form_data.get('dlp_presidio_timeout_seconds'),
+                settings.get('dlp_presidio_timeout_seconds', 5),
+                5
+            )
+            dlp_presidio_timeout_seconds = max(1, min(30, dlp_presidio_timeout_seconds))
+            try:
+                dlp_presidio_score_threshold = float(
+                    form_data.get(
+                        'dlp_presidio_score_threshold',
+                        settings.get('dlp_presidio_score_threshold', 0.5)
+                    )
+                )
+            except (TypeError, ValueError):
+                dlp_presidio_score_threshold = 0.5
+            dlp_presidio_score_threshold = max(0.0, min(1.0, dlp_presidio_score_threshold))
+            dlp_presidio_language = form_data.get(
+                'dlp_presidio_language',
+                settings.get('dlp_presidio_language', 'en')
+            ).strip() or 'en'
+            existing_dlp_presidio_entities = settings.get('dlp_presidio_entities') or [
+                'CREDIT_CARD',
+                'EMAIL_ADDRESS',
+                'PHONE_NUMBER',
+                'US_SSN',
+            ]
+            dlp_presidio_entities_raw = form_data.get(
+                'dlp_presidio_entities',
+                ','.join(existing_dlp_presidio_entities)
+            )
+            dlp_presidio_entities = [
+                item.strip().upper()
+                for item in dlp_presidio_entities_raw.split(',')
+                if item.strip()
+            ]
+            if not dlp_presidio_entities:
+                dlp_presidio_entities = ['CREDIT_CARD', 'EMAIL_ADDRESS', 'PHONE_NUMBER', 'US_SSN']
+            web_search_dlp_mode = form_data.get('web_search_dlp_mode', 'monitor')
+            if web_search_dlp_mode not in ('monitor', 'redact', 'block'):
+                web_search_dlp_mode = 'monitor'
+            upload_dlp_mode = form_data.get('upload_dlp_mode', 'monitor')
+            if upload_dlp_mode not in ('monitor', 'redact', 'block'):
+                upload_dlp_mode = 'monitor'
+
+            raw_dlp_regex_rules = form_data.get('dlp_regex_rules_json', '').strip()
+            try:
+                submitted_dlp_regex_rules = json.loads(raw_dlp_regex_rules) if raw_dlp_regex_rules else get_default_dlp_regex_rules()
+            except json.JSONDecodeError:
+                _new_admin_settings_csrf_token()
+                flash("DLP regex rules must be valid JSON.", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
+            normalized_dlp_regex_rules, dlp_regex_rule_errors = validate_dlp_regex_rules(submitted_dlp_regex_rules)
+            if dlp_regex_rule_errors:
+                _new_admin_settings_csrf_token()
+                flash(f"DLP regex rules are invalid: {dlp_regex_rule_errors[0]}", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_source_review_max_bytes = parse_admin_int(
                 settings.get('source_review_max_bytes_per_page'),
@@ -2705,6 +2881,28 @@ def register_route_frontend_admin_settings(bp):
                 'web_search_consent_accepted': web_search_consent_accepted,
                 'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
                 'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
+                'enable_dlp_control_plane': form_data.get('enable_dlp_control_plane') == 'on',
+                'dlp_default_engine': dlp_default_engine,
+                'dlp_regex_rules': normalized_dlp_regex_rules,
+                'dlp_max_scan_chars': dlp_max_scan_chars,
+                'dlp_fail_closed_on_scanner_error': form_data.get('dlp_fail_closed_on_scanner_error') == 'on',
+                'dlp_audit_level': 'counts_only',
+                'dlp_enable_structured_telemetry': form_data.get('dlp_enable_structured_telemetry') == 'on',
+                'dlp_telemetry_sample_allow_events': form_data.get('dlp_telemetry_sample_allow_events') == 'on',
+                'dlp_review_destination': dlp_review_destination,
+                'dlp_presidio_analyzer_endpoint': dlp_presidio_analyzer_endpoint,
+                'dlp_presidio_allowed_private_hosts': dlp_presidio_allowed_private_hosts,
+                'dlp_presidio_auth_header_name': dlp_presidio_auth_header_name,
+                'dlp_presidio_auth_secret_env_var': dlp_presidio_auth_secret_env_var,
+                'dlp_presidio_timeout_seconds': dlp_presidio_timeout_seconds,
+                'dlp_presidio_score_threshold': dlp_presidio_score_threshold,
+                'dlp_presidio_language': dlp_presidio_language,
+                'dlp_presidio_entities': dlp_presidio_entities,
+                'enable_web_search_dlp': form_data.get('enable_web_search_dlp') == 'on',
+                'web_search_dlp_mode': web_search_dlp_mode,
+                'enable_upload_dlp': form_data.get('enable_upload_dlp') == 'on',
+                'upload_dlp_mode': upload_dlp_mode,
+                'upload_dlp_fail_upload_on_match': form_data.get('upload_dlp_fail_upload_on_match') == 'on',
                 'web_search_agent': {
                     'agent_type': 'aifoundry',
                     'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
@@ -3261,6 +3459,8 @@ def register_route_frontend_admin_settings(bp):
             else:
                 flash("Failed to update admin settings.", "danger")
 
+
+            _new_admin_settings_csrf_token()
 
             # Redirect back to settings page
             return redirect(url_for('frontend_admin_settings.admin_settings'))

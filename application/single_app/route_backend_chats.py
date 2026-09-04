@@ -210,6 +210,7 @@ from functions_image_generation import (
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
+from functions_dlp import evaluate_web_search_egress, build_dlp_telemetry_properties, should_emit_dlp_telemetry
 from functions_notifications import create_chat_response_notification
 from functions_activity_logging import log_agent_run, log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
@@ -2011,6 +2012,8 @@ def _rollback_mixed_source_chat_publication(
 FACT_MEMORY_TYPE_FACT = 'fact'
 FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
 FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
+WEB_SEARCH_DLP_BLOCKED_STATUS = "Web search was blocked because the message appears to contain non-public information."
+WEB_SEARCH_DLP_REDACTED_STATUS = "Sensitive details were removed before web search."
 INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
 TABULAR_INLINE_CHART_MAX_POINTS = 12
 TABULAR_INLINE_CHART_MAX_CHARTS = 2
@@ -18674,26 +18677,80 @@ def register_route_backend_chats(bp):
 
             if web_search_enabled:
                 search_thought_label = 'deep_research' if deep_research_enabled else 'web_search'
-                search_thought_text = "Planning Deep Research web searches" if deep_research_enabled else f"Searching the web for '{web_search_query_text[:50]}'"
+                search_thought_text = "Planning Deep Research web searches" if deep_research_enabled else f"Searching the web with query length {len(web_search_query_text)}"
                 thought_tracker.add_thought(search_thought_label, search_thought_text)
-                research_search_result = perform_research_web_searches(
+                web_search_dlp_result = evaluate_web_search_egress(
+                    web_search_query_text,
                     settings=settings,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    user_message=user_message,
-                    user_message_id=user_message_id,
-                    chat_type=chat_type,
-                    document_scope=document_scope,
-                    active_group_id=active_group_id,
-                    active_public_workspace_id=active_public_workspace_id,
-                    web_search_query_text=web_search_query_text,
-                    system_messages_for_augmentation=system_messages_for_augmentation,
-                    agent_citations_list=agent_citations_list,
-                    web_search_citations_list=web_search_citations_list,
-                    deep_research_enabled=deep_research_enabled,
-                    deep_research_planner_client=gpt_client,
-                    deep_research_planner_model=gpt_model,
+                    context={
+                        "conversation_id": conversation_id,
+                        "chat_type": chat_type,
+                        "document_scope": document_scope,
+                        "workspace_scope": document_scope,
+                    },
                 )
+                if should_emit_dlp_telemetry(web_search_dlp_result, settings):
+                    log_event(
+                        "[DLP] Web search egress decision",
+                        extra=build_dlp_telemetry_properties(
+                            web_search_dlp_result,
+                            surface="web_search",
+                            context={
+                                "conversation_id": conversation_id,
+                                "chat_type": chat_type,
+                                "document_scope": document_scope,
+                                "workspace_scope": document_scope,
+                            },
+                        ),
+                    )
+                if web_search_dlp_result.get("status_message"):
+                    thought_tracker.add_thought('web_search', web_search_dlp_result["status_message"])
+
+                if not web_search_dlp_result.get("web_search_allowed", True):
+                    system_messages_for_augmentation.append({
+                        "role": "system",
+                        "content": WEB_SEARCH_DLP_BLOCKED_STATUS,
+                    })
+                    research_search_result = {'query_plan': {}, 'web_search_runs': []}
+                else:
+                    web_search_query_text = web_search_dlp_result.get("web_search_query_text", web_search_query_text)
+                    if deep_research_enabled:
+                        research_search_result = perform_research_web_searches(
+                            settings=settings,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            user_message=user_message,
+                            user_message_id=user_message_id,
+                            chat_type=chat_type,
+                            document_scope=document_scope,
+                            active_group_id=active_group_id,
+                            active_public_workspace_id=active_public_workspace_id,
+                            web_search_query_text=web_search_query_text,
+                            system_messages_for_augmentation=system_messages_for_augmentation,
+                            agent_citations_list=agent_citations_list,
+                            web_search_citations_list=web_search_citations_list,
+                            deep_research_enabled=deep_research_enabled,
+                            deep_research_planner_client=gpt_client,
+                            deep_research_planner_model=gpt_model,
+                        )
+                    else:
+                        perform_web_search(
+                            settings=settings,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            user_message=user_message,
+                            user_message_id=user_message_id,
+                            chat_type=chat_type,
+                            document_scope=document_scope,
+                            active_group_id=active_group_id,
+                            active_public_workspace_id=active_public_workspace_id,
+                            web_search_query_text=web_search_query_text,
+                            system_messages_for_augmentation=system_messages_for_augmentation,
+                            agent_citations_list=agent_citations_list,
+                            web_search_citations_list=web_search_citations_list,
+                            web_search_runs_list=deep_research_web_search_runs,
+                        )
+                        research_search_result = {'query_plan': {}, 'web_search_runs': deep_research_web_search_runs}
                 deep_research_query_plan = research_search_result.get('query_plan', {})
                 deep_research_web_search_runs = research_search_result.get('web_search_runs', [])
                 if web_search_citations_list:
@@ -22729,25 +22786,79 @@ def register_route_backend_chats(bp):
                     if deep_research_enabled:
                         yield emit_thought('deep_research', "Planning Deep Research web searches")
                     else:
-                        yield emit_thought('web_search', f"Searching the web for '{web_search_query_text[:50]}'")
-                    research_search_result = perform_research_web_searches(
+                        yield emit_thought('web_search', f"Searching the web with query length {len(web_search_query_text)}")
+                    web_search_dlp_result = evaluate_web_search_egress(
+                        web_search_query_text,
                         settings=settings,
-                        conversation_id=conversation_id,
-                        user_id=user_id,
-                        user_message=user_message,
-                        user_message_id=user_message_id,
-                        chat_type=chat_type,
-                        document_scope=document_scope,
-                        active_group_id=active_group_id,
-                        active_public_workspace_id=active_public_workspace_id,
-                        web_search_query_text=web_search_query_text,
-                        system_messages_for_augmentation=system_messages_for_augmentation,
-                        agent_citations_list=agent_citations_list,
-                        web_search_citations_list=web_search_citations_list,
-                        deep_research_enabled=deep_research_enabled,
-                        deep_research_planner_client=gpt_client,
-                        deep_research_planner_model=gpt_model,
+                        context={
+                            "conversation_id": conversation_id,
+                            "chat_type": chat_type,
+                            "document_scope": document_scope,
+                            "workspace_scope": document_scope,
+                        },
                     )
+                    if should_emit_dlp_telemetry(web_search_dlp_result, settings):
+                        log_event(
+                            "[DLP] Web search egress decision",
+                            extra=build_dlp_telemetry_properties(
+                                web_search_dlp_result,
+                                surface="web_search",
+                                context={
+                                    "conversation_id": conversation_id,
+                                    "chat_type": chat_type,
+                                    "document_scope": document_scope,
+                                    "workspace_scope": document_scope,
+                                },
+                            ),
+                        )
+                    if web_search_dlp_result.get("status_message"):
+                        yield emit_thought('web_search', web_search_dlp_result["status_message"])
+
+                    if not web_search_dlp_result.get("web_search_allowed", True):
+                        system_messages_for_augmentation.append({
+                            "role": "system",
+                            "content": WEB_SEARCH_DLP_BLOCKED_STATUS,
+                        })
+                        research_search_result = {'query_plan': {}, 'web_search_runs': []}
+                    else:
+                        web_search_query_text = web_search_dlp_result.get("web_search_query_text", web_search_query_text)
+                        if deep_research_enabled:
+                            research_search_result = perform_research_web_searches(
+                                settings=settings,
+                                conversation_id=conversation_id,
+                                user_id=user_id,
+                                user_message=user_message,
+                                user_message_id=user_message_id,
+                                chat_type=chat_type,
+                                document_scope=document_scope,
+                                active_group_id=active_group_id,
+                                active_public_workspace_id=active_public_workspace_id,
+                                web_search_query_text=web_search_query_text,
+                                system_messages_for_augmentation=system_messages_for_augmentation,
+                                agent_citations_list=agent_citations_list,
+                                web_search_citations_list=web_search_citations_list,
+                                deep_research_enabled=deep_research_enabled,
+                                deep_research_planner_client=gpt_client,
+                                deep_research_planner_model=gpt_model,
+                            )
+                        else:
+                            perform_web_search(
+                                settings=settings,
+                                conversation_id=conversation_id,
+                                user_id=user_id,
+                                user_message=user_message,
+                                user_message_id=user_message_id,
+                                chat_type=chat_type,
+                                document_scope=document_scope,
+                                active_group_id=active_group_id,
+                                active_public_workspace_id=active_public_workspace_id,
+                                web_search_query_text=web_search_query_text,
+                                system_messages_for_augmentation=system_messages_for_augmentation,
+                                agent_citations_list=agent_citations_list,
+                                web_search_citations_list=web_search_citations_list,
+                                web_search_runs_list=deep_research_web_search_runs,
+                            )
+                            research_search_result = {'query_plan': {}, 'web_search_runs': deep_research_web_search_runs}
                     deep_research_query_plan = research_search_result.get('query_plan', {})
                     deep_research_web_search_runs = research_search_result.get('web_search_runs', [])
                     if web_search_citations_list:
@@ -25951,7 +26062,7 @@ def build_conversation_history_segments(
 def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, str]]:
     if not content:
         return []
-    debug_print(f"[CITATION_EXTRACTION] Extracting citations from:\n{content}\n")
+    debug_print(f"[CITATION_EXTRACTION] Extracting citations from content length: {len(content)}")
 
     citations: List[Dict[str, str]] = []
 
@@ -25993,7 +26104,7 @@ def _extract_web_search_citations_from_content(content: str) -> List[Dict[str, s
         if not url:
             continue
         citations.append({"url": url, "title": url})
-    debug_print(f"[CITATION_EXTRACTION] Extracted {len(citations)} citations. - {citations}\n")
+    debug_print(f"[CITATION_EXTRACTION] Extracted {len(citations)} citations.")
 
     return citations
 
@@ -26083,7 +26194,7 @@ def _extract_token_usage_from_metadata(metadata: Dict[str, Any]) -> Dict[str, in
     if total_tokens is None:
         debug_print(
             "[WEB_SEARCH][Token Usage Extraction] total_tokens missing or invalid. "
-            f"usage={usage}"
+            f"usage_type={type(usage)}, usage_keys={list(usage.keys())}"
         )
         return {}
 
@@ -26128,11 +26239,24 @@ def perform_research_web_searches(
     """Run one or more current-message-only web searches for normal or Deep Research mode."""
     web_search_runs = []
     query_plan = {}
+    dlp_context = {
+        "conversation_id": conversation_id,
+        "chat_type": chat_type,
+        "document_scope": document_scope,
+        "workspace_scope": document_scope,
+    }
 
     if deep_research_enabled:
+        planner_user_message = user_message
+        if (
+            settings.get("enable_dlp_control_plane", False)
+            and settings.get("enable_web_search_dlp", False)
+            and str(settings.get("web_search_dlp_mode", "monitor") or "monitor").lower() == "redact"
+        ):
+            planner_user_message = web_search_query_text
         query_plan = build_deep_research_query_plan(
             settings=settings,
-            user_message=user_message,
+            user_message=planner_user_message,
             base_query=web_search_query_text,
             planner_client=deep_research_planner_client,
             planner_model=deep_research_planner_model,
@@ -26162,6 +26286,43 @@ def perform_research_web_searches(
         search_label = None
         if deep_research_enabled:
             search_label = f"Deep Research query {query_index}/{total_queries}"
+        query_dlp_result = evaluate_web_search_egress(
+            query_text,
+            settings=settings,
+            context={
+                **dlp_context,
+                "deep_research_query_index": query_index,
+                "deep_research_query_count": total_queries,
+            },
+        )
+        if should_emit_dlp_telemetry(query_dlp_result, settings):
+            log_event(
+                "[DLP] Web search egress decision",
+                extra=build_dlp_telemetry_properties(
+                    query_dlp_result,
+                    surface="web_search",
+                    context={
+                        **dlp_context,
+                        "deep_research_query_index": query_index,
+                        "deep_research_query_count": total_queries,
+                    },
+                ),
+            )
+        if not query_dlp_result.get("web_search_allowed", True):
+            query_item['query'] = ""
+            if not any(
+                message.get("content") == WEB_SEARCH_DLP_BLOCKED_STATUS
+                for message in system_messages_for_augmentation
+                if isinstance(message, dict)
+            ):
+                system_messages_for_augmentation.append({
+                    "role": "system",
+                    "content": WEB_SEARCH_DLP_BLOCKED_STATUS,
+                })
+            continue
+
+        query_text = query_dlp_result.get("web_search_query_text", query_text)
+        query_item['query'] = query_text
         perform_web_search(
             settings=settings,
             conversation_id=conversation_id,
@@ -26207,16 +26368,15 @@ def perform_web_search(
     debug_print(f"[WEB_SEARCH] Parameters received:")
     debug_print(f"[WEB_SEARCH]   conversation_id: {conversation_id}")
     debug_print(f"[WEB_SEARCH]   user_id: {user_id}")
-    debug_print(f"[WEB_SEARCH]   user_message: {user_message[:100] if user_message else None}...")
+    debug_print(f"[WEB_SEARCH]   user_message_length: {len(user_message or '')}")
     debug_print(f"[WEB_SEARCH]   user_message_id: {user_message_id}")
     debug_print(f"[WEB_SEARCH]   chat_type: {chat_type}")
     debug_print(f"[WEB_SEARCH]   document_scope: {document_scope}")
     debug_print(f"[WEB_SEARCH]   active_group_id: {active_group_id}")
     debug_print(f"[WEB_SEARCH]   active_public_workspace_id: {active_public_workspace_id}")
-    debug_print(
-        "[WEB_SEARCH]   web_search_query_text: "
-        f"{web_search_query_text[:100] if web_search_query_text else None}..."
-    )
+    dlp_enabled = bool(settings.get("enable_dlp_control_plane") and settings.get("enable_web_search_dlp"))
+    debug_print(f"[WEB_SEARCH]   web_search_query_length: {len(web_search_query_text or '')}")
+    debug_print(f"[WEB_SEARCH]   dlp_enabled: {dlp_enabled}")
 
     initial_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else 0
     run_started_at = datetime.utcnow().isoformat()
@@ -26226,7 +26386,7 @@ def perform_web_search(
             return
         final_seed_url_count = len(web_search_citations_list or []) if isinstance(web_search_citations_list, list) else initial_seed_url_count
         web_search_runs_list.append({
-            'query': str(web_search_query_text or user_message or '').strip()[:300],
+            'query': str(web_search_query_text or '').strip()[:300],
             'label': str(search_context_label or '').strip()[:100],
             'status': status,
             'success': bool(success),
@@ -26288,11 +26448,11 @@ def perform_web_search(
 
     debug_print(f"[WEB_SEARCH] Agent ID is configured: {agent_id}")
 
-    query_text = (web_search_query_text or user_message or "").strip()
-    debug_print(f"[WEB_SEARCH] Final query_text after fallback: '{query_text[:100] if query_text else ''}'")
+    query_text = (web_search_query_text or "").strip()
+    debug_print(f"[WEB_SEARCH] Final approved query_length: {len(query_text)}")
 
     if not query_text:
-        debug_print("[WEB_SEARCH] Query text is EMPTY after processing, skipping web search")
+        debug_print("[WEB_SEARCH] Empty approved web-search query; skipping Foundry call")
         log_event(
             "[WEB_SEARCH] Skipping Foundry web search: empty query",
             extra={
@@ -26302,10 +26462,10 @@ def perform_web_search(
             level=logging.WARNING,
         )
         record_web_search_run(True, 'empty_query')
-        return True  # Not an error, just empty query
+        return True  # Not an error, just empty approved query
 
     search_request_content = build_research_search_prompt(query_text)
-    debug_print(f"[WEB_SEARCH] Building message history with query: {query_text[:100]}...")
+    debug_print(f"[WEB_SEARCH] Building message history with query_length: {len(query_text)}")
     message_history = [
         ChatMessageContent(role="user", content=search_request_content)
     ]
@@ -26329,37 +26489,39 @@ def perform_web_search(
         )
     except FoundryAgentInvocationError as exc:
         log_event(
-            f"[WEB_SEARCH] Foundry agent invocation failed: {exc}",
+            "[WEB_SEARCH] Foundry agent invocation failed",
             extra={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "agent_id": agent_id,
+                "error_type": type(exc).__name__,
             },
             level=logging.ERROR,
-            exceptionTraceback=True,
+            exceptionTraceback=False,
         )
         # Add failure message so the model informs the user
         system_messages_for_augmentation.append({
             "role": "system",
-            "content": f"Web search failed with error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
+            "content": "Web search failed. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
         record_web_search_run(False, 'foundry_invocation_error', error=str(exc))
         return False  # Search failed
     except Exception as exc:
         log_event(
-            f"[WEB_SEARCH] Unexpected error invoking Foundry agent: {exc}",
+            "[WEB_SEARCH] Unexpected error invoking Foundry agent",
             extra={
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "agent_id": agent_id,
+                "error_type": type(exc).__name__,
             },
             level=logging.ERROR,
-            exceptionTraceback=True,
+            exceptionTraceback=False,
         )
         # Add failure message so the model informs the user
         system_messages_for_augmentation.append({
             "role": "system",
-            "content": f"Web search failed with an unexpected error: {exc}. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
+            "content": "Web search failed with an unexpected error. Please inform the user that the web search encountered an error and you cannot provide real-time information for this query. Do not attempt to answer questions requiring current information from your training data - instead, acknowledge the search failure and suggest the user try again.",
         })
         record_web_search_run(False, 'unexpected_error', error=str(exc))
         return False  # Search failed
@@ -26373,23 +26535,17 @@ def perform_web_search(
 
     if result.message:
         debug_print(f"[WEB_SEARCH] Result message length: {len(result.message)} chars")
-        debug_print(f"[WEB_SEARCH] Result message preview: {result.message[:500] if len(result.message) > 500 else result.message}")
     else:
         debug_print("[WEB_SEARCH] Result message is EMPTY or None")
 
     if result.citations:
         debug_print(f"[WEB_SEARCH] Result citations count: {len(result.citations)}")
-        for i, cit in enumerate(result.citations[:3]):
-            debug_print(f"[WEB_SEARCH]   Citation {i}: {json.dumps(cit, default=str)[:200]}...")
     else:
         debug_print("[WEB_SEARCH] Result citations is EMPTY or None")
 
     if result.metadata:
-        try:
-            metadata_payload = json.dumps(result.metadata, default=str)
-        except (TypeError, ValueError):
-            metadata_payload = str(result.metadata)
-        debug_print(f"[WEB_SEARCH] Foundry metadata: {metadata_payload}")
+        metadata_keys = list(result.metadata.keys()) if isinstance(result.metadata, Mapping) else []
+        debug_print(f"[WEB_SEARCH] Foundry metadata present with keys: {metadata_keys}")
     else:
         debug_print("[WEB_SEARCH] Foundry metadata: <empty>")
 
@@ -26427,12 +26583,12 @@ def perform_web_search(
     debug_print(f"[WEB_SEARCH] Processing {len(citations)} citations from result.citations")
     if citations:
         for i, citation in enumerate(citations):
-            debug_print(f"[WEB_SEARCH] Processing citation {i}: {json.dumps(citation, default=str)[:200]}...")
+            debug_print(f"[WEB_SEARCH] Processing citation {i}")
             serializable = make_json_serializable(citation)
             if not isinstance(serializable, dict):
                 serializable = {"value": str(citation)}
             citation_title = serializable.get("title") or serializable.get("url") or "Web search source"
-            debug_print(f"[WEB_SEARCH] Adding agent citation with title: {citation_title}")
+            debug_print(f"[WEB_SEARCH] Adding agent citation {i + 1} of {len(citations)}")
             agent_citations_list.append({
                 "tool_name": citation_title,
                 "function_name": "azure_ai_foundry_web_search",
@@ -26452,7 +26608,8 @@ def perform_web_search(
     else:
         debug_print("[WEB_SEARCH] No citations in result.citations to process")
 
-    debug_print(f"[WEB_SEARCH] Starting token usage extraction from Foundry metadata. Metadata: {result.metadata}")
+    metadata_keys = list((result.metadata or {}).keys()) if isinstance(result.metadata, Mapping) else []
+    debug_print(f"[WEB_SEARCH] Starting token usage extraction from Foundry metadata keys: {metadata_keys}")
     token_usage = _extract_token_usage_from_metadata(result.metadata or {})
     if token_usage.get("total_tokens"):
         try:
@@ -26476,19 +26633,21 @@ def perform_web_search(
                 public_workspace_id=active_public_workspace_id,
                 additional_context={
                     'agent_id': agent_id,
-                    'search_query': query_text,
+                    'search_query_length': len(query_text),
                     'token_source': 'foundry_metadata'
                 }
             )
         except Exception as log_error:
             log_event(
-                f"[WEB_SEARCH] Failed to log web search token usage: {log_error}",
+                "[WEB_SEARCH] Failed to log web search token usage",
                 extra={
                     "conversation_id": conversation_id,
                     "user_id": user_id,
                     "agent_id": agent_id,
+                    "error_type": type(log_error).__name__,
                 },
                 level=logging.WARNING,
+                exceptionTraceback=False,
             )
 
     debug_print("[WEB_SEARCH] ========== FINAL SUMMARY ==========")
