@@ -18,6 +18,7 @@ import {
     getInlineMermaidTheme,
     renderMermaidSvg,
 } from './chat-mermaid-runtime.js';
+import { applyStoredBlockRevisions, fingerprintSource } from './chat-block-revisions.js';
 
 const INLINE_DIAGRAM_LANGUAGE = 'mermaid';
 
@@ -70,81 +71,22 @@ function createInlineDiagramToken(blocks, block) {
 }
 
 /**
- * The exact set `String.prototype.trim` removes.
- *
- * Spelled out because the fingerprint below has to agree, character for character, with
- * `fingerprintSource` in the V2 client and `fingerprint_source` on the server. A regular
- * `.trim()` would in fact do, but writing the set down is what makes the agreement checkable.
- */
-const JS_TRIM_PATTERN = /^[\s\uFEFF\u00A0]+|[\s\uFEFF\u00A0]+$/g;
-
-/**
- * Fingerprint a diagram's source.
- *
- * A port of `fingerprintSource` in application/v2_ui/src/lib/visualPalettes.ts, which is what
- * computes the hashes that get stored. A revision is filed under the fingerprint of the block's
- * original source, so classic can only find the right entry by computing the same value.
- */
-function fingerprintSource(value) {
-    const normalized = String(value ?? '').replace(/\r\n/g, '\n').replace(JS_TRIM_PATTERN, '');
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < normalized.length; index += 1) {
-        hash ^= normalized.charCodeAt(index);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-/** The source a stored entry currently points at, or null when the original still applies. */
-function readCurrentRevisionSource(entry) {
-    if (!entry || typeof entry !== 'object' || !Array.isArray(entry.revisions)) {
-        return null;
-    }
-    const current = entry.current;
-    if (!Number.isInteger(current) || current <= 0 || current >= entry.revisions.length) {
-        return null;
-    }
-    const source = entry.revisions[current]?.source;
-    return typeof source === 'string' && source ? source : null;
-}
-
-/**
  * Swap in the current version of any diagram that has been edited in the V2 client.
  *
  * Editing happens only in V2, but a conversation is readable in both, and a reader who moved
  * here would otherwise see the version the model first produced with no sign that it had been
  * changed — and would then export that stale version.
  *
- * Identified by position and confirmed by fingerprint, the same rule the server applies. A
- * block whose fingerprint does not match is left alone rather than replaced with another
- * diagram's source, so every way this can go wrong shows the original.
+ * The resolution rules live in chat-block-revisions.js, shared with charts, because they are
+ * subtle enough that two copies of them would eventually disagree.
  */
 export function applyStoredDiagramRevisions(blocks, blockRevisions) {
-    const entries = blockRevisions && typeof blockRevisions === 'object'
-        ? blockRevisions[INLINE_DIAGRAM_LANGUAGE]
-        : null;
-    if (!entries || typeof entries !== 'object' || !Array.isArray(blocks)) {
-        return blocks;
-    }
-
-    return blocks.map((block, index) => {
-        if (!block || block.pending || typeof block.sourceHash !== 'string') {
-            return block;
-        }
-
-        let entry = entries[String(index)];
-        if (!entry || entry.source_hash !== block.sourceHash) {
-            // The position disagrees, which happens when the two clients number the fences
-            // differently. Fall back to the fingerprint, and only when it is unambiguous.
-            const matches = Object.values(entries).filter(
-                candidate => candidate && candidate.source_hash === block.sourceHash,
-            );
-            entry = matches.length === 1 ? matches[0] : null;
-        }
-
-        const source = readCurrentRevisionSource(entry);
-        return source ? { ...block, source: normalizeDiagramSource(source) } : block;
-    });
+    return applyStoredBlockRevisions(
+        blocks,
+        blockRevisions,
+        INLINE_DIAGRAM_LANGUAGE,
+        (block, source) => ({ ...block, source: normalizeDiagramSource(source) }),
+    );
 }
 
 /**
