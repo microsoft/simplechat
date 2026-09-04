@@ -27,7 +27,7 @@ import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
-import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { applyStoredChartRevisions, destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
 import { applyStoredDiagramRevisions, destroyInlineDiagrams, extractInlineDiagramBlocks, hydrateInlineDiagrams, injectInlineDiagramHtml, restoreInlineDiagramTokens } from './chat-inline-diagrams.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
@@ -2755,6 +2755,12 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
+    // Show the current version of any chart edited in the V2 client. `originalBlock` is
+    // deliberately untouched, so copying the message still yields the markdown as stored.
+    chartExtraction.blocks = applyStoredChartRevisions(
+      chartExtraction.blocks,
+      options.blockRevisions,
+    );
     const diagramExtraction = extractInlineDiagramBlocks(chartExtraction.markdown);
     // Show the current version of any diagram edited in the V2 client. `originalBlock` is
     // deliberately untouched, so copying the message still yields the markdown as stored.

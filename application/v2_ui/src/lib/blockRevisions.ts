@@ -18,6 +18,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import type { ConversationKind } from '../stores/chatStore';
+import { describeChartProblem } from './chartEdits';
 import { fingerprintSource } from './visualPalettes';
 import type {
     BlockRevision,
@@ -28,7 +29,7 @@ import type {
 export type { BlockRevision, BlockRevisionChatTurn } from './endpoints';
 
 /** Fence languages that can be edited. Matches BLOCK_REVISION_KINDS on the server. */
-export const EDITABLE_BLOCK_KINDS = ['mermaid'] as const;
+export const EDITABLE_BLOCK_KINDS = ['mermaid', 'simplechart'] as const;
 export type EditableBlockKind = (typeof EDITABLE_BLOCK_KINDS)[number];
 
 /** Longest source the server will store. Matches MAX_SOURCE_LENGTH. */
@@ -46,19 +47,36 @@ export const MAX_INSTRUCTION_LENGTH = 2000;
  */
 const FENCE_BREAKOUT_PATTERN = /^ {0,3}(?:`{3,}|~{3,})/m;
 
-/** Whether a source is something the server will accept, and why not when it is not. */
-export function describeSourceProblem(source: string): string | null {
+/**
+ * Whether a source is something the server will accept, and why not when it is not.
+ *
+ * The first three checks are what the server itself enforces and apply to every kind. The kind
+ * is then given a chance to add its own: a chart payload can be the right length and free of
+ * fences and still not be a chart, which is worth saying before it is stored rather than after,
+ * when the block would render as an error.
+ */
+export function describeSourceProblem(
+    source: string,
+    kind: EditableBlockKind = 'mermaid',
+): string | null {
     const candidate = String(source ?? '').trim();
     if (!candidate) {
-        return 'The diagram cannot be empty.';
+        return kind === 'simplechart'
+            ? 'The chart cannot be empty.'
+            : 'The diagram cannot be empty.';
     }
     if (candidate.length > MAX_BLOCK_SOURCE_LENGTH) {
-        return `The diagram is too long by ${
+        return `The ${kind === 'simplechart' ? 'chart' : 'diagram'} is too long by ${
             candidate.length - MAX_BLOCK_SOURCE_LENGTH
         } characters.`;
     }
     if (FENCE_BREAKOUT_PATTERN.test(candidate)) {
-        return 'The diagram cannot contain a line of backticks or tildes.';
+        return `The ${
+            kind === 'simplechart' ? 'chart' : 'diagram'
+        } cannot contain a line of backticks or tildes.`;
+    }
+    if (kind === 'simplechart') {
+        return describeChartProblem(candidate);
     }
     return null;
 }
@@ -251,7 +269,7 @@ export function useBlockRevisions(
 
     const save = useCallback(
         (next: string, origin: 'manual' | 'control' = 'manual', note = '') => {
-            const problem = describeSourceProblem(next);
+            const problem = describeSourceProblem(next, kind);
             if (problem) {
                 setError(problem);
                 return Promise.resolve(false);
