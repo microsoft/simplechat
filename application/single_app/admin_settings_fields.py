@@ -635,7 +635,8 @@ ADMIN_SETTINGS_FIELDS = {
                 "Routes chat through the connections listed below, so several Azure "
                 "OpenAI or Foundry resources can serve models at once. When off, chat "
                 "uses the single classic endpoint instead and these connections are "
-                "not consulted."
+                "not consulted. Switching this on cannot be undone, and carries the "
+                "classic endpoint over as the first connection."
             ),
             "default": False,
         },
@@ -1007,6 +1008,27 @@ def _validate_identity_header_name(value):
     return normalized, None
 
 
+def _validate_multi_model_endpoint_enablement(value, current_settings):
+    """Return ``(normalized, error)`` for the connections capability toggle.
+
+    ``update_settings`` runs this key through ``coerce_multi_model_endpoint_enablement``,
+    which is ``existing or requested`` -- so once connections are on they cannot be turned
+    off. The classic form reflects that by rendering the checkbox only while the flag is
+    off. The V2 surface has no such affordance, so without this an administrator could
+    switch it off, be told the save succeeded, and be shown the toggle in its new position,
+    while chat carried on routing through connections.
+    """
+    requested = _coerce_bool(value)
+    already_on = _coerce_bool(current_settings.get("enable_multi_model_endpoints", False))
+
+    if already_on and not requested:
+        return None, (
+            "Connections cannot be switched off once enabled, because existing chats, "
+            "agents and workflows may already reference a model published from one."
+        )
+    return requested, None
+
+
 def _check_acknowledgements(updates, current_settings, errors):
     """Enforce the acknowledgements a field requires before it may be enabled."""
     for _section_id, field in iter_fields():
@@ -1069,6 +1091,16 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 errors[key] = header_error
             else:
                 normalized[key] = header_value
+            continue
+
+        if key == "enable_multi_model_endpoints":
+            enablement, enablement_error = _validate_multi_model_endpoint_enablement(
+                value, current
+            )
+            if enablement_error:
+                errors[key] = enablement_error
+            else:
+                normalized[key] = enablement
             continue
 
         field_value, error, warning = _normalize_field_value(key, value, field)

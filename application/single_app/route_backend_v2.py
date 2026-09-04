@@ -70,6 +70,7 @@ from functions_public_workspaces import (
 )
 from functions_settings import (
     WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+    build_migrated_model_endpoints_from_legacy,
     get_settings,
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
@@ -77,6 +78,7 @@ from functions_settings import (
     merge_model_endpoint_payload,
     normalize_model_endpoints,
     resolve_default_model_selection,
+    resolve_metadata_extraction_model_selection,
     sanitize_settings_for_user,
     sanitize_model_endpoints_for_frontend,
     update_settings,
@@ -693,20 +695,72 @@ def _persist_global_model_endpoints(normalized, existing):
 
     settings = get_settings()
     updates = {"model_endpoints": saved_endpoints}
+    multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
 
-    # The default model names an endpoint and a model by id, so deleting or disabling
-    # either leaves it pointing at nothing. Chat would then quietly fall back to a
-    # different model, so the selection is re-resolved against what was actually saved.
+    # Both stored selections name an endpoint and a model by id, so deleting or disabling
+    # either leaves them pointing at nothing. A dangling default makes chat fall back
+    # quietly; a dangling metadata extraction selection makes document ingestion raise,
+    # and its caller only logs that. Neither is acceptable, so both are re-resolved against
+    # what was actually saved.
     resolved_default, _ = resolve_default_model_selection(
         settings.get("default_model_selection"),
         saved_endpoints,
-        multi_endpoint_enabled=bool(settings.get("enable_multi_model_endpoints", False)),
+        multi_endpoint_enabled=multi_endpoint_enabled,
     )
     if resolved_default != settings.get("default_model_selection"):
         updates["default_model_selection"] = resolved_default
 
-    update_settings(updates)
+    resolved_metadata, _ = resolve_metadata_extraction_model_selection(
+        settings.get("metadata_extraction_model_selection"),
+        saved_endpoints,
+        multi_endpoint_enabled=multi_endpoint_enabled,
+    )
+    if resolved_metadata != settings.get("metadata_extraction_model_selection"):
+        updates["metadata_extraction_model_selection"] = resolved_metadata
+
+    # ``update_settings`` swallows its own exceptions and answers False. The Key Vault
+    # passes above have already run and cannot be undone, so reporting success on a failed
+    # write would leave an endpoint referencing a secret that no longer exists.
+    if not update_settings(updates):
+        raise RuntimeError("The settings document could not be updated.")
+
     return saved_endpoints
+
+
+def _seed_connections_on_first_enable(updates, current_settings):
+    """Carry the classic chat endpoint into the connection list when connections go on.
+
+    Enabling connections is one-way. A deployment that already had a working classic
+    endpoint, and enables connections without carrying it over, is left with an empty model
+    catalog and no way to switch back -- so chat stops working outright.
+
+    The classic form has always migrated on this transition. Mirroring it here, through the
+    same shared builder, is what stops the V2 surface from being the one path that strands
+    a deployment.
+    """
+    if not updates.get("enable_multi_model_endpoints"):
+        return
+    if current_settings.get("enable_multi_model_endpoints", False):
+        return
+    if _load_global_model_endpoints(current_settings):
+        return
+
+    migrated = build_migrated_model_endpoints_from_legacy(current_settings)
+    if not migrated:
+        return
+
+    normalized, _ = normalize_model_endpoints(migrated)
+    updates["model_endpoints"] = [
+        keyvault_model_endpoint_save_helper(
+            endpoint, endpoint.get("id"), scope="global", existing_endpoint=None
+        )
+        for endpoint in normalized
+    ]
+    log_event(
+        f"[V2_ADMIN_ENDPOINTS] Migrated the classic chat endpoint into "
+        f"{len(updates['model_endpoints'])} connection(s) on first enable",
+        level=logging.INFO,
+    )
 
 
 def register_route_backend_v2_admin(bp):
@@ -791,6 +845,8 @@ def register_route_backend_v2_admin(bp):
 
             if not normalized:
                 return jsonify({"error": "No settings supplied"}), 400
+
+            _seed_connections_on_first_enable(normalized, current_settings)
 
             update_settings(normalized)
             log_event(
