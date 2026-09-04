@@ -12,7 +12,7 @@ almost empty tab. This feature declares the Agents & Actions group properly, and
 adds the small number of schema and renderer capabilities the group needs that
 the Appearance group never exercised.
 
-**Implemented in version:** 0.261.065
+**Implemented in version:** 0.261.074
 
 **Dependencies:** `admin_settings_fields.py`, `admin_settings_nav.py`,
 `route_backend_v2.py`, `application/v2_ui`.
@@ -168,7 +168,7 @@ dropped too, so no empty titled panel is left behind.
   "field_schema": { },
   "branding_assets": { },
   "runtime_flags": { "mcp_ui_enabled": false },
-  "version": "0.261.065"
+  "version": "0.261.074"
 }
 ```
 
