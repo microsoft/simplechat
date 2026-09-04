@@ -41,6 +41,7 @@ import uuid
 
 from functions_appinsights import log_event
 from functions_orchestration_registry import (
+    PRODUCES_EVIDENCE,
     TERMINAL_CAPABILITY_ID,
     get_capability,
     get_capability_document_limit,
@@ -50,6 +51,11 @@ from functions_orchestration_registry import (
 
 ORCHESTRATION_PLAN_CONTRACT_VERSION = 1
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 1
+
+# Document fields a step cannot simply lose. These are not in their capability's `required`
+# list, because a step may supply `documents_from_step` instead -- but once neither is
+# present the step has nothing to read and cannot run.
+DOCUMENT_FIELDS_REQUIRED_UNLESS_REFERENCED = ('document_ids',)
 
 # Plan lifecycle.
 PLAN_STATUS_DRAFT = 'draft'
@@ -345,6 +351,71 @@ def validate_step_arguments(capability, arguments):
 # Plan validation
 # --------------------------------------------------------------------------------------
 
+def _resolve_document_references(steps):
+    """Resolve a step that reads whichever documents an earlier step found.
+
+    A plan could previously only act on documents whose ids were known when it was written,
+    which meant it could not express the most natural shape of all: search for the relevant
+    material, then analyse what turned up. ``documents_from_step`` says that instead.
+
+    Three things are checked:
+
+    - The named step must exist. A reference to a step that was dropped goes with it.
+    - It must not be the step itself, which could never resolve.
+    - It must produce documents. Only evidence-producing capabilities do, so pointing at a
+      web search or at ``respond`` would resolve to nothing every time.
+
+    Ordering is deliberately *not* checked here. A resolved reference is added to
+    ``depends_on``, and the topological pass that follows is what guarantees the referenced
+    step runs first -- with the existing cycle detection catching a plan that points two
+    steps at each other. Checking positions here as well would duplicate that and disagree
+    with it as soon as phase ordering moved a step.
+
+    A failure is a repair where the step still means something without the reference, and an
+    error where it does not: a step with no documents and no way to find any cannot run.
+    """
+    repairs = []
+    errors = []
+    failed = set()
+    by_id = {step['step_id']: step for step in steps}
+
+    for step in steps:
+        arguments = step.get('arguments') or {}
+        reference = _text(arguments.get('documents_from_step'))
+        if not reference:
+            continue
+
+        source = by_id.get(reference)
+        if source is None:
+            problem = 'names a step that is not in the plan'
+        elif reference == step['step_id']:
+            problem = 'refers to itself'
+        elif PRODUCES_EVIDENCE not in (
+            (get_capability(source['capability_id']) or {}).get('produces') or ()
+        ):
+            problem = 'reads from a step that does not produce documents'
+        else:
+            problem = None
+
+        if problem is None:
+            if reference not in step['depends_on']:
+                step['depends_on'] = [*step['depends_on'], reference]
+            continue
+
+        arguments.pop('documents_from_step', None)
+        if arguments.get('document_ids'):
+            repairs.append(
+                f"Step '{step['step_id']}' {problem}; its own documents were kept."
+            )
+        else:
+            errors.append(
+                f"Step '{step['step_id']}' {problem} and names no documents of its own."
+            )
+            failed.add(step['step_id'])
+
+    return [step for step in steps if step['step_id'] not in failed], repairs, errors
+
+
 def _enforce_phase_order(steps):
     """Sort steps into phase order and drop dependencies that point backwards.
 
@@ -552,13 +623,19 @@ def validate_plan(
                 )
                 continue
 
-        # A step whose documents have all been removed has nothing left to do.
+        # A step whose documents have all been removed has nothing left to do -- unless it
+        # is reading whatever an earlier step finds, in which case having no documents of
+        # its own is the entire point.
         emptied = [
             field
             for field in ('document_ids', 'right_document_ids')
             if field in arguments
             and not arguments[field]
-            and field in set((capability.get('inputs') or {}).get('required') or ())
+            and not _text(arguments.get('documents_from_step'))
+            and (
+                field in set((capability.get('inputs') or {}).get('required') or ())
+                or field in DOCUMENT_FIELDS_REQUIRED_UNLESS_REFERENCED
+            )
         ]
         if emptied:
             errors.append(
@@ -595,6 +672,14 @@ def validate_plan(
         if len(kept) != len(step['depends_on']):
             repairs.append(f"Step '{step['step_id']}' waited on a step that was removed.")
         step['depends_on'] = kept
+
+    # A step may read the documents an earlier step found rather than naming its own. The
+    # reference is resolved here, once every surviving step id is known, because ids can be
+    # renamed above and a reference validated earlier could point at a name that no longer
+    # exists.
+    accepted, reference_repairs, reference_errors = _resolve_document_references(accepted)
+    repairs.extend(reference_repairs)
+    errors.extend(reference_errors)
 
     # Phase order first, so the topological pass below sorts within a plan that already
     # runs knowledge before reasoning before output rather than one that merely could.
