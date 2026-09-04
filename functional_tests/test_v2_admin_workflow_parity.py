@@ -229,7 +229,19 @@ def test_number_bounds_match_v1():
 
 
 def test_sub_settings_are_gated_by_their_capability():
-    """A sub-setting gated on the wrong capability hides while its feature is live."""
+    """A sub-setting gated on the wrong capability hides while its feature is live.
+
+    This read ``depends_on`` as a single dict until 0.261.074, and raised
+    ``'list' object has no attribute 'get'`` the moment it met a chain. The crash
+    was latent rather than new: ``group_workflow_allowed_group_ids`` has carried a
+    two-link chain for some time, but ``workflow-settings-section`` was declared
+    twice and the later declaration won, so the chained field was never the one
+    this test read. Resolving that duplicate made it live and the assumption
+    failed immediately.
+
+    Worth remembering as a shape: fixing a duplicate declaration can expose a bug
+    in code that only ever saw the other copy.
+    """
     print("\nTesting the workflow gating chain...")
 
     declared = {field["key"]: field for field in workflow_fields() if field.get("key")}
