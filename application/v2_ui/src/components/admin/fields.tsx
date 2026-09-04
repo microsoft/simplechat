@@ -30,6 +30,8 @@ const inputClass = clsx(
     'disabled:cursor-not-allowed disabled:opacity-60',
 );
 
+export { inputClass };
+
 /**
  * Standing operational guidance a field carries, drawn beneath its control.
  *
@@ -607,8 +609,9 @@ function MirrorControl({ field, value }: FieldControlProps) {
 /**
  * Render one declared field.
  *
- * `image`, `link_list` and `component` fields are handled by the page, which owns the
- * upload endpoint and the bespoke widgets, so they are not reached here.
+ * `image`, `link_list`, `secret` and `component` fields are handled by the page, which
+ * owns the upload endpoint, the bespoke widgets, and the stored value a secret needs to
+ * distinguish "not configured" from "configured but hidden".
  */
 export function SettingField(props: FieldControlProps) {
     if (props.field.readonly) {

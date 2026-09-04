@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -55,6 +56,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "color": ("default",),
     "text": ("default",),
     "textarea": ("default",),
+    "secret": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
     "entry_list": ("default", "value_label"),
@@ -77,6 +79,7 @@ EXPECTED_DEFAULT_TYPES = {
     "switch": bool,
     "text": str,
     "textarea": str,
+    "secret": str,
     "select": str,
     "color": str,
     "range": int,
@@ -253,42 +256,44 @@ def test_dependencies_reference_real_fields():
     for section_id, field in fields_module.iter_fields():
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        # ``depends_on`` may be one condition or a chain of them, so the schema
-        # exposes an iterator rather than each caller re-deriving the shape.
-        for depends_on in fields_module.iter_dependencies(field):
+        # A field may carry one condition or a list of them, so both shapes are read
+        # through the schema's own iterator rather than assumed here.
+        for condition in fields_module.iter_field_dependencies(field):
             checked += 1
 
-            if depends_on.get("flag"):
+            if condition.get("flag"):
                 # A runtime flag is resolved by the server, not by another field,
                 # so there is no declaration to point at. It must still be a flag
                 # the settings API actually sends.
-                if depends_on["flag"] not in RUNTIME_FLAGS:
+                if condition["flag"] not in RUNTIME_FLAGS:
                     problems.append(
                         f"{identity}: depends on unknown runtime flag "
-                        f"{depends_on['flag']!r}"
+                        f"{condition['flag']!r}"
                     )
-                if not isinstance(depends_on.get("equals"), bool):
+                if not isinstance(condition.get("equals"), bool):
                     problems.append(f"{identity}: a flag condition must compare to a bool")
                 continue
 
-            if "key" not in depends_on:
+            if "key" not in condition:
                 problems.append(f"{identity}: depends_on names neither a key nor a flag")
                 continue
-            if depends_on["key"] not in declared:
-                problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
-            if field.get("key") == depends_on["key"]:
+            if condition["key"] not in declared:
+                problems.append(
+                    f"{identity}: depends on undeclared key {condition['key']!r}"
+                )
+            if field.get("key") == condition["key"]:
                 problems.append(f"{identity}: depends on itself")
 
             # A string comparison only makes sense against a value the gating
             # field can actually hold, and a typo there hides the dependent
             # field for good.
-            expected = depends_on.get("equals", True)
+            expected = condition.get("equals", True)
             if isinstance(expected, str):
-                gate = fields_module.get_field_definition(depends_on["key"]) or {}
+                gate = fields_module.get_field_definition(condition["key"]) or {}
                 allowed = {option["value"] for option in gate.get("options", [])}
                 if allowed and expected not in allowed:
                     problems.append(
-                        f"{identity}: depends on {depends_on['key']!r} == {expected!r}, "
+                        f"{identity}: depends on {condition['key']!r} == {expected!r}, "
                         f"which is not one of {sorted(allowed)}"
                     )
 
@@ -297,6 +302,124 @@ def test_dependencies_reference_real_fields():
     )
 
     print(f"  All {checked} dependency reference(s) resolve to declared fields.")
+    return True
+
+
+def test_string_dependencies_name_an_offered_option():
+    """A string condition that no option produces would hide the field forever."""
+    print("\nTesting string visibility dependencies against their select options...")
+
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        identity = f"{section_id}.{field.get('key') or field.get('component')}"
+        for depends_on in fields_module.iter_field_dependencies(field):
+            expected = depends_on.get("equals")
+            if not isinstance(expected, str):
+                continue
+
+            checked += 1
+            gate = fields_by_key.get(depends_on.get("key"))
+
+            if gate is None:
+                problems.append(f"{identity}: gate field is not declared")
+                continue
+            if gate.get("type") != "select":
+                problems.append(
+                    f"{identity}: gate {gate['key']!r} is a {gate.get('type')!r}, but a "
+                    "string condition only makes sense against a select"
+                )
+                continue
+
+            values = [option["value"] for option in gate.get("options", [])]
+            if expected not in values:
+                problems.append(
+                    f"{identity}: waits for {gate['key']}=={expected!r}, which is not "
+                    f"one of {values}"
+                )
+
+    assert not problems, (
+        "These string dependencies can never be satisfied, so the field would "
+        "never render:\n  " + "\n  ".join(problems)
+    )
+
+    assert checked, (
+        "No string dependencies were compared; the Enhanced Citations storage "
+        "credentials should each be gated on an authentication type."
+    )
+    print(f"  All {checked} string dependency condition(s) are reachable.")
+    return True
+
+
+def test_gated_fields_inherit_their_gate_s_own_conditions():
+    """The renderer evaluates each field's conditions alone, not recursively.
+
+    So a field gated on a sibling is visible whenever that sibling's *value* matches,
+    even when the sibling is itself hidden. Gating the Enhanced Citations connection
+    string on the authentication type alone left it on screen while Enhanced Citations
+    was off, because the authentication type defaults to ``key`` whether the capability
+    is on or not -- offering a credential field for a disabled feature.
+
+    A field must therefore repeat every condition its gate carries.
+    """
+    print("\nTesting that gated fields inherit their gate's conditions...")
+
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    def condition_set(field, seen=None):
+        """Every (key, equals) a field declares, plus everything its gates declare."""
+        seen = seen if seen is not None else set()
+        for condition in fields_module.iter_field_dependencies(field):
+            key = condition.get("key")
+            entry = (key, condition.get("equals", True))
+            if entry in seen:
+                continue
+            seen.add(entry)
+            parent = fields_by_key.get(key)
+            if parent is not None:
+                condition_set(parent, seen)
+        return seen
+
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        own = {
+            (condition.get("key"), condition.get("equals", True))
+            for condition in fields_module.iter_field_dependencies(field)
+        }
+        if not own:
+            continue
+
+        checked += 1
+        inherited = condition_set(field)
+        missing = sorted(
+            f"{key}=={value!r}" for key, value in inherited - own
+        )
+        if missing:
+            problems.append(
+                f"{section_id}.{field.get('key') or field.get('component')}: also needs "
+                + ", ".join(missing)
+            )
+
+    assert not problems, (
+        "These fields are gated on another field that is itself gated, but do not "
+        "repeat its conditions. Because visibility is evaluated per field rather than "
+        "recursively, they stay on screen when their gate is hidden:\n  "
+        + "\n  ".join(problems)
+    )
+
+    assert checked, "No gated fields were compared; the extraction likely broke."
+    print(f"  All {checked} gated field(s) carry their gate's conditions.")
     return True
 
 
@@ -341,7 +464,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 
@@ -386,6 +515,8 @@ if __name__ == "__main__":
         test_select_defaults_are_offered_as_options,
         test_setting_keys_have_one_owner,
         test_dependencies_reference_real_fields,
+        test_string_dependencies_name_an_offered_option,
+        test_gated_fields_inherit_their_gate_s_own_conditions,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,
     ]
