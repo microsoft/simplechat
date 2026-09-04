@@ -238,12 +238,16 @@ def test_admin_connection_test_does_not_expose_credential_errors():
 
     construction_block = body[body.index("create_redis_client("):body.index("test_key_simplechat")]
 
-    # Validation messages are our own and safe; credential resolution errors are not.
+    # Validation messages are handled separately from credential errors.
     assert "except ValueError" in construction_block, (
         "Validation errors should be surfaced separately from credential errors."
     )
-    assert not re.search(r"jsonify\(\{\s*'error':\s*f'[^']*\{str\(client_error\)\}", construction_block), (
-        "The client construction error must not be returned to the browser."
+    # Neither handler may echo the exception back to the browser.
+    assert not re.search(r"jsonify\([^)]*str\((?:client_error|validation_error)\)", construction_block), (
+        "Client construction errors must not be returned to the browser."
+    )
+    assert "sanitize_log_message(" in construction_block, (
+        "Exception detail must be sanitized before it reaches the logger."
     )
     assert "[REDIS_TEST]" in construction_block, (
         "Credential errors must be logged for diagnosis instead of returned."
