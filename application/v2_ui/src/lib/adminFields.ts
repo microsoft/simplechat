@@ -150,6 +150,8 @@ export interface AdminField {
      */
     builder_template?: string;
     builder_sources?: Record<string, string>;
+    /** Multiplier between the unit a field is edited in and the unit it is stored in. */
+    scale?: number;
     /** Lifts a field into the section header. See `FIELD_ROLES`. */
     role?: 'capability';
     /**
@@ -265,6 +267,15 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
     const stored = field.paths?.length
         ? readNestedSetting(settings, field.paths[0])
         : settings[field.key];
+
+    if (stored !== undefined && stored !== null && field.scale) {
+        // Stored in one unit, edited in another. File Sync's per-run limit is held
+        // in bytes and entered in GB, and showing the byte count in a field labelled
+        // GB would read as an absurd value.
+        const scaled = Number(stored) / field.scale;
+        return Number.isFinite(scaled) ? scaled : field.default;
+    }
+
     return stored === undefined || stored === null ? field.default : stored;
 }
 
