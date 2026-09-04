@@ -30,11 +30,13 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Only the Appearance group is described in full so far. Sections with no entry
-here fall back to the V2 surface's ``enable_*`` scan, so undescribed groups keep
-working exactly as they did. A handful of individual fields outside Appearance
-are also declared: that scan places a key by guessing from shared word stems,
-and declaring a field is the only way to stop it guessing wrong.
+Only the Appearance and Workflow groups are described in full so far. Sections
+with no entry here fall back to the V2 surface's ``enable_*`` scan, so
+undescribed groups keep working exactly as they did. A handful of individual
+fields outside those groups are also declared: that scan places a key by guessing
+from shared word stems, and declaring a field is the only way to stop it guessing
+wrong. Workflow had the opposite problem -- none of its settings are named
+``enable_*``, so the scan had nothing to guess with and the group rendered empty.
 """
 
 import re
@@ -44,6 +46,9 @@ from functions_ai_notice import (
     AI_NOTICE_MAX_MESSAGE_LENGTH,
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
+)
+from functions_group_assignment_ids import (
+    normalize_group_workflow_allowed_group_ids,
 )
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
@@ -71,6 +76,7 @@ FIELD_TYPES = (
     "number",
     "image",
     "link_list",
+    "group_picker",
     "component",
 )
 
@@ -89,6 +95,11 @@ LOGO_SCALE_DEFAULT_PERCENT = 100
 # rejecting the value here would lock an administrator out of editing a section
 # that already holds a longer agreement.
 USER_AGREEMENT_WORD_LIMIT = 200
+
+# Above this many automatic tool calls per workflow run, a run is capacity
+# sensitive rather than merely long. The server-rendered pane says so in a
+# warning block, so the same guidance is attached to the field here.
+WORKFLOW_AUTO_INVOKE_CAPACITY_THRESHOLD = 100
 
 CLASSIFICATION_BANNER_DEFAULT_COLOR = "#ffc107"
 CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
@@ -632,6 +643,108 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    # The Workflow group has exactly one section, and none of its settings are
+    # named `enable_*`, so the fallback scan found nothing at all and the group
+    # rendered empty in V2. Declaring the section is what makes it reachable.
+    "workflow-settings-section": [
+        {
+            "key": "allow_user_workflows",
+            "type": "switch",
+            "label": "Enable Personal Workflows",
+            "help": (
+                "Users can create personal workflows that run a selected agent or "
+                "model manually or on an interval schedule."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_member_of_workflow_user",
+            "type": "switch",
+            "label": "Require WorkflowUser App Role",
+            "help": (
+                "Restricts personal workflows to holders of the WorkflowUser "
+                "Enterprise App role, covering opening, creating, editing, running "
+                "and inspecting them. Assign the role value WorkflowUser to users or "
+                "groups in the Enterprise App before turning this on, or everyone "
+                "loses access at once."
+            ),
+            "default": False,
+            "depends_on": {"key": "allow_user_workflows", "equals": True},
+        },
+        {
+            "key": "allow_group_workflows",
+            "type": "switch",
+            "label": "Enable Group Workflows",
+            "help": (
+                "Permitted group members can create, manage and run workflows from "
+                "group workspaces. Owners and Admins may author them unless "
+                "Workspaces > Workspace Types restricts group agent, action and "
+                "workflow management to Owners."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_group_assignment_for_group_workflows",
+            "type": "switch",
+            "label": "Require Group Assignment to Use Workflow",
+            "help": (
+                "Narrows group workflows to an explicit allow list. Every other "
+                "group loses the capability, so assign the groups that need it "
+                "before turning this on."
+            ),
+            "default": False,
+            "depends_on": {"key": "allow_group_workflows", "equals": True},
+        },
+        {
+            "key": "group_workflow_allowed_group_ids",
+            "type": "group_picker",
+            "label": "Assigned Groups",
+            "help": (
+                "The groups that may create, manage and run group workflows while "
+                "assignment is required."
+            ),
+            "default": [],
+            "search_endpoint": "/api/v2/admin/groups",
+            "depends_on": {
+                "key": "require_group_assignment_for_group_workflows",
+                "equals": True,
+            },
+        },
+        {
+            "key": "workflow_max_auto_invoke_attempts",
+            "type": "number",
+            "label": "Workflow Agent Action Limit",
+            "help": (
+                "Maximum automatic tool or action calls an agent can make during one "
+                "workflow run. Default is 60; increase for large document sets."
+            ),
+            "default": 60,
+            "min": 1,
+            "max": 500,
+            "step": 1,
+            "notice_level": "warning",
+            "notice": (
+                f"Values above {WORKFLOW_AUTO_INVOKE_CAPACITY_THRESHOLD} are "
+                "capacity-sensitive. Enable Cosmos DB Throughput automation in "
+                "SimpleChat so the app can monitor RU pressure and scale up Cosmos "
+                "when needed, and also monitor Azure OpenAI throttling, App Service "
+                "CPU and memory, and downstream service latency."
+            ),
+        },
+        {
+            "key": "workflow_max_tasks",
+            "type": "number",
+            "label": "Workflow Task Limit",
+            "help": (
+                "Maximum ordered instruction tasks users can add to one workflow. "
+                "Default is 50; supported range is 1-100."
+            ),
+            "default": 50,
+            "min": 1,
+            "max": 100,
+            "step": 1,
+        },
+    ],
 }
 
 
@@ -872,6 +985,12 @@ def _normalize_field_value(key, value, field):
     if field_type == "link_list":
         links, error = _normalize_link_list(value)
         return links, error, None
+
+    if field_type == "group_picker":
+        # Delegated so an assignment saved from V2 is byte-for-byte what the
+        # server-rendered form would have stored, including how it drops ids that
+        # are not canonical group UUIDs.
+        return normalize_group_workflow_allowed_group_ids(value), None, None
 
     if field_type == "textarea":
         text = str(value if value is not None else "")

@@ -20,6 +20,7 @@ export type AdminFieldType =
     | 'number'
     | 'image'
     | 'link_list'
+    | 'group_picker'
     | 'component';
 
 export interface AdminFieldOption {
@@ -71,6 +72,17 @@ export interface AdminField {
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
+    /** Group picker fields only: the admin endpoint that searches and resolves groups. */
+    search_endpoint?: string;
+    /**
+     * Standing guidance shown as a callout beneath the control.
+     *
+     * Distinct from `help`, which describes what the setting does, and from the
+     * server's per-save `warnings`, which react to a submitted value. A notice is
+     * an operational caveat that is true whenever the setting is on screen.
+     */
+    notice?: string;
+    notice_level?: 'info' | 'warning';
     depends_on?: AdminFieldDependency;
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
@@ -196,7 +208,13 @@ export function countWords(text: string): number {
 
 /** Text a field contributes to the page search index. */
 export function fieldSearchText(field: AdminField): string {
-    return [field.key ?? '', field.label, field.help ?? '', field.component ?? '']
+    return [
+        field.key ?? '',
+        field.label,
+        field.help ?? '',
+        field.notice ?? '',
+        field.component ?? '',
+    ]
         .join(' ')
         .toLowerCase();
 }

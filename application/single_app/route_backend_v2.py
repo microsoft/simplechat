@@ -61,7 +61,15 @@ from functions_authentication import (
 )
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_custom_pages import get_custom_pages_nav
-from functions_group import find_group_by_id, get_user_groups
+from functions_group import (
+    GROUP_DIRECTORY_DEFAULT_LIMIT,
+    GROUP_DIRECTORY_MAX_LIMIT,
+    find_group_by_id,
+    find_groups_by_ids,
+    get_user_groups,
+    list_groups_for_admin_directory,
+)
+from functions_group_assignment_ids import normalize_group_workflow_allowed_group_ids
 from functions_image_edit import resolve_image_edit_capability
 from functions_public_workspaces import (
     find_public_workspace_by_id,
@@ -817,3 +825,73 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to store the uploaded image"}), 500
+
+    @bp.route("/api/v2/admin/groups", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_list_groups():
+        """Return group directory rows for an administrator's assignment picker.
+
+        Settings such as ``group_workflow_allowed_group_ids`` store group ids. An
+        id is not something an administrator can recognise, so the picker needs to
+        resolve one to a name, and needs to search the directory to add another.
+
+        This exists rather than reusing ``/api/groups/discover`` because that
+        endpoint answers a different question: it is a member-facing directory,
+        gated on the User role and on group workspaces being enabled, it returns
+        every group in one unbounded response, and it cannot resolve a specific
+        set of ids. An administrator managing an assignment may hold neither the
+        User role nor a membership in the groups being assigned.
+
+        ``ids`` resolves an existing assignment; ids that no longer exist are
+        absent from the response, which is how the caller detects a stale entry.
+        Otherwise ``search`` matches on name, description or id.
+        """
+        raw_ids = str(request.args.get("ids") or "").strip()
+        if raw_ids:
+            requested_ids = normalize_group_workflow_allowed_group_ids(raw_ids)
+            if not requested_ids:
+                return jsonify({"groups": [], "truncated": False}), 200
+            if len(requested_ids) > GROUP_DIRECTORY_MAX_LIMIT:
+                return (
+                    jsonify(
+                        {
+                            "error": "Too many group ids requested. Limit is "
+                            f"{GROUP_DIRECTORY_MAX_LIMIT}."
+                        }
+                    ),
+                    400,
+                )
+
+            try:
+                return (
+                    jsonify({"groups": find_groups_by_ids(requested_ids), "truncated": False}),
+                    200,
+                )
+            except Exception as exc:
+                log_event(
+                    f"[V2_ADMIN_GROUPS] Failed to resolve {len(requested_ids)} group id(s): {exc}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return jsonify({"error": "Failed to load groups"}), 500
+
+        try:
+            limit = int(request.args.get("limit") or GROUP_DIRECTORY_DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            limit = GROUP_DIRECTORY_DEFAULT_LIMIT
+
+        try:
+            groups, truncated = list_groups_for_admin_directory(
+                search_query=request.args.get("search", ""),
+                limit=limit,
+            )
+            return jsonify({"groups": groups, "truncated": truncated}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_GROUPS] Failed to list groups: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load groups"}), 500
