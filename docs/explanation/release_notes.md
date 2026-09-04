@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.017)**
+
+#### New Features
+
+*   **Custom Model Endpoints Support Bearer Tokens, OAuth2, And Client Certificates**
+    *   Custom endpoints accepted one authentication scheme: an API key sent in whichever header the built-in providers happened to use. That covers OpenAI and Anthropic and nothing else, so a gateway expecting `x-goog-api-key`, a corporate gateway issuing short-lived tokens, and an appliance requiring a client certificate were all unreachable.
+    *   **The API key header name and value prefix are now configurable**, so a single scheme covers `Authorization: Bearer`, Anthropic's `x-api-key`, Google's `x-goog-api-key`, and any bespoke gateway header.
+    *   **Added static bearer token authentication.**
+    *   **Added OAuth2 client credentials**, with token caching and refresh ahead of expiry so a token cannot lapse mid-request. The token endpoint is validated against the same outbound policy as the inference endpoint, so it cannot become an unchecked request target, and a failing token response is sanitized before it reaches the browser.
+    *   **Added mTLS client certificates.** Certificates are referenced by file path so a private key is mounted into the deployment and never written to the configuration database.
+    *   (Ref: `functions_model_endpoint_auth.py`, `functions_model_endpoint_providers.py`, `functions_model_endpoint_validation.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
+
 ### **(v0.261.016)**
 
 #### New Features

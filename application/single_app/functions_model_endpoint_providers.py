@@ -69,6 +69,16 @@ MODEL_IDENTIFIER_DEPLOYMENT_NAME = "deployment_name"
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 
 AUTH_TYPE_API_KEY = "api_key"
+AUTH_TYPE_BEARER = "bearer"
+AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
+
+# Every registered provider accepts these. API key remains the default and the
+# only one required; the others are opt-in for gateways that need them.
+DEFAULT_CUSTOM_AUTH_TYPES = (
+    AUTH_TYPE_API_KEY,
+    AUTH_TYPE_BEARER,
+    AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
+)
 
 
 class ModelEndpointProvider:
@@ -82,7 +92,9 @@ class ModelEndpointProvider:
         model_identifier: str,
         url_policy: str,
         *,
-        auth_types: Tuple[str, ...] = (AUTH_TYPE_API_KEY,),
+        auth_types: Tuple[str, ...] = DEFAULT_CUSTOM_AUTH_TYPES,
+        default_api_key_header: str = "Authorization",
+        default_api_key_prefix: str = "Bearer",
         requires_api_version: bool = False,
         version_field: str = "",
         default_version: str = "",
@@ -97,6 +109,8 @@ class ModelEndpointProvider:
         self.model_identifier = model_identifier
         self.url_policy = url_policy
         self.auth_types = auth_types
+        self.default_api_key_header = default_api_key_header
+        self.default_api_key_prefix = default_api_key_prefix
         self.requires_api_version = requires_api_version
         self.version_field = version_field
         self.default_version = default_version
@@ -120,6 +134,8 @@ class ModelEndpointProvider:
             "versionField": self.version_field,
             "defaultVersion": self.default_version,
             "authTypes": list(self.auth_types),
+            "defaultApiKeyHeader": self.default_api_key_header,
+            "defaultApiKeyPrefix": self.default_api_key_prefix,
             "description": self.description,
         }
 
@@ -157,6 +173,9 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
         url_policy=URL_POLICY_ANTHROPIC_MESSAGES,
         version_field="anthropic_version",
         default_version=DEFAULT_ANTHROPIC_VERSION,
+        # Anthropic reads the key from x-api-key with no value prefix.
+        default_api_key_header="x-api-key",
+        default_api_key_prefix="",
         description="Anthropic's messages API, direct or through a gateway.",
     ),
     ModelEndpointProvider(

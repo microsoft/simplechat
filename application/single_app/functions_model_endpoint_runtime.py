@@ -8,7 +8,14 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAICha
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
-from functions_model_endpoint_providers import normalize_custom_endpoint_url_mode
+from functions_model_endpoint_auth import (
+    normalize_custom_endpoint_auth_type,
+    resolve_custom_endpoint_credentials,
+)
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_custom_endpoint_url_mode,
+)
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
@@ -184,8 +191,27 @@ def build_model_endpoint_sync_chat_client(
         api_type,
     )
     auth_type = str(auth_settings.get('type') or 'managed_identity').strip().lower()
-    if direct_custom and auth_type not in ('api_key', 'key'):
-        raise ValueError('Custom model endpoints support API key authentication only.')
+    if direct_custom:
+        normalized_custom_auth = normalize_custom_endpoint_auth_type(auth_type)
+        if not normalized_custom_auth:
+            raise ValueError(
+                'Custom model endpoints support API key, bearer token, or OAuth2 '
+                'client credentials authentication.'
+            )
+        registered_provider = get_model_endpoint_provider(api_type)
+        credential, credential_headers = resolve_custom_endpoint_credentials(
+            auth_settings,
+            default_api_key_header=(
+                registered_provider.default_api_key_header if registered_provider else ''
+            ),
+            default_api_key_prefix=(
+                registered_provider.default_api_key_prefix if registered_provider else ''
+            ),
+        )
+        if credential_headers:
+            extra_headers = {**(extra_headers or {}), **credential_headers}
+        auth_type = 'api_key'
+        auth_settings = {**auth_settings, 'type': 'api_key', 'api_key': credential}
 
     if auth_type in ('api_key', 'key'):
         api_key = auth_settings.get('api_key')
@@ -452,13 +478,33 @@ def build_semantic_kernel_chat_service_for_model(
             api_type,
         )
         auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
-        if direct_custom and auth_type not in ('api_key', 'key'):
-            raise ValueError('Custom model endpoints support API key authentication only.')
         extra_headers = build_model_endpoint_identity_headers(
             settings,
             endpoint_config=resolved_model_endpoint,
             identity_context=model_context,
         )
+        if direct_custom:
+            normalized_custom_auth = normalize_custom_endpoint_auth_type(auth_type)
+            if not normalized_custom_auth:
+                raise ValueError(
+                    'Custom model endpoints support API key, bearer token, or OAuth2 '
+                    'client credentials authentication.'
+                )
+            registered_provider = get_model_endpoint_provider(api_type)
+            credential, credential_headers = resolve_custom_endpoint_credentials(
+                auth_settings,
+                default_api_key_header=(
+                    registered_provider.default_api_key_header if registered_provider else ''
+                ),
+                default_api_key_prefix=(
+                    registered_provider.default_api_key_prefix if registered_provider else ''
+                ),
+            )
+            if credential_headers:
+                extra_headers = {**(extra_headers or {}), **credential_headers}
+            auth_type = 'api_key'
+            auth_settings = {**auth_settings, 'type': 'api_key', 'api_key': credential}
+
         if auth_type in ('api_key', 'key'):
             api_key = auth_settings.get('api_key')
             if not api_key:

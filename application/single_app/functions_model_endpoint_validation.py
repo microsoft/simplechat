@@ -7,6 +7,12 @@ import socket
 from typing import Any, Dict, Iterable
 from urllib.parse import urlparse, urlunparse
 
+from functions_model_endpoint_auth import (
+    AUTH_TYPE_API_KEY,
+    AUTH_TYPE_BEARER,
+    AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
+    normalize_custom_endpoint_auth_type,
+)
 from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
@@ -297,13 +303,40 @@ def validate_custom_model_endpoint(
     registered_provider = get_model_endpoint_provider(api_type)
 
     auth = endpoint.get("auth") if isinstance(endpoint.get("auth"), dict) else {}
-    auth_type = str(auth.get("type") or "").strip().lower()
-    if auth_type not in {"api_key", "key"}:
+    auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
+    if not auth_type:
         raise ModelEndpointValidationError(
-            "Custom endpoints support API key authentication only."
+            "Custom endpoints support API key, bearer token, or OAuth2 "
+            "client credentials authentication."
         )
-    if require_api_key and not auth.get("api_key"):
-        raise ModelEndpointValidationError("Custom endpoint API key is required.")
+    if registered_provider is not None and auth_type not in registered_provider.auth_types:
+        raise ModelEndpointValidationError(
+            f"{registered_provider.display_name} does not support the selected "
+            "authentication type."
+        )
+    if require_api_key:
+        if auth_type == AUTH_TYPE_API_KEY and not auth.get("api_key"):
+            raise ModelEndpointValidationError("Custom endpoint API key is required.")
+        if auth_type == AUTH_TYPE_BEARER and not auth.get("bearer_token"):
+            raise ModelEndpointValidationError("Custom endpoint bearer token is required.")
+        if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS and not all(
+            str(auth.get(field) or "").strip()
+            for field in ("token_url", "client_id", "client_secret")
+        ):
+            raise ModelEndpointValidationError(
+                "Custom endpoint OAuth2 authentication requires a token URL, "
+                "client ID, and client secret."
+            )
+    if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS and auth.get("token_url"):
+        # The token endpoint is a separate host and must satisfy the same policy
+        # as the inference endpoint, otherwise it becomes an unchecked outbound
+        # request target.
+        validate_custom_model_endpoint_url(
+            auth.get("token_url"),
+            allow_private=bool((settings or {}).get("allow_private_custom_model_endpoints", False)),
+            allow_insecure=bool((settings or {}).get("allow_insecure_custom_model_endpoints", False)),
+            require_resolvable=False,
+        )
 
     connection = (
         endpoint.get("connection")

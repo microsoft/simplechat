@@ -488,7 +488,7 @@ class _PinnedCustomEndpointAsyncBackend(httpcore.AsyncNetworkBackend):
         await self._backend.sleep(seconds)
 
 
-def build_custom_endpoint_ssl_context(ca_bundle_path: Any = ""):
+def build_custom_endpoint_ssl_context(ca_bundle_path: Any = "", client_cert: Any = None):
     """Return the TLS context for Custom endpoint requests.
 
     The default context trusts only certifi's public roots, and deliberately does
@@ -496,26 +496,43 @@ def build_custom_endpoint_ssl_context(ca_bundle_path: Any = ""):
     what SimpleChat trusts. That leaves an on-premises gateway with an
     enterprise-issued certificate untrustable, so an administrator may name a CA
     bundle explicitly. Naming a bundle is an explicit decision, not an ambient one.
+
+    ``client_cert`` supplies an mTLS client certificate, as either a combined PEM
+    path or a (certificate, key) pair of paths.
     """
     bundle_path = str(ca_bundle_path or "").strip()
     if bundle_path:
         try:
-            return ssl.create_default_context(cafile=bundle_path)
+            context = ssl.create_default_context(cafile=bundle_path)
         except (OSError, ssl.SSLError):
             # A missing or unreadable bundle must not silently fall back to a
             # weaker context, so the failure is surfaced to the caller.
             raise ModelEndpointValidationError(
                 "The configured Custom endpoint CA bundle could not be loaded."
             ) from None
-    return httpx.create_ssl_context(verify=True, trust_env=False)
+    else:
+        context = httpx.create_ssl_context(verify=True, trust_env=False)
+
+    if client_cert:
+        try:
+            if isinstance(client_cert, (tuple, list)):
+                context.load_cert_chain(*client_cert)
+            else:
+                context.load_cert_chain(client_cert)
+        except (OSError, ssl.SSLError):
+            raise ModelEndpointValidationError(
+                "The configured Custom endpoint client certificate could not be loaded."
+            ) from None
+
+    return context
 
 
 class _PinnedCustomEndpointHTTPTransport(httpx.HTTPTransport):
     """HTTPX transport whose TCP connection uses the validated DNS results."""
 
-    def __init__(self, *, allow_private=False, ca_bundle_path=""):
+    def __init__(self, *, allow_private=False, ca_bundle_path="", client_cert=None):
         self._pool = httpcore.ConnectionPool(
-            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path),
+            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path, client_cert),
             max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
             max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
             keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
@@ -528,9 +545,9 @@ class _PinnedCustomEndpointHTTPTransport(httpx.HTTPTransport):
 class _PinnedCustomEndpointAsyncHTTPTransport(httpx.AsyncHTTPTransport):
     """Async HTTPX transport whose TCP connection uses validated DNS results."""
 
-    def __init__(self, *, allow_private=False, ca_bundle_path=""):
+    def __init__(self, *, allow_private=False, ca_bundle_path="", client_cert=None):
         self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path),
+            ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path, client_cert),
             max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
             max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
             keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
@@ -540,24 +557,26 @@ class _PinnedCustomEndpointAsyncHTTPTransport(httpx.AsyncHTTPTransport):
         )
 
 
-def build_custom_openai_sync_http_client(*, allow_private=False, ca_bundle_path=""):
+def build_custom_openai_sync_http_client(*, allow_private=False, ca_bundle_path="", client_cert=None):
     """Return a no-redirect SDK transport pinned to validated DNS addresses."""
     return DefaultHttpxClient(
         transport=_PinnedCustomEndpointHTTPTransport(
             allow_private=allow_private,
             ca_bundle_path=ca_bundle_path,
+            client_cert=client_cert,
         ),
         follow_redirects=False,
         trust_env=False,
     )
 
 
-def build_custom_openai_async_http_client(*, allow_private=False, ca_bundle_path=""):
+def build_custom_openai_async_http_client(*, allow_private=False, ca_bundle_path="", client_cert=None):
     """Return an async no-redirect transport pinned to validated DNS addresses."""
     return DefaultAsyncHttpxClient(
         transport=_PinnedCustomEndpointAsyncHTTPTransport(
             allow_private=allow_private,
             ca_bundle_path=ca_bundle_path,
+            client_cert=client_cert,
         ),
         follow_redirects=False,
         trust_env=False,

@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.017 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.016 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.015 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.014 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -31,7 +32,7 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.007 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.006 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.005 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.004 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.004 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.003 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.002 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.001 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
@@ -82,6 +83,18 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.017)**
+
+#### New Features
+
+*   **Custom Model Endpoints Support Bearer Tokens, OAuth2, And Client Certificates**
+    *   Custom endpoints accepted one authentication scheme: an API key sent in whichever header the built-in providers happened to use. That covers OpenAI and Anthropic and nothing else, so a gateway expecting `x-goog-api-key`, a corporate gateway issuing short-lived tokens, and an appliance requiring a client certificate were all unreachable.
+    *   **The API key header name and value prefix are now configurable**, so a single scheme covers `Authorization: Bearer`, Anthropic's `x-api-key`, Google's `x-goog-api-key`, and any bespoke gateway header.
+    *   **Added static bearer token authentication.**
+    *   **Added OAuth2 client credentials**, with token caching and refresh ahead of expiry so a token cannot lapse mid-request. The token endpoint is validated against the same outbound policy as the inference endpoint, so it cannot become an unchecked request target, and a failing token response is sanitized before it reaches the browser.
+    *   **Added mTLS client certificates.** Certificates are referenced by file path so a private key is mounted into the deployment and never written to the configuration database.
+    *   (Ref: `functions_model_endpoint_auth.py`, `functions_model_endpoint_providers.py`, `functions_model_endpoint_validation.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
 ### **(v0.261.016)**
 
@@ -204,14 +217,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   The temporary upload summary no longer labels unconfirmed browser upload requests as final document failures. This avoids misleading summaries such as `Uploaded 77/204, Failed: 127` when the document list later shows that most documents were queued and processed successfully.
     *   Personal, group, and public workspace uploads now use `Queued` for confirmed upload requests and direct users to the refreshed document list for final processing status.
     *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
-
-### **(v0.261.004)**
-
-#### Bug Fixes
-
-*   **Large Workspace Uploads No Longer Fail On Search Write Gate Contention**
-    *   Fixed partial failures when uploading many small Markdown, JSON, or YAML files to personal, group, or public workspaces at once. Document processing could fail with a message that the Data Management Search write gate changed too often to reserve a write slot.
-    *   The shared write gate now waits within the existing request timeout budget, briefly backs off after transient Cosmos ETag conflicts, and serializes Search writes inside each worker process. This prevents local upload threads from stampeding the same gate document while preserving the migration freeze protection for Azure AI Search writes.
-    *   Markdown processing now batches its chunk embeddings and Search upload instead of reserving the gate once per chunk, which reduces contention and avoids the intermittent `OrderedDict mutated during iteration` failures seen during concurrent Markdown ingestion.
-    *   Added regression coverage for repeated transient gate conflicts, local worker serialization, and Markdown use of the batch chunk writer.
-    *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
