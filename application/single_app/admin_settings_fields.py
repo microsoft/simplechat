@@ -4425,20 +4425,11 @@ ADMIN_SETTINGS_FIELDS = {
                 "next time the connections are saved."
             ),
         },
-        {
-            "key": "enable_gpt_apim",
-            "type": "switch",
-            "label": "Send requests through API Management",
-            "help": (
-                "Routes GPT requests that use the classic endpoint through API Management "
-                "rather than straight to the Azure OpenAI resource, which is how a "
-                "deployment applies its own governance and monitoring to them. The APIM "
-                "endpoint, deployment and subscription key this needs are configured on "
-                "the classic admin page, so turning it on before those are set leaves "
-                "those requests with nowhere to go."
-            ),
-            "default": False,
-        },
+        # `enable_gpt_apim` deliberately has no field here. It belongs to the classic
+        # single endpoint, and a connection now carries its own API Management
+        # configuration, so a switch in this section would be a second control for a
+        # route connections do not use. It is named in SUPPRESSED_CAPABILITY_KEYS so the
+        # fallback scan does not draw one anyway.
     ],
     "core-plugin-toggles": [
         {
@@ -5536,9 +5527,13 @@ ADMIN_SETTINGS_FIELDS = {
             "component": "image-model-selection",
             "label": "Image model",
             "help": (
-                "The deployment every generated image comes from. Image deployments differ "
-                "in the sizes and quality settings they accept, so a change here can alter "
-                "what the image tool is able to produce."
+                "The deployment every generated image comes from. A gpt-image or DALL-E "
+                "deployment is asked for an image directly; a chat deployment such as "
+                "gpt-5.6 has no image endpoint and is asked through the Responses image "
+                "tool instead, which is worth choosing where no image model is available "
+                "but cannot change part of an existing image. Image deployments also "
+                "differ in the sizes and quality settings they accept, so a change here "
+                "can alter what the image tool is able to produce."
             ),
             "depends_on": [
                 {"key": "enable_image_generation", "equals": True},
@@ -5552,7 +5547,9 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Image generation moves on its own API schedule, which is why this defaults "
                 "later than the chat and embedding versions. Change it only for a "
-                "deployment that needs a different one."
+                "deployment that needs a different one. It governs the image endpoints "
+                "only; a chat deployment reached through the Responses image tool uses a "
+                "version new enough for that route regardless of what is set here."
             ),
             "default": "2024-12-01-preview",
             "depends_on": [
@@ -5753,6 +5750,13 @@ ADMIN_SECTION_STATUS = {
 # there is something to edit. They are named here with the reason instead, and
 # the settings GET sends this list so the scan can skip them.
 SUPPRESSED_CAPABILITY_KEYS = {
+    "enable_gpt_apim": (
+        "Belongs to the classic single endpoint and is edited on the "
+        "server-rendered model-endpoints pane. A connection carries its own API "
+        "Management configuration, so a switch here would be a second control "
+        "for a route connections never take, and turning it on would silently "
+        "repoint only the classic path."
+    ),
     "enable_tabular_processing_plugin": (
         "Derived, not stored: is_tabular_processing_enabled() returns "
         "enable_enhanced_citations, and get_settings() overwrites the stored value "
