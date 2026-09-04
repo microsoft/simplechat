@@ -138,6 +138,38 @@ def test_checkbox_sets_are_ordered_and_bounded():
     return True
 
 
+def test_assignment_lists_are_deduplicated_and_typed():
+    """A download policy keyed on a blank or repeated id would grant the wrong set."""
+    print("\nTesting assignment list handling...")
+
+    assert_app_version_at_least("0.261.059")
+
+    normalized, errors, _ = normalize(
+        {
+            "file_download_allowed_group_ids": [
+                " group-a ",
+                "group-b",
+                "group-a",
+                "",
+                None,
+            ]
+        }
+    )
+    assert not errors, errors
+    assert normalized["file_download_allowed_group_ids"] == ["group-a", "group-b"], (
+        normalized
+    )
+
+    # V1 round-trips this through a hidden textarea and accepts a JSON string. V2
+    # always sends a real array, and accepting a string here would mean two shapes
+    # to keep in step for no gain.
+    _, errors, _ = normalize({"file_download_allowed_public_workspace_ids": "ws-a,ws-b"})
+    assert "file_download_allowed_public_workspace_ids" in errors, errors
+
+    print("  Assignment lists are deduplicated, trimmed and reject non-list input.")
+    return True
+
+
 def test_selects_reject_unknown_values_but_reuse_shared_aliases():
     """Frequency fields must accept the same aliases the V1 form accepts."""
     print("\nTesting select handling...")
@@ -303,6 +335,7 @@ if __name__ == "__main__":
         test_colours_must_be_hex,
         test_external_links_reject_unsafe_urls,
         test_checkbox_sets_are_ordered_and_bounded,
+        test_assignment_lists_are_deduplicated_and_typed,
         test_selects_reject_unknown_values_but_reuse_shared_aliases,
         test_redirect_url_refuses_unsafe_targets,
         test_text_is_bounded_and_falls_back_when_empty,
