@@ -52,6 +52,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "textarea": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
+    "group_picker": ("default", "search_endpoint"),
     "image": ("upload_target", "accept", "version_key"),
     "component": ("component",),
 }
@@ -66,6 +67,7 @@ EXPECTED_DEFAULT_TYPES = {
     "number": int,
     "checkbox_set": list,
     "link_list": list,
+    "group_picker": list,
 }
 
 
