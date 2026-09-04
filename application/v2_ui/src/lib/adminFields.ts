@@ -43,7 +43,8 @@ export interface AdminFieldOption {
  *
  * `equals` is a string for a select, and a boolean for a switch. A field may carry one
  * of these or an array of them, in which case every condition has to hold — Content
- * Safety's key is gated on the capability, the routing choice and the auth type at once.
+ * Safety's key is gated on the capability, the routing choice and the auth type at once,
+ * and an Azure OpenAI key is gated on both the direct-connection route and the auth type.
  */
 export interface AdminFieldCondition {
     key?: string;

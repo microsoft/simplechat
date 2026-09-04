@@ -49,6 +49,7 @@ import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
+import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -80,6 +81,7 @@ import {
     type SectionStatus,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
+import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
 import type { AdminNavGroup, Json } from '../lib/types';
 
@@ -787,6 +789,32 @@ export function AdminSettingsPage() {
                                 settings['enable_multi_model_endpoints'],
                             )}
                             help={field.help}
+                        />
+                    );
+                case 'embedding-model-selection':
+                    return (
+                        <ModelSelectionPicker
+                            key={key}
+                            kind="embedding"
+                            label={field.label}
+                            help={field.help}
+                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
+                                'embedding',
+                                Object.keys(draft),
+                            )}
+                        />
+                    );
+                case 'image-model-selection':
+                    return (
+                        <ModelSelectionPicker
+                            key={key}
+                            kind="image"
+                            label={field.label}
+                            help={field.help}
+                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
+                                'image',
+                                Object.keys(draft),
+                            )}
                         />
                     );
                 case 'global-identities-list':

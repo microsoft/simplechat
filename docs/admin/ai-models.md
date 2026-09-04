@@ -104,46 +104,85 @@ The classic single endpoint is configured on the server-rendered admin page. Its
 
 ### Embeddings {#embeddings-config}
 
-The Embeddings section belongs to the Embeddings tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Embeddings turn text into vectors so a document can be found by meaning rather than by exact words. Every workspace document is embedded when it is indexed, and every question is embedded when it is asked, which makes this route a dependency of search itself rather than of chat: with it misconfigured, indexing fails and citations stop being found, while chat continues to answer from whatever it is given.
+
+Unlike chat, embeddings have no connections list. There is one Azure OpenAI resource, or API Management in front of one, and it is configured here.
+
+#### Direct or through API Management
+
+The two routes are alternatives, and only the selected one is used. Switching to APIM does not carry the direct settings over — the gateway has its own address, version, deployment name and subscription key — so the fields for the route you are not using stay out of the way rather than sitting there looking configured.
+
+#### Authentication and deployment discovery
+
+Managed identity avoids storing a credential at all, and it is also what allows SimpleChat to list the resource's deployments for you. That listing goes through Azure Resource Manager, which is why it needs the subscription id and resource group as well as the endpoint: inference is addressed by URL, but a deployment list is addressed by resource. A key authenticates to inference only.
+
+**Fetch deployments** reads the *saved* endpoint, subscription id and resource group, not what is currently on screen, so save changes to those before fetching. The list it returns is a cache of that answer: it can name a deployment that has since been removed, and a deployment the resource no longer reports is dropped from the selection rather than left to fail on the next embedding call.
+
+The stored key is never shown. Its field stays empty whatever is stored, and leaving it empty keeps the stored key rather than clearing it, so saving an API version cannot wipe a working credential. Typing a value replaces it, and **Remove stored value** clears it.
+
+#### Changing the embedding model
+
+An embedding is only comparable with other embeddings from the same model. Changing the deployment does not re-embed what is already indexed, so existing chunks keep the dimensions and the semantics of the model that wrote them, and search quality across the two sets degrades quietly rather than failing. Treat a model change as a re-index.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Use APIM instead of direct to Azure OpenAI endpoint | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_embedding_apim`; capability toggle |
-| Azure OpenAI Embedding Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_embedding_endpoint` |
-| Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_embedding_authentication_type` |
-| Subscription ID | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `azure_openai_embedding_subscription_id` |
-| Resource Group | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `azure_openai_embedding_resource_group` |
-| Azure OpenAI Embedding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_openai_embedding_key` |
-| Azure OpenAI Embedding API Version | Pins the service API version SimpleChat sends with requests for this feature. | 2024-05-01-preview | `azure_openai_embedding_api_version` |
-| Azure APIM Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_embedding_endpoint` |
-| Azure APIM API Version | Pins the service API version SimpleChat sends with requests for this feature. | Empty | `azure_apim_embedding_api_version` |
-| Azure APIM Deployment | Selects the deployment SimpleChat sends requests to for this capability. | Empty | `azure_apim_embedding_deployment` |
-| Azure APIM Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_embedding_subscription_key` |
+| Use APIM instead of direct to Azure OpenAI endpoint | Sends embedding requests through API Management rather than straight to the Azure OpenAI resource. Only the selected route is used. | Off | `enable_embedding_apim`; capability toggle |
+| Azure OpenAI Embedding Endpoint | The Azure OpenAI resource that produces vectors. Independent of the chat endpoint. | Empty | `azure_openai_embedding_endpoint` |
+| Authentication Type | Managed identity stores no credential and enables deployment discovery; a key authenticates to inference only. | key | `azure_openai_embedding_authentication_type` |
+| Subscription ID | Addresses the resource when listing its deployments. Inference does not need it. | Empty | `azure_openai_embedding_subscription_id` |
+| Resource Group | The other half of the address the deployment list is fetched from. | Empty | `azure_openai_embedding_resource_group` |
+| Azure OpenAI Embedding Key | Used only with key authentication. Leaving it blank keeps the stored key. | Empty | `azure_openai_embedding_key` |
+| Embedding model | The single deployment every stored embedding comes from. Changing it does not re-embed existing documents. | None selected | `embedding_model`; written through its own API |
+| Azure OpenAI Embedding API Version | Pin only when a deployment needs a version other than the default; an unsupported value fails every embedding call. | 2024-05-01-preview | `azure_openai_embedding_api_version` |
+| Azure APIM Endpoint | The API Management address that fronts the embedding deployment. | Empty | `azure_apim_embedding_endpoint` |
+| Azure APIM API Version | Whatever version the API Management operation publishes; there is no default, because a gateway can publish any. | Empty | `azure_apim_embedding_api_version` |
+| Azure APIM Deployment | The deployment name to send embedding requests to. Discovery does not reach through a gateway, so this is typed. | Empty | `azure_apim_embedding_deployment` |
+| Azure APIM Subscription Key | Leaving it blank keeps the stored key. | Empty | `azure_apim_embedding_subscription_key` |
 
 ## Image Generation {#image-generation}
 
 ### Image Generation {#image-config}
 
-The Image Generation section belongs to the Image Generation tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Image generation gives chat a tool that produces pictures from a prompt. It is off by default and configured entirely separately from chat and embeddings, because image models are deployed on their own and are frequently in a different region from the chat deployment.
+
+With **Enable Image Generation** off, nothing else in this section is consulted, and the rest of it stays out of the way rather than inviting configuration that would have no effect.
+
+#### Direct or through API Management
+
+As with embeddings, the direct and gateway routes are alternatives and only the selected one is used. The gateway has its own address, version, deployment name and subscription key.
+
+#### Authentication and deployment discovery
+
+Managed identity stores no credential and is what allows SimpleChat to list the resource's deployments, using the subscription id and resource group. A key authenticates to inference only.
+
+**Fetch deployments** reads the saved endpoint, subscription id and resource group, so save changes to those first. A deployment the resource no longer reports is dropped from the selection rather than left to fail on the next request.
+
+The stored key is never shown, and leaving its field empty keeps what is stored. **Remove stored value** clears it.
+
+#### Changing the image model
+
+Image deployments differ in the sizes, quality settings and response formats they accept, so a change here can alter what the image tool is able to produce, not only how the results look. Generate one test image after changing it.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Image Generation | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_image_generation`; capability toggle |
-| Use APIM instead of direct to Azure OpenAI endpoint. | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_image_gen_apim`; capability toggle |
-| Azure OpenAI Image Generation Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_image_gen_endpoint` |
-| Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_image_gen_authentication_type` |
-| Subscription ID | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `azure_openai_image_gen_subscription_id` |
-| Resource Group | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `azure_openai_image_gen_resource_group` |
-| Azure OpenAI Image Generation Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_openai_image_gen_key` |
-| Azure OpenAI Image Gen API Version | Pins the service API version SimpleChat sends with requests for this feature. | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
-| Azure APIM Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_image_gen_endpoint` |
-| Azure APIM API Version | Pins the service API version SimpleChat sends with requests for this feature. | Empty | `azure_apim_image_gen_api_version` |
-| Azure APIM Deployment | Selects the deployment SimpleChat sends requests to for this capability. | Empty | `azure_apim_image_gen_deployment` |
-| Azure APIM Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_image_gen_subscription_key` |
+| Enable Image Generation | Offers image generation in chat. With it off, nothing else here is consulted. | Off | `enable_image_generation`; capability toggle |
+| Use APIM instead of direct to Azure OpenAI endpoint | Sends image requests through API Management rather than straight to the Azure OpenAI resource. Only the selected route is used. | Off | `enable_image_gen_apim`; capability toggle |
+| Azure OpenAI Image Generation Endpoint | The resource holding the image deployment. Rarely the same as the chat endpoint. | Empty | `azure_openai_image_gen_endpoint` |
+| Authentication Type | Managed identity stores no credential and enables deployment discovery; a key authenticates to inference only. | key | `azure_openai_image_gen_authentication_type` |
+| Subscription ID | Addresses the resource when listing its deployments. Inference does not need it. | Empty | `azure_openai_image_gen_subscription_id` |
+| Resource Group | The other half of the address the deployment list is fetched from. | Empty | `azure_openai_image_gen_resource_group` |
+| Azure OpenAI Image Generation Key | Used only with key authentication. Leaving it blank keeps the stored key. | Empty | `azure_openai_image_gen_key` |
+| Image model | The single deployment every generated image comes from. | None selected | `image_gen_model`; written through its own API |
+| Azure OpenAI Image Gen API Version | Image generation moves on its own API schedule, which is why this defaults later than the chat and embedding versions. | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
+| Azure APIM Endpoint | The API Management address that fronts the image deployment. | Empty | `azure_apim_image_gen_endpoint` |
+| Azure APIM API Version | Whatever version the API Management operation publishes; there is no default, because a gateway can publish any. | Empty | `azure_apim_image_gen_api_version` |
+| Azure APIM Deployment | The deployment name to send image requests to. Discovery does not reach through a gateway, so this is typed. | Empty | `azure_apim_image_gen_deployment` |
+| Azure APIM Subscription Key | Leaving it blank keeps the stored key. | Empty | `azure_apim_image_gen_subscription_key` |
+
 
 ## Common tasks
 
@@ -151,8 +190,10 @@ The Image Generation section belongs to the Image Generation tab. Use it with th
 2. **Rotate a stored key.** Edit the connection, type the new key over the empty field, and save. Outcome to verify: **Test connection** succeeds with the replacement.
 3. **Choose the model chat starts from.** With connections in force, pick a default under Chat. Outcome to verify: a new conversation opens on that model without anyone selecting it.
 4. **Retire a connection.** Disable it first and confirm chat still works, then delete it. Outcome to verify: its models stop being offered, and a default model that named it is cleared.
-5. **Configure embeddings.** Set endpoint, authentication, API version, and deployment, then index a small document. Outcome to verify: Indexing succeeds with the configured embedding route.
-6. **Enable image generation.** Enable the capability, set endpoint values, and generate a low-risk test image. Outcome to verify: The image tool returns output from the configured deployment.
+5. **Configure embeddings.** Set the endpoint, authentication and — with managed identity — the subscription id and resource group, then save. Fetch the deployments, choose one, and index a small document. Outcome to verify: indexing completes and the document's citations are found by a question that does not repeat its wording.
+6. **Enable image generation.** Turn the capability on, set the endpoint and authentication, save, fetch the deployments and choose one. Outcome to verify: the image tool returns a picture from the deployment you chose.
+7. **Rotate an embedding or image key.** Type the new key over the empty field and save. Outcome to verify: **Test connection** on the classic admin page succeeds, and indexing or generation still works.
+8. **Move a route behind API Management.** Turn on **Use APIM**, then fill in the gateway address, version, deployment name and subscription key. Outcome to verify: requests appear in the gateway's logs, and the direct settings are left untouched in case you switch back.
 
 ## Troubleshooting
 
@@ -167,6 +208,12 @@ The Image Generation section belongs to the Image Generation tab. Use it with th
 | The default model list is empty | Either chat is on the classic single endpoint, or no connection currently has an enabled model on an enabled connection. | Turn on **Use connections for chat**, then enable at least one model. |
 | A default model choice is refused | Chat is on the classic single endpoint, so the choice would be cleared on the next save rather than taking effect. | Turn on **Use connections for chat** first. |
 | Embeddings fail during indexing | Endpoint, deployment, API version, or authentication does not match the Azure resource. | Validate the embedding route with a small document before bulk indexing. |
+| **Fetch deployments** returns nothing | Either the endpoint, subscription id and resource group do not name the resource the deployment lives in, or those changes have not been saved yet — fetching reads the saved values. | Save the connection details first, then fetch again. |
+| **Fetch deployments** is refused | The route authenticates with a key, which reaches inference but not Azure Resource Manager. | Switch to managed identity, and grant it read access to the resource. |
+| An embedding or image deployment disappeared from the list | The deployment was removed or renamed in Azure, so discovery no longer reports it. The selection is cleared rather than kept, because a request naming it would fail. | Choose a replacement from the refreshed list. |
+| Search quality dropped after changing the embedding model | Embeddings are only comparable with others from the same model, and existing chunks were not rewritten. | Re-index the affected workspaces so every chunk comes from one model. |
+| A key was cleared without anyone changing it | Nothing in the V2 admin surface clears a secret by saving an empty field, so check the classic admin page, where a blank key field does store a blank. | Re-enter the key. Use the V2 surface's **Remove stored value** when removal is what you want. |
+| Image generation is configured but never offered | **Enable Image Generation** is off, so the rest of the section is not consulted. | Turn it on, then confirm a deployment is selected. |
 
 ## Related
 
