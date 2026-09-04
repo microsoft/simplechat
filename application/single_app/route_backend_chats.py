@@ -26430,10 +26430,14 @@ def register_route_backend_chats(bp):
             except BlockRevisionError as ex:
                 return jsonify({'error': str(ex)}), 400
 
+            # What the block is called in anything the reader sees, so an error about a chart
+            # does not tell them their diagram is broken.
+            block_noun = 'chart' if block_kind == 'simplechart' else 'diagram'
+
             entry = read_block_entry(message_doc, block_kind, block_index, source_hash)
             current_source = current_block_source(entry, fallback=original_source)
             if not current_source:
-                return jsonify({'error': 'The diagram source is required'}), 400
+                return jsonify({'error': f'The {block_noun} source is required'}), 400
 
             try:
                 result = request_block_edit(
@@ -26444,6 +26448,7 @@ def register_route_backend_chats(bp):
                     originating_request=_find_originating_user_request(
                         conversation_id, message_doc
                     ),
+                    block_kind=block_kind,
                 )
             except BlockAssistError as ex:
                 log_event(
@@ -26491,7 +26496,9 @@ def register_route_backend_chats(bp):
                 }), 409
             except BlockRevisionError as ex:
                 debug_print(f'[BLOCK_REVISION] Model reply was not storable: {ex}')
-                return jsonify({'error': f'The model returned an unusable diagram: {ex}'}), 502
+                return jsonify({
+                    'error': f'The model returned an unusable {block_noun}: {ex}',
+                }), 502
 
             try:
                 cosmos_messages_container.upsert_item(message_doc)
