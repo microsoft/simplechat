@@ -25,6 +25,80 @@ fields_module = import_app_module("admin_settings_fields")
 normalize = fields_module.normalize_admin_settings_updates
 
 
+def test_dependency_conditions_compare_by_declared_type():
+    """A string condition compared for truthiness would match every non-empty choice."""
+    print("Testing depends_on comparison semantics...")
+
+    assert_app_version_at_least("0.261.075")
+
+    satisfied = fields_module._dependency_is_satisfied
+
+    # Boolean dependencies keep working exactly as they did.
+    assert satisfied({"key": "flag", "equals": True}, {"flag": True}, {}) is True
+    assert satisfied({"key": "flag", "equals": True}, {"flag": False}, {}) is False
+    assert satisfied({"key": "flag", "equals": False}, {"flag": False}, {}) is True
+    # Including the form-shaped truthiness the PATCH accepts elsewhere.
+    assert satisfied({"key": "flag", "equals": True}, {"flag": "on"}, {}) is True
+
+    # An omitted ``equals`` still means True, which is the historical default.
+    assert satisfied({"key": "flag"}, {"flag": True}, {}) is True
+
+    auth = {"key": "azure_openai_embedding_authentication_type", "equals": "key"}
+
+    # Exact equality only. "managed_identity" is truthy, so a boolean comparison here
+    # would show an API key field for a route that stores no key.
+    assert satisfied(auth, {"azure_openai_embedding_authentication_type": "key"}, {}) is True
+    assert (
+        satisfied(auth, {"azure_openai_embedding_authentication_type": "managed_identity"}, {})
+        is False
+    )
+
+    # A near miss must not match: no prefix, substring or case folding.
+    for near_miss in ("keys", "ke", "KEY", "Key", " key", "key "):
+        assert satisfied(auth, {"azure_openai_embedding_authentication_type": near_miss}, {}) is False, (
+            f"{near_miss!r} matched a condition on 'key'"
+        )
+
+    # A missing or null value must not match a string condition by accident.
+    for absent in ({}, {"azure_openai_embedding_authentication_type": None},
+                   {"azure_openai_embedding_authentication_type": ""}):
+        assert satisfied({"key": "some_undeclared_choice", "equals": "key"}, absent, {}) is False
+
+    print("  Boolean conditions unchanged; string conditions match on exact equality.")
+    return True
+
+
+def test_dependency_reads_the_pending_save_before_stored_state():
+    """A gate edited in the same PATCH decides the fields it gates."""
+    print("Testing depends_on value precedence...")
+
+    satisfied = fields_module._dependency_is_satisfied
+    dependency = {"key": "azure_openai_embedding_authentication_type", "equals": "key"}
+
+    # The value being written wins over the value on disk.
+    assert satisfied(
+        dependency,
+        {"azure_openai_embedding_authentication_type": "managed_identity"},
+        {"azure_openai_embedding_authentication_type": "key"},
+    ) is False
+
+    # Falling back to stored state when the gate is not part of this save.
+    assert satisfied(
+        dependency, {}, {"azure_openai_embedding_authentication_type": "key"}
+    ) is True
+
+    # And to the declared default when the document predates the key, because that is
+    # what the application would be applying.
+    declared_default = fields_module.get_field_definition(
+        "azure_openai_embedding_authentication_type"
+    )["default"]
+    assert declared_default == "key", declared_default
+    assert satisfied(dependency, {}, {}) is True
+
+    print("  Pending value beats stored value beats declared default.")
+    return True
+
+
 def test_numeric_values_are_clamped_to_declared_bounds():
     """An out-of-range logo scale would render an unusable home page."""
     print("Testing numeric clamping...")
@@ -299,6 +373,8 @@ def test_switches_coerce_form_shaped_truthiness():
 
 if __name__ == "__main__":
     tests = [
+        test_dependency_conditions_compare_by_declared_type,
+        test_dependency_reads_the_pending_save_before_stored_state,
         test_numeric_values_are_clamped_to_declared_bounds,
         test_colours_must_be_hex,
         test_external_links_reject_unsafe_urls,
