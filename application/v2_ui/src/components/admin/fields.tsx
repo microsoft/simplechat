@@ -29,6 +29,8 @@ const inputClass = clsx(
     'disabled:cursor-not-allowed disabled:opacity-60',
 );
 
+export { inputClass };
+
 /** Label, help text, control and error, laid out consistently for every field type. */
 export function FieldShell({
     field,
@@ -348,8 +350,9 @@ function CheckboxSetControl({
 /**
  * Render one declared field.
  *
- * `image`, `link_list` and `component` fields are handled by the page, which owns the
- * upload endpoint and the bespoke widgets, so they are not reached here.
+ * `image`, `link_list`, `secret` and `component` fields are handled by the page, which
+ * owns the upload endpoint, the bespoke widgets, and the stored value a secret needs to
+ * distinguish "not configured" from "configured but hidden".
  */
 export function SettingField(props: FieldControlProps) {
     switch (props.field.type) {

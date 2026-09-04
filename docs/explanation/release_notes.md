@@ -2,6 +2,52 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.059)**
+
+#### New Features
+
+*   **Chat Settings Are Fully Editable In The New Admin Interface**
+    *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
+    *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
+    *   **Two switches were invisible even though they are switches**, because their setting names do not begin with `enable_`. Workspace Scope Lock and the ChatFileUploadUser role requirement are now both present.
+    *   **Enhanced Citations came across in full**, including the storage authentication type, the storage credentials, the tabular preview size cap, the large-run confirmation thresholds, and the chunk processing model — plus a **Test storage connection** button. Startup deliberately skips storage checks so an outage cannot stop the application booting, which previously meant a wrong credential was only discovered when a citation failed to open.
+    *   (Ref: `admin_settings_fields.py`, `EnhancedCitationsStorageTest.tsx`, `AdminSettingsPage.tsx`, [V2 Admin Chat Settings](features/V2_ADMIN_CHAT_SETTINGS.md))
+
+*   **Conversation History Summarization Can Be Configured**
+    *   Three settings that control what happens to conversation history — summarizing messages that fall outside the history limit, summarizing recent turns into the document-search query, and how many messages that summary reads — have always been acted on by the chat backend but have never had a control anywhere.
+    *   All three are now editable in both the classic and the new admin interface, under Conversation History.
+    *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](../../admin/chat/))
+
+#### Bug Fixes
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Settings From Other Areas No Longer Appear Under Chat**
+    *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
+    *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
+    *   (Ref: `SUPPRESSED_CAPABILITY_KEYS`, `buildCapabilityIndex`, `test_v2_admin_capability_placement.py`)
+
+*   **Settings No Longer Linger After Their Feature Is Switched Off**
+    *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
+    *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
 ### **(v0.261.058)**
 
 #### New Features

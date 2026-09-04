@@ -12,6 +12,7 @@ import type { Json } from './types';
 export type AdminFieldType =
     | 'text'
     | 'textarea'
+    | 'secret'
     | 'select'
     | 'switch'
     | 'checkbox_set'
@@ -22,15 +23,30 @@ export type AdminFieldType =
     | 'link_list'
     | 'component';
 
+/**
+ * The placeholder the server sends in place of a stored secret.
+ *
+ * Mirrors `ADMIN_SETTINGS_SECRET_REDACTED_VALUE`. A secret field that still holds this
+ * has not been edited, and sending it back is what tells the server to keep the stored
+ * value rather than overwrite the credential with the mask.
+ */
+export const REDACTED_SECRET = '***REDACTED***';
+
 export interface AdminFieldOption {
     value: string;
     label: string;
 }
 
-/** Shows a field only while another field holds a given value. */
+/**
+ * Shows a field only while another field holds a given value.
+ *
+ * `equals` is usually a boolean, gating a field on a capability switch. A string gates
+ * it on a select instead: each Enhanced Citations storage credential applies to one
+ * authentication type only.
+ */
 export interface AdminFieldDependency {
     key: string;
-    equals: boolean;
+    equals: boolean | string;
 }
 
 /**
@@ -71,7 +87,7 @@ export interface AdminField {
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
-    depends_on?: AdminFieldDependency;
+    depends_on?: AdminFieldDependency | AdminFieldDependency[];
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
@@ -91,6 +107,14 @@ export interface AdminSettingsResponse {
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
     branding_assets: BrandingAssets;
+    /**
+     * `enable_*` keys the fallback scan must not draw.
+     *
+     * Some booleans in the settings document are derived or are staged rollout flags
+     * with no administrator control. A switch for one would appear to save and then
+     * revert, so the server names them and the scan skips them.
+     */
+    suppressed_capabilities: string[];
     version: string;
 }
 
@@ -170,16 +194,33 @@ export function asStringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/** Whether a field's `depends_on` condition is currently satisfied. */
+/**
+ * Whether a field's `depends_on` condition is currently satisfied.
+ *
+ * `depends_on` is normally one condition, and may be a list, in which case every
+ * condition must hold. A list is needed wherever a control is gated on a sibling whose
+ * own default would otherwise reveal it -- the Enhanced Citations storage credentials are
+ * chosen by authentication type, but must stay hidden while the capability itself is off.
+ */
 export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
-    const dependency = field.depends_on;
-    if (!dependency) {
+    if (!field.depends_on) {
         return true;
     }
-    const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
-        ? draft[dependency.key]
-        : settings[dependency.key];
-    return asBoolean(current) === dependency.equals;
+
+    const conditions = Array.isArray(field.depends_on)
+        ? field.depends_on
+        : [field.depends_on];
+
+    return conditions.every((dependency) => {
+        const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
+            ? draft[dependency.key]
+            : settings[dependency.key];
+
+        // A string condition compares the select's value; anything else is a switch.
+        return typeof dependency.equals === 'string'
+            ? asString(current) === dependency.equals
+            : asBoolean(current) === dependency.equals;
+    });
 }
 
 /** Turn `enable_document_classification` into `Document classification`. */

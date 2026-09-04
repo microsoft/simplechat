@@ -29,6 +29,7 @@ from admin_settings_fields import (
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
     get_admin_settings_fields,
+    get_suppressed_capability_keys,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
 )
@@ -73,6 +74,8 @@ from functions_settings import (
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
+    redact_admin_settings_secrets_for_form,
+    sanitize_model_endpoints_for_frontend,
     sanitize_settings_for_user,
     update_settings,
 )
@@ -612,25 +615,42 @@ def register_route_backend_v2_admin(bp):
     @login_required
     @admin_required
     def v2_admin_get_settings():
-        """Return the raw settings document, the admin navigation and the field schema.
+        """Return the settings document, the admin navigation and the field schema.
 
-        Admin settings are not sanitized. Sanitization removes keys, secrets and endpoint
-        configuration, which are exactly the values an administrator is here to manage.
-        Access is restricted to the Admin role by the blueprint guard and the decorator.
+        Admin settings are not run through ``sanitize_settings_for_user``. That removes
+        keys and endpoint configuration outright, which are exactly the values an
+        administrator is here to manage. Access is restricted to the Admin role by the
+        blueprint guard and the decorator.
+
+        Stored secrets are masked all the same, using the same helpers the
+        server-rendered form uses. An administrator needs to know a credential is
+        configured and be able to replace it, not to read it back, and the settings
+        PATCH resolves the mask to the stored value so an untouched field round-trips
+        intact. Model endpoint credentials are nested inside the ``model_endpoints``
+        list rather than at a fixed key, so they are stripped by
+        ``sanitize_model_endpoints_for_frontend`` first, matching what the
+        server-rendered page passes to its template.
 
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
-        not been described yet keep working.
+        not been described yet keep working. ``suppressed_capabilities`` names the keys
+        that scan must skip because they are derived or are staged rollout flags with no
+        administrator control.
         """
         try:
             settings = get_settings()
+            safe_settings = redact_admin_settings_secrets_for_form(settings)
+            safe_settings["model_endpoints"] = sanitize_model_endpoints_for_frontend(
+                settings.get("model_endpoints")
+            )
             return (
                 jsonify(
                     {
-                        "settings": settings,
+                        "settings": safe_settings,
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "branding_assets": _build_branding_assets(settings),
+                        "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
                     }
                 ),
@@ -706,7 +726,10 @@ def register_route_backend_v2_admin(bp):
                     {
                         "success": True,
                         "updated_keys": sorted(normalized.keys()),
-                        "settings": normalized,
+                        # Re-mask before echoing. A secret field resolves the mask back to
+                        # the stored credential, so returning `normalized` unchanged would
+                        # hand the browser the very value the GET withholds.
+                        "settings": redact_admin_settings_secrets_for_form(normalized),
                         "warnings": warnings,
                     }
                 ),
