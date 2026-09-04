@@ -1139,43 +1139,6 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
         },
     ],
-    "gpt-config": [
-        {
-            "type": "component",
-            "component": "chat-mode-notice",
-            "label": "Which endpoint chat is using",
-            "help": (
-                "Connections and the classic single endpoint are two separate routes, and "
-                "only one of them is live at a time. This says which."
-            ),
-        },
-        {
-            "key": "default_model_selection",
-            "type": "component",
-            "component": "chat-default-model",
-            "label": "Default model",
-            "help": (
-                "Used when nothing else has chosen a model -- a new conversation, or work "
-                "started outside the chat window. Only models that are enabled on an "
-                "enabled connection can be picked, because anything else is cleared the "
-                "next time the connections are saved."
-            ),
-        },
-        {
-            "key": "enable_gpt_apim",
-            "type": "switch",
-            "label": "Send requests through API Management",
-            "help": (
-                "Routes GPT requests that use the classic endpoint through API Management "
-                "rather than straight to the Azure OpenAI resource, which is how a "
-                "deployment applies its own governance and monitoring to them. The APIM "
-                "endpoint, deployment and subscription key this needs are configured on "
-                "the classic admin page, so turning it on before those are set leaves "
-                "those requests with nowhere to go."
-            ),
-            "default": False,
-        },
-    ],
     "group-workspaces-section": [
         {
             "key": "enable_group_workspaces",
@@ -2128,6 +2091,43 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "The same for a group's shared actions. Group workspaces must also "
                 "be enabled under Workspaces."
+            ),
+            "default": False,
+        },
+    ],
+    "gpt-config": [
+        {
+            "type": "component",
+            "component": "chat-mode-notice",
+            "label": "Which endpoint chat is using",
+            "help": (
+                "Connections and the classic single endpoint are two separate routes, and "
+                "only one of them is live at a time. This says which."
+            ),
+        },
+        {
+            "key": "default_model_selection",
+            "type": "component",
+            "component": "chat-default-model",
+            "label": "Default model",
+            "help": (
+                "Used when nothing else has chosen a model -- a new conversation, or work "
+                "started outside the chat window. Only models that are enabled on an "
+                "enabled connection can be picked, because anything else is cleared the "
+                "next time the connections are saved."
+            ),
+        },
+        {
+            "key": "enable_gpt_apim",
+            "type": "switch",
+            "label": "Send requests through API Management",
+            "help": (
+                "Routes GPT requests that use the classic endpoint through API Management "
+                "rather than straight to the Azure OpenAI resource, which is how a "
+                "deployment applies its own governance and monitoring to them. The APIM "
+                "endpoint, deployment and subscription key this needs are configured on "
+                "the classic admin page, so turning it on before those are set leaves "
+                "those requests with nowhere to go."
             ),
             "default": False,
         },
@@ -3301,6 +3301,9 @@ LEGACY_FIELD_NAMES = {
     ],
     # V1 round-trips the list through a hidden JSON field maintained by script.
     "external_links": ["external_links_json"],
+    # Same pattern: V1 posts the default model reference as serialized JSON, while V2
+    # writes it through /api/v2/admin/default-model.
+    "default_model_selection": ["default_model_selection_json"],
     # V1 posts the images as part of the settings form; V2 uploads them
     # separately, so the stored keys are what the schema names.
     "custom_logo_base64": ["logo_file"],
