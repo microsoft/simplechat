@@ -82,6 +82,11 @@ FIELD_TYPES = (
 
 # Types that own their persistence outside the settings PATCH: image uploads go
 # through the multipart branding endpoint, and components talk to their own API.
+#
+# Declaring a key with one of these types is also how a value is kept *out* of the
+# PATCH. Undeclared keys pass through it unexamined, which is fine for a boolean
+# but not for something like ``default_model_selection``, whose meaning depends on
+# configuration the PATCH does not look at.
 NON_PATCHABLE_TYPES = ("image", "component")
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
@@ -693,6 +698,29 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
         },
     ],
+    "gpt-config": [
+        {
+            "type": "component",
+            "component": "chat-mode-notice",
+            "label": "Which endpoint chat is using",
+            "help": (
+                "Connections and the classic single endpoint are two separate routes, and "
+                "only one of them is live at a time. This says which."
+            ),
+        },
+        {
+            "key": "default_model_selection",
+            "type": "component",
+            "component": "chat-default-model",
+            "label": "Default model",
+            "help": (
+                "Used when nothing else has chosen a model -- a new conversation, or work "
+                "started outside the chat window. Only models that are enabled on an "
+                "enabled connection can be picked, because anything else is cleared the "
+                "next time the connections are saved."
+            ),
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -722,6 +750,9 @@ LEGACY_FIELD_NAMES = {
     ],
     # V1 round-trips the list through a hidden JSON field maintained by script.
     "external_links": ["external_links_json"],
+    # Same pattern: V1 posts the default model reference as serialized JSON, while V2
+    # writes it through /api/v2/admin/default-model.
+    "default_model_selection": ["default_model_selection_json"],
     # V1 posts the images as part of the settings form; V2 uploads them
     # separately, so the stored keys are what the schema names.
     "custom_logo_base64": ["logo_file"],

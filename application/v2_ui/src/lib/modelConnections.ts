@@ -532,6 +532,166 @@ export function enabledModelCount(connection: ModelConnection): number {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Default chat model                                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The stored reference to the model chat falls back to.
+ *
+ * It names an endpoint and a model by id rather than holding the model itself, which is
+ * why it outlives what it points at and has to be re-checked against the connections that
+ * currently exist.
+ */
+export interface DefaultModelSelection {
+    endpoint_id: string;
+    model_id: string;
+    provider: string;
+}
+
+/** One offerable model, already resolved to the labels a picker needs. */
+export interface DefaultModelChoice {
+    endpointId: string;
+    modelId: string;
+    provider: string;
+    connectionName: string;
+    modelLabel: string;
+    deploymentName: string;
+}
+
+export const EMPTY_DEFAULT_MODEL_SELECTION: DefaultModelSelection = {
+    endpoint_id: '',
+    model_id: '',
+    provider: '',
+};
+
+export function toDefaultModelSelection(value: unknown): DefaultModelSelection {
+    const source = (value ?? {}) as Record<string, unknown>;
+    return {
+        endpoint_id: text(source.endpoint_id),
+        model_id: text(source.model_id),
+        provider: text(source.provider).toLowerCase(),
+    };
+}
+
+export function hasDefaultModel(selection: DefaultModelSelection): boolean {
+    return Boolean(selection.endpoint_id && selection.model_id);
+}
+
+export function isSameSelection(a: DefaultModelSelection, b: DefaultModelSelection): boolean {
+    return a.endpoint_id === b.endpoint_id && a.model_id === b.model_id;
+}
+
+/**
+ * The models an administrator may actually pick as the default.
+ *
+ * A disabled connection or a disabled model is excluded rather than shown greyed out,
+ * because `resolve_default_model_selection` clears anything in that state on the next
+ * write -- offering it would let someone choose a value that silently reverts.
+ *
+ * Ordered by connection then model so the list is stable between renders; the stored
+ * order of connections is whatever the administrator added them in.
+ */
+export function buildDefaultModelChoices(connections: ModelConnection[]): DefaultModelChoice[] {
+    const choices: DefaultModelChoice[] = [];
+
+    for (const connection of connections ?? []) {
+        if (!connection || connection.enabled === false || !text(connection.id)) {
+            continue;
+        }
+        const connectionName =
+            text(connection.name) || text(connection.connection?.endpoint) || 'Connection';
+
+        for (const model of connection.models ?? []) {
+            if (!model || model.enabled === false) {
+                continue;
+            }
+            // `normalize_model_endpoints` fills a missing id from the deployment name, so
+            // a model with neither is not addressable and cannot be referenced.
+            const modelId = text(model.id) || text(model.deploymentName);
+            if (!modelId) {
+                continue;
+            }
+            choices.push({
+                endpointId: text(connection.id),
+                modelId,
+                provider: text(connection.provider).toLowerCase(),
+                connectionName,
+                modelLabel:
+                    text(model.displayName) ||
+                    text(model.deploymentName) ||
+                    text(model.modelName) ||
+                    modelId,
+                deploymentName: text(model.deploymentName),
+            });
+        }
+    }
+
+    return choices.sort(
+        (a, b) =>
+            a.connectionName.localeCompare(b.connectionName) ||
+            a.modelLabel.localeCompare(b.modelLabel),
+    );
+}
+
+/**
+ * Group choices by connection for `optgroup` rendering, carrying each one's index.
+ *
+ * The index is what the `select` uses as an option value, so it has to survive the
+ * grouping; recovering it afterwards would mean searching the flat list per option.
+ */
+export function groupChoicesByConnection(
+    choices: DefaultModelChoice[],
+): Array<{ connectionName: string; items: Array<{ choice: DefaultModelChoice; index: number }> }> {
+    const groups: Array<{
+        connectionName: string;
+        items: Array<{ choice: DefaultModelChoice; index: number }>;
+    }> = [];
+
+    choices.forEach((choice, index) => {
+        const last = groups[groups.length - 1];
+        if (last && last.connectionName === choice.connectionName) {
+            last.items.push({ choice, index });
+        } else {
+            groups.push({ connectionName: choice.connectionName, items: [{ choice, index }] });
+        }
+    });
+
+    return groups;
+}
+
+/**
+ * Where a stored selection sits in the offerable list, or -1.
+ *
+ * The index is what the `select` carries as its option value. Endpoint and model ids are
+ * administrator-supplied strings, so composing them into one value would need an escape
+ * rule that a deployment name could still break.
+ */
+export function findChoiceIndex(
+    choices: DefaultModelChoice[],
+    selection: DefaultModelSelection,
+): number {
+    if (!hasDefaultModel(selection)) {
+        return -1;
+    }
+    return choices.findIndex(
+        (choice) =>
+            choice.endpointId === selection.endpoint_id && choice.modelId === selection.model_id,
+    );
+}
+
+/** Turn a picked choice back into the shape the API stores. */
+export function choiceToSelection(choice: DefaultModelChoice | null): DefaultModelSelection {
+    if (!choice) {
+        return { ...EMPTY_DEFAULT_MODEL_SELECTION };
+    }
+    return {
+        endpoint_id: choice.endpointId,
+        model_id: choice.modelId,
+        provider: choice.provider,
+    };
+}
+
+/* -------------------------------------------------------------------------- */
 /* API                                                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -568,3 +728,18 @@ export const testConnectionModel = (payload: Record<string, unknown>, deployment
         ...payload,
         model: { deploymentName },
     });
+
+const DEFAULT_MODEL_BASE = '/api/v2/admin/default-model';
+
+export interface DefaultModelResponse {
+    selection: DefaultModelSelection;
+    multi_endpoint_enabled: boolean;
+    /** Why the stored selection no longer resolves, when it does not. */
+    reason: string | null;
+}
+
+export const fetchDefaultModel = (signal?: AbortSignal) =>
+    api.get<DefaultModelResponse>(DEFAULT_MODEL_BASE, signal);
+
+export const saveDefaultModel = (selection: DefaultModelSelection) =>
+    api.put<{ selection: DefaultModelSelection }>(DEFAULT_MODEL_BASE, { selection });

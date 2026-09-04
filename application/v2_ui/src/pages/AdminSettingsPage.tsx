@@ -34,6 +34,8 @@ import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/prim
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
+import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
+import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
@@ -59,6 +61,7 @@ import {
     type BrandingUploadResponse,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
+import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
 import type { AdminNavGroup, Json } from '../lib/types';
 
 /** One fallback row: an `enable_*` key with no declared field. */
@@ -447,6 +450,17 @@ export function AdminSettingsPage() {
             setDraft({});
             void refreshBootstrap();
 
+            // Enabling connections carries the classic chat endpoint into the connection
+            // list server-side. That write happens here rather than in the connections
+            // section, so nothing else would tell it, or the default model picker, that
+            // the list they are showing is no longer what is stored.
+            if (
+                response.updated_keys.includes('model_endpoints') ||
+                response.updated_keys.includes('enable_multi_model_endpoints')
+            ) {
+                modelConnectionsChanged();
+            }
+
             const warningCount = Object.keys(response.warnings ?? {}).length;
             toast.success(
                 warningCount
@@ -539,6 +553,37 @@ export function AdminSettingsPage() {
                     return <CustomPagesTable key={key} help={field.help} />;
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
+                case 'chat-mode-notice': {
+                    // The saved value decides which route is live; the draft value only
+                    // says what a pending save would change it to, so the notice is given
+                    // both rather than the merged reading the other fields use.
+                    const savedEnabled = asBoolean(settings['enable_multi_model_endpoints']);
+                    return (
+                        <ChatModeNotice
+                            key={key}
+                            enabled={savedEnabled}
+                            pending={
+                                Object.prototype.hasOwnProperty.call(
+                                    draft,
+                                    'enable_multi_model_endpoints',
+                                )
+                                    ? asBoolean(draft['enable_multi_model_endpoints'])
+                                    : undefined
+                            }
+                            help={field.help}
+                        />
+                    );
+                }
+                case 'chat-default-model':
+                    return (
+                        <ChatDefaultModel
+                            key={key}
+                            multiEndpointEnabled={asBoolean(
+                                settings['enable_multi_model_endpoints'],
+                            )}
+                            help={field.help}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
