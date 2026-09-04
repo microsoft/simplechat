@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the orchestration adapter contract.
-Version: 0.261.087
+Version: 0.261.088
 Implemented in: 0.261.087
 
 This is the generalisation of a bug that reached production. A step failed live with
@@ -24,11 +24,12 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from test_support.app_stubs import APP_ROOT  # noqa: E402
+from test_support.app_stubs import APP_ROOT, stubbed_app_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 ADAPTERS = 'functions_orchestration_adapters.py'
 EXECUTOR = 'functions_orchestration_executor.py'
+PLANNER = 'functions_orchestration_planner.py'
 REGISTRY = 'functions_orchestration_registry.py'
 ROUTE = 'route_backend_orchestration.py'
 
@@ -287,6 +288,142 @@ def test_role_gates_fail_closed():
         return False
 
 
+def test_request_gates_are_actually_applied_by_the_planner():
+    """A capability gate nobody invokes is decoration."""
+    print("Testing that the planner applies request gates...")
+    try:
+        tree = _tree(PLANNER)
+        functions = _functions(tree)
+
+        plan_request = functions.get('plan_request')
+        assert plan_request is not None, 'plan_request not found'
+
+        # The signature must accept a request context...
+        accepted = (
+            {a.arg for a in plan_request.args.args}
+            | {a.arg for a in plan_request.args.kwonlyargs}
+        )
+        assert 'request_context' in accepted, (
+            'plan_request does not accept a request_context. Without one, '
+            'resolve_available_capabilities skips every request gate -- which is right for '
+            'the admin page describing a deployment, and wrong for a real caller. The '
+            'planner would be offered URL reading for a message with no URL, and agents a '
+            'user does not have.'
+        )
+
+        # ...and must actually forward it. Accepting an argument and dropping it is the
+        # same bug wearing a signature that looks correct.
+        forwarded = False
+        for node in ast.walk(plan_request):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'resolve_available_capabilities'
+            ):
+                for keyword in node.keywords:
+                    if keyword.arg == 'request_context':
+                        forwarded = True
+        assert forwarded, (
+            'plan_request accepts a request_context but does not pass it to '
+            'resolve_available_capabilities'
+        )
+
+        # And the route must supply one when it plans.
+        route_tree = _tree(ROUTE)
+        supplied = False
+        for node in ast.walk(route_tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == 'plan_request'
+            ):
+                supplied = any(kw.arg == 'request_context' for kw in node.keywords)
+        assert supplied, (
+            'the route calls plan_request without a request_context, so no request gate '
+            'runs for a real request'
+        )
+
+        print("  ok  request gates reach the planner and the validator")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_request_gates_withhold_what_the_caller_cannot_use():
+    """The gates themselves, exercised rather than inspected."""
+    print("Testing request gate behaviour...")
+    try:
+        with stubbed_app_imports():
+            from functions_orchestration_registry import resolve_available_capabilities
+
+            settings = {
+                'enable_chat_orchestration': True,
+                'enable_user_workspace': True,
+                'enable_web_search': True,
+                'enable_url_access': True,
+                'enable_source_review': True,
+                'enable_semantic_kernel': True,
+            }
+
+            def ids(context, override=None):
+                return [
+                    c['id'] for c in resolve_available_capabilities(
+                        override or settings, request_context=context,
+                    )
+                ]
+
+            plain = {
+                'user_id': 'u1',
+                'user_message': 'what is in my handbook?',
+                'message_urls': [],
+                'user_roles': [],
+                'user_enable_agents': True,
+                'agent_catalog': [],
+            }
+
+            # Offering "read the links" for a message with no links produces a step whose
+            # only possible outcome is reporting that it had nothing to do.
+            assert 'url_fetch' not in ids(plain), 'url_fetch offered with no URL'
+            assert 'url_fetch' in ids(dict(
+                plain,
+                user_message='summarise https://example.com/a',
+                message_urls=['https://example.com/a'],
+            )), 'url_fetch withheld despite a URL in the message'
+
+            # An agent the user does not have produces a plan naming something that cannot run.
+            assert 'agent_invoke' not in ids(plain), 'agent_invoke offered with no agents'
+            with_agent = dict(plain, agent_catalog=[{'name': 'research_helper'}])
+            assert 'agent_invoke' in ids(with_agent), 'agent_invoke withheld despite an agent'
+            assert 'agent_invoke' not in ids(dict(with_agent, user_enable_agents=False)), (
+                'agent_invoke offered to a user who turned agents off; orchestration must '
+                'not hand back a capability the user switched off for themselves'
+            )
+
+            # And the app role must be enforced where the deployment requires it.
+            strict = dict(
+                settings,
+                require_member_of_deep_research_user=True,
+                source_review_settings={'require_member_of_deep_research_user': True},
+            )
+            assert 'deep_research' not in ids(plain, strict), (
+                'deep_research offered to a user holding no DeepResearchUser role'
+            )
+            assert 'deep_research' in ids(dict(plain, user_roles=['DeepResearchUser']), strict), (
+                'deep_research withheld from a user who holds the role'
+            )
+
+        print("  ok  each gate withholds what its caller cannot use")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == "__main__":
     tests = [
         test_every_capability_resolves_to_an_adapter,
@@ -294,6 +431,8 @@ if __name__ == "__main__":
         test_adapters_never_touch_flask_state,
         test_route_captures_identity_before_the_thread_starts,
         test_role_gates_fail_closed,
+        test_request_gates_are_actually_applied_by_the_planner,
+        test_request_gates_withhold_what_the_caller_cannot_use,
     ]
     results = []
     for test in tests:

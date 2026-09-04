@@ -295,6 +295,12 @@ def _citations_from_search_results(results):
             'page_number': result.get('page_number'),
             'chunk_sequence': result.get('chunk_sequence'),
             'score': result.get('score'),
+            # Which workspace the hit came from. The search index selects these per scope
+            # and they were being dropped here, which left a found document with no home:
+            # the composer groups its context chips by workspace, so a document the run
+            # discovered could not be offered back to the user without one.
+            'group_id': result.get('group_id'),
+            'public_workspace_id': result.get('public_workspace_id'),
         })
     return citations
 
@@ -320,6 +326,10 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
             doc_scope=_text(arguments.get('doc_scope')) or _ctx(context, 'doc_scope', 'all'),
             active_group_ids=_ctx(context, 'active_group_ids', None) or None,
             active_public_workspace_id=_ctx(context, 'active_public_workspace_id', None),
+            # The tags the user picked, applied to every search in the run. A step is free
+            # to choose its own query, but not to widen the shelf the user narrowed to.
+            tags_filter=_ctx(context, 'tags', None) or None,
+            document_filter_mode=_ctx(context, 'document_filter_mode', 'intersection'),
         )
     except Exception as exc:
         log_event(
@@ -408,6 +418,53 @@ def _analysis_envelopes(result, requested_document_ids):
     return envelopes
 
 
+def _resolve_step_document_ids(step, context, *, settings=None, capability_id=None):
+    """The documents this step should read.
+
+    Either the ones the plan named, or -- when it named an earlier step instead -- the ones
+    that step actually found. The second is what lets a plan say "search for the relevant
+    contracts, then analyse them" without having to know at planning time which contracts
+    those turn out to be.
+
+    Documents arriving this way were returned by an earlier search, which only ever returns
+    what this user can read, and the document functions resolve access again from the user
+    id and scope they are given. The reference widens nothing.
+
+    The administrator's per-action document ceiling is applied here as well. The validator
+    trims what a plan *names*, but it cannot trim what a search has not run yet -- so a
+    reference would otherwise be a way around a configured limit.
+    """
+    arguments = _arguments(step)
+    explicit = _string_list(arguments.get('document_ids'))
+
+    reference = _text(arguments.get('documents_from_step'))
+    if not reference:
+        return explicit
+
+    found = (_ctx(context, 'step_documents', None) or {}).get(reference) or []
+    merged = list(explicit)
+    for document_id in found:
+        if document_id not in merged:
+            merged.append(document_id)
+
+    try:
+        from functions_orchestration_registry import (
+            get_capability,
+            get_capability_document_limit,
+        )
+
+        limit = get_capability_document_limit(get_capability(capability_id), settings=settings)
+        if limit and len(merged) > limit:
+            merged = merged[:limit]
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Could not resolve the document ceiling: {exc}',
+            level=logging.WARNING,
+        )
+
+    return merged
+
+
 def run_document_analyze(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
     invoke_prompt = _ctx(context, 'invoke_prompt', None)
@@ -417,7 +474,9 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
             'document_analyze requires a callable invoke_prompt on the context.',
         )
 
-    document_ids = _string_list(arguments.get('document_ids'))
+    document_ids = _resolve_step_document_ids(
+        step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_ANALYZE,
+    )
     analysis_prompt = (
         _text(arguments.get('analysis_prompt'))
         or _text(arguments.get('prompt'))
@@ -425,6 +484,18 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
         or _text(_ctx(context, 'user_message', ''))
     )
     if not document_ids:
+        # Either the plan named none, or it deferred to a step that found none. The second
+        # is worth a replan hint rather than a bare failure: nothing was wrong with the
+        # plan's shape, the search simply came back empty.
+        if _text(arguments.get('documents_from_step')):
+            return build_step_result(
+                status=STEP_STATUS_COMPLETED,
+                summary='The earlier search found no documents to analyse.',
+                replan_hint=(
+                    'The step this analysis reads from returned no documents; broaden the '
+                    'search or answer from what was already gathered.'
+                ),
+            )
         return _failed_result('No documents were provided to analyze.', 'document_analyze requires document_ids.')
     if not analysis_prompt:
         return _failed_result('No analysis prompt was provided.', 'document_analyze requires an analysis prompt.')
