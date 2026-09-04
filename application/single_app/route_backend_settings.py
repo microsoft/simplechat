@@ -5,6 +5,13 @@ from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
+from functions_image_api_route import (
+    IMAGE_API_ROUTE_RESPONSES,
+    build_image_generation_tool,
+    extract_responses_image_source,
+    resolve_image_api_route,
+    resolve_responses_image_api_version,
+)
 from functions_url_access_policy_test import run_url_access_policy_test
 from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
@@ -1771,6 +1778,19 @@ def _test_image_gen_connection(payload):
         api_version = direct_data.get('api_version')
         image_gen_model = selected_model.get('deploymentName')
 
+        # The route is decided by the model behind the deployment, and a test that took a
+        # different route from the real call would report success for a path chat never
+        # uses. The ephemeral payload is reshaped into what the classifier reads rather
+        # than the answer being guessed here.
+        image_api_route = resolve_image_api_route({
+            'enable_image_gen_apim': False,
+            'image_gen_model': {'selected': [selected_model]},
+        })
+        if image_api_route == IMAGE_API_ROUTE_RESPONSES:
+            api_version = resolve_responses_image_api_version(
+                {'azure_openai_image_gen_api_version': api_version}
+            )
+
         if direct_data.get('auth_type') == 'managed_identity':
             token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
             
@@ -1787,6 +1807,27 @@ def _test_image_gen_connection(payload):
                 azure_endpoint=endpoint,
                 api_key=key
             )
+
+        if image_api_route == IMAGE_API_ROUTE_RESPONSES:
+            try:
+                response = image_gen_client.responses.create(
+                    model=image_gen_model,
+                    input=prompt,
+                    tools=[build_image_generation_tool()],
+                    tool_choice={'type': 'image_generation'},
+                )
+                if extract_responses_image_source(response):
+                    return jsonify({'message': 'Image generation connection successful'}), 200
+                return jsonify({
+                    'error': (
+                        f'{image_gen_model} answered without generating an image. Its '
+                        'deployment may not support the image generation tool.'
+                    )
+                }), 500
+            except Exception as e:
+                print(str(e))
+                return jsonify({'error': f'Error generating model response: {str(e)}'}), 500
+
     try:
         response = image_gen_client.images.generate(
             prompt=prompt,

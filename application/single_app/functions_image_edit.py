@@ -31,6 +31,12 @@ import re
 
 from PIL import Image
 
+from functions_image_api_route import (
+    IMAGE_API_ROUTE_RESPONSES,
+    resolve_image_api_route,
+    resolve_selected_image_deployment_name,
+    resolve_selected_image_model_name,
+)
 from functions_image_messages import decode_image_content, is_external_image_url
 
 # Config, the Azure clients and the generation helpers are imported inside the functions that
@@ -95,25 +101,6 @@ EDIT_CAPABLE_MODEL_MARKERS = ('gpt-image', 'dall-e-2', 'dalle-2')
 MIN_IMAGE_EDIT_API_VERSION = '2025-04-01-preview'
 
 
-def resolve_selected_image_model_name(settings):
-    """Return the model behind the selected image deployment, or '' when it is not recorded.
-
-    Admin settings persist ``{deploymentName, modelName}`` for the chosen deployment, but an
-    APIM route records only a deployment name and settings saved before ``modelName`` was added
-    have none either. An empty answer therefore means "unknown", not "none".
-    """
-    if not isinstance(settings, dict):
-        return ''
-
-    if settings.get('enable_image_gen_apim', False):
-        return ''
-
-    selected = (settings.get('image_gen_model') or {}).get('selected') or []
-    if not selected or not isinstance(selected[0], dict):
-        return ''
-    return str(selected[0].get('modelName') or '').strip()
-
-
 def image_api_version_supports_edit(api_version):
     """Return whether an Azure OpenAI API version can route /images/edits.
 
@@ -167,14 +154,21 @@ def resolve_image_edit_capability(settings):
         }
 
     if not any(marker in normalized_model for marker in EDIT_CAPABLE_MODEL_MARKERS):
+        if resolve_image_api_route(settings) == IMAGE_API_ROUTE_RESPONSES:
+            reason = (
+                f'{model_name} produces images through the Responses image tool, which has '
+                'no way to change part of one, so a change replaces the whole image.'
+            )
+        else:
+            reason = (
+                f'{model_name} can generate images but cannot edit them, so a change replaces '
+                'the whole image.'
+            )
         return {
             'mode': IMAGE_EDIT_MODE_REGENERATE,
             'enabled': True,
             'model_name': model_name,
-            'reason': (
-                f'{model_name} can generate images but cannot edit them, so a change replaces '
-                'the whole image.'
-            ),
+            'reason': reason,
         }
 
     api_version = settings.get('azure_openai_image_gen_api_version')
@@ -681,14 +675,46 @@ def request_image_edit(
     from functions_appinsights import log_event
     from functions_image_generation import (
         extract_generated_image_source,
+        request_generated_image_source,
         resolve_image_generation_client,
-        resolve_generated_image_bytes,
     )
 
     capability = resolve_image_edit_capability(settings)
+    normalized_size = size if size in SUPPORTED_IMAGE_SIZES else ''
+
+    if (
+        capability['mode'] != IMAGE_EDIT_MODE_MASKED
+        and resolve_image_api_route(settings) == IMAGE_API_ROUTE_RESPONSES
+    ):
+        # This deployment answers on the Responses API and nowhere else, so the images
+        # endpoint below is not a fallback for it -- it is a request it cannot serve.
+        deployment = resolve_selected_image_deployment_name(settings)
+        try:
+            generated_source = request_generated_image_source(
+                settings,
+                prompt,
+                size=normalized_size,
+                quality=quality,
+                background=background,
+            )
+        except Exception as exc:
+            log_event(
+                f'[IMAGE_EDIT] Regeneration request failed: {exc}',
+                extra={'deployment': deployment},
+            )
+            raise ImageEditError('The image could not be regenerated') from exc
+
+        return _finish_image_edit(
+            generated_source,
+            deployment=deployment,
+            method='regenerate',
+            normalized_size=normalized_size,
+            quality=quality,
+            background=background,
+        )
+
     client, deployment = resolve_image_generation_client(settings)
 
-    normalized_size = size if size in SUPPORTED_IMAGE_SIZES else ''
     optional = _optional_parameters(
         quality=quality,
         background=background,
@@ -750,6 +776,33 @@ def request_image_edit(
         generated_source = extract_generated_image_source(response)
     except ValueError as exc:
         raise ImageEditError('The model returned no image') from exc
+
+    return _finish_image_edit(
+        generated_source,
+        deployment=deployment,
+        method=method,
+        normalized_size=normalized_size,
+        quality=quality,
+        background=background,
+    )
+
+
+def _finish_image_edit(
+    generated_source,
+    *,
+    deployment,
+    method,
+    normalized_size,
+    quality,
+    background,
+):
+    """Turn a produced image into the result shape both routes return.
+
+    Shared so the Responses route reports its outcome identically to the images endpoint:
+    the caller records ``method`` in the revision history, and a difference here would show
+    up as two kinds of regeneration rather than one.
+    """
+    from functions_image_generation import resolve_generated_image_bytes
 
     if is_external_image_url(generated_source) or generated_source.startswith('data:image/'):
         mime_type, image_bytes = resolve_generated_image_bytes(generated_source)

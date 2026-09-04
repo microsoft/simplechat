@@ -1,7 +1,7 @@
 # Chat Orchestration
 
 **Implemented in version: 0.261.086**
-**Knowledge phase added in version: 0.261.088**
+**Knowledge phase added in version: 0.261.089**
 
 ## Overview
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for orchestration citation persistence.
-Version: 0.261.088
+Version: 0.261.089
 Implemented in: 0.261.087
 
 An orchestrated answer searched documents, found the right material, and cited it in its

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the orchestration adapter contract.
-Version: 0.261.088
+Version: 0.261.089
 Implemented in: 0.261.087
 
 This is the generalisation of a bug that reached production. A step failed live with
