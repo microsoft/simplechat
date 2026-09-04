@@ -37,6 +37,7 @@ import {
     shouldGroupStartOpen,
     type SectionStatus,
 } from '../../lib/adminSections';
+import { evaluateSectionStatus, type AdminSectionStatusRule } from '../../lib/adminFields';
 import { GlassPanel } from '../ui/primitives';
 import type { Json } from '../../lib/types';
 
@@ -66,6 +67,13 @@ const STATUS_PRESENTATION: Record<
     },
 };
 
+/** A declared status uses different words for the same three states. */
+const DECLARED_STATUS_MAP: Record<'off' | 'unconfigured' | 'on', SectionStatus> = {
+    off: 'off',
+    unconfigured: 'incomplete',
+    on: 'ready',
+};
+
 export interface SettingsSectionProps {
     sectionId: string;
     label: string;
@@ -78,6 +86,14 @@ export interface SettingsSectionProps {
     renderField: (field: AdminField) => React.ReactNode;
     /** Renders the capability toggle, so switch acknowledgements keep working. */
     renderCapability: (field: AdminField) => React.ReactNode;
+    /**
+     * A server-declared status rule, used in preference to deriving one.
+     *
+     * Sections that describe `required` fields have their status derived from those.
+     * A declared rule exists for sections where "configured" depends on a combination
+     * the field metadata cannot express on its own.
+     */
+    statusRule?: AdminSectionStatusRule;
     /** Force every group open, used while a search is filtering the page. */
     forceExpanded?: boolean;
     children?: React.ReactNode;
@@ -203,6 +219,7 @@ export function SettingsSection({
     fields,
     settings,
     draft,
+    statusRule,
     renderField,
     renderCapability,
     forceExpanded,
@@ -215,10 +232,15 @@ export function SettingsSection({
         [fields, capability],
     );
 
-    const status = useMemo(
-        () => deriveSectionStatus(fields, settings, draft),
-        [fields, settings, draft],
-    );
+    const status = useMemo(() => {
+        // A declared rule wins: it exists precisely for sections whose "configured"
+        // state the field metadata cannot express.
+        const declared = evaluateSectionStatus(statusRule, settings, draft);
+        if (declared) {
+            return DECLARED_STATUS_MAP[declared];
+        }
+        return deriveSectionStatus(fields, settings, draft);
+    }, [statusRule, fields, settings, draft]);
 
     const capabilityOn = capability?.key
         ? asBoolean(readSectionValue(settings, draft, capability.key))

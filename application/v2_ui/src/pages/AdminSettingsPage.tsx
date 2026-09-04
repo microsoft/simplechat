@@ -39,8 +39,10 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
+import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelPicker } from '../components/admin/ModelPicker';
 import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -195,6 +197,7 @@ export function AdminSettingsPage() {
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
+    const [pendingScroll, setPendingScroll] = useState<string | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -250,6 +253,7 @@ export function AdminSettingsPage() {
 
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+    const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
@@ -359,21 +363,31 @@ export function AdminSettingsPage() {
      * App role requirements, for the roster that mirrors them into Security.
      *
      * Built from the navigation and the schema together so each entry can say which tab
-     * really owns it, and so the order matches the rest of the page.
+     * really owns it, and so the order matches the rest of the page. The server registry
+     * is merged in for the Entra role value and the before/after description, which the
+     * field schema has nowhere to put.
      */
     const appRoleEntries = useMemo(
-        () => (data ? collectAppRoleEntries(data.admin_nav, schema) : []),
+        () =>
+            data
+                ? collectAppRoleEntries(data.admin_nav, schema, data.app_role_requirements)
+                : [],
         [data, schema],
     );
 
     const appRoleValues = useMemo(() => {
         const values: Record<string, boolean> = {};
-        for (const entry of appRoleEntries) {
-            values[entry.key] = asBoolean(
-                Object.prototype.hasOwnProperty.call(draft, entry.key)
-                    ? draft[entry.key]
-                    : settings[entry.key],
+        const read = (key: string) =>
+            asBoolean(
+                Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
             );
+        for (const entry of appRoleEntries) {
+            values[entry.key] = read(entry.key);
+            // The capability each requirement guards, so the roster can say when one is
+            // enforced but currently doing nothing.
+            if (entry.dependsOn) {
+                values[entry.dependsOn] = read(entry.dependsOn);
+            }
         }
         return values;
     }, [appRoleEntries, draft, settings]);
@@ -522,6 +536,30 @@ export function AdminSettingsPage() {
     const readSibling = (key: string, fallback = '') =>
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
+    /**
+     * Move the page to a section, from a cross-reference elsewhere on it.
+     *
+     * The role catalog links to settings that live in other groups, so clearing the
+     * filters is part of the jump: with a group selected or a search active, the target
+     * section may not be on screen to scroll to. The scroll itself is deferred to an
+     * effect, because the element only exists once that filter change has rendered.
+     */
+    const goToSection = useCallback((sectionId: string) => {
+        setQuery('');
+        setActiveGroup(null);
+        setPendingScroll(sectionId);
+    }, []);
+
+    useEffect(() => {
+        if (!pendingScroll) {
+            return;
+        }
+        document
+            .getElementById(`admin-section-${pendingScroll}`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setPendingScroll(null);
+    }, [pendingScroll]);
+
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
         if (!isFieldVisible(field, settings, draft)) {
@@ -644,6 +682,7 @@ export function AdminSettingsPage() {
                             help={field.help}
                             disabled={saving}
                             onChange={setValue}
+                            onNavigate={goToSection}
                         />
                     );
                 case 'classification-banner-preview':
@@ -663,6 +702,19 @@ export function AdminSettingsPage() {
                         <UserAgreementPreview
                             key={key}
                             text={readSibling('user_agreement_text')}
+                        />
+                    );
+                case 'key-vault-secret-reminders':
+                    return (
+                        <KeyVaultReminders key={key} label={field.label} help={field.help} />
+                    );
+                case 'front-door-redirect-preview':
+                    return (
+                        <FrontDoorRedirectPreview
+                            key={key}
+                            origin={readSibling('front_door_url')}
+                            label={field.label}
+                            help={field.help}
                         />
                     );
                 default:
@@ -839,6 +891,10 @@ export function AdminSettingsPage() {
                                     fields={section.fields}
                                     settings={settings}
                                     draft={draft}
+                                    // Sections that describe a status rule use it;
+                                    // the rest have their status derived from which
+                                    // of their required fields are filled.
+                                    statusRule={sectionStatus[section.sectionId]}
                                     renderField={renderField}
                                     renderCapability={renderField}
                                     // While a search is filtering, a match inside a

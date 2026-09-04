@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.061)**
+### **(v0.261.072)**
 
 #### New Features
 
@@ -49,6 +49,97 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **The Response Completion Sound Moved To Feedback & Alerts**
     *   It played a local browser sound and required no Azure Speech resource, yet it was the first control in the AI Voice Conversations section. It now sits with the other notification settings under Chat.
     *   (Ref: `enable_chat_completion_audio_cues`, [Chat settings](../admin/chat.md#desktop-notifications-section))
+
+### **(v0.261.063)**
+
+#### New Features
+
+*   **The Whole Security Group Now Works In The New Admin Interface**
+    *   The new Admin Settings surface renders from a description of each setting. Security had no description, so it fell back to scanning for on/off switches — which meant it could draw switches and nothing else. The Key Vault name, the Content Safety endpoint and key, the idle timeout values, the Front Door URL and the access denied message were all unreachable, and three sections — Permissions, Access Denied Message and Key Vault — rendered as nothing at all, because a section with no switches and nothing described is skipped entirely.
+    *   All six Security tabs are now described in full: **Access & Roles**, **Secrets**, **Content Safety**, **Session**, **Network** and **Rate Limiting**. Every field the classic page submits has a control, and a test keeps the two from drifting apart again.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, `test_v2_admin_security_parity.py`, [Security settings](../admin/security.md))
+
+*   **App Role Requirements Reads As A Policy, Not A List Of Switches**
+    *   Role requirements are decided on the tab that owns each feature, which keeps each decision in context but scatters the access policy across seven tabs. The old roster gathered the switches but said nothing about them: a row was a label and a toggle, with no indication of which Entra role to assign or what changed when you flipped it.
+    *   Each row now names the exact app role value to assign — copyable, so it does not get retyped wrong into Entra — and states both halves of the decision: what enforcing it restricts, and who keeps access when it is left off. A count at the top reads the posture at a glance, and the list can be filtered.
+    *   **A requirement that is doing nothing now says so.** Enforcing a role for a feature that is switched off looks like protection and is not, so those rows are marked.
+    *   **One requirement was missing entirely.** The old roster was built by scanning the page for checkboxes named `require_member_of_*`, so `file_sync_personal_require_app_role` never appeared in it. The catalog is built from a declared registry instead, and a test fails if a new role requirement is not registered.
+    *   (Ref: `admin_app_roles.py`, `AppRoleRequirements.tsx`, `test_v2_admin_app_role_registry.py`)
+
+*   **Sections Say Whether They Are Actually Working**
+    *   "Enabled" and "working" are not the same thing for an integration. Content Safety can be switched on with no endpoint, and Key Vault with no vault name, and in both cases the feature silently does nothing — which you would only discover by opening the section and reading every field.
+    *   Section headers now carry **Off**, **Needs configuration** or **On**, so the security posture can be read without opening anything. Content Safety is judged against whichever endpoint its routing choice actually uses.
+
+*   **Key Vault Expiration Reminders And The Tracked Secret Inventory**
+    *   Key Vault secret names written by SimpleChat are content hashes, so an expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. The reminder settings and the inventory that maps that name back to its owner, source action and field are now available in the new interface, including the on-demand sweep.
+
+*   **Test Buttons And Front Door Redirect URIs**
+    *   Content Safety and Key Vault both have inline connection tests again, run against what is currently on screen rather than what was last saved, so a mistake is caught before Save. A broken Content Safety connection blocks chat rather than failing quietly, which makes testing first worth the click.
+    *   The Front Door section derives and shows the two redirect URIs that must be registered on the Entra app registration, each copyable. An unregistered URI is the usual cause of sign-in completing at Microsoft and then failing on the way back.
+
+#### Bug Fixes
+
+*   **Secrets Are No Longer Sent To The Browser By The New Admin Interface**
+    *   The classic admin page replaces stored credentials with a placeholder before rendering, and restores them on save. The new interface's settings endpoint returned the settings document as-is, so opening Admin Settings put every stored key into the page payload — including the Content Safety key, the APIM subscription key, and the Azure Storage account key used to sign document SAS URLs, which no admin template renders as a secret at all.
+    *   Secrets are now redacted, against a wider list than the classic form uses, because this endpoint returns the whole settings document rather than the subset a form draws. A credential field reports whether a value is stored and offers **Replace**; the stored value is never sent, so it cannot be read back out of the browser. Saving without touching a secret leaves it intact, and the connection tests resolve the placeholder on the server.
+    *   **Replace does not stage a deletion.** It only opens the field for entry — leaving it blank keeps what is stored, and a secret is removed only by clearing a value you typed.
+    *   (Ref: `route_backend_v2.py`, `redact_admin_settings_secrets_for_api`, `resolve_admin_settings_secret_value`, `test_v2_admin_settings_secret_redaction.py`)
+
+*   **The Content Safety Connection Test Now Tests The Path Actually In Use**
+    *   The new interface sent the authentication mode under the wrong name, so the endpoint never saw it and always took the key path. On a deployment authenticating with a managed identity, the test reported a failure for a working configuration — or, if a stale key happened to be stored, quietly validated a path that is not the one in use.
+    *   (Ref: `ConnectionTest.tsx`, `_test_safety_connection`)
+
+*   **"Startup App Maintenance" No Longer Appears Under Security**
+    *   `enable_app_maintenance` and `enable_startup_app_maintenance` were showing up in **Security > App Role Requirements**, beside Entra role switches they have nothing to do with. The fallback scan files an undescribed setting by matching word stems, and both matched "app" in `app-role-requirements-section`.
+    *   They are Cosmos maintenance switches — the recurring job that checks index policies, reconciles the document access index and clears stale caches — and now live under **Scale > Cosmos > Cosmos Maintenance** with labels and help text that say what they do. Neither had a control on the classic page at all.
+    *   `enable_key_vault_secret_storage` was likewise being filed under Backup & Recovery by matching "storage", and `enable_key_vault_secret_expiration_reminders` matched nothing and fell into "Other capabilities". Both are now in the Key Vault section where they belong.
+    *   (Ref: `admin_settings_fields.py`, `test_v2_admin_capability_placement.py`)
+
+*   **The Idle Warning Can No Longer Be Set After The Sign-Out It Warns About**
+    *   The classic page silently lowers a warning time that exceeds the sign-out time. The new interface's save now does the same and says so, instead of storing a warning that could never appear.
+
+#### User Interface Enhancements
+
+*   **Long Settings Sections Are Broken Into Labelled Parts**
+    *   Key Vault has eleven controls and a table; as one flat list, its connection settings and its expiration reminder settings read as a single undifferentiated decision. Sections can now declare sub-headings, so Key Vault reads as **Vault connection**, **Expiration reminders** and **Tracked secrets**, and Content Safety as **Connection** and **When a message is blocked**.
+
+*   **Standing Warnings Sit Next To The Control They Apply To**
+    *   Consequences that no label can hold — enabling Key Vault is effectively one-way, and SimpleChat records expiry reminders rather than emailing them — are now shown as callouts beside the switch rather than hidden behind a tooltip or left unsaid.
+
+#### Documentation
+
+*   **Security And Cosmos Maintenance Documentation Rewritten**
+    *   The Security page's section bodies were placeholder text, and several setting descriptions were wrong: the Key Vault name, lead days and scan interval were all described as "the secret credential used when the selected authentication mode requires one". Every section now explains what the capability does and why it matters, and the common tasks and troubleshooting tables cover the failures these settings actually produce.
+    *   (Ref: `docs/admin/security.md`, `docs/admin/scale.md`)
+
+### **(v0.261.061)**
+
+#### New Features
+
+*   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated chart used to be final. If the model picked a pie where a bar was wanted, put a scale on the axis that flattened the whole story, left the axes unnamed, or got a single number wrong, the only remedy was to ask again — which left a second near-duplicate chart sitting below the first with nothing to say which one was current.
+    *   Every chart now has an **Edit** button. The editor opens beside a live preview with six tabs: **Data**, **Design**, **Axes**, **Source**, **Ask AI** and **History**.
+    *   **The numbers are editable.** A grid of the chart's own labels and series: change any value, rename or add a series, add and remove rows. An emptied cell is a gap rather than a zero, so a line is drawn straight past it instead of dropping to the axis. Scatter and bubble charts get a list of their x/y pairs instead.
+    *   **The chart type can be changed**, but only to a type the data can actually be read as. A scatter chart is not offered a bar chart, and pie, doughnut and polar area appear once a chart has a single series — with the reason given, rather than the option silently missing.
+    *   **The axes can be scaled and named.** An explicit minimum and maximum, start-at-zero, a logarithmic scale for values that span orders of magnitude, and an angle and a limit for category labels too crowded to read. On a horizontal bar chart these correctly apply to the axis that carries the values, which runs along the bottom.
+    *   **Bar width, line thickness, point size, the doughnut hole, gridlines, the legend and its position, stacking and orientation** are all adjustable, along with the chart's title, subtitle and caption.
+    *   **Six changes make one entry in the history, not six.** The whole panel edits a draft that the preview follows, and one save records the lot with a note naming what changed — "Bar width, Value axis" rather than "Edited".
+    *   **Ask AI changes the chart in front of it** without adding anything to the conversation, and is told not to invent numbers: if an instruction asks for values the chart does not have and cannot derive, the data is left alone. A reply that is not a chart is refused rather than stored.
+    *   **Nothing is deleted.** History keeps every version with who made it and what it was; restoring moves a pointer rather than discarding newer ones, and the chart the model originally produced is always kept.
+    *   Exported and emailed charts, and the classic interface, all show the current version with every setting applied — so a conversation looks the same wherever it is read.
+    *   (Ref: `chartEdits.ts`, `ChartEditor.tsx`, `ChartDataGrid.tsx`, `ChartCanvas.tsx`, `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `functions_chart_export.py`, `chat-block-revisions.js`, [V2 Inline Chart Editing](features/V2_INLINE_CHART_EDITING.md))
+
+#### Bug Fixes
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
 ### **(v0.261.060)**
 
 #### New Features

@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -216,11 +217,20 @@ def test_setting_keys_are_unique():
 def _walk_dependency_conditions(dependency, path="depends_on"):
     """Yield every leaf condition in a dependency tree, with a readable path.
 
-    A dependency is either a single ``{key, equals}`` condition or an ``any_of`` /
-    ``all_of`` composition of them, and the composed forms nest. Walking the tree
-    is what lets these checks reach a condition buried two levels down, which is
-    where a typo would otherwise sit undetected and hide a control forever.
+    A dependency is a single ``{key, equals}`` condition, a list of them meaning
+    all must hold, or an ``any_of`` / ``all_of`` composition, and the composed
+    forms nest. Walking the tree is what lets these checks reach a condition
+    buried two levels down, which is where a typo would otherwise sit undetected
+    and hide a control forever.
     """
+    if isinstance(dependency, list):
+        if not dependency:
+            yield path, {"__error": "an empty condition list is always satisfied"}
+            return
+        for index, condition in enumerate(dependency):
+            yield from _walk_dependency_conditions(condition, f"{path}[{index}]")
+        return
+
     if not isinstance(dependency, dict):
         return
 
@@ -248,12 +258,13 @@ def test_dependencies_reference_real_fields():
     checked = 0
 
     for section_id, field in fields_module.iter_fields():
-        depends_on = field.get("depends_on")
-        if not depends_on:
+        if not field.get("depends_on"):
             continue
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        for path, condition in _walk_dependency_conditions(depends_on):
+        # A field may carry one condition, a list of them, or an any_of/all_of
+        # composition, so the tree is walked rather than any one shape assumed.
+        for path, condition in _walk_dependency_conditions(field["depends_on"]):
             checked += 1
 
             if "__error" in condition:
@@ -332,6 +343,80 @@ def test_connection_tests_read_declared_keys():
     return True
 
 
+def test_no_section_or_field_is_declared_twice():
+    """A later re-declaration silently overrides the earlier one.
+
+    ``ADMIN_SETTINGS_FIELDS`` is a dict literal, so declaring the same section id
+    twice keeps only the last: the first block becomes dead code that reads as
+    live. This has already happened once, when two branches described the same
+    section in parallel and the merge kept both. A duplicate settings key is worse
+    still -- two controls edit one value and disagree about its help text.
+
+    The source is parsed rather than the imported dict inspected, because by the
+    time Python has built the dict the duplicate is gone.
+    """
+    print("\nTesting for duplicate declarations...")
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "application"
+        / "single_app"
+        / "admin_settings_fields.py"
+    ).read_text(encoding="utf-8")
+
+    tree = ast.parse(source)
+    schema_node = next(
+        (
+            node.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "ADMIN_SETTINGS_FIELDS"
+                for target in node.targets
+            )
+        ),
+        None,
+    )
+    assert isinstance(schema_node, ast.Dict), "Could not parse ADMIN_SETTINGS_FIELDS"
+
+    section_ids = [
+        key.value
+        for key in schema_node.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    ]
+    duplicate_sections = sorted(
+        {name for name in section_ids if section_ids.count(name) > 1}
+    )
+    assert not duplicate_sections, (
+        "These section ids are declared more than once, so every declaration but "
+        "the last is dead code:\n  " + "\n  ".join(duplicate_sections)
+    )
+
+    field_keys = []
+    for value in schema_node.values:
+        if not isinstance(value, ast.List):
+            continue
+        for item in value.elts:
+            if not isinstance(item, ast.Dict):
+                continue
+            for key, node in zip(item.keys, item.values):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "key"
+                    and isinstance(node, ast.Constant)
+                ):
+                    field_keys.append(node.value)
+
+    duplicate_fields = sorted({key for key in field_keys if field_keys.count(key) > 1})
+    assert not duplicate_fields, (
+        "These settings keys are declared by more than one field, so two controls "
+        "would edit one value:\n  " + "\n  ".join(duplicate_fields)
+    )
+
+    print(f"  {len(section_ids)} section(s) and {len(field_keys)} field(s), none repeated.")
+    return True
+
+
 def test_option_values_are_unique_within_a_field():
     """Duplicate option values make a control's selection ambiguous."""
     print("\nTesting option value uniqueness...")
@@ -373,7 +458,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 
@@ -419,6 +510,7 @@ if __name__ == "__main__":
         test_setting_keys_are_unique,
         test_dependencies_reference_real_fields,
         test_connection_tests_read_declared_keys,
+        test_no_section_or_field_is_declared_twice,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,
     ]

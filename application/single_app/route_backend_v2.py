@@ -23,13 +23,16 @@ import logging
 
 from flask import current_app, jsonify, request, session
 
+from admin_app_roles import get_app_role_requirements
 from admin_settings_fields import (
     LANDING_PAGE_ALIGNMENTS,
     LOGO_SCALE_DEFAULT_PERCENT,
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
     SECRET_REDACTED_VALUE,
+    get_admin_section_status,
     get_admin_settings_fields,
+    get_secret_field_keys,
     get_secret_storage_paths,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
@@ -80,12 +83,16 @@ from functions_public_workspaces import (
     get_user_visible_public_workspace_ids_from_settings,
 )
 from functions_settings import (
+    ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
     WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+    get_admin_settings_api_secret_fields,
     get_settings,
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
+    redact_admin_settings_secrets_for_api,
     redact_admin_settings_secrets_for_form,
+    resolve_admin_settings_secret_value,
     sanitize_settings_for_user,
     update_settings,
 )
@@ -747,18 +754,20 @@ def register_route_backend_v2_admin(bp):
     def _redact_admin_settings_for_v2(settings):
         """Replace stored credentials with the redaction placeholder.
 
-        Two lists feed this. ``redact_admin_settings_secrets_for_form`` covers the keys
-        the server-rendered form already protects, including the nested Foundry client
-        secret. ``get_secret_storage_paths`` adds anything the V2 schema declares as a
-        secret, so declaring a new credential field protects it without a second edit
-        here.
+        Three lists feed this, and all three are needed:
 
-        Storage paths rather than field keys, because a field is named after its control
-        and a credential is not always stored under that name -- the Web Search client
-        secret lives inside ``web_search_agent``. Redacting the key alone would leave the
-        real value in place under its actual path.
+        ``redact_admin_settings_secrets_for_api`` covers what the server-rendered form
+        protects plus the keys only this endpoint returns, because it hands back the
+        whole settings document rather than the subset a template draws.
+
+        ``get_secret_storage_paths`` adds anything the V2 schema declares as a secret,
+        so declaring a new credential field protects it without a second edit here. It
+        reports storage paths rather than field keys, because a credential is not always
+        stored under the name of its control -- the Web Search client secret lives inside
+        ``web_search_agent``, and redacting the field key would leave the real value in
+        place under its actual path.
         """
-        redacted = redact_admin_settings_secrets_for_form(settings)
+        redacted = redact_admin_settings_secrets_for_api(settings)
         for path in get_secret_storage_paths():
             if "." in path:
                 if read_nested_setting(redacted, path):
@@ -774,16 +783,22 @@ def register_route_backend_v2_admin(bp):
     def v2_admin_get_settings():
         """Return the settings document, the admin navigation and the field schema.
 
-        Admin settings are not sanitized the way a user-facing payload is. Sanitization
-        removes endpoint configuration and feature state, which are exactly the values an
-        administrator is here to manage, and access is restricted to the Admin role by
-        the blueprint guard and the decorator.
+        Admin settings are not passed through ``sanitize_settings_for_user``: that
+        removes endpoint and integration configuration, which is exactly what an
+        administrator is here to manage. Access is restricted to the Admin role by the
+        blueprint guard and the decorator.
 
-        Credentials are the exception. They are replaced with the same redaction
-        placeholder the server-rendered form uses, so an administrator who only needs to
-        flip a toggle never has every stored key delivered to their browser. Submitting
-        the placeholder back means "unchanged"; ``normalize_admin_settings_updates`` drops
-        it rather than writing it.
+        Secrets are a separate question from sanitization and *are* withheld. Every known
+        secret is replaced with a placeholder, matching what the server-rendered form
+        does, so a stored key never reaches the browser merely because someone opened the
+        page. The list used here is wider than the form's, because this endpoint returns
+        the whole settings document rather than the subset a template draws, and it also
+        covers credentials the schema declares at a nested path rather than under a
+        top-level key of their own.
+
+        Submitting a placeholder back means "unchanged". The normalizer drops it, and the
+        PATCH below resolves anything that reaches it against the stored document, so an
+        untouched secret survives a save either way.
 
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
@@ -797,6 +812,8 @@ def register_route_backend_v2_admin(bp):
                         "settings": _redact_admin_settings_for_v2(settings),
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
+                        "section_status": get_admin_section_status(),
+                        "app_role_requirements": get_app_role_requirements(),
                         "branding_assets": _build_branding_assets(settings),
                         "status_readouts": {
                             **_build_status_readouts(),
@@ -829,6 +846,14 @@ def register_route_backend_v2_admin(bp):
         Values are normalized against the field schema first, which is what keeps the two
         admin interfaces agreeing on what a valid value is. The update is applied only if
         every supplied key validates, so a save never lands half-applied.
+
+        Secrets need one step beyond normalization. The browser was handed a placeholder
+        rather than the stored value, so a save that did not touch a secret sends the
+        placeholder straight back; storing it verbatim would overwrite a working
+        credential with the literal string. Every key redacted on the way out is
+        therefore resolved against the current document on the way in, exactly as the
+        server-rendered form does -- not just the ones the schema declares, so a redacted
+        key reaching the payload some other way cannot land as the placeholder either.
         """
         payload = request.get_json(silent=True) or {}
         updates = payload.get("settings")
@@ -874,6 +899,12 @@ def register_route_backend_v2_admin(bp):
                     200,
                 )
 
+            secret_keys = set(get_admin_settings_api_secret_fields()) | get_secret_field_keys()
+            for key in secret_keys & set(normalized):
+                normalized[key] = resolve_admin_settings_secret_value(
+                    key, normalized[key], current_settings
+                )
+
             update_settings(normalized)
             log_event(
                 f"[V2_ADMIN_SETTINGS] Updated {len(normalized)} setting(s): "
@@ -886,6 +917,9 @@ def register_route_backend_v2_admin(bp):
             # a branding change has to refresh them.
             _refresh_branding_static_files()
 
+            # The response reflects the draft back into the page's stored state, so a
+            # resolved secret has to be re-redacted on the way out, which
+            # _redact_admin_settings_for_v2 does below.
             return (
                 jsonify(
                     {
@@ -893,7 +927,9 @@ def register_route_backend_v2_admin(bp):
                         "updated_keys": sorted(normalized.keys()),
                         # The browser merges this into its copy of the document, so a
                         # credential that was just set has to come back redacted rather
-                        # than echoing the value straight out again.
+                        # than echoing the value straight out again. This follows nested
+                        # storage paths too, which a flat key check over `normalized`
+                        # would miss for the Foundry client secret.
                         "settings": _redact_admin_settings_for_v2(normalized),
                         "warnings": warnings,
                     }

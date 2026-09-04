@@ -2,8 +2,8 @@
 # test_v2_admin_section_shell.py
 """
 Functional test for the Admin Settings section shell and connection tests.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.072
+Implemented in: 0.261.072
 
 Two things arrive together here, because neither is useful without the other.
 
@@ -60,7 +60,7 @@ def test_both_interfaces_share_one_connection_test_dispatcher():
     """Two dispatchers would let one interface test things the other cannot."""
     print("Testing the shared connection-test dispatcher...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.072")
 
     settings_source = _read(APP_ROOT / "route_backend_settings.py")
 

@@ -2,8 +2,8 @@
 # test_v2_admin_knowledge_file_sync.py
 """
 Functional test for the Knowledge group's File Sync tab in the V2 admin UI.
-Version: 0.261.061
-Implemented in: 0.261.061
+Version: 0.261.072
+Implemented in: 0.261.072
 
 File Sync is the first section to declare a prerequisite owned by another group.
 It needs Redis Cache, which lives under Scale, and the server-rendered card says
@@ -93,7 +93,7 @@ def test_the_tab_sections_match_navigation():
     """A field filed under an unknown section id would never render."""
     print("Testing File Sync sections against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.061")
+    assert_app_version_at_least("0.261.072")
 
     nav_sections = tuple(
         section["id"]
