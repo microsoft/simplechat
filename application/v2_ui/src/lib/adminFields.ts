@@ -12,12 +12,15 @@ import type { Json } from './types';
 export type AdminFieldType =
     | 'text'
     | 'textarea'
+    | 'secret'
     | 'select'
     | 'switch'
     | 'checkbox_set'
     | 'color'
     | 'range'
     | 'number'
+    | 'string_list'
+    | 'note'
     | 'image'
     | 'link_list'
     | 'component';
@@ -27,11 +30,19 @@ export interface AdminFieldOption {
     label: string;
 }
 
-/** Shows a field only while another field holds a given value. */
-export interface AdminFieldDependency {
+/**
+ * Shows a field only while another field holds a given value.
+ *
+ * `equals` is a string for a select, and a boolean for a switch. A field may carry one
+ * of these or an array of them, in which case every condition has to hold — Content
+ * Safety's key is gated on the capability, the routing choice and the auth type at once.
+ */
+export interface AdminFieldCondition {
     key: string;
-    equals: boolean;
+    equals: boolean | string;
 }
+
+export type AdminFieldDependency = AdminFieldCondition | AdminFieldCondition[];
 
 /**
  * A confirmation an administrator must give before a capability may be switched on.
@@ -65,18 +76,54 @@ export interface AdminField {
     min_selected?: number;
     fallback_when_empty?: boolean;
     item_fields?: AdminField[];
+    /** Text fields only: the input type the browser should use. */
+    input_type?: 'text' | 'email' | 'url';
+    /** String list fields only: per-item character cap. */
+    max_item_length?: number;
+    /** Note fields only. */
+    tone?: 'info' | 'warning';
+    body?: string;
+    /** Optional sub-heading grouping consecutive fields inside one section. */
+    group?: string;
     /** Image fields only: which branding slot the upload endpoint should write. */
     upload_target?: 'logo' | 'logo_dark' | 'favicon';
     accept?: string;
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
+    /** Connection test components only: which `test_connection` branch to call. */
+    test_type?: string;
     depends_on?: AdminFieldDependency;
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
 /** Section id -> ordered fields. Section ids come from `admin_settings_nav.py`. */
 export type AdminFieldSchema = Record<string, AdminField[]>;
+
+/** One rule deciding whether an enabled section is actually usable. */
+export interface AdminSectionConfiguredRule {
+    when?: Record<string, boolean>;
+    requires: string[];
+}
+
+/** Mirrors `ADMIN_SECTION_STATUS`. */
+export interface AdminSectionStatusRule {
+    enabled_key: string;
+    configured?: AdminSectionConfiguredRule[];
+}
+
+export type AdminSectionStatusSchema = Record<string, AdminSectionStatusRule>;
+
+/** One entry from `APP_ROLE_REQUIREMENTS`. */
+export interface AppRoleRequirement {
+    key: string;
+    role: string;
+    label: string;
+    section_id: string;
+    grants: string;
+    when_off: string;
+    depends_on: string | null;
+}
 
 export interface BrandingAsset {
     present: boolean;
@@ -90,6 +137,8 @@ export interface AdminSettingsResponse {
     settings: Json;
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
+    section_status: AdminSectionStatusSchema;
+    app_role_requirements: AppRoleRequirement[];
     branding_assets: BrandingAssets;
     version: string;
 }
@@ -170,16 +219,79 @@ export function asStringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/** Whether a field's `depends_on` condition is currently satisfied. */
+/**
+ * Whether every `depends_on` condition on a field currently holds.
+ *
+ * A boolean `equals` is compared loosely, because a switch value arriving from a stored
+ * settings document may be `"on"` rather than `true`. A string `equals` is compared as a
+ * string, which is what a select needs.
+ */
 export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
     const dependency = field.depends_on;
     if (!dependency) {
         return true;
     }
-    const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
-        ? draft[dependency.key]
-        : settings[dependency.key];
-    return asBoolean(current) === dependency.equals;
+    const conditions = Array.isArray(dependency) ? dependency : [dependency];
+
+    return conditions.every((condition) => {
+        const current = Object.prototype.hasOwnProperty.call(draft, condition.key)
+            ? draft[condition.key]
+            : settings[condition.key];
+        return typeof condition.equals === 'boolean'
+            ? asBoolean(current) === condition.equals
+            : asString(current) === condition.equals;
+    });
+}
+
+/**
+ * The placeholder the server sends in place of a stored secret.
+ *
+ * Mirrors `ADMIN_SETTINGS_SECRET_REDACTED_VALUE`. The browser never receives the real
+ * value, so this is how a control tells "a secret is stored" apart from "no secret set".
+ */
+export const SECRET_PLACEHOLDER = '***REDACTED***';
+
+export type SectionStatus = 'off' | 'unconfigured' | 'on';
+
+/**
+ * Reduce a section to a single word an administrator can read without opening it.
+ *
+ * "Enabled" and "working" are not the same thing for an integration: Content Safety can
+ * be switched on with no endpoint, in which case it silently does nothing. `unconfigured`
+ * is that state, and it is the whole reason this exists rather than a plain on/off.
+ */
+export function evaluateSectionStatus(
+    rule: AdminSectionStatusRule | undefined,
+    settings: Json,
+    draft: Json,
+): SectionStatus | null {
+    if (!rule) {
+        return null;
+    }
+
+    const read = (key: string): unknown =>
+        Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key];
+
+    if (!asBoolean(read(rule.enabled_key))) {
+        return 'off';
+    }
+
+    for (const candidate of rule.configured ?? []) {
+        const applies = Object.entries(candidate.when ?? {}).every(
+            ([key, expected]) => asBoolean(read(key)) === expected,
+        );
+        if (!applies) {
+            continue;
+        }
+        // Blank means unset. A secret key would read as its placeholder here, which is
+        // correct: the placeholder means a value is stored, the browser just cannot see it.
+        const missing = candidate.requires.some((key) => !asString(read(key)).trim());
+        if (missing) {
+            return 'unconfigured';
+        }
+    }
+
+    return 'on';
 }
 
 /** Turn `enable_document_classification` into `Document classification`. */
