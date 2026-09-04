@@ -69,6 +69,7 @@ import {
     resolveSendTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
+import type { RunStreamEvent } from '../lib/orchestration';
 import {
     applySelection,
     pruneSelection,
@@ -113,7 +114,28 @@ const FEED_PAGE_SIZE = 30;
 const STREAMING_MESSAGE_ID = '__streaming__';
 
 /** Which mode the right-hand drawer is showing, or null when it is closed. */
-export type DrawerMode = 'contents' | 'documents' | null;
+export type DrawerMode = 'contents' | 'documents' | 'plan' | null;
+
+/**
+ * How an orchestration run's answer settled into the thread.
+ *
+ * A run is driven outside the chat stream machinery, but its answer lands in the same thread as
+ * any other, so `settleOrchestrationTurn` takes one of these and folds it into the shared
+ * streaming state. `completed` carries the chat-shaped terminal frame (`RunStreamEvent` extends
+ * `ChatStreamEvent`) so the final message is built exactly as a chat completion's is.
+ */
+export type OrchestrationTurnOutcome =
+    | {
+          status: 'completed';
+          event: RunStreamEvent;
+          accumulated: string;
+          /** The optimistic user bubble to reconcile with the server's id, when one is known. */
+          pendingUserMessageId?: string | null;
+      }
+    | { status: 'cancelled'; accumulated: string }
+    | { status: 'failed'; error: string }
+    /** Planning produced a plan or a question: leave the thinking state without adding a message. */
+    | { status: 'planned' };
 
 /**
  * Which API family the open conversation belongs to.
@@ -295,6 +317,51 @@ interface ChatState {
 
     sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
     stopStreaming: () => void;
+
+    /**
+     * Fold an orchestration turn into the shared thread and streaming state.
+     *
+     * Orchestration plans and runs are driven by `useOrchestrationController`, not by the chat
+     * stream machinery, because they speak a different transport and cancel differently. But the
+     * question the user typed and the answer a run produces belong in this thread like any other,
+     * so these three are the seam between the two. They are deliberately small and each guards on
+     * the open conversation: a run outlives the view it started in, and writing streaming state
+     * for a conversation the reader has since left would paint this answer into whatever they
+     * opened instead — the same hazard `sendMessage` guards with `ownsScreen`.
+     *
+     * `beginOrchestrationTurn` returns the optimistic user bubble's id so the controller can hand
+     * it back on completion for reconciliation with the server's persisted id. Passing
+     * `addUserMessage: false` re-enters the thinking state for a re-plan without adding a second
+     * bubble, because the user's question is already in the thread from the first plan.
+     */
+    beginOrchestrationTurn: (
+        conversationId: string,
+        text: string,
+        addUserMessage?: boolean,
+        turnId?: string,
+    ) => string;
+    pushOrchestrationThought: (conversationId: string, event: RunStreamEvent) => void;
+    pushOrchestrationContent: (conversationId: string, accumulated: string) => void;
+    settleOrchestrationTurn: (
+        conversationId: string,
+        outcome: OrchestrationTurnOutcome,
+    ) => void;
+    /**
+     * Re-key an in-flight turn's optimistic bubble when the server reconciles its ids.
+     *
+     * A safety net for the plan seam, not a normal step. The client mints the turn id and
+     * pre-creates the conversation, so the server almost always echoes both back unchanged; when it
+     * does not, the plan is keyed on one value and the question bubble already on screen carries
+     * another. That bubble is the anchor the plan card scrolls back to, so it is re-stamped to the
+     * ids the store now keys on. A no-op when neither id actually moved, so the ordinary path — and
+     * the common orchestration path — pays nothing.
+     */
+    reassignOrchestrationTurn: (params: {
+        fromConversationId: string;
+        toConversationId: string;
+        fromTurnId: string;
+        toTurnId: string;
+    }) => void;
 
     setDrawerMode: (mode: DrawerMode) => void;
     loadMetadata: (conversationId: string) => Promise<void>;
@@ -2330,6 +2397,226 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ) {
             void get().loadMetadata(activeConversationId);
         }
+    },
+
+    beginOrchestrationTurn: (conversationId, text, addUserMessage = true, turnId) => {
+        const trimmed = text.trim();
+        const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
+        // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
+        // started here keeps going after the reader opens another thread, and its question must
+        // not appear inside that other thread.
+        if (get().activeConversationId === conversationId) {
+            set((state) => ({
+                messages: addUserMessage
+                    ? [
+                          ...state.messages,
+                          {
+                              id: pendingUserMessageId,
+                              conversation_id: conversationId,
+                              role: 'user',
+                              content: trimmed,
+                              timestamp: new Date().toISOString(),
+                              // Stamp the turn so the plan map can scroll back to the question a
+                              // run belongs to; it survives the id reconciliation on completion,
+                              // which only swaps the id and keeps every other field.
+                              metadata: turnId ? { orchestration_turn_id: turnId } : undefined,
+                          },
+                      ]
+                    : state.messages,
+                streaming: true,
+                streamingContent: '',
+                thoughts: [],
+                streamError: null,
+                reconnectPhase: null,
+            }));
+        }
+        return pendingUserMessageId;
+    },
+
+    pushOrchestrationThought: (conversationId, event) => {
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+        const content =
+            typeof event.content === 'string' ? event.content : String(event.thought ?? '');
+        if (!content) {
+            return;
+        }
+        // Built exactly like buildStreamHandlers.onThought so a planner reasoning step feeds the
+        // same activity lane a chat run's thoughts do — the orchestration lane keys on the
+        // `orchestration_*` step types these carry.
+        set((state) => ({
+            thoughts: [
+                ...state.thoughts,
+                {
+                    id: `${state.thoughts.length}`,
+                    title: String(event.title ?? event.step_type ?? 'Planning'),
+                    content,
+                    stepType: typeof event.step_type === 'string' ? event.step_type : undefined,
+                    detail: typeof event.detail === 'string' ? event.detail : undefined,
+                    activity: event.activity as ThoughtEntry['activity'],
+                    progress: event.progress as ThoughtEntry['progress'],
+                    stepIndex:
+                        typeof event.step_index === 'number' ? event.step_index : undefined,
+                },
+            ],
+        }));
+    },
+
+    pushOrchestrationContent: (conversationId, accumulated) => {
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+        set({ streamingContent: accumulated });
+    },
+
+    settleOrchestrationTurn: (conversationId, outcome) => {
+        // The reader is elsewhere: there is no streaming surface of this conversation's to
+        // resolve, and the run's own record in the orchestration store is what remembers it ran.
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+
+        if (outcome.status === 'planned') {
+            // Planning is over and the card takes the stage; leave the thinking state without
+            // adding a message. Thoughts are cleared because the planning reasoning is ephemeral —
+            // the plan is the artifact worth keeping, and stale thoughts would otherwise flash in
+            // the next turn's streaming bubble.
+            set({
+                streaming: false,
+                streamingContent: '',
+                thoughts: [],
+                reconnectPhase: null,
+            });
+            return;
+        }
+
+        if (outcome.status === 'failed') {
+            set({
+                streaming: false,
+                streamingContent: '',
+                reconnectPhase: null,
+                streamError: outcome.error,
+            });
+            return;
+        }
+
+        if (outcome.status === 'cancelled') {
+            // Partial output is kept, matching a cancelled chat stream: discarding a long answer
+            // someone stopped is more annoying than useful.
+            const { accumulated } = outcome;
+            set((state) => ({
+                messages: accumulated
+                    ? [
+                          ...state.messages,
+                          {
+                              id: `cancelled-${Date.now()}`,
+                              conversation_id: conversationId,
+                              role: 'assistant',
+                              content: accumulated,
+                              timestamp: new Date().toISOString(),
+                              thoughts:
+                                  state.thoughts.length > 0 ? [...state.thoughts] : undefined,
+                          },
+                      ]
+                    : state.messages,
+                streaming: false,
+                streamingContent: '',
+                reconnectPhase: null,
+            }));
+            return;
+        }
+
+        // Completed: the terminal frame is chat-shaped, so the assistant message is built exactly
+        // as buildStreamHandlers.onDone builds it, and merged by id for the same reason — a shared
+        // conversation echoes the same message over its event stream and the second copy must
+        // update the first rather than double it.
+        const { event, accumulated, pendingUserMessageId } = outcome;
+        const persistedUserId = String(event.user_message_id ?? '').trim();
+        const finalMessage: ChatMessage = {
+            id: String(event.message_id ?? STREAMING_MESSAGE_ID),
+            conversation_id: conversationId,
+            role: 'assistant',
+            content: accumulated,
+            timestamp: new Date().toISOString(),
+            model_deployment_name: event.model_deployment_name,
+            agent_display_name: event.agent_display_name,
+            augmented: event.augmented,
+            metadata: event.metadata,
+            thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
+        };
+        set((state) => {
+            // Reconcile the optimistic user bubble with the server id when the run reports one, so
+            // per-message actions address a message the server knows. Matched on the exact pending
+            // id rather than any `pending-user-` bubble, so an earlier cancelled turn's unresolved
+            // bubble is left alone.
+            const messages =
+                persistedUserId && pendingUserMessageId
+                    ? state.messages.map((message) =>
+                          message.id === pendingUserMessageId
+                              ? { ...message, id: persistedUserId }
+                              : message,
+                      )
+                    : state.messages;
+            return {
+                messages: mergeCollaborationMessage(
+                    messages,
+                    finalMessage as CollaborationMessage,
+                ),
+                streaming: false,
+                streamingContent: '',
+                reconnectPhase: null,
+            };
+        });
+    },
+
+    reassignOrchestrationTurn: ({
+        fromConversationId,
+        toConversationId,
+        fromTurnId,
+        toTurnId,
+    }) => {
+        const conversationChanged =
+            Boolean(toConversationId) && toConversationId !== fromConversationId;
+        const turnChanged = Boolean(toTurnId) && toTurnId !== fromTurnId;
+        if (!conversationChanged && !turnChanged) {
+            return;
+        }
+        set((state) => {
+            const messages = state.messages.map((message) => {
+                if (message.conversation_id !== fromConversationId) {
+                    return message;
+                }
+                // The turn stamp is what tells this turn's bubble apart from an earlier turn's in
+                // the same thread, so the turn id is rewritten only on the bubble carrying the old
+                // one. The conversation id moves with any bubble of a just-created conversation,
+                // which holds nothing but this turn.
+                const stamp = (
+                    message.metadata as { orchestration_turn_id?: string } | undefined
+                )?.orchestration_turn_id;
+                const metadata =
+                    turnChanged && stamp === fromTurnId
+                        ? ({
+                              ...(message.metadata as Record<string, unknown>),
+                              orchestration_turn_id: toTurnId,
+                          } as ChatMessage['metadata'])
+                        : message.metadata;
+                return {
+                    ...message,
+                    conversation_id: conversationChanged
+                        ? toConversationId
+                        : message.conversation_id,
+                    metadata,
+                };
+            });
+            // The optimistic write guarded on the open conversation, so a reader looking at the old
+            // id is looking at this turn; keep them attached to it under the real id.
+            const activeConversationId =
+                conversationChanged && state.activeConversationId === fromConversationId
+                    ? toConversationId
+                    : state.activeConversationId;
+            return { messages, activeConversationId };
+        });
     },
 
     loadMetadata: async (conversationId) => {

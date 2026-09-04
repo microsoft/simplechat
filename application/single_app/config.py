@@ -739,6 +739,18 @@ cosmos_group_workflow_run_items_container = cosmos_database.create_container_if_
     partition_key=PartitionKey(path="/run_id")
 )
 
+cosmos_orchestration_runs_container_name = "orchestration_runs"
+cosmos_orchestration_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_orchestration_runs_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_orchestration_run_steps_container_name = "orchestration_run_steps"
+cosmos_orchestration_run_steps_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_orchestration_run_steps_container_name,
+    partition_key=PartitionKey(path="/run_id")
+)
+
 cosmos_group_conversations_container_name = "group_conversations"
 cosmos_group_conversations_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_conversations_container_name,

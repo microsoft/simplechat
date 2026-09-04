@@ -1,0 +1,7 @@
+# The browser bundle is a generated build artifact, rebuilt on demand by harness_build.ensure_bundle
+# from harness_entry.tsx + application/v2_ui/src. It is large and machine-specific, so it is not
+# tracked; a checkout with application/v2_ui/node_modules present regenerates it on first test run,
+# and a checkout without node_modules skips the browser-driven checks.
+harness.bundle.js
+harness.bundle.js.map
+__pycache__/

@@ -1,0 +1,197 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'chat-orchestration' %} show active{% endif %}" id="chat-orchestration" role="tabpanel" aria-labelledby="chat-orchestration-tab">
+
+                <div class="card mb-3 p-3" id="chat-orchestration-section">
+                    <h5>
+                        <i class="bi bi-signpost-split me-2"></i>Chat Orchestration
+                    </h5>
+                    <p class="text-muted">
+                        Lets a user describe what they want and have SimpleChat work out the rest. Instead of choosing documents, web search, a prompt, an agent and a model before asking, the user asks; SimpleChat plans the work, shows the plan, and runs it once approved.
+                    </p>
+                    <p class="text-muted small">
+                        Orchestration only reaches capabilities this deployment already allows. Turning it on does not grant a user access to anything they could not already use by hand.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_orchestration"
+                            name="enable_chat_orchestration"
+                            {% if settings.enable_chat_orchestration %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_chat_orchestration">
+                            Enable Chat Orchestration
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Adds an orchestration mode to the V2 chat composer. The classic interface is unaffected."></i>
+                    </div>
+                    <div class="alert alert-info small mb-0">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Available in the V2 interface only.
+                    </div>
+                </div>
+
+                <div class="card mb-3 p-3" id="chat-orchestration-approval-section">
+                    <h5>
+                        <i class="bi bi-check2-square me-2"></i>Plan Approval
+                    </h5>
+                    <p class="text-muted">
+                        How much say a user has before a plan runs. Reviewing every plan is the safest default and the slowest; approving automatically is the fastest and gives the user no chance to intervene before work starts.
+                    </p>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="chat_orchestration_default_approval_mode">Default approval mode</label>
+                        <select class="form-select" id="chat_orchestration_default_approval_mode" name="chat_orchestration_default_approval_mode">
+                            <option value="manual" {% if settings.chat_orchestration_default_approval_mode == 'manual' %}selected{% endif %}>Review before running</option>
+                            <option value="timed" {% if settings.chat_orchestration_default_approval_mode == 'timed' %}selected{% endif %}>Run automatically after a countdown</option>
+                            <option value="auto" {% if settings.chat_orchestration_default_approval_mode == 'auto' %}selected{% endif %}>Run automatically</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="chat_orchestration_timed_approval_seconds">Countdown before running (seconds)</label>
+                        <input
+                            type="number"
+                            class="form-control"
+                            id="chat_orchestration_timed_approval_seconds"
+                            name="chat_orchestration_timed_approval_seconds"
+                            min="3"
+                            max="120"
+                            value="{{ settings.chat_orchestration_timed_approval_seconds if settings.chat_orchestration_timed_approval_seconds is not none else 10 }}">
+                        <div class="form-text">How long the user has to intervene when the mode is a countdown. Between 3 and 120 seconds.</div>
+                    </div>
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="chat_orchestration_allow_user_approval_override"
+                            name="chat_orchestration_allow_user_approval_override"
+                            {% if settings.chat_orchestration_allow_user_approval_override %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="chat_orchestration_allow_user_approval_override">
+                            Let users change their own approval mode
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When off, every user stays on the default mode above and the control is hidden from the composer."></i>
+                    </div>
+
+                    <div class="form-group form-check form-switch mb-0">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="chat_orchestration_show_manual_controls"
+                            name="chat_orchestration_show_manual_controls"
+                            {% if settings.chat_orchestration_show_manual_controls %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="chat_orchestration_show_manual_controls">
+                            Keep the manual composer controls available
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Keeps the document, web, model and agent pickers reachable behind a disclosure while orchestration is on. Anything chosen there constrains the plan instead of being ignored."></i>
+                    </div>
+                </div>
+
+                <div class="card mb-3 p-3" id="chat-orchestration-capabilities-section">
+                    <h5>
+                        <i class="bi bi-puzzle me-2"></i>Capabilities
+                    </h5>
+                    <p class="text-muted">
+                        Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled.
+                    </p>
+                    <p class="text-muted small">
+                        Answering is always available. A plan has to end somewhere.
+                    </p>
+
+                    {% for capability in orchestration_capabilities or [] %}
+                    <div class="form-group form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="chat_orchestration_capability_{{ capability.id }}"
+                            name="chat_orchestration_enabled_capabilities"
+                            value="{{ capability.id }}"
+                            {% if capability.terminal %}checked disabled{% elif capability.id in orchestration_selected_capabilities %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="chat_orchestration_capability_{{ capability.id }}">
+                            {{ capability.label }}
+                            <span class="badge bg-secondary ms-1">{{ capability.cost }} cost</span>
+                        </label>
+                        <div class="form-text ms-4">{{ capability.summary }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <div class="card mb-3 p-3" id="chat-orchestration-limits-section">
+                    <h5>
+                        <i class="bi bi-speedometer2 me-2"></i>Limits
+                    </h5>
+                    <p class="text-muted">
+                        Bounds on a single run. These are what stop a badly-shaped question turning into an open-ended amount of work, so they are enforced regardless of what a plan asks for.
+                    </p>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_max_steps">Maximum steps in a plan</label>
+                            <input type="number" class="form-control" id="chat_orchestration_max_steps" name="chat_orchestration_max_steps" min="1" max="30"
+                                value="{{ settings.chat_orchestration_max_steps if settings.chat_orchestration_max_steps is not none else 8 }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_max_replans">Maximum re-plans per run</label>
+                            <input type="number" class="form-control" id="chat_orchestration_max_replans" name="chat_orchestration_max_replans" min="0" max="5"
+                                value="{{ settings.chat_orchestration_max_replans if settings.chat_orchestration_max_replans is not none else 2 }}">
+                            <div class="form-text">How often a step may send the plan back to be reconsidered.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_step_timeout_seconds">Step timeout (seconds)</label>
+                            <input type="number" class="form-control" id="chat_orchestration_step_timeout_seconds" name="chat_orchestration_step_timeout_seconds" min="30" max="1800"
+                                value="{{ settings.chat_orchestration_step_timeout_seconds if settings.chat_orchestration_step_timeout_seconds is not none else 180 }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_total_timeout_seconds">Run timeout (seconds)</label>
+                            <input type="number" class="form-control" id="chat_orchestration_total_timeout_seconds" name="chat_orchestration_total_timeout_seconds" min="60" max="7200"
+                                value="{{ settings.chat_orchestration_total_timeout_seconds if settings.chat_orchestration_total_timeout_seconds is not none else 900 }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_ledger_max_runs">Earlier runs shown to the planner</label>
+                            <input type="number" class="form-control" id="chat_orchestration_ledger_max_runs" name="chat_orchestration_ledger_max_runs" min="0" max="50"
+                                value="{{ settings.chat_orchestration_ledger_max_runs if settings.chat_orchestration_ledger_max_runs is not none else 10 }}">
+                            <div class="form-text">How much of the conversation's earlier work the planner can see, so it reuses findings instead of repeating them. Zero makes every turn plan from scratch.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_ledger_max_bytes">Earlier-run summary size (bytes)</label>
+                            <input type="number" class="form-control" id="chat_orchestration_ledger_max_bytes" name="chat_orchestration_ledger_max_bytes" min="1024" max="131072"
+                                value="{{ settings.chat_orchestration_ledger_max_bytes if settings.chat_orchestration_ledger_max_bytes is not none else 16384 }}">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-3 p-3" id="chat-orchestration-planner-model-section">
+                    <h5>
+                        <i class="bi bi-cpu me-2"></i>Planner Model
+                    </h5>
+                    <p class="text-muted">
+                        Which model writes the plan. Planning is a short, structured task rather than a conversational one, so a smaller and faster deployment usually does it well and costs less per message than the model that writes the answer.
+                    </p>
+                    <p class="text-muted small">
+                        Leave the deployment blank to plan with this deployment's default chat model.
+                    </p>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_planner_deployment">Planner deployment name</label>
+                            <input type="text" class="form-control" id="chat_orchestration_planner_deployment" name="chat_orchestration_planner_deployment"
+                                value="{{ settings.chat_orchestration_planner_deployment or '' }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_planner_model_id">Planner model id</label>
+                            <input type="text" class="form-control" id="chat_orchestration_planner_model_id" name="chat_orchestration_planner_model_id"
+                                value="{{ settings.chat_orchestration_planner_model_id or '' }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_planner_model_endpoint_id">Planner model endpoint id</label>
+                            <input type="text" class="form-control" id="chat_orchestration_planner_model_endpoint_id" name="chat_orchestration_planner_model_endpoint_id"
+                                value="{{ settings.chat_orchestration_planner_model_endpoint_id or '' }}">
+                            <div class="form-text">Required when planning through a configured model endpoint rather than the default deployment.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label" for="chat_orchestration_planner_model_provider">Planner model provider</label>
+                            <input type="text" class="form-control" id="chat_orchestration_planner_model_provider" name="chat_orchestration_planner_model_provider"
+                                value="{{ settings.chat_orchestration_planner_model_provider or '' }}">
+                        </div>
+                    </div>
+                </div>
+
+            </div>

@@ -401,6 +401,46 @@ part of the Chat group feature work.
 
 ### **(v0.261.061)**
 
+#### Bug Fixes
+
+*   **Enabling A Feature No Longer Requires Reloading The Chat Tab**
+    *   The new interface read its configuration once, when the page first loaded. An administrator who turned a capability on in Admin Settings — which is a different page, usually a different tab — came back to an open chat that still insisted the capability did not exist, with nothing on screen to explain why.
+    *   The configuration is now re-read whenever the tab comes back to the front, so returning from Admin Settings is enough. This applies to every setting, not just the one that surfaced it.
+    *   (Ref: `bootstrapStore.refresh`, `App.tsx` visibility and focus handling)
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+#### User Interface Enhancements
+
+*   **Orchestration Is On By Default Where It Is Enabled**
+    *   Orchestration previously had to be switched on in the composer before it did anything, which meant a deployment that had enabled it still opened on a row of capability buttons inviting exactly the decisions the planner exists to make.
+    *   Where an administrator has enabled orchestration, the composer now opens in it, with the document, web, model, agent and reasoning controls folded behind **Manual controls** rather than removed. Turning orchestration off restores the classic composer, and anything chosen under the disclosure still constrains the plan.
+    *   (Ref: `Composer.tsx`, `chat_orchestration_show_manual_controls`)
+
+*   **The Inbound MCP Tab Explains Why It Is Empty**
+    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
+    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
+    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
+
+*   **Inbound MCP Documentation Describes The Access Model**
+    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+*   **Chat Now Says Which Endpoint Is Actually Serving It**
+    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
+    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
+    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
+    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
+    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
+    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
+
 #### New Features
 
 *   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
@@ -432,39 +472,21 @@ part of the Chat group feature work.
     *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
     *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
 
-#### Bug Fixes
-
-*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
-    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
-    *   All three now take effect in the new interface, the classic interface and exported images alike.
-    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
-
-*   **Horizontal Bar Charts Scaled The Wrong Axis**
-    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
-    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
-
-#### User Interface Enhancements
-
-*   **The Inbound MCP Tab Explains Why It Is Empty**
-    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
-    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
-    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
-
-*   **Inbound MCP Documentation Describes The Access Model**
-    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
-    *   (Ref: `docs/admin/agents-actions.md`)
-
-*   **Chat Now Says Which Endpoint Is Actually Serving It**
-    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
-    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
-    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
-    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
-    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
-    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
-
 ### **(v0.261.060)**
 
 #### New Features
+
+*   **Orchestration: Describe What You Want Instead Of Assembling The Request**
+    *   Answering a question well used to depend on choosing correctly before you had seen any results. You had to decide whether to search your documents and which ones, whether to search the web, whether to read the URLs you had pasted, which saved prompt to apply, which agent to use, and which model should answer — all in advance, from a row of controls under the message box.
+    *   **You now just ask.** SimpleChat works out what the question needs, shows you the plan it intends to follow, and runs it. Turning orchestration on hides the capability toggles and the model, agent and reasoning pickers behind a disclosure; file upload and voice input stay exactly where they are.
+    *   **You decide how much say you want.** A plan can wait for you to read it, run after a countdown you can interrupt, or run immediately. Administrators set the default and can decide whether users may change it.
+    *   **You can narrow a plan before it runs.** Steps can be switched off and documents removed. You cannot add to a plan this way — widening it goes back through planning, so a request never skips the reasoning and the permission check that produced it.
+    *   **Questions are asked in the conversation, as a card.** When the orchestrator genuinely cannot proceed without knowing something, it asks with a short form — choices to pick rather than prose to write — instead of a paragraph you have to answer in the thread. The card speaks the MCP elicitation contract, so an MCP server asking a question later will use the same card.
+    *   **The plan lives in the side panel, next to Contents and Documents.** A Run view shows the current plan with live progress, and a Map view shows every run in the conversation in order, so you can see what has already been searched and produced. Clicking a run jumps the conversation to the turn that produced it.
+    *   **Later turns reuse earlier work.** The planner is shown a bounded summary of what previous turns in the conversation already did, so a follow-up question depends on findings that already exist rather than searching for them again — and you are never asked a question you have already answered.
+    *   Orchestration reaches only capabilities that are already enabled, so it grants no new access to anyone. This release covers document search, document analysis, document comparison, spreadsheet analysis, web search and answering.
+    *   Available in the V2 interface. The classic interface is unchanged. Off by default.
+    *   (Ref: `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_executor.py`, `/api/v2/orchestration/plan`, `/api/v2/orchestration/run`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Orchestration settings](../admin/orchestration.md))
 
 *   **The Whole Workspaces Group Is Now Editable In The New Interface**
     *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.

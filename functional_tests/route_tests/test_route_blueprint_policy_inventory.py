@@ -51,6 +51,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
     "backend_m365": ("login_required", "user_required"),
     "backend_notifications": ("login_required", "user_required"),
+    "backend_orchestration": ("login_required", "user_required"),
     "backend_prompts": ("login_required", "user_required"),
     "backend_public_documents": ("login_required", "user_required"),
     "backend_public_prompts": ("login_required", "user_required"),
