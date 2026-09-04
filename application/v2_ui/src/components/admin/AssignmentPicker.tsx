@@ -90,7 +90,13 @@ function PickerModal({
                 setStatus(
                     records.length
                         ? null
-                        : `No ${field.item_noun_plural ?? 'records'} matched that search.`,
+                        : query
+                          ? `No ${field.item_noun_plural ?? 'records'} matched that search.`
+                          : // Not every endpoint answers an empty term with a full list --
+                            // the public workspace search requires two characters -- so an
+                            // empty result for an empty term means "type something", not
+                            // "nothing exists".
+                            `Search to find ${field.item_noun_plural ?? 'records'} to assign.`,
                 );
             } catch (searchError) {
                 setResults([]);
