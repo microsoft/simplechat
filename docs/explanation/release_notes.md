@@ -2,6 +2,18 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.013)**
+
+#### Bug Fixes
+
+*   **Custom Model Endpoint Failures Are Now Diagnosable**
+    *   Every Custom endpoint failure produced the same sentence — "Custom model request failed." — with the underlying cause discarded before it reached the log. A wrong path, a wrong API key, a wrong model name, a TLS failure, and a blocked address were indistinguishable, and nothing anywhere explained which had happened.
+    *   The browser message stays sanitized, because an upstream error body can echo back a URL, a header, or an API key. The real cause is now recorded server-side with the API type, the resolved request URL, the upstream status code, and the upstream error body.
+    *   Both the message and the log entry now carry a short reference id, so an administrator can join the message a user reports to the log entry that explains it.
+    *   Credentials are redacted before anything is written to the log, covering API keys, bearer tokens, `x-api-key`, `x-goog-api-key`, and key query parameters. A logging failure never replaces the original error.
+    *   The resolved request URL is included deliberately: URL normalization can rewrite what the administrator typed, and that rewrite was previously invisible.
+    *   (Ref: `functions_model_endpoint_diagnostics.py`, `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
+
 ### **(v0.261.012)**
 
 #### New Features

@@ -218,7 +218,11 @@ def build_model_endpoint_sync_chat_client(
             )
         client = AzureOpenAI(**client_kwargs)
         if direct_custom:
-            client = SanitizedCustomChatCompletionClient(client)
+            client = SanitizedCustomChatCompletionClient(
+                client,
+                api_type=api_type,
+                request_url=endpoint,
+            )
         return client, runtime_protocol
 
     credential = resolve_credential_for_model_endpoint_auth(auth_settings)
@@ -470,7 +474,11 @@ def build_semantic_kernel_chat_service_for_model(
                     client_kwargs['default_query'] = {'api-version': request_api_version}
                 async_client = AsyncOpenAI(**client_kwargs)
                 if direct_custom:
-                    async_client = sanitize_custom_async_openai_client(async_client)
+                    async_client = sanitize_custom_async_openai_client(
+                        async_client,
+                        api_type=api_type,
+                        request_url=client_kwargs['base_url'],
+                    )
                 return OpenAIChatCompletion(
                     service_id=service_id,
                     ai_model_id=request_model,
@@ -486,7 +494,11 @@ def build_semantic_kernel_chat_service_for_model(
                         allow_private=allow_private_custom_endpoints,
                     ),
                 )
-                async_client = sanitize_custom_async_openai_client(async_client)
+                async_client = sanitize_custom_async_openai_client(
+                    async_client,
+                    api_type=api_type,
+                    request_url=endpoint,
+                )
                 return AzureChatCompletion(
                     service_id=service_id,
                     deployment_name=request_model,

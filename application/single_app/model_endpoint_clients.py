@@ -32,6 +32,7 @@ from semantic_kernel.contents.utils.finish_reason import FinishReason
 from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutionSettingsError
 
 from functions_debug import debug_print
+from functions_model_endpoint_diagnostics import build_sanitized_model_endpoint_error
 from functions_model_endpoint_providers import (
     URL_POLICY_APPEND_V1_IF_MISSING,
     URL_POLICY_AS_GIVEN,
@@ -502,15 +503,26 @@ def build_openai_style_chat_client(
     return OpenAIStyleChatCompletionClient(
         OpenAI(**client_kwargs),
         sanitize_errors=direct_custom,
+        api_type=api_type,
+        request_url=client_kwargs["base_url"],
     )
 
 
 class OpenAIStyleChatCompletionClient:
     """Small wrapper that makes OpenAI-compatible Foundry calls tolerant of Azure-only options."""
 
-    def __init__(self, client: OpenAI, *, sanitize_errors: bool = False):
+    def __init__(
+        self,
+        client: OpenAI,
+        *,
+        sanitize_errors: bool = False,
+        api_type: Any = "",
+        request_url: Any = "",
+    ):
         self._client = client
         self._sanitize_errors = sanitize_errors
+        self._api_type = api_type
+        self._request_url = request_url
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
@@ -518,21 +530,35 @@ class OpenAIStyleChatCompletionClient:
         request_kwargs.pop("stream_options", None)
         try:
             response = self._client.chat.completions.create(**request_kwargs)
-        except Exception:
+        except Exception as exc:
             if self._sanitize_errors:
-                raise RuntimeError("Custom model request failed.") from None
+                raise build_sanitized_model_endpoint_error(
+                    "Custom model request failed.",
+                    exc,
+                    api_type=self._api_type,
+                    protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+                    request_url=self._request_url,
+                    status_code=getattr(exc, "status_code", None),
+                    detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
+                ) from None
             raise
         if self._sanitize_errors and request_kwargs.get("stream"):
-            return _SanitizedSyncIterator(response)
+            return _SanitizedSyncIterator(
+                response,
+                api_type=self._api_type,
+                request_url=self._request_url,
+            )
         return response
 
 
 class _SanitizedSyncIterator:
     """Proxy a streaming response without exposing provider exception details."""
 
-    def __init__(self, iterator: Any):
+    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = ""):
         self._iterator = iterator
         self._items = iter(iterator)
+        self._api_type = api_type
+        self._request_url = request_url
 
     def __iter__(self):
         return self
@@ -542,8 +568,14 @@ class _SanitizedSyncIterator:
             return next(self._items)
         except StopIteration:
             raise
-        except Exception:
-            raise RuntimeError("Custom model stream failed.") from None
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model stream failed.",
+                exc,
+                api_type=self._api_type,
+                protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+                request_url=self._request_url,
+            ) from None
 
     def __enter__(self):
         enter = getattr(self._iterator, "__enter__", None)
@@ -570,9 +602,11 @@ class _SanitizedSyncIterator:
 class _SanitizedAsyncIterator:
     """Proxy an async streaming response without exposing provider exception details."""
 
-    def __init__(self, iterator: Any):
+    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = ""):
         self._iterator = iterator
         self._items = iterator.__aiter__()
+        self._api_type = api_type
+        self._request_url = request_url
 
     def __aiter__(self):
         return self
@@ -582,8 +616,14 @@ class _SanitizedAsyncIterator:
             return await self._items.__anext__()
         except StopAsyncIteration:
             raise
-        except Exception:
-            raise RuntimeError("Custom model stream failed.") from None
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model stream failed.",
+                exc,
+                api_type=self._api_type,
+                protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+                request_url=self._request_url,
+            ) from None
 
     async def __aenter__(self):
         enter = getattr(self._iterator, "__aenter__", None)
@@ -612,24 +652,38 @@ class _SanitizedAsyncIterator:
 class SanitizedCustomChatCompletionClient:
     """Expose an SDK chat client while replacing direct Custom provider errors."""
 
-    def __init__(self, client: Any):
+    def __init__(self, client: Any, *, api_type: Any = "", request_url: Any = ""):
         self._client = client
+        self._api_type = api_type
+        self._request_url = request_url
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
         try:
             response = self._client.chat.completions.create(**kwargs)
-        except Exception:
-            raise RuntimeError("Custom model request failed.") from None
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model request failed.",
+                exc,
+                api_type=self._api_type,
+                protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+                request_url=self._request_url,
+                status_code=getattr(exc, "status_code", None),
+                detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
+            ) from None
         if kwargs.get("stream"):
-            return _SanitizedSyncIterator(response)
+            return _SanitizedSyncIterator(
+                response,
+                api_type=self._api_type,
+                request_url=self._request_url,
+            )
         return response
 
     def __getattr__(self, name: str):
         return getattr(self._client, name)
 
 
-def sanitize_custom_async_openai_client(client: Any):
+def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", request_url: Any = ""):
     """Replace async SDK chat errors with safe direct-Custom messages."""
     if getattr(client, "_simplechat_custom_errors_sanitized", False):
         return client
@@ -639,10 +693,21 @@ def sanitize_custom_async_openai_client(client: Any):
     async def sanitized_create(*args, **kwargs):
         try:
             response = await original_create(*args, **kwargs)
-        except Exception:
-            raise RuntimeError("Custom model request failed.") from None
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom model request failed.",
+                exc,
+                api_type=api_type,
+                request_url=request_url,
+                status_code=getattr(exc, "status_code", None),
+                detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
+            ) from None
         if kwargs.get("stream"):
-            return _SanitizedAsyncIterator(response)
+            return _SanitizedAsyncIterator(
+                response,
+                api_type=api_type,
+                request_url=request_url,
+            )
         return response
 
     client.chat.completions.create = sanitized_create
@@ -743,16 +808,35 @@ class AnthropicChatCompletionClient:
                 stream=stream,
                 follow_redirects=False,
             )
-        except Exception:
+        except Exception as exc:
             http_client.close()
-            raise RuntimeError("Custom Anthropic model request failed.") from None
+            raise build_sanitized_model_endpoint_error(
+                "Custom Anthropic model request failed.",
+                exc,
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                request_url=self.endpoint,
+            ) from None
 
         if response.status_code >= 400:
             status_code = response.status_code
+            # Read the upstream body before closing so the log can explain the
+            # failure, even though the browser only ever sees the status code.
+            error_detail = ""
+            try:
+                if not stream:
+                    error_detail = response.text
+            except Exception:
+                error_detail = ""
             response.close()
             http_client.close()
-            raise RuntimeError(
-                f"Custom Anthropic model request failed with status {status_code}."
+            raise build_sanitized_model_endpoint_error(
+                f"Custom Anthropic model request failed with status {status_code}.",
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                request_url=self.endpoint,
+                status_code=status_code,
+                detail=error_detail,
             )
 
         if stream:
@@ -763,9 +847,13 @@ class AnthropicChatCompletionClient:
 
         try:
             return self._build_completion_response(response.json())
-        except Exception:
-            raise RuntimeError(
-                "Custom Anthropic model returned an invalid response."
+        except Exception as exc:
+            raise build_sanitized_model_endpoint_error(
+                "Custom Anthropic model returned an invalid response.",
+                exc,
+                api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                request_url=self.endpoint,
             ) from None
         finally:
             response.close()
@@ -1069,9 +1157,15 @@ class AnthropicChatCompletionClient:
                     prompt_tokens = int(usage.get("input_tokens") or prompt_tokens or 0)
                     completion_tokens = int(usage.get("output_tokens") or completion_tokens or 0)
                     continue
-        except Exception:
+        except Exception as exc:
             if self.direct_custom:
-                raise RuntimeError("Custom Anthropic model stream failed.") from None
+                raise build_sanitized_model_endpoint_error(
+                    "Custom Anthropic model stream failed.",
+                    exc,
+                    api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
+                    protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+                    request_url=self.endpoint,
+                ) from None
             raise
         finally:
             response.close()

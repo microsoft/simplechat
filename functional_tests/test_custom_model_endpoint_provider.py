@@ -12,6 +12,7 @@ sanitization, and the admin/workspace UI contract without network traffic.
 
 import asyncio
 import importlib
+import re
 import socket
 import sys
 import types
@@ -475,7 +476,11 @@ def test_custom_client_paths_headers_and_redirect_policy():
     try:
         safe_sync_client.chat.completions.create(model="test")
     except RuntimeError as exc:
-        assert str(exc) == "Custom model request failed."
+        # The message stays sanitized, but now carries a correlation id so an
+        # administrator can find the real cause in the server log.
+        assert "provider secret response" not in str(exc)
+        assert str(exc).startswith("Custom model request failed.")
+        assert re.search(r"\(reference [0-9a-f]{8}\)$", str(exc))
         assert exc.__cause__ is None
     else:
         raise AssertionError("Expected direct Custom SDK errors to be sanitized")
@@ -494,7 +499,9 @@ def test_custom_client_paths_headers_and_redirect_policy():
         try:
             await fake_async_client.chat.completions.create(model="test")
         except RuntimeError as exc:
-            assert str(exc) == "Custom model request failed."
+            assert "provider secret response" not in str(exc)
+            assert str(exc).startswith("Custom model request failed.")
+            assert re.search(r"\(reference [0-9a-f]{8}\)$", str(exc))
             assert exc.__cause__ is None
             return
         raise AssertionError("Expected direct Custom async SDK errors to be sanitized")
