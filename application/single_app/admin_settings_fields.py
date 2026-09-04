@@ -76,6 +76,9 @@ from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
 )
+from functions_group_assignment_ids import (
+    normalize_group_workflow_allowed_group_ids,
+)
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -106,6 +109,7 @@ FIELD_TYPES = (
     "secret",
     "string_list",
     "id_list",
+    "group_picker",
     "status",
 )
 
@@ -159,6 +163,17 @@ EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
 # tests import directly, and ``functions_settings`` reaches ``config``, which
 # builds a Cosmos client at import time. The schema test pins the two values
 # together, so the duplication cannot drift.
+# Above this many automatic tool calls per workflow run, a run is capacity
+# sensitive rather than merely long. The server-rendered pane says so in a
+# warning block, so the same guidance is attached to the field here.
+WORKFLOW_AUTO_INVOKE_CAPACITY_THRESHOLD = 100
+
+# Mirrors PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH in functions_settings.py, which
+# cannot be imported here: it reaches config.py and a live Cosmos client, and is one
+# of the modules the functional tests stub out. test_v2_admin_workspaces_parity.py
+# reads the value back out of that source and fails if the two drift apart.
+PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
+
 SECRET_REDACTED_VALUE = "***REDACTED***"
 
 # Longest value accepted for a secret. Generous enough for a certificate-bearing
@@ -1174,8 +1189,10 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "switch",
             "label": "Require UrlAccessUser App Role",
             "help": (
-                "Required app role value: UrlAccessUser. Assign it in the Enterprise App "
-                "before turning this on, or nobody will be able to use URL Access."
+                "Narrows fetching a URL in chat, and enabling it for a workflow, to "
+                "holders of the UrlAccessUser app role. Assign the role in the "
+                "Enterprise App before turning this on, or nobody will be able to use "
+                "URL Access."
             ),
             "default": False,
             "group": {"id": "access", "label": "Access", "variant": "access"},
@@ -1272,8 +1289,10 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "switch",
             "label": "Require DeepResearchUser App Role",
             "help": (
-                "Required app role value: DeepResearchUser. Assign it in the Enterprise "
-                "App before turning this on, or nobody will be able to use Deep Research."
+                "Narrows Deep Research to holders of the DeepResearchUser app role. "
+                "Worth using where the multi-step runs it performs are expensive enough "
+                "to want a named audience. Assign the role in the Enterprise App before "
+                "turning this on, or nobody will be able to use Deep Research."
             ),
             "default": False,
             "group": {"id": "access", "label": "Access", "variant": "access"},
@@ -2686,10 +2705,13 @@ ADMIN_SETTINGS_FIELDS = {
             "default": [],
             "placeholder": "Search groups by name",
             "search_endpoint": "/api/admin/file-sync/groups/search",
+            "search_param": "q",
             "results_key": "groups",
-            "value_field": "id",
-            "title_field": "name",
-            "subtitle_field": "description",
+            "item_noun": "group",
+            "item_noun_plural": "groups",
+            # Group ids are canonical UUIDs, and the shared normalizer drops
+            # anything else, matching what the server-rendered form stores.
+            "id_kind": "group",
             "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
             "depends_on": {
                 "all_of": [
@@ -2735,10 +2757,13 @@ ADMIN_SETTINGS_FIELDS = {
             "default": [],
             "placeholder": "Search public workspaces by name",
             "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "search_param": "q",
             "results_key": "workspaces",
-            "value_field": "id",
-            "title_field": "name",
-            "subtitle_field": "description",
+            "item_noun": "public workspace",
+            "item_noun_plural": "public workspaces",
+            # Public workspace ids are not UUID-constrained, so they are only
+            # trimmed and deduplicated.
+            "id_kind": "opaque",
             "group": {"id": "assignment", "label": "Assignment", "variant": "access"},
             "depends_on": {
                 "all_of": [
@@ -2749,6 +2774,437 @@ ADMIN_SETTINGS_FIELDS = {
                     },
                 ]
             },
+        },
+    ],
+    "permissions-section": [
+        {
+            "key": "require_member_of_safety_violation_admin",
+            "type": "switch",
+            "label": "Require SafetyViolationAdmin App Role",
+            "help": (
+                "Narrows the Safety Violations report to holders of the "
+                "SafetyViolationAdmin app role. Left off, anyone with the general "
+                "Admin role can read it, including the flagged message text."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_member_of_feedback_admin",
+            "type": "switch",
+            "label": "Require FeedbackAdmin App Role",
+            "help": (
+                "Narrows the User Feedback report to holders of the FeedbackAdmin app "
+                "role. It only governs that report, so it has no effect until User "
+                "Feedback is enabled under Chat."
+            ),
+            "default": False,
+        },
+    ],
+    "app-role-requirements-section": [
+        {
+            "type": "component",
+            "component": "app-role-requirements-roster",
+            "label": "App Role Requirements",
+            "help": (
+                "Every setting that can demand an Entra app role, gathered so the "
+                "whole access policy reads in one place. Each switch is the same value "
+                "as the one on its own tab, so changing it here changes it there."
+            ),
+        },
+    ],
+    "chat-file-uploads-section": [
+        {
+            "key": "require_member_of_chat_file_upload_user",
+            "type": "switch",
+            "label": "Require ChatFileUploadUser App Role",
+            "help": (
+                "Narrows attaching files to a chat message to holders of the "
+                "ChatFileUploadUser app role. Attachments already in a conversation "
+                "stay readable; this governs new uploads only."
+            ),
+            "default": False,
+        },
+    ],
+    "control-center-overview-section": [
+        {
+            "key": "require_member_of_control_center_admin",
+            "type": "switch",
+            "label": "Require ControlCenterAdmin App Role",
+            "help": (
+                "Narrows the Control Center -- user management, group oversight, "
+                "public workspace control and activity logs -- to holders of the "
+                "ControlCenterAdmin app role. Note that this takes it away from "
+                "general Admins, so assign the role before switching it on."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_member_of_control_center_dashboard_reader",
+            "type": "switch",
+            "label": "Allow ControlCenterDashboardReader App Role",
+            "help": (
+                "Grants the Control Center dashboard, and nothing else, to holders of "
+                "the ControlCenterDashboardReader app role. Useful for giving someone "
+                "the usage picture without any management ability."
+            ),
+            "default": False,
+        },
+    ],
+    "group-workspaces-section": [
+        {
+            "key": "enable_group_workspaces",
+            "type": "switch",
+            "label": "Enable Group Workspaces",
+            "help": (
+                "Lets users form groups that share one document library, prompt set "
+                "and agent catalogue, with membership managed per group. This is the "
+                "gate for everything else in this section."
+            ),
+            "default": True,
+        },
+        {
+            # V1 renders this inverted, as a "Disable Group Creation" checkbox, while
+            # the stored key is enable_group_creation. Declaring it positively means
+            # the switch and the value it writes finally agree, which is what makes
+            # the interaction with the role requirement below readable.
+            "key": "enable_group_creation",
+            "type": "switch",
+            "label": "Allow Users to Create Groups",
+            "help": (
+                "When off, nobody can create a new group regardless of app role, and "
+                "existing groups keep working. Use this to freeze the group list "
+                "while a migration or review is under way. Off here overrides the "
+                "CreateGroups role requirement entirely."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_group_workspaces", "equals": True},
+        },
+        {
+            "key": "require_member_of_create_group",
+            "type": "switch",
+            "label": "Require CreateGroups App Role",
+            "help": (
+                "Narrows group creation to users holding the CreateGroups app role. "
+                "Assign the role in the Enterprise App before switching this on, or "
+                "nobody will be able to create a group. Left off, any signed-in user "
+                "can create groups while the two settings above allow it."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_group_workspaces", "equals": True},
+        },
+        {
+            "key": "require_owner_for_group_agent_management",
+            "type": "switch",
+            "label": "Require Owner to Manage Group Agents, Actions and Workflows",
+            "help": (
+                "Restricts creating, editing and deleting a group's agents, actions "
+                "and workflows to the group Owner. Group Admins keep read access, so "
+                "they can still see what is configured without being able to change "
+                "what the group's agents are allowed to do."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_group_workspaces", "equals": True},
+        },
+    ],
+    "public-workspaces-section": [
+        {
+            "key": "enable_public_workspaces",
+            "type": "switch",
+            "label": "Enable Public Workspaces",
+            "help": (
+                "Adds a workspace type any user in the organisation can read without "
+                "being a member, for reference material meant to reach everyone. "
+                "Membership still controls who can add or change documents."
+            ),
+            "default": False,
+        },
+        {
+            "key": "public_workspace_display_name",
+            "type": "text",
+            "label": "End-user display name",
+            "help": (
+                "Renames the workspace type wherever end users meet it, so it can "
+                "match what your organisation already calls this material -- "
+                "\"Knowledge Base\" or \"Library\", for example. Admin settings and "
+                "internal references keep saying Public Workspace. Leave empty to use "
+                "the default name."
+            ),
+            "placeholder": "Public Workspace",
+            "default": "",
+            "max_length": PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH,
+            "depends_on": {"key": "enable_public_workspaces", "equals": True},
+        },
+        {
+            "key": "require_member_of_create_public_workspace",
+            "type": "switch",
+            "label": "Require CreatePublicWorkspaces App Role",
+            "help": (
+                "Narrows public workspace creation to users holding the "
+                "CreatePublicWorkspaces app role. Because anything published here is "
+                "readable organisation-wide, this is usually the setting to reach for "
+                "before enabling the workspace type broadly."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_public_workspaces", "equals": True},
+        },
+    ],
+    "workspace-identities-section": [
+        {
+            "type": "component",
+            "component": "global-identities-list",
+            "label": "Global Identities",
+            "help": (
+                "Credentials saved once and reused by File Sync sources and Actions, "
+                "referenced by name so the secret itself never travels with a "
+                "configuration. Each one stores its secret in Key Vault when Key Vault "
+                "is configured."
+            ),
+        },
+    ],
+    "file-download-settings-section": [
+        {
+            "key": "allow_personal_workspace_file_downloads",
+            "type": "switch",
+            "label": "Enable Personal Workspace Downloads",
+            "help": (
+                "Lets users retrieve the original uploaded file from their own "
+                "workspace, rather than only the extracted text the model reads. Off "
+                "by default because it turns the workspace into a way to move a file "
+                "back out of the tenant."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_workspace_file_downloads",
+            "type": "switch",
+            "label": "Enable Group Workspace Downloads",
+            "help": (
+                "Permits downloads from group workspaces. A group Owner or Admin can "
+                "still switch downloads off for their own group, so this sets the "
+                "ceiling rather than the outcome."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_group_assignment_for_file_downloads",
+            "type": "switch",
+            "label": "Require Group Assignment for Downloads",
+            "help": (
+                "Limits downloads to the groups named below instead of every group. "
+                "Use this to pilot downloads with a few teams before opening them up."
+            ),
+            "default": False,
+            "depends_on": {"key": "allow_group_workspace_file_downloads", "equals": True},
+        },
+        {
+            "key": "file_download_allowed_group_ids",
+            "type": "id_list",
+            "label": "Groups allowed to download",
+            "help": (
+                "Only these groups can offer downloads while the requirement above is "
+                "on. A group left out of this list behaves as though downloads were "
+                "never enabled."
+            ),
+            "default": [],
+            "id_kind": "group",
+            "search_endpoint": "/api/groups/discover",
+            "search_param": "search",
+            "search_extra": {"showAll": "true"},
+            "results_key": "groups",
+            "item_noun": "group",
+            "item_noun_plural": "groups",
+            "depends_on": {
+                "key": "require_group_assignment_for_file_downloads",
+                "equals": True,
+            },
+        },
+        {
+            "key": "allow_public_workspace_file_downloads",
+            "type": "switch",
+            "label": "Enable Public Workspace Downloads",
+            "help": (
+                "Permits downloads from public workspaces. Because these are readable "
+                "organisation-wide, this makes every original file in them retrievable "
+                "by anyone who can see the workspace."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_public_workspace_assignment_for_file_downloads",
+            "type": "switch",
+            "label": "Require Public Workspace Assignment for Downloads",
+            "help": (
+                "Limits downloads to the public workspaces named below instead of all "
+                "of them."
+            ),
+            "default": False,
+            "depends_on": {
+                "key": "allow_public_workspace_file_downloads",
+                "equals": True,
+            },
+        },
+        {
+            "key": "file_download_allowed_public_workspace_ids",
+            "type": "id_list",
+            "label": "Public workspaces allowed to download",
+            "help": (
+                "Only these public workspaces can offer downloads while the "
+                "requirement above is on."
+            ),
+            "default": [],
+            "id_kind": "opaque",
+            "search_endpoint": "/api/admin/file-sync/public-workspaces/search",
+            "search_param": "q",
+            "results_key": "workspaces",
+            "item_noun": "public workspace",
+            "item_noun_plural": "public workspaces",
+            "depends_on": {
+                "key": "require_public_workspace_assignment_for_file_downloads",
+                "equals": True,
+            },
+        },
+    ],
+    "file-sharing-section": [
+        {
+            "key": "enable_file_sharing",
+            "type": "switch",
+            "label": "Enable File Sharing",
+            "help": (
+                "Lets a user hand a workspace file to another user or workspace from "
+                "inside the application, instead of downloading it and sending it on."
+            ),
+            "default": False,
+        },
+    ],
+    "file-size-limit-section": [
+        {
+            "key": "max_file_size_mb",
+            "type": "number",
+            "label": "Maximum File Size (MB)",
+            "help": (
+                "Rejects an upload larger than this before any extraction runs. It "
+                "applies to workspace documents and to files attached to a chat "
+                "message, so lowering it narrows both paths at once. Raise it only as "
+                "far as your extraction and storage tiers can actually handle."
+            ),
+            "default": 150,
+            "min": 1,
+            "suffix": " MB",
+        },
+    ],
+    "shared-conversation-file-approvals-section": [
+        {
+            "key": "require_shared_conversation_file_approval",
+            "type": "switch",
+            "label": "Require approval for participant-generated files",
+            "help": (
+                "Files a participant generates in someone else's shared conversation "
+                "are saved into the owner's storage. With this on they are withheld "
+                "until the owner approves them -- in a group conversation any Owner, "
+                "Admin or Document Manager can. Anything left unapproved is declined "
+                "and deleted after three days. Covers CSV, XLSX, DOCX, PDF, JSON and "
+                "XML; generated images and charts are never held."
+            ),
+            "default": True,
+        },
+    ],
+    "workflow-settings-section": [
+        {
+            "key": "allow_user_workflows",
+            "type": "switch",
+            "label": "Enable Personal Workflows",
+            "help": (
+                "Users can create personal workflows that run a selected agent or "
+                "model manually or on an interval schedule."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_member_of_workflow_user",
+            "type": "switch",
+            "label": "Require WorkflowUser App Role",
+            "help": (
+                "Restricts personal workflows to holders of the WorkflowUser "
+                "Enterprise App role, covering opening, creating, editing, running "
+                "and inspecting them. Assign the role value WorkflowUser to users or "
+                "groups in the Enterprise App before turning this on, or everyone "
+                "loses access at once."
+            ),
+            "default": False,
+            "depends_on": {"key": "allow_user_workflows", "equals": True},
+        },
+        {
+            "key": "allow_group_workflows",
+            "type": "switch",
+            "label": "Enable Group Workflows",
+            "help": (
+                "Permitted group members can create, manage and run workflows from "
+                "group workspaces. Owners and Admins may author them unless "
+                "Workspaces > Workspace Types restricts group agent, action and "
+                "workflow management to Owners."
+            ),
+            "default": False,
+        },
+        {
+            "key": "require_group_assignment_for_group_workflows",
+            "type": "switch",
+            "label": "Require Group Assignment to Use Workflow",
+            "help": (
+                "Narrows group workflows to an explicit allow list. Every other "
+                "group loses the capability, so assign the groups that need it "
+                "before turning this on."
+            ),
+            "default": False,
+            "depends_on": {"key": "allow_group_workflows", "equals": True},
+        },
+        {
+            "key": "group_workflow_allowed_group_ids",
+            "type": "group_picker",
+            "label": "Assigned Groups",
+            "help": (
+                "The groups that may create, manage and run group workflows while "
+                "assignment is required."
+            ),
+            "default": [],
+            "search_endpoint": "/api/v2/admin/groups",
+            "depends_on": {
+                "key": "require_group_assignment_for_group_workflows",
+                "equals": True,
+            },
+        },
+        {
+            "key": "workflow_max_auto_invoke_attempts",
+            "type": "number",
+            "label": "Workflow Agent Action Limit",
+            "help": (
+                "Maximum automatic tool or action calls an agent can make during one "
+                "workflow run. Default is 60; increase for large document sets."
+            ),
+            "default": 60,
+            "min": 1,
+            "max": 500,
+            "step": 1,
+            "notice_level": "warning",
+            "notice": (
+                f"Values above {WORKFLOW_AUTO_INVOKE_CAPACITY_THRESHOLD} are "
+                "capacity-sensitive. Enable Cosmos DB Throughput automation in "
+                "SimpleChat so the app can monitor RU pressure and scale up Cosmos "
+                "when needed, and also monitor Azure OpenAI throttling, App Service "
+                "CPU and memory, and downstream service latency."
+            ),
+        },
+        {
+            "key": "workflow_max_tasks",
+            "type": "number",
+            "label": "Workflow Task Limit",
+            "help": (
+                "Maximum ordered instruction tasks users can add to one workflow. "
+                "Default is 50; supported range is 1-100."
+            ),
+            "default": 50,
+            "min": 1,
+            "max": 100,
+            "step": 1,
         },
     ],
     "actions-config": [
@@ -2787,6 +3243,9 @@ LEGACY_FIELD_NAMES = {
     "custom_favicon_base64": ["favicon_file"],
     # Collected as an acknowledgement on the toggle rather than a stored value.
     "enable_custom_pages": ["enable_custom_pages", "custom_pages_restart_acknowledged"],
+    # V1 renders this as an inverted "Disable Group Creation" checkbox and flips it
+    # server-side; V2 edits the stored key directly.
+    "enable_group_creation": ["disable_group_creation"],
     # Same shape: the Grounding with Bing terms are accepted on the toggle, and
     # the flag rides along with the save rather than being edited on its own.
     "enable_web_search": ["enable_web_search", "web_search_consent_accepted"],
@@ -3109,34 +3568,57 @@ def _normalize_string_list(value, field):
 
 
 def _normalize_id_list(value, field):
-    """Return ``(ids, error)`` for a list of opaque identifiers.
+    """Return ``(ids, error)`` for a list of assigned group or workspace ids.
 
-    Kept as a JSON array, matching the hidden textareas the server-rendered File
-    Sync pane writes, so an assignment saved in one interface is readable in the
-    other.
+    What counts as a valid id depends on the record being assigned, and the two
+    cases genuinely differ in the application:
+
+    ``id_kind: "group"``
+        Delegated to ``normalize_group_workflow_allowed_group_ids``, which is what
+        ``functions_settings.normalize_file_download_allowed_group_ids`` calls. It
+        requires a canonical group UUID and silently drops anything else, so
+        normalizing here instead would let V2 store an id the server-rendered form
+        would have discarded.
+
+    ``id_kind: "opaque"``
+        Public workspace ids are not UUID-constrained --
+        ``normalize_file_sync_allowed_public_workspace_ids`` only trims and
+        deduplicates -- so imposing a UUID check would reject valid assignments.
+
+    The delegation is possible because ``functions_group_assignment_ids`` was split
+    out of ``functions_settings`` precisely so this module can reach it: the parent
+    builds a Cosmos client at import time and is stubbed by the functional tests.
+
+    A string is also accepted. The server-rendered File Sync pane round-trips these
+    lists through a hidden textarea holding a JSON array, so a value read back from
+    a document that form wrote arrives serialized rather than as a list.
     """
     if isinstance(value, str):
         stripped = value.strip()
         if not stripped:
             return [], None
-        # The V1 pane stores this as a JSON array inside a textarea, so a string
-        # arriving here is most likely that same serialized form.
         try:
             value = json.loads(stripped)
         except ValueError:
-            return None, "Expected a list of identifiers."
+            return None, "Expected a list of ids."
 
     if not isinstance(value, list):
-        return None, "Expected a list of identifiers."
+        return None, "Expected a list of ids."
+
+    if field.get("id_kind") == "group":
+        return normalize_group_workflow_allowed_group_ids(value), None
 
     ids = []
+    seen = set()
     for item in value:
+        # The assignment picker holds records, not bare ids.
         if isinstance(item, dict):
             item = item.get("id")
-        identifier = str(item or "").strip()
-        if not identifier or identifier in ids:
+        candidate = str(item or "").strip()
+        if not candidate or candidate in seen:
             continue
-        ids.append(identifier[:200])
+        ids.append(candidate)
+        seen.add(candidate)
 
     maximum = field.get("max_entries")
     if maximum is not None and len(ids) > maximum:
@@ -3220,6 +3702,12 @@ def _normalize_field_value(key, value, field):
     if field_type == "id_list":
         ids, error = _normalize_id_list(value, field)
         return ids, error, None
+
+    if field_type == "group_picker":
+        # Delegated so an assignment saved from V2 is byte-for-byte what the
+        # server-rendered form would have stored, including how it drops ids that
+        # are not canonical group UUIDs.
+        return normalize_group_workflow_allowed_group_ids(value), None, None
 
     if field_type == "link_list":
         links, error = _normalize_link_list(value)
