@@ -1,16 +1,20 @@
 # functions_message_block_revisions.py
 
-"""Revision history for the editable diagrams inside a chat message.
+"""Revision history for the editable blocks inside a chat message.
 
-A reply can contain ```mermaid fences. Once the reply has landed, the only way to change one
-has been to ask again in the thread, which produces a whole new message with a whole new
-diagram. This module lets a block be edited in place instead, and keeps every version it has
-had so a reader can see what changed and go back.
+A reply can contain ```mermaid diagrams and ```simplechart charts. Once the reply has landed,
+the only way to change one has been to ask again in the thread, which produces a whole new
+message with a whole new diagram. This module lets a block be edited in place instead, and
+keeps every version it has had so a reader can see what changed and go back.
 
 Named for *blocks* rather than artifacts because ``functions_message_artifacts`` already owns
 that word here, for the tool-call payloads behind agent citations, which are a different thing
 entirely. The sibling this belongs beside is ``functions_message_visual_styles``: both store a
 per-block choice against a message, addressed the same way.
+
+Nothing here knows what a diagram or a chart is. A revision is a length-capped string filed
+against a fence language, and the two kinds differ only in what the client does with it and in
+which prompt ``functions_block_revision_assist`` uses to produce one.
 
 Storage is an *overlay*. The message's own ``content`` is never rewritten; the revisions live
 in metadata beside ``visual_styles`` and are substituted in when the content is read. Splicing
@@ -47,10 +51,10 @@ import uuid
 from datetime import datetime, timezone
 
 # Fence languages a revision may be stored against. The storage below is deliberately
-# kind-agnostic so charts and images can be added without a migration, but only diagrams are
-# wired up, and admitting a kind the client cannot edit would be storing something nothing
-# reads.
-BLOCK_REVISION_KINDS = ('mermaid',)
+# kind-agnostic, which is what let charts be added to it without a migration; images are stored
+# separately by functions_message_image_revisions because an image is a blob rather than a
+# source. Admitting a kind the client cannot edit would be storing something nothing reads.
+BLOCK_REVISION_KINDS = ('mermaid', 'simplechart')
 
 # The message metadata key the whole map lives under.
 BLOCK_REVISIONS_METADATA_KEY = 'block_revisions'
@@ -75,8 +79,10 @@ MAX_BLOCK_INDEX = 199
 # never pruned, so this is one original plus nineteen edits.
 MAX_REVISIONS = 20
 
-# A mermaid diagram far larger than this is not being hand-edited, and the cap is what stops a
-# message document being grown without bound by repeated edits.
+# A block far larger than this is not being hand-edited, and the cap is what stops a message
+# document being grown without bound by repeated edits. Generous enough for a large diagram or
+# for a chart payload carrying a few hundred data points; a chart that carries more than that
+# is reported as too long rather than silently truncated.
 MAX_SOURCE_LENGTH = 20000
 
 # Turns kept in a block's sub-conversation, oldest dropped first.
@@ -108,8 +114,8 @@ _JS_TRIM_CHARS = (
 # least three backticks or tildes, then an info string.
 _FENCE_LINE_PATTERN = re.compile(r'^( {0,3})(`{3,}|~{3,})[ \t]*(.*)$')
 
-# A line anywhere in a candidate source that would be read as a fence. Mermaid never contains
-# one legitimately, so this is refused rather than escaped.
+# A line anywhere in a candidate source that would be read as a fence. Neither mermaid nor a
+# chart payload ever contains one legitimately, so this is refused rather than escaped.
 _FENCE_BREAKOUT_PATTERN = re.compile(r'^ {0,3}(?:`{3,}|~{3,})', re.MULTILINE)
 
 _WHITESPACE_RUN_PATTERN = re.compile(r'\s+')
