@@ -11,7 +11,7 @@ deployment is generally already there. Before this change, a tenant without an i
 could not switch image generation on at all: the deployment list was filtered to names
 containing `dall-e` or `image`, so nothing appeared to select.
 
-**Implemented in version:** `0.261.087`
+**Implemented in version:** `0.261.088`
 
 **Dependencies:** `openai==1.109.1` (the `responses` client surface and the
 `image_generation` hosted tool), an Azure OpenAI resource in a region where the Responses

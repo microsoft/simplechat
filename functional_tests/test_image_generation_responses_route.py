@@ -2,8 +2,8 @@
 # test_image_generation_responses_route.py
 """
 Functional test for image generation through the Responses image tool.
-Version: 0.261.087
-Implemented in: 0.261.087
+Version: 0.261.088
+Implemented in: 0.261.088
 
 Azure OpenAI produces images two different ways. ``gpt-image-*`` and the legacy
 ``dall-e-*`` models serve ``/images/generations``; a chat model such as ``gpt-5.6-*``
@@ -274,7 +274,7 @@ def test_discovery_offers_what_could_actually_produce_an_image():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.087")
+    assert_app_version_at_least("0.261.088")
 
     tests = [
         test_image_models_keep_the_images_endpoint,
