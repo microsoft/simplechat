@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.010)**
+
+#### New Features
+
+*   **Custom Model Endpoint Provider**
+    *   Added manually configured Custom endpoints for OpenAI API, Azure OpenAI API, and Anthropic chat models across global, personal, and group scopes.
+    *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
+    *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
+    *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
+
 ### **(v0.261.009)**
 
 #### Bug Fixes
@@ -17,6 +27,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
     *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
     *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
+
 
 ### **(v0.261.007)**
 
