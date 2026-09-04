@@ -18,10 +18,8 @@ from functions_redis_client import (  # noqa: F401
     AUTH_TYPE_MANAGED_IDENTITY,
     CREDENTIAL_PURPOSE_APP_CACHE,
     REDIS_ENTRA_TOKEN_SCOPE,
-    REDIS_TOKEN_REFRESH_BUFFER_SECONDS,
     RedisManagedIdentityCredentialProvider,
     create_redis_client,
-    get_redis_entra_token_scope as _get_redis_entra_token_scope,
 )
 
 # NOTE: functions_keyvault is imported locally inside configure_app_cache to avoid a circular
