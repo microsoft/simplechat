@@ -175,6 +175,24 @@ def escape_liquid(text: str) -> str:
     return "{% raw %}\n" + safe + "\n{% endraw %}"
 
 
+RELEASE_NOTE_RELATIVE_LINK_PATTERN = re.compile(
+    r"\]\((?!https?://|mailto:|/|#|\.\./|\{)([^)\s]+)\)"
+)
+
+
+def rewrite_relative_links(text: str) -> str:
+    """Repoint release-note relative links for the generated subdirectory.
+
+    The source lives at docs/explanation/release_notes.md and links to siblings such
+    as fixes/NAME.md or running_simplechat_locally.md. Generated pages live one level
+    deeper in docs/explanation/release-notes/, so those targets need an extra ../ or
+    they resolve to files that do not exist.
+    """
+    return RELEASE_NOTE_RELATIVE_LINK_PATTERN.sub(
+        lambda match: f"](../{match.group(1)})", text
+    )
+
+
 def page_body_for_releases(
     heading: str,
     releases: tuple[ReleaseSection, ...],
@@ -183,7 +201,9 @@ def page_body_for_releases(
     body_parts = [f"# {heading}"]
     if include_back_link:
         body_parts.append("[Back to release notes index]({{ '/explanation/release_notes/' | relative_url }})")
-    body_parts.extend(escape_liquid(release.content) for release in releases)
+    body_parts.extend(
+        escape_liquid(rewrite_relative_links(release.content)) for release in releases
+    )
     return "\n\n".join(body_parts)
 
 

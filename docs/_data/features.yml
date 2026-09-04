@@ -483,6 +483,23 @@ content-safety:
   reference:
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
+data-loss-prevention:
+  name: "Data loss prevention"
+  area: "Governance and safety"
+  audience: "Admins"
+  summary: "Scans uploaded documents and outbound web-search queries for sensitive identifiers, then monitors, redacts, or blocks them."
+  why: "Use this when documents entering the search index, or queries leaving for an external search service, must not carry identifiers such as U.S. SSNs or credit-card numbers. Start in monitor mode to size the match volume before switching to redact or block, because block mode fails uploads and refuses searches outright. Scanning runs either against built-in regex rules or an external Presidio Analyzer endpoint you host and reach over a private network."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_dlp_control_plane
+    - enable_upload_dlp
+    - enable_web_search_dlp
+  reference:
+    - title: "Security admin settings"
+      url: /admin/security/
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
 notices-and-terms:
   name: "Notices and terms of use"
   area: "Governance and safety"

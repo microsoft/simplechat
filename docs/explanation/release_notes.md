@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.010)**
+### **(v0.261.011)**
 
 #### New Features
 
@@ -20,6 +20,11 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   (Ref: external Presidio DLP endpoint, Admin Settings DLP controls, Presidio deployment how-to)
 
 #### Bug Fixes
+
+*   **Presidio DLP Endpoint No Longer Depends On A Private urllib3 Symbol**
+    *   The Presidio Analyzer adapter imported `urllib3.util.timeout._DEFAULT_TIMEOUT`, a private symbol that only exists on urllib3 2.x, and referenced `NameResolutionError`, which was also added in 2.x. `urllib3` is not pinned and is resolved through `requests`, so on urllib3 1.x this raised `ImportError` during application start-up, because document processing imports the DLP module.
+    *   The adapter now resolves the sentinel through urllib3's public `Timeout.DEFAULT_TIMEOUT`, which is the same object as the 2.x private sentinel and as `socket._GLOBAL_DEFAULT_TIMEOUT` on 1.x, so connect-timeout behavior on the DLP request path is unchanged. DNS failures raise `NameResolutionError` where available and its base `NewConnectionError` otherwise.
+    *   (Ref: `functions_dlp_presidio.py`, `test_dlp_presidio_urllib3_compatibility.py`)
 
 *   **Presidio Endpoint Authentication Guardrails**
     *   Requires non-loopback Presidio Analyzer endpoints to resolve the configured env-backed auth secret before SimpleChat sends raw scan text.
@@ -50,6 +55,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Sanitizes selected upload metadata before prompts, Search payloads, Cosmos updates, and logs while preserving counts-only DLP telemetry summaries.
     *   (Ref: upload DLP redaction, scanner failure handling, enhanced-citation safety)
 
+### **(v0.261.010)**
+
+#### New Features
+
+*   **Custom Model Endpoint Provider**
+    *   Added manually configured Custom endpoints for OpenAI API, Azure OpenAI API, and Anthropic chat models across global, personal, and group scopes.
+    *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
+    *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
+    *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
+
 ### **(v0.261.009)**
 
 #### Bug Fixes
@@ -65,6 +80,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
     *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
     *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
+
 
 ### **(v0.261.007)**
 

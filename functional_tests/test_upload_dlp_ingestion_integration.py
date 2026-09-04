@@ -10,6 +10,7 @@ redacted text is the only text passed into embedding/index payload construction.
 """
 
 import ast
+import importlib
 import os
 import sys
 import types
@@ -44,28 +45,147 @@ def extract_function_source(source_text, function_name):
     raise AssertionError(f"Function {function_name} not found")
 
 
+def _literal_module_constants(module_file_name):
+    """Return the literal module-level constants declared in an application module.
+
+    functions_documents star-imports config, functions_settings and friends, and reads
+    constants such as EMBEDDING_CONTEXT_FALLBACK_TOKENS at module scope. Star imports do
+    not consult a module __getattr__, so the real literal values are parsed out of the
+    source here. Importing those modules directly would pull in the Azure SDK clients and
+    Cosmos containers this test deliberately avoids.
+    """
+    module_path = os.path.join(APP_DIR, module_file_name)
+    if not os.path.exists(module_path):
+        return {}
+
+    with open(module_path, "r", encoding="utf-8") as file_handle:
+        tree = ast.parse(file_handle.read(), filename=module_path)
+
+    constants = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                constants[target.id] = value
+    return constants
+
+
+def _module_level_assigned_names(module_file_name):
+    """Return every top-level assignment target name in an application module."""
+    module_path = os.path.join(APP_DIR, module_file_name)
+    if not os.path.exists(module_path):
+        return set()
+
+    with open(module_path, "r", encoding="utf-8") as file_handle:
+        tree = ast.parse(file_handle.read(), filename=module_path)
+
+    names = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+    return names
+
+
+def _stub_missing_attribute(resolver):
+    """Wrap a module __getattr__ so dunder lookups still raise AttributeError.
+
+    Import machinery asks modules for names such as __all__ and __path__. Answering
+    those with a stub value changes how `from module import *` behaves, so only
+    ordinary names are resolved here.
+    """
+
+    def __getattr__(missing_name):
+        if missing_name.startswith("__") and missing_name.endswith("__"):
+            raise AttributeError(missing_name)
+        return resolver(missing_name)
+
+    return __getattr__
+
+
+def _app_module_stub(module_name):
+    """Return a module stub that resolves unknown names to inert no-ops.
+
+    functions_documents imports a wide and growing surface from its sibling modules.
+    These stubs stand in for dependencies this test never exercises, so unknown names
+    resolve to a no-op callable instead of needing to be re-listed here every time the
+    ingestion import chain gains a dependency.
+    """
+    module = types.ModuleType(module_name)
+    module.__getattr__ = _stub_missing_attribute(
+        lambda missing_name: (lambda *args, **kwargs: None)
+    )
+    return module
+
+
 def import_functions_documents_for_helper_tests():
     """Import functions_documents with lightweight stubs for optional app dependencies."""
     stub_modules = {
         "config": types.ModuleType("config"),
-        "functions_content": types.ModuleType("functions_content"),
-        "functions_settings": types.ModuleType("functions_settings"),
-        "functions_search": types.ModuleType("functions_search"),
-        "functions_logging": types.ModuleType("functions_logging"),
-        "functions_authentication": types.ModuleType("functions_authentication"),
-        "functions_debug": types.ModuleType("functions_debug"),
-        "functions_keyvault": types.ModuleType("functions_keyvault"),
-        "functions_document_access_index": types.ModuleType("functions_document_access_index"),
-        "functions_data_management_search_write_fence": types.ModuleType(
+        "functions_content": _app_module_stub("functions_content"),
+        "functions_settings": _app_module_stub("functions_settings"),
+        "functions_search": _app_module_stub("functions_search"),
+        "functions_logging": _app_module_stub("functions_logging"),
+        "functions_authentication": _app_module_stub("functions_authentication"),
+        "functions_debug": _app_module_stub("functions_debug"),
+        "functions_keyvault": _app_module_stub("functions_keyvault"),
+        "functions_document_access_index": _app_module_stub("functions_document_access_index"),
+        "functions_data_management_search_write_fence": _app_module_stub(
             "functions_data_management_search_write_fence"
         ),
-        "azure": types.ModuleType("azure"),
-        "azure.cognitiveservices": types.ModuleType("azure.cognitiveservices"),
-        "azure.cognitiveservices.speech": types.ModuleType("azure.cognitiveservices.speech"),
     }
+    # azure-cognitiveservices-speech is an optional local dependency, but the ingestion chain
+    # also imports azure.ai and azure.core. Stubbing the whole azure namespace package would
+    # shadow those, so stub only the speech modules and only when they are genuinely absent.
+    try:
+        importlib.import_module("azure.cognitiveservices.speech")
+    except ImportError:
+        cognitiveservices_stub = types.ModuleType("azure.cognitiveservices")
+        speech_stub = types.ModuleType("azure.cognitiveservices.speech")
+        cognitiveservices_stub.speech = speech_stub
+        try:
+            importlib.import_module("azure")
+        except ImportError:
+            stub_modules["azure"] = types.ModuleType("azure")
+        stub_modules["azure.cognitiveservices"] = cognitiveservices_stub
+        stub_modules["azure.cognitiveservices.speech"] = speech_stub
     stub_modules["config"].List = List
     stub_modules["config"].datetime = datetime
     stub_modules["config"].timezone = timezone
+    stub_modules["config"].AZURE_ENVIRONMENT = "public"
+    stub_modules["config"].cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
+    # functions_documents star-imports each of these, so seed the stubs with the real
+    # literal constants those modules declare.
+    for module_name in (
+        "config",
+        "functions_content",
+        "functions_settings",
+        "functions_search",
+        "functions_logging",
+        "functions_authentication",
+        "functions_debug",
+    ):
+        for constant_name, constant_value in _literal_module_constants(f"{module_name}.py").items():
+            setattr(stub_modules[module_name], constant_name, constant_value)
+        # Remaining top-level names are Azure/Cosmos clients built at import time. The test
+        # never touches them, but they must exist so the star import resolves.
+        for assigned_name in _module_level_assigned_names(f"{module_name}.py"):
+            if not hasattr(stub_modules[module_name], assigned_name):
+                setattr(stub_modules[module_name], assigned_name, None)
+    # functions_documents pulls in a growing set of sibling modules that import specific
+    # names from config. Those are all Azure clients and endpoints this test never calls,
+    # so resolve any other name to an inert empty string rather than re-listing them here
+    # every time the ingestion chain grows a new dependency.
+    stub_modules["config"].__getattr__ = _stub_missing_attribute(lambda missing_name: "")
+    stub_modules["functions_debug"].debug_print = lambda *args, **kwargs: None
     stub_modules["functions_settings"].get_settings = lambda: {}
     stub_modules["functions_logging"].add_file_task_to_file_processing_log = lambda **kwargs: None
     stub_modules["functions_logging"].log_event = lambda *args, **kwargs: None
@@ -230,8 +350,12 @@ def test_batch_chunk_vision_text_is_not_reappended_after_dlp_redaction():
     embedded_texts = []
 
     class FakeSearchClient:
-        def upload_documents(self, documents):
+        # Development's search write path passes options such as connection_timeout and
+        # requires a per-document acknowledgement back, so accept the extra keyword
+        # arguments and report every document as succeeded.
+        def upload_documents(self, documents, **kwargs):
             uploaded_batches.append(documents)
+            return [{"succeeded": True} for _ in documents]
 
     original_get_settings = functions_documents.get_settings
     original_get_document_metadata = functions_documents.get_document_metadata

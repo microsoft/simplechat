@@ -96,6 +96,43 @@ The Content Safety section belongs to the Content Safety tab. Use it with the ad
 | Safety Violation Message (Markdown supported) | Displayed when Content Safety blocks a chat message. | Not specified in defaults | `content_safety_violation_message` |
 | Include Trigger Information | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `content_safety_include_trigger_information` |
 
+### Data Loss Prevention {#dlp-section}
+
+The Data Loss Prevention section belongs to the Content Safety tab. It scans text at two boundaries: documents on their way into embeddings and the search index, and web-search queries on their way out to an external search service. Content Safety judges whether a message is harmful; DLP judges whether text contains sensitive identifiers, so the two are configured independently.
+
+Each boundary has its own mode. **Monitor** records matches and changes nothing, **Redact** replaces matched values before the text is indexed or sent, and **Block** refuses the upload or the search. Start in Monitor to learn how many matches real content produces before moving to Redact or Block, because Block mode fails uploads outright.
+
+Two engines are available. **Regex** uses the rules in the Custom Regex Rules editor and ships with U.S. SSN and Luhn-validated credit-card detection only, so it stays quiet by default. **External Presidio Analyzer endpoint** sends scan text to a Presidio-compatible service you host. Presidio is not bundled with SimpleChat; you deploy it yourself, reach it over a private network, and authenticate with an API key read from an environment variable rather than stored in settings. Endpoint URLs are validated and private, loopback, and link-local addresses are refused unless you list the host under Allowed Private Hosts.
+
+Telemetry stays counts-only: DLP records how many matches occurred and of which type, never the matched values.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Enable DLP Control Plane | Master switch for DLP scanning. Leave off and neither upload nor web-search scanning runs, regardless of the switches below. | Off | `enable_dlp_control_plane`; capability toggle |
+| Enable Upload DLP | Scans document text before it is embedded and written to the search index. | Off | `enable_upload_dlp`; capability toggle |
+| Upload DLP mode | Chooses whether an upload match is recorded, redacted, or blocked. | monitor | `upload_dlp_mode` |
+| Fail upload on match | Fails the whole upload when content matches, instead of indexing the redacted text. | Off | `upload_dlp_fail_upload_on_match` |
+| Enable Web Search DLP | Scans the outbound web-search query before it reaches the external search service. | Off | `enable_web_search_dlp`; capability toggle |
+| Web Search DLP mode | Chooses whether an outbound query match is recorded, redacted, or blocked. | monitor | `web_search_dlp_mode` |
+| Default Engine | Selects built-in regex scanning or an external Presidio Analyzer endpoint. | regex | `dlp_default_engine` |
+| Maximum Scan Characters | Caps how much text is scanned per item, bounding scan cost on very large documents. | 200000 | `dlp_max_scan_chars` |
+| Fail Closed On Scanner Error | Treats a scanner failure as a match rather than letting unscanned content through. | Off | `dlp_fail_closed_on_scanner_error` |
+| Emit Structured DLP Telemetry | Sends counts-only match telemetry to Application Insights. | Off | `dlp_enable_structured_telemetry` |
+| Sample Allow Events | Includes a sample of allowed, non-matching scans in telemetry for baseline volume. | Off | `dlp_telemetry_sample_allow_events` |
+| Audit Level | Controls how much detail DLP records. Counts only is the sole supported level, so matched values are never stored. | counts_only | `dlp_audit_level` |
+| Review Events | Destination for review records. No reachable destination is implemented yet, so this stays on the no-write option. | none | `dlp_review_destination` |
+| Custom Regex Rules | JSON rule list supporting per-surface targeting, Luhn validation, and keyword-proximity confidence. Invalid JSON or an invalid pattern is rejected on save. | U.S. SSN and Luhn-valid credit card | `dlp_regex_rules` |
+| Analyzer Endpoint | URL of your Presidio Analyzer service. Credentials, fragments, and credential-like query parameters are rejected. | Empty | `dlp_presidio_analyzer_endpoint` |
+| Allowed Private Hosts | Hosts or IPs permitted for a private Presidio deployment, since private and loopback addresses are otherwise refused. | Empty | `dlp_presidio_allowed_private_hosts` |
+| Auth Header | Header name carrying the Presidio API key. Connection and content headers are rejected. | X-DLP-API-Key | `dlp_presidio_auth_header_name` |
+| Secret Env Var | Environment variable holding the Presidio API key. The key itself is never stored in settings. | PRESIDIO_DLP_API_KEY | `dlp_presidio_auth_secret_env_var` |
+| Timeout Seconds | How long to wait for the Presidio endpoint before the call counts as a scanner error. | 5 | `dlp_presidio_timeout_seconds` |
+| Score Threshold | Minimum Presidio confidence score before a detection counts as a match. | 0.5 | `dlp_presidio_score_threshold` |
+| Language | Language code sent to Presidio for analysis. | en | `dlp_presidio_language` |
+| Entities | Presidio entity types to detect, such as CREDIT_CARD or US_SSN. | CREDIT_CARD, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN | `dlp_presidio_entities` |
+
 ## Session {#session}
 
 ### Idle Session Timeout {#idle-timeout-section}
