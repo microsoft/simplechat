@@ -57,6 +57,7 @@ import {
 } from '../../lib/modelConnections';
 import { AdminModal } from './AdminModal';
 import { GlassButton } from '../ui/primitives';
+import { useModelConnectionsStore, modelConnectionsChanged } from '../../stores/modelConnectionsStore';
 import { toast } from '../../stores/toastStore';
 
 const inputClass = clsx(
@@ -899,12 +900,20 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const [busyId, setBusyId] = useState<string | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+    // Turning connections on seeds this list server-side with the classic chat endpoint,
+    // and that save happens in the section above rather than here. Without a reload the
+    // list would keep reading as empty at the exact moment it stopped being so.
+    const connectionsRevision = useModelConnectionsStore((state) => state.revision);
+
     const load = useCallback(async (signal?: AbortSignal) => {
         try {
             const response = await fetchModelConnections(signal);
             setConnections(Array.isArray(response.endpoints) ? response.endpoints : []);
             setError(null);
         } catch (loadError) {
+            if (signal?.aborted) {
+                return;
+            }
             setError(errorMessage(loadError, 'Model connections could not be loaded.'));
         } finally {
             setLoading(false);
@@ -915,7 +924,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         const controller = new AbortController();
         void load(controller.signal);
         return () => controller.abort();
-    }, [load]);
+    }, [load, connectionsRevision]);
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -942,6 +951,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             // A partial update, so the stripped secrets in the copy held here are never
             // sent back and cannot overwrite what is stored.
             await updateModelConnection(connection.id, { enabled: next });
+            modelConnectionsChanged();
         } catch (toggleError) {
             setConnections(previous);
             setError(errorMessage(toggleError, 'The connection could not be updated.'));
@@ -957,6 +967,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         setConnections(connections.filter((item) => item.id !== connection.id));
         try {
             await deleteModelConnection(connection.id);
+            modelConnectionsChanged();
             toast.success(`Deleted ${connection.name || 'connection'}.`);
         } catch (deleteError) {
             setConnections(previous);
@@ -969,6 +980,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const onSaved = (saved: ModelConnection, created: boolean) => {
         setEditing(null);
         setError(null);
+        modelConnectionsChanged();
         if (created) {
             setConnections((current) => [...current, saved]);
             toast.success(`Created ${saved.name || 'connection'}.`);

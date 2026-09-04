@@ -236,6 +236,17 @@ EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
 # warning block, so the same guidance is attached to the field here.
 WORKFLOW_AUTO_INVOKE_CAPACITY_THRESHOLD = 100
 
+CLASSIFICATION_BANNER_DEFAULT_COLOR = "#ffc107"
+CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
+
+# The two ways SimpleChat authenticates to an Azure OpenAI resource on the classic
+# single-endpoint routes. Shared by the embedding and image generation sections so the
+# two cannot offer different values for the same question.
+AZURE_OPENAI_AUTH_OPTIONS = [
+    {"value": "key", "label": "Key"},
+    {"value": "managed_identity", "label": "Managed Identity"},
+]
+
 # Mirrors PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH in functions_settings.py, which
 # cannot be imported here: it reaches config.py and a live Cosmos client, and is one
 # of the modules the functional tests stub out. test_v2_admin_workspaces_parity.py
@@ -4145,6 +4156,43 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
     ],
+    "gpt-config": [
+        {
+            "type": "component",
+            "component": "chat-mode-notice",
+            "label": "Which endpoint chat is using",
+            "help": (
+                "Connections and the classic single endpoint are two separate routes, and "
+                "only one of them is live at a time. This says which."
+            ),
+        },
+        {
+            "key": "default_model_selection",
+            "type": "component",
+            "component": "chat-default-model",
+            "label": "Default model",
+            "help": (
+                "Used when nothing else has chosen a model -- a new conversation, or work "
+                "started outside the chat window. Only models that are enabled on an "
+                "enabled connection can be picked, because anything else is cleared the "
+                "next time the connections are saved."
+            ),
+        },
+        {
+            "key": "enable_gpt_apim",
+            "type": "switch",
+            "label": "Send requests through API Management",
+            "help": (
+                "Routes GPT requests that use the classic endpoint through API Management "
+                "rather than straight to the Azure OpenAI resource, which is how a "
+                "deployment applies its own governance and monitoring to them. The APIM "
+                "endpoint, deployment and subscription key this needs are configured on "
+                "the classic admin page, so turning it on before those are set leaves "
+                "those requests with nowhere to go."
+            ),
+            "default": False,
+        },
+    ],
     "core-plugin-toggles": [
         {
             "key": "enable_time_plugin",
@@ -5002,6 +5050,320 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_app_maintenance", "equals": True},
         },
     ],
+    "embeddings-config": [
+        {
+            "key": "enable_embedding_apim",
+            "type": "switch",
+            "label": "Use APIM instead of direct to Azure OpenAI endpoint",
+            "help": (
+                "Sends embedding requests to API Management rather than straight to the "
+                "Azure OpenAI resource, so a gateway can apply its own governance and "
+                "monitoring. The two routes are configured separately and only the "
+                "selected one is used."
+            ),
+            "default": False,
+        },
+        {
+            "key": "azure_openai_embedding_endpoint",
+            "type": "text",
+            "label": "Azure OpenAI Embedding Endpoint",
+            "help": (
+                "The Azure OpenAI resource that turns document and query text into "
+                "vectors. Embeddings are not shared with chat: indexing and search use "
+                "this route even when chat is pointed somewhere else entirely."
+            ),
+            "default": "",
+            "placeholder": "https://your-resource.openai.azure.com",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a credential and is what lets SimpleChat "
+                "list the resource's deployments for you. A key authenticates to inference "
+                "only."
+            ),
+            "default": "key",
+            "options": AZURE_OPENAI_AUTH_OPTIONS,
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "help": (
+                "Used to address the resource when listing its deployments. Inference does "
+                "not need it, so an embedding route can work while the model list stays "
+                "empty."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "help": "The other half of the address the deployment list is fetched from.",
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_key",
+            "type": "secret",
+            "label": "Azure OpenAI Embedding Key",
+            "help": (
+                "Only used with key authentication. Leave it blank to keep the stored key."
+            ),
+            "default": "",
+            # Two conditions, because this control sits inside two nested blocks on the
+            # server-rendered page: the direct-connection card and the key-authentication
+            # card within it. With only the authentication condition, switching the route
+            # to APIM would leave a direct-connection credential on screen.
+            "depends_on": [
+                {"key": "enable_embedding_apim", "equals": False},
+                {"key": "azure_openai_embedding_authentication_type", "equals": "key"},
+            ],
+        },
+        {
+            "key": "embedding_model",
+            "type": "component",
+            "component": "embedding-model-selection",
+            "label": "Embedding model",
+            "help": (
+                "One deployment serves every embedding SimpleChat stores. Changing it does "
+                "not re-embed what is already indexed, so existing chunks keep the "
+                "dimensions of the model that wrote them."
+            ),
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_api_version",
+            "type": "text",
+            "label": "Azure OpenAI Embedding API Version",
+            "help": (
+                "Pin this only when a deployment needs a version other than the default; "
+                "an unsupported value fails every embedding call rather than degrading."
+            ),
+            "default": "2024-05-01-preview",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_apim_embedding_endpoint",
+            "type": "text",
+            "label": "Azure APIM Endpoint",
+            "help": "The API Management address that fronts the embedding deployment.",
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_embedding_api_version",
+            "type": "text",
+            "label": "Azure APIM API Version",
+            "help": (
+                "Whatever version the API Management operation expects. There is no "
+                "default here, because a gateway can publish any version it likes."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_embedding_deployment",
+            "type": "text",
+            "label": "Azure APIM Deployment",
+            "help": (
+                "The deployment name to send embedding requests to. Discovery does not "
+                "reach through a gateway, so this is typed rather than picked."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_embedding_subscription_key",
+            "type": "secret",
+            "label": "Azure APIM Subscription Key",
+            "help": "Leave it blank to keep the stored key.",
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+    ],
+    "image-config": [
+        {
+            "key": "enable_image_generation",
+            "type": "switch",
+            "label": "Enable Image Generation",
+            "help": (
+                "Offers image generation in chat. With it off nothing below is consulted, "
+                "and the rest of this section stays out of the way."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_image_gen_apim",
+            "type": "switch",
+            "label": "Use APIM instead of direct to Azure OpenAI endpoint",
+            "help": (
+                "Sends image requests to API Management rather than straight to the Azure "
+                "OpenAI resource. The two routes are configured separately and only the "
+                "selected one is used."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_image_generation", "equals": True},
+        },
+        {
+            "key": "azure_openai_image_gen_endpoint",
+            "type": "text",
+            "label": "Azure OpenAI Image Generation Endpoint",
+            "help": (
+                "Image models are deployed separately from chat models and are often in a "
+                "different region, so this rarely matches the chat endpoint."
+            ),
+            "default": "",
+            "placeholder": "https://your-resource.openai.azure.com",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "azure_openai_image_gen_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a credential and is what lets SimpleChat "
+                "list the resource's deployments for you. A key authenticates to inference "
+                "only."
+            ),
+            "default": "key",
+            "options": AZURE_OPENAI_AUTH_OPTIONS,
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "azure_openai_image_gen_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "help": (
+                "Used to address the resource when listing its deployments. Inference does "
+                "not need it, so generation can work while the model list stays empty."
+            ),
+            "default": "",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "azure_openai_image_gen_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "help": "The other half of the address the deployment list is fetched from.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "azure_openai_image_gen_key",
+            "type": "secret",
+            "label": "Azure OpenAI Image Generation Key",
+            "help": (
+                "Only used with key authentication. Leave it blank to keep the stored key."
+            ),
+            "default": "",
+            # Nested the same way as the embedding key: inside the direct-connection card
+            # and the key-authentication card within it.
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+                {"key": "azure_openai_image_gen_authentication_type", "equals": "key"},
+            ],
+        },
+        {
+            "key": "image_gen_model",
+            "type": "component",
+            "component": "image-model-selection",
+            "label": "Image model",
+            "help": (
+                "The deployment every generated image comes from. Image deployments differ "
+                "in the sizes and quality settings they accept, so a change here can alter "
+                "what the image tool is able to produce."
+            ),
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "azure_openai_image_gen_api_version",
+            "type": "text",
+            "label": "Azure OpenAI Image Gen API Version",
+            "help": (
+                "Image generation moves on its own API schedule, which is why this defaults "
+                "later than the chat and embedding versions. Change it only for a "
+                "deployment that needs a different one."
+            ),
+            "default": "2024-12-01-preview",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "azure_apim_image_gen_endpoint",
+            "type": "text",
+            "label": "Azure APIM Endpoint",
+            "help": "The API Management address that fronts the image deployment.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_apim_image_gen_api_version",
+            "type": "text",
+            "label": "Azure APIM API Version",
+            "help": (
+                "Whatever version the API Management operation expects. There is no "
+                "default here, because a gateway can publish any version it likes."
+            ),
+            "default": "",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_apim_image_gen_deployment",
+            "type": "text",
+            "label": "Azure APIM Deployment",
+            "help": (
+                "The deployment name to send image requests to. Discovery does not reach "
+                "through a gateway, so this is typed rather than picked."
+            ),
+            "default": "",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_apim_image_gen_subscription_key",
+            "type": "secret",
+            "label": "Azure APIM Subscription Key",
+            "help": "Leave it blank to keep the stored key.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_image_generation", "equals": True},
+                {"key": "enable_image_gen_apim", "equals": True},
+            ],
+        },
+    ],
 }
 
 
@@ -5022,6 +5384,9 @@ LEGACY_FIELD_NAMES = {
     ],
     # V1 round-trips the list through a hidden JSON field maintained by script.
     "external_links": ["external_links_json"],
+    # Same pattern: V1 posts the default model reference as serialized JSON, while V2
+    # writes it through /api/v2/admin/default-model.
+    "default_model_selection": ["default_model_selection_json"],
     # V1 posts the images as part of the settings form; V2 uploads them
     # separately, so the stored keys are what the schema names.
     "custom_logo_base64": ["logo_file"],

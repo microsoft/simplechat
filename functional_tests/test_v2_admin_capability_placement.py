@@ -83,6 +83,9 @@ RELOCATED_CAPABILITIES = {
     "enable_support_latest_features": ("support-menu-section", "support-menu"),
     "enable_support_menu": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
+    # Matched the token "image" and landed in Image Generation, which is about producing
+    # pictures rather than reading them out of Word and PowerPoint files.
+    "enable_office_embedded_image_analysis": ("document-intelligence-section", "extraction"),
     # Agents & Actions. Before these were declared, enable_semantic_kernel matched
     # no section at all and was filed under "Other capabilities", and the plugin
     # toggles were scattered: enable_text_plugin matched "text" in
