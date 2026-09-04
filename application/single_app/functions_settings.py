@@ -1534,6 +1534,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'redis_url': '',
         'redis_key': '',
         'redis_auth_type': '',
+        'redis_service_type': 'auto',
+        'redis_port': '',
 
         # App Maintenance Settings
         'enable_app_maintenance': True,

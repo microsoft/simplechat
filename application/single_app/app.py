@@ -176,7 +176,7 @@ from swagger_wrapper import register_swagger_routes
 register_swagger_routes(app)
 
 from flask_session import Session
-from redis import Redis
+import functions_redis_client
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
@@ -221,41 +221,18 @@ def configure_sessions(settings):
                 try:
                     if redis_auth_type == 'managed_identity':
                         log_event("Redis enabled using Managed Identity", level=logging.INFO)
-                        redis_client = app_settings_cache.create_redis_managed_identity_client(
-                            redis_url,
-                            settings=settings,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     elif redis_auth_type == 'key_vault':
                         log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
-                        from functions_keyvault import retrieve_secret_direct
-                        redis_key_secret_name = settings.get('redis_key', '').strip()
-                        redis_password = retrieve_secret_direct(redis_key_secret_name)
-                        if redis_password:
-                            redis_password = redis_password.strip()
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_password,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     else:
-                        redis_key = settings.get('redis_key', '').strip()
                         log_event("Redis enabled using Access Key", level=logging.INFO)
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_key,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
-                    
+
+                    redis_client = functions_redis_client.create_redis_client(
+                        settings=settings,
+                        credential_purpose=functions_redis_client.CREDENTIAL_PURPOSE_SESSION,
+                        socket_connect_timeout=5,
+                        socket_timeout=5
+                    )
+
                     # Test the connection
                     redis_client.ping()
                     log_event("✅ Redis connection successful", level=logging.INFO)

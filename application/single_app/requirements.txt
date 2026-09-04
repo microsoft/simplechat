@@ -14,7 +14,7 @@ Markdown==3.8.1
 bleach==6.4.0
 defusedxml==0.7.1
 azure-cosmos==4.9.0
-msal==1.31.0
+msal==1.33.0
 Flask-Session==0.8.0
 azure-ai-documentintelligence==1.0.2
 numpy==2.1.1
@@ -30,7 +30,7 @@ azure-ai-agents==1.2.0b6
 pyjwt==2.13.0
 markdown2==2.5.5
 azure-mgmt-cognitiveservices==13.6.0
-azure-identity==1.23.0
+azure-identity==1.24.0
 azure-ai-contentsafety==1.0.0
 azure-storage-blob==12.24.1
 azure-storage-file-share==12.25.0
@@ -54,6 +54,7 @@ tableauserverclient==0.40
 yamcs-client==2.1.0
 protobuf==6.33.5
 redis==5.3.1
+redis-entraid==1.2.1
 smbprotocol==1.15.0
 pyodbc==5.3.0
 PyMySQL==1.1.2

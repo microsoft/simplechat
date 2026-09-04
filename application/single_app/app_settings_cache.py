@@ -7,14 +7,21 @@ This supports the dynamic selection of redis or in-memory caching of settings.
 import json
 import logging
 import copy
-import base64
-import os
 import threading
 import time
 from datetime import datetime, timedelta
-from redis import Redis
-from redis.credentials import CredentialProvider
-from azure.identity import DefaultAzureCredential
+
+# Redis client construction lives in functions_redis_client so session, cache, and admin
+# diagnostics code paths share one place that resolves service type, port, and credentials.
+# These names are re-exported for existing callers.
+from functions_redis_client import (  # noqa: F401
+    CREDENTIAL_PURPOSE_APP_CACHE,
+    REDIS_ENTRA_TOKEN_SCOPE,
+    REDIS_TOKEN_REFRESH_BUFFER_SECONDS,
+    RedisManagedIdentityCredentialProvider,
+    create_redis_client,
+    get_redis_entra_token_scope as _get_redis_entra_token_scope,
+)
 
 # NOTE: functions_keyvault is imported locally inside configure_app_cache to avoid a circular
 # import (functions_keyvault -> app_settings_cache -> functions_keyvault).
@@ -22,8 +29,6 @@ from azure.identity import DefaultAzureCredential
 
 _settings = None
 _logger = logging.getLogger(__name__)
-REDIS_ENTRA_TOKEN_SCOPE = 'https://redis.azure.com/.default'
-REDIS_TOKEN_REFRESH_BUFFER_SECONDS = 300
 APP_SETTINGS_CACHE = {}
 APP_USER_UI_SETTINGS_CACHE = {}
 APP_STREAM_SESSION_METADATA = {}
@@ -63,61 +68,18 @@ app_cache_is_using_redis = False
 _app_cache_lock = threading.Lock()
 
 
-def _get_redis_entra_token_scope(settings=None):
-    configured_scope = (settings or {}).get('redis_entra_token_scope') or os.getenv('REDIS_ENTRA_TOKEN_SCOPE')
-    return (configured_scope or REDIS_ENTRA_TOKEN_SCOPE).strip()
-
-
-def _decode_token_claims(access_token):
-    parts = access_token.split('.')
-    if len(parts) < 2:
-        raise ValueError('Redis Microsoft Entra token did not contain JWT claims.')
-
-    payload = parts[1]
-    payload += '=' * (-len(payload) % 4)
-    decoded_payload = base64.urlsafe_b64decode(payload.encode('utf-8')).decode('utf-8')
-    return json.loads(decoded_payload)
-
-
-def _get_redis_username_from_claims(access_token):
-    claims = _decode_token_claims(access_token)
-    username = claims.get('oid') or claims.get('appid')
-    if not username:
-        raise ValueError('Redis Microsoft Entra token did not include an object ID claim.')
-    return username
-
-
-class RedisManagedIdentityCredentialProvider(CredentialProvider):
-    """Provides Redis ACL username and Microsoft Entra token credentials."""
-
-    def __init__(self, credential=None, scope=None):
-        self.credential = credential or DefaultAzureCredential()
-        self.scope = scope or REDIS_ENTRA_TOKEN_SCOPE
-        self._cached_credentials = None
-        self._expires_on = 0
-
-    def get_credentials(self):
-        now = time.time()
-        if self._cached_credentials and now < self._expires_on - REDIS_TOKEN_REFRESH_BUFFER_SECONDS:
-            return self._cached_credentials
-
-        token = self.credential.get_token(self.scope)
-        username = _get_redis_username_from_claims(token.token)
-        self._cached_credentials = (username, token.token)
-        self._expires_on = token.expires_on
-        return self._cached_credentials
-
-
 def create_redis_managed_identity_client(redis_url, settings=None, **redis_kwargs):
-    credential_provider = RedisManagedIdentityCredentialProvider(
-        scope=_get_redis_entra_token_scope(settings)
-    )
-    return Redis(
-        host=redis_url,
-        port=6380,
-        db=0,
-        credential_provider=credential_provider,
-        ssl=True,
+    """Build a managed identity Redis client for the configured Azure Redis service.
+
+    Retained as a thin wrapper so existing callers keep working; the port, TLS, and
+    credential provider are resolved by functions_redis_client.
+    """
+    import functions_redis_client
+
+    return functions_redis_client.create_redis_client(
+        settings=settings,
+        redis_url=redis_url,
+        auth_type=functions_redis_client.AUTH_TYPE_MANAGED_IDENTITY,
         **redis_kwargs
     )
 
@@ -707,39 +669,17 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 raise ValueError('Redis cache is enabled but redis_url is empty.')
             if redis_auth_type == 'managed_identity':
                 log_event("[ASC] Redis enabled using Managed Identity", level=logging.INFO)
-                redis_client = create_redis_managed_identity_client(
-                    redis_url,
-                    settings=settings
-                )
             elif redis_auth_type == 'key_vault':
                 log_event("[ASC] Redis enabled using Key Vault Secret", level=logging.INFO)
-                # Local import to avoid circular dependency: functions_keyvault imports app_settings_cache.
-                from functions_keyvault import retrieve_secret_direct
-                redis_key_secret_name = settings.get('redis_key', '').strip()
-                # Pass settings directly: get_settings_cache() is still None at this point
-                # because configure_app_cache has not finished initialising the cache yet.
-                redis_password = retrieve_secret_direct(redis_key_secret_name, settings=settings)
-                if redis_password:
-                    redis_password = redis_password.strip()
-                log_event("[ASC] Redis key retrieved from Key Vault successfully", level=logging.INFO)
-
-                redis_client = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_password,
-                    ssl=True
-                )
             else:
-                redis_key = settings.get('redis_key', '').strip()
                 log_event("[ASC] Redis enabled using Access Key", level=logging.INFO)
-                redis_client = Redis(
-                    host=redis_url,
-                    port=6380,
-                    db=0,
-                    password=redis_key,
-                    ssl=True
-                )
+
+            # Pass settings directly: get_settings_cache() is still None at this point
+            # because configure_app_cache has not finished initialising the cache yet.
+            redis_client = create_redis_client(
+                settings=settings,
+                credential_purpose=CREDENTIAL_PURPOSE_APP_CACHE,
+            )
             app_cache_is_using_redis = True
             APP_REDIS_CLIENT = redis_client
         except Exception as redis_init_error:
