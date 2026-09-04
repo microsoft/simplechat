@@ -38,6 +38,7 @@ import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
@@ -45,6 +46,7 @@ import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { SaveBar } from '../components/admin/SaveBar';
+import { SecretField } from '../components/admin/SecretField';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -147,11 +149,15 @@ function groupFields(fields: AdminField[]): { group: string | null; fields: Admi
  * belong to them, so keys are matched to the section whose id shares the most leading
  * word stems. Anything with no reasonable match is collected under "Other capabilities"
  * rather than being hidden, because a silently missing toggle is worse than a misfiled one.
+ *
+ * `suppressed` names keys that must not be drawn at all -- derived values and staged
+ * rollout flags, which would render a switch that appears to save and then reverts.
  */
 function buildCapabilityIndex(
     nav: AdminNavGroup[],
     settings: Json,
     declaredKeys: Set<string>,
+    suppressedKeys: Set<string>,
 ): CapabilityRow[] {
     const capabilityKeys = Object.keys(settings)
         .filter(
@@ -160,7 +166,8 @@ function buildCapabilityIndex(
                 typeof settings[key] === 'boolean' &&
                 // A key with a proper field is rendered by the schema path; rendering it
                 // here as well would put two controls on one value.
-                !declaredKeys.has(key),
+                !declaredKeys.has(key) &&
+                !suppressedKeys.has(key),
         )
         .sort();
 
@@ -311,9 +318,22 @@ export function AdminSettingsPage() {
         return keys;
     }, [schema]);
 
+    const suppressedKeys = useMemo(
+        () => new Set(data?.suppressed_capabilities ?? []),
+        [data],
+    );
+
     const capabilityRows = useMemo(
-        () => (data ? buildCapabilityIndex(data.admin_nav, data.settings, declaredKeys) : []),
-        [data, declaredKeys],
+        () =>
+            data
+                ? buildCapabilityIndex(
+                      data.admin_nav,
+                      data.settings,
+                      declaredKeys,
+                      suppressedKeys,
+                  )
+                : [],
+        [data, declaredKeys, suppressedKeys],
     );
 
     /** Every section that has something to show, in navigation order. */
@@ -653,6 +673,23 @@ export function AdminSettingsPage() {
             );
         }
 
+        if (field.type === 'secret') {
+            return (
+                <SecretField
+                    key={key}
+                    field={field}
+                    value={value}
+                    // The saved value, not the draft: only that says whether a credential
+                    // exists, which is what tells an empty box apart from a pending delete.
+                    storedValue={field.key ? settings[field.key] : undefined}
+                    error={error}
+                    warning={warning}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
         if (field.type === 'id_list') {
             return (
                 <AssignmentPicker
@@ -716,6 +753,21 @@ export function AdminSettingsPage() {
                         <UserAgreementPreview
                             key={key}
                             text={readSibling('user_agreement_text')}
+                        />
+                    );
+                case 'enhanced-citations-storage-test':
+                    return (
+                        <EnhancedCitationsStorageTest
+                            key={key}
+                            help={field.help}
+                            authenticationType={readSibling(
+                                'office_docs_authentication_type',
+                                'key',
+                            )}
+                            connectionString={readSibling('office_docs_storage_account_url')}
+                            blobEndpoint={readSibling(
+                                'office_docs_storage_account_blob_endpoint',
+                            )}
                         />
                     );
                 case 'connection-test':
