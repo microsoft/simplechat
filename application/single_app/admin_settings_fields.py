@@ -1142,10 +1142,10 @@ ADMIN_SETTINGS_FIELDS = {
             "results_key": "groups",
             "item_noun": "group",
             "item_noun_plural": "groups",
-            "depends_on": {
-                "key": "require_group_assignment_for_file_downloads",
-                "equals": True,
-            },
+            "depends_on": [
+                {"key": "allow_group_workspace_file_downloads", "equals": True},
+                {"key": "require_group_assignment_for_file_downloads", "equals": True},
+            ],
         },
         {
             "key": "allow_public_workspace_file_downloads",
@@ -1187,10 +1187,13 @@ ADMIN_SETTINGS_FIELDS = {
             "results_key": "workspaces",
             "item_noun": "public workspace",
             "item_noun_plural": "public workspaces",
-            "depends_on": {
-                "key": "require_public_workspace_assignment_for_file_downloads",
-                "equals": True,
-            },
+            "depends_on": [
+                {"key": "allow_public_workspace_file_downloads", "equals": True},
+                {
+                    "key": "require_public_workspace_assignment_for_file_downloads",
+                    "equals": True,
+                },
+            ],
         },
     ],
     "file-sharing-section": [
@@ -1480,10 +1483,13 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": [],
             "search_endpoint": "/api/v2/admin/groups",
-            "depends_on": {
-                "key": "require_group_assignment_for_group_workflows",
-                "equals": True,
-            },
+            "depends_on": [
+                {"key": "allow_group_workflows", "equals": True},
+                {
+                    "key": "require_group_assignment_for_group_workflows",
+                    "equals": True,
+                },
+            ],
         },
         {
             "key": "workflow_max_auto_invoke_attempts",

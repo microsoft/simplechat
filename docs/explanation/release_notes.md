@@ -2,6 +2,124 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.064)**
+
+#### New Features
+
+*   **Chat Settings Are Fully Editable In The New Admin Interface**
+    *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
+    *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
+    *   **Two switches were invisible even though they are switches**, because their setting names do not begin with `enable_`. Workspace Scope Lock and the ChatFileUploadUser role requirement are now both present.
+    *   **Enhanced Citations came across in full**, including the storage authentication type, the storage credentials, the tabular preview size cap, the large-run confirmation thresholds, and the chunk processing model — plus a **Test storage connection** button. Startup deliberately skips storage checks so an outage cannot stop the application booting, which previously meant a wrong credential was only discovered when a citation failed to open.
+    *   (Ref: `admin_settings_fields.py`, `EnhancedCitationsStorageTest.tsx`, `AdminSettingsPage.tsx`, [V2 Admin Chat Settings](features/V2_ADMIN_CHAT_SETTINGS.md))
+
+*   **Conversation History Summarization Can Be Configured**
+    *   Three settings that control what happens to conversation history — summarizing messages that fall outside the history limit, summarizing recent turns into the document-search query, and how many messages that summary reads — have always been acted on by the chat backend but have never had a control anywhere.
+    *   All three are now editable in both the classic and the new admin interface, under Conversation History.
+    *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](../../admin/chat/))
+
+#### Bug Fixes
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Settings From Other Areas No Longer Appear Under Chat**
+    *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
+    *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
+    *   (Ref: `SUPPRESSED_CAPABILITY_KEYS`, `buildCapabilityIndex`, `test_v2_admin_capability_placement.py`)
+
+*   **Settings No Longer Linger After Their Feature Is Switched Off**
+    *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
+    *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   The same problem affected three group assignment pickers — group and public workspace file downloads, and group workflows. Turning the capability off left the picker on screen assigning access for a disabled feature.
+    *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
+*   **Workflow Settings Were Declared Twice**
+    *   The Workflow section was registered twice, and only the second registration took effect. The two were not identical, so the first was silently dead — and a reordering would have swapped which one applied, dropping six settings from the page.
+    *   The same duplication had begun to affect chat file uploads, where the second registration was overriding the first and hiding the **Enable Chat File Uploads** switch.
+    *   (Ref: `ADMIN_SETTINGS_FIELDS`, `workflow-settings-section`, `chat-file-uploads-section`)
+
+### **(v0.261.061)**
+
+#### New Features
+
+*   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated chart used to be final. If the model picked a pie where a bar was wanted, put a scale on the axis that flattened the whole story, left the axes unnamed, or got a single number wrong, the only remedy was to ask again — which left a second near-duplicate chart sitting below the first with nothing to say which one was current.
+    *   Every chart now has an **Edit** button. The editor opens beside a live preview with six tabs: **Data**, **Design**, **Axes**, **Source**, **Ask AI** and **History**.
+    *   **The numbers are editable.** A grid of the chart's own labels and series: change any value, rename or add a series, add and remove rows. An emptied cell is a gap rather than a zero, so a line is drawn straight past it instead of dropping to the axis. Scatter and bubble charts get a list of their x/y pairs instead.
+    *   **The chart type can be changed**, but only to a type the data can actually be read as. A scatter chart is not offered a bar chart, and pie, doughnut and polar area appear once a chart has a single series — with the reason given, rather than the option silently missing.
+    *   **The axes can be scaled and named.** An explicit minimum and maximum, start-at-zero, a logarithmic scale for values that span orders of magnitude, and an angle and a limit for category labels too crowded to read. On a horizontal bar chart these correctly apply to the axis that carries the values, which runs along the bottom.
+    *   **Bar width, line thickness, point size, the doughnut hole, gridlines, the legend and its position, stacking and orientation** are all adjustable, along with the chart's title, subtitle and caption.
+    *   **Six changes make one entry in the history, not six.** The whole panel edits a draft that the preview follows, and one save records the lot with a note naming what changed — "Bar width, Value axis" rather than "Edited".
+    *   **Ask AI changes the chart in front of it** without adding anything to the conversation, and is told not to invent numbers: if an instruction asks for values the chart does not have and cannot derive, the data is left alone. A reply that is not a chart is refused rather than stored.
+    *   **Nothing is deleted.** History keeps every version with who made it and what it was; restoring moves a pointer rather than discarding newer ones, and the chart the model originally produced is always kept.
+    *   Exported and emailed charts, and the classic interface, all show the current version with every setting applied — so a conversation looks the same wherever it is read.
+    *   (Ref: `chartEdits.ts`, `ChartEditor.tsx`, `ChartDataGrid.tsx`, `ChartCanvas.tsx`, `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `functions_chart_export.py`, `chat-block-revisions.js`, [V2 Inline Chart Editing](features/V2_INLINE_CHART_EDITING.md))
+
+#### Bug Fixes
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+### **(v0.261.060)**
+
+#### New Features
+
+*   **The Whole Workspaces Group Is Now Editable In The New Interface**
+    *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.
+    *   **Everything that was missing is now there**: personal, group and public workspace downloads, both "require assignment" rules and the group and public workspace pickers that go with them, the public workspace end-user display name, shared conversation file approvals, the CreateGroups and CreatePublicWorkspaces role requirements, and the owner-only restriction on group agents and actions.
+    *   **The four toggles that were already visible now explain themselves.** They were previously drawn from the flag name alone — "Group creation", with no help text and no indication that it does nothing while group workspaces are off. Each now carries a written explanation of what it does and when you would want it.
+    *   **Settings that do nothing are hidden rather than shown as inert.** Requiring a group assignment only appears once group downloads are enabled, and the group picker only appears once the assignment is required, so what is on screen is what currently has an effect.
+    *   (Ref: `admin_settings_fields.py`, `AssignmentPicker.tsx`, `AdminSettingsPage.tsx`, [V2 Workspaces Admin Settings](features/V2_WORKSPACES_ADMIN_SETTINGS.md))
+
+*   **Every App Role Requirement, Readable In One Place**
+    *   Ten settings in SimpleChat can demand an Entra app role, spread across six tabs. None of them appeared in the new interface at all, because the fallback scan that was drawing those pages could only see on/off capability flags.
+    *   All ten are now on the tab that owns them, and **Security > App Role Requirements** additionally gathers them into one list. Each switch there is the same value as the one on its own tab, not a copy, so changing it in either place is the same change.
+    *   Each entry names the group, tab and section the setting really lives on, and the list reports how many of the ten are currently being enforced — so the deployment's access policy can be read as a whole rather than reconstructed tab by tab.
+    *   (Ref: `collectAppRoleEntries`, `AppRoleRoster.tsx`, `admin_access_roles_roster.js`)
+
+*   **Global Identities Explain What They Are, And Sit Somewhere Sensible**
+    *   Global Identities are saved credentials for the systems SimpleChat connects out to, used by File Sync sources and actions. They were filed under Workspaces, which owns neither, and the tab in the new interface was empty.
+    *   The tab has moved to **Security**, next to Key Vault — which is where each identity's secret is actually stored — and now lists what exists with its sign-in type, alongside a link to the classic page for adding or editing one. Existing links to the tab still work.
+    *   (Ref: `admin_settings_nav.py`, `GlobalIdentitiesList.tsx`)
+
+#### User Interface Enhancements
+
+*   **Maximum File Size Moved To Knowledge**
+    *   The upload ceiling applies to chat attachments as well as workspace documents, and it is checked before extraction runs, so Workspaces only ever described half of what it does. It now sits in **Knowledge > Document Extraction** beside Chunk Sizes, and its description says plainly that it covers both upload paths.
+    *   (Ref: `max_file_size_mb`, `functions_documents.py`, `route_frontend_chats.py`)
+
+*   **Group Creation Reads The Right Way Round**
+    *   The classic page asks you to tick "Disable Group Creation" to prevent it — a double negative over a setting that is stored as *enable* group creation. The new interface presents it as **Allow Users to Create Groups**, where on means users can create groups.
+    *   The wording also now says what was previously undocumented: switching it off freezes the group list without disabling existing groups, and overrides the CreateGroups role requirement entirely.
+    *   The classic page is unchanged, so nothing about an existing deployment moves.
+    *   (Ref: `enable_group_creation`, `LEGACY_FIELD_NAMES`)
+
+*   **Workspaces, Knowledge And Security Documentation Rewritten**
+    *   The Workspaces admin page described its sections with a repeated sentence that said only which tab they belonged to. It now explains what each workspace type means for who can read a document, how the three group-creation controls stack, and why downloads default to off, with troubleshooting for the cases where a setting appears to have no effect.
+    *   (Ref: `docs/admin/workspaces.md`, `docs/admin/knowledge.md`, `docs/admin/security.md`)
+
 ### **(v0.261.059)**
 
 #### New Features
