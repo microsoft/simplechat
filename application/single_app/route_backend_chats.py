@@ -43,10 +43,6 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
 )
-from functions_model_endpoint_types import (
-    get_model_endpoint_api_type,
-    resolve_model_endpoint_request_model,
-)
 from functions_mixed_source_orchestration import (
     MixedSourceCancellationError,
     MixedSourceFinalizationError,
@@ -13932,9 +13928,6 @@ def build_streaming_multi_endpoint_client(
     api_version,
     deployment_name='',
     *,
-    api_type='',
-    anthropic_version='',
-    allow_private_custom_endpoints=False,
     settings=None,
     endpoint_config=None,
     identity_context=None,
@@ -13946,9 +13939,6 @@ def build_streaming_multi_endpoint_client(
         endpoint,
         api_version,
         deployment_name=deployment_name,
-        api_type=api_type,
-        anthropic_version=anthropic_version,
-        allow_private_custom_endpoints=allow_private_custom_endpoints,
         settings=settings,
         endpoint_config=endpoint_config,
         identity_context=identity_context,
@@ -14100,7 +14090,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         model_cfg = next(
             (
                 model for model in models
-                if resolve_model_endpoint_request_model(resolved_endpoint_cfg, model) == requested_deployment
+                if str(model.get('deploymentName') or model.get('deployment') or '').strip() == requested_deployment
             ),
             None,
         )
@@ -14132,12 +14122,10 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
 
     connection = resolved_endpoint_cfg.get('connection', {}) or {}
     auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-    deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
+    deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
     endpoint = str(connection.get('endpoint') or '').strip()
     api_version = str(connection.get('openai_api_version') or connection.get('api_version') or '').strip()
-    api_type = get_model_endpoint_api_type(resolved_endpoint_cfg)
-    anthropic_version = str(connection.get('anthropic_version') or '').strip()
-    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment, api_type)
+    runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
     model_icon = _normalize_model_icon_payload(model_cfg.get('icon'))
     model_response_length = normalize_model_response_length_from_model(model_cfg)
     model_behavior_name = _build_model_endpoint_behavior_name(model_cfg, deployment)
@@ -14171,11 +14159,6 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         endpoint,
         api_version,
         deployment_name=deployment,
-        api_type=api_type,
-        anthropic_version=anthropic_version,
-        allow_private_custom_endpoints=bool(
-            settings.get('allow_private_custom_model_endpoints', False)
-        ),
         settings=settings,
         endpoint_config=resolved_endpoint_cfg,
         identity_context={'user_id': user_id},
@@ -14183,7 +14166,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
         f"provider={provider} | endpoint_id={requested_endpoint_id} | model_id={model_cfg.get('id')} | "
-        f"request_model={deployment} | api_version={api_version} | api_type={api_type} | protocol={runtime_protocol} | "
+        f"deployment={deployment} | api_version={api_version} | protocol={runtime_protocol} | "
         f"response_length={model_response_length or ''} | "
         f"response_length_parameter={model_response_length_parameter or ''}"
     )
@@ -14194,8 +14177,6 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         endpoint,
         auth_settings,
         api_version,
-        api_type,
-        anthropic_version,
         requested_endpoint_id,
         str(model_cfg.get('id') or '').strip(),
         model_icon,
@@ -16571,8 +16552,6 @@ def register_route_backend_chats(bp):
             gpt_endpoint = None
             gpt_auth = None
             gpt_api_version = None
-            gpt_api_type = None
-            gpt_anthropic_version = None
             gpt_endpoint_id = None
             gpt_model_id = None
             gpt_model_icon = None
@@ -16611,8 +16590,6 @@ def register_route_backend_chats(bp):
                         gpt_endpoint,
                         gpt_auth,
                         gpt_api_version,
-                        gpt_api_type,
-                        gpt_anthropic_version,
                         gpt_endpoint_id,
                         gpt_model_id,
                         gpt_model_icon,
@@ -16709,12 +16686,9 @@ def register_route_backend_chats(bp):
                     endpoint=gpt_endpoint,
                     auth=gpt_auth,
                     api_version=gpt_api_version,
-                    api_type=gpt_api_type,
-                    anthropic_version=gpt_anthropic_version,
                     endpoint_id=gpt_endpoint_id or data.get('model_endpoint_id'),
                     model_id=gpt_model_id or data.get('model_id'),
                     model_deployment=gpt_model,
-                    request_model=gpt_model,
                     user_id=user_id,
                     active_group_ids=active_group_ids,
                 )
@@ -21032,8 +21006,6 @@ def register_route_backend_chats(bp):
                 gpt_endpoint = None
                 gpt_auth = None
                 gpt_api_version = None
-                gpt_api_type = None
-                gpt_anthropic_version = None
                 gpt_endpoint_id = None
                 gpt_model_id = None
                 gpt_model_icon = None
@@ -21073,8 +21045,6 @@ def register_route_backend_chats(bp):
                             gpt_endpoint,
                             gpt_auth,
                             gpt_api_version,
-                            gpt_api_type,
-                            gpt_anthropic_version,
                             gpt_endpoint_id,
                             gpt_model_id,
                             gpt_model_icon,
@@ -21154,12 +21124,9 @@ def register_route_backend_chats(bp):
                         endpoint=gpt_endpoint,
                         auth=gpt_auth,
                         api_version=gpt_api_version,
-                        api_type=gpt_api_type,
-                        anthropic_version=gpt_anthropic_version,
                         endpoint_id=gpt_endpoint_id or frontend_model_endpoint_id,
                         model_id=gpt_model_id or frontend_model_id,
                         model_deployment=gpt_model,
-                        request_model=gpt_model,
                         user_id=user_id,
                         active_group_ids=active_group_ids,
                     )

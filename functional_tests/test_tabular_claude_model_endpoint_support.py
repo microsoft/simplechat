@@ -2,9 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for tabular Claude model endpoint support.
-Version: 0.250.172
+Version: 0.241.186
 Implemented in: 0.241.186
-Updated in: 0.250.172
 
 This test ensures tabular analysis and generated tabular exports preserve the
 selected Claude/Anthropic model endpoint context, use provider-aware Semantic
@@ -16,13 +15,13 @@ import ast
 import sys
 from pathlib import Path
 
-from test_support.versioning import assert_app_version_at_least
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
 CHAT_ROUTE = APP_ROOT / "route_backend_chats.py"
 RUNTIME_HELPER = APP_ROOT / "functions_model_endpoint_runtime.py"
+CONFIG = APP_ROOT / "config.py"
+
 
 def read_text(path):
     """Read source text as UTF-8."""
@@ -91,8 +90,7 @@ def test_claude_tabular_uses_direct_planner_fallback():
 def test_runtime_helper_supports_claude_sk_services():
     """Validate runtime helper can build Anthropic SK services from context."""
     source_text = read_text(RUNTIME_HELPER)
-    assert_contains(source_text, "'claude'", "Claude provider allowlist")
-    assert_contains(source_text, "MODEL_ENDPOINT_PROVIDER_CUSTOM", "Custom provider allowlist")
+    assert_contains(source_text, "MODEL_ENDPOINT_PROVIDER_ALLOWLIST = {'aoai', 'aifoundry', 'new_foundry', 'anthropic', 'claude'}", "Claude provider allowlist")
     assert_contains(source_text, "resolve_model_endpoint_from_context", "model context re-resolution")
     assert_contains(source_text, "AnthropicSemanticKernelChatCompletion", "Anthropic SK adapter")
     assert_contains(source_text, "sanitize_model_endpoint_auth_for_context", "non-secret auth context")
@@ -113,7 +111,8 @@ def test_summary_helpers_are_anthropic_message_safe():
 
 def test_version_bumped_for_fix():
     """Validate config.py version was bumped for the fix."""
-    assert_app_version_at_least("0.241.186")
+    source_text = read_text(CONFIG)
+    assert_contains(source_text, 'VERSION = "0.241.186"', "fix version")
 
 
 def main():
