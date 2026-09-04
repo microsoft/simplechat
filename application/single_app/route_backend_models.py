@@ -10,6 +10,7 @@ from functions_keyvault import SecretReturnType, keyvault_model_endpoint_cleanup
 from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
+from functions_image_api_route import is_image_capable_model_name
 from functions_model_capabilities import resolve_model_vision_support
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -683,8 +684,13 @@ def register_route_backend_models(bp):
     @admin_required
     def get_image_models():
         """
-        Fetch available DALL-E image generation Azure OpenAI deployments using Azure Management API.
-        Returns a list of image generation models with deployment names and model information.
+        Fetch available image-capable Azure OpenAI deployments using Azure Management API.
+
+        Two kinds qualify. A gpt-image or DALL-E deployment serves /images/generations
+        directly. A chat model serves no image endpoint at all, but can still produce an
+        image through the Responses API's image_generation tool, and where gpt-image is
+        unavailable it is the only deployment that can. Both are listed; which route a
+        selection takes is decided from its model name at call time.
         """
         settings = get_settings()
 
@@ -711,10 +717,7 @@ def register_route_backend_models(bp):
                 if not is_deployment_enabled(d):
                     continue
                 model_name = d.properties.model.name
-                if model_name and (
-                    "dall-e" in model_name.lower() or
-                    "image" in model_name.lower()
-                ):
+                if model_name and is_image_capable_model_name(model_name):
                     models.append({
                         "deploymentName": d.name,
                         "modelName": model_name

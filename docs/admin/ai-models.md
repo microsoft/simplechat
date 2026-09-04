@@ -109,7 +109,7 @@ The classic single endpoint is configured on the server-rendered admin page. Its
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Default model | The model chat uses when nothing else has chosen one. Cleared automatically if the connection or model it names is deleted or disabled. | Not specified in defaults | `default_model_selection`; connections mode only |
-| Send requests through API Management | Routes GPT requests that use the classic endpoint through API Management rather than straight to the Azure OpenAI resource, so a deployment can apply its own governance and monitoring to them. | Off | `enable_gpt_apim`; needs the three APIM values below |
+| Send requests through API Management | Routes GPT requests that use the classic endpoint through API Management rather than straight to the Azure OpenAI resource, so a deployment can apply its own governance and monitoring to them. Set on the classic page only — a connection carries its own API Management configuration, so this tab does not offer it. | Off | `enable_gpt_apim`; needs the three APIM values below |
 | Azure OpenAI Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_gpt_endpoint` |
 | Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_gpt_authentication_type` |
 | Subscription ID | Addresses the resource when listing its deployments. | Empty | `azure_openai_gpt_subscription_id` |
@@ -174,17 +174,34 @@ With **Enable Image Generation** off, nothing else in this section is consulted,
 
 As with embeddings, the direct and gateway routes are alternatives and only the selected one is used. The gateway has its own address, version, deployment name and subscription key.
 
+#### Which API produces the image
+
+Azure OpenAI produces images two different ways, and which one applies is decided by the model behind the deployment you select rather than by a setting.
+
+A `gpt-image-*` or DALL-E deployment serves the images endpoint and is asked for a picture directly. That is the route SimpleChat has always used, and it remains the route for every deployment that can take it.
+
+A chat deployment — `gpt-5.6-*`, `gpt-4o` and their relations — serves no image endpoint at all. It can still produce an image, through the Responses API's hosted `image_generation` tool, and SimpleChat sends it that way instead. This matters where an image model is not available to a subscription or region: a chat deployment is then the difference between image generation working and not being offered. It is not the better route where both exist, because it cannot change part of an existing image and puts the orchestrating model in front of every picture.
+
+Two things follow from selecting a chat deployment:
+
+- The image editor offers whole-image regeneration only. Changing part of an image needs `/images/edits`, which the Responses tool has no equivalent for, and the editor says so before you paint a region rather than after.
+- **Azure OpenAI Image Gen API Version** does not apply to it. That setting governs the image endpoints, and its default predates the Responses API entirely, so this route uses a version new enough for it regardless of what is set. A value newer than that is honoured.
+
+A deployment reached through API Management always uses the images endpoint. The gateway records a deployment name and no model name, so there is nothing to decide from, and the operation the gateway publishes determines the shape of the call in any case.
+
+A deployment saved before SimpleChat began recording model names also stays on the images endpoint, because an unknown model is not the same as a chat model. Re-running **Fetch deployments** and re-selecting it records the name and lets it be classified.
+
 #### Authentication and deployment discovery
 
 Managed identity stores no credential and is what allows SimpleChat to list the resource's deployments, using the subscription id and resource group. A key authenticates to inference only.
 
-**Fetch deployments** reads the saved endpoint, subscription id and resource group, so save changes to those first. A deployment the resource no longer reports is dropped from the selection rather than left to fail on the next request.
+**Fetch deployments** reads the saved endpoint, subscription id and resource group, so save changes to those first. It lists both the image models and the chat models the resource exposes, since either can produce an image, and excludes embedding deployments, which can produce neither. A deployment the resource no longer reports is dropped from the selection rather than left to fail on the next request.
 
 The stored key is never shown, and leaving its field empty keeps what is stored. **Remove stored value** clears it.
 
 #### Changing the image model
 
-Image deployments differ in the sizes, quality settings and response formats they accept, so a change here can alter what the image tool is able to produce, not only how the results look. Generate one test image after changing it.
+Image deployments differ in the sizes, quality settings and response formats they accept, so a change here can alter what the image tool is able to produce, not only how the results look. Moving between an image model and a chat model changes the API the request takes as well, and with it whether the editor can change part of an image. Generate one test image after changing it.
 
 #### Settings
 
@@ -197,8 +214,8 @@ Image deployments differ in the sizes, quality settings and response formats the
 | Subscription ID | Addresses the resource when listing its deployments. Inference does not need it. | Empty | `azure_openai_image_gen_subscription_id` |
 | Resource Group | The other half of the address the deployment list is fetched from. | Empty | `azure_openai_image_gen_resource_group` |
 | Azure OpenAI Image Generation Key | Used only with key authentication. Leaving it blank keeps the stored key. | Empty | `azure_openai_image_gen_key` |
-| Image model | The single deployment every generated image comes from. | None selected | `image_gen_model`; written through its own API |
-| Azure OpenAI Image Gen API Version | Image generation moves on its own API schedule, which is why this defaults later than the chat and embedding versions. | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
+| Image model | The single deployment every generated image comes from. An image model is asked through the images endpoint; a chat model through the Responses image tool. | None selected | `image_gen_model`; written through its own API |
+| Azure OpenAI Image Gen API Version | Image generation moves on its own API schedule, which is why this defaults later than the chat and embedding versions. Governs the image endpoints only. | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
 | Azure APIM Endpoint | The API Management address that fronts the image deployment. | Empty | `azure_apim_image_gen_endpoint` |
 | Azure APIM API Version | Whatever version the API Management operation publishes; there is no default, because a gateway can publish any. | Empty | `azure_apim_image_gen_api_version` |
 | Azure APIM Deployment | The deployment name to send image requests to. Discovery does not reach through a gateway, so this is typed. | Empty | `azure_apim_image_gen_deployment` |
