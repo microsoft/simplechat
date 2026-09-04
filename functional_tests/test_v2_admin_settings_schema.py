@@ -51,6 +51,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "text": ("default",),
     "textarea": ("default",),
     "switch": ("default",),
+    "password": ("default",),
     "link_list": ("item_fields", "default"),
     "image": ("upload_target", "accept", "version_key"),
     "component": ("component",),
@@ -64,6 +65,7 @@ EXPECTED_DEFAULT_TYPES = {
     "color": str,
     "range": int,
     "number": int,
+    "password": str,
     "checkbox_set": list,
     "link_list": list,
 }
@@ -196,6 +198,11 @@ def test_dependencies_reference_real_fields():
     print("\nTesting visibility dependencies...")
 
     declared = fields_module.get_declared_setting_keys()
+    by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
     problems = []
     checked = 0
 
@@ -213,6 +220,24 @@ def test_dependencies_reference_real_fields():
             problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
         if field.get("key") == depends_on["key"]:
             problems.append(f"{identity}: depends on itself")
+
+        expected = depends_on.get("equals", True)
+        if not isinstance(expected, (bool, str)):
+            problems.append(
+                f"{identity}: equals {expected!r} is neither a boolean nor a string"
+            )
+            continue
+
+        # A string condition has to name a value the depended-on control can actually
+        # produce, or the field is unreachable however the page is used.
+        parent = by_key.get(depends_on["key"])
+        if isinstance(expected, str) and parent:
+            offered = [option["value"] for option in parent.get("options", [])]
+            if offered and expected not in offered:
+                problems.append(
+                    f"{identity}: depends on {depends_on['key']} == {expected!r}, "
+                    f"which is not one of {offered}"
+                )
 
     assert not problems, (
         "These visibility dependencies are broken:\n  " + "\n  ".join(problems)

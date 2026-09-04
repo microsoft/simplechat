@@ -2,6 +2,36 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.075)**
+
+#### New Features
+
+*   **Embeddings And Image Generation Can Be Configured In The New Admin Interface**
+    *   These were the last two sections of AI Models with nothing behind them. Both fell back to scanning the settings document for `enable_*` booleans, so each showed a switch or two and hid everything that actually makes the route work: the endpoint, the authentication method, the subscription and resource group, the API version, the gateway alternative and the deployment in use.
+    *   **Neither has connections, and the interface no longer pretends otherwise.** Chat can draw from several resources at once; embeddings and image generation each have exactly one, or one API Management gateway in front of one. Both are now configured directly, with the direct and gateway routes presented as the alternatives they are — only the selected one is used, so the fields for the other stay out of the way instead of sitting there looking configured.
+    *   **The deployment in use is chosen from a list rather than typed.** **Fetch deployments** asks the resource what it has, and the choice is saved on its own. A deployment the resource no longer reports is dropped from the selection rather than kept, because a request naming it would fail on the next embedding or image call rather than at save time. The list is a cache of the last answer, which is why fetching is a deliberate action and why the interface says so.
+    *   **Fetching reads the saved endpoint, not the one on screen**, since that is how the underlying discovery has always worked. That caveat is now stated next to the button that trips over it.
+    *   (Ref: `admin_settings_fields.py`, `route_backend_v2.py`, `/api/v2/admin/model-selection`, `ModelSelectionPicker.tsx`, `modelSelection.ts`, `embedding_model`, `image_gen_model`)
+
+*   **Stored Credentials Are No Longer Placed In The Page**
+    *   The new admin interface had no way to describe a secret, so a credential declared in a section would have been drawn by the ordinary text control — a live Azure OpenAI key sitting in a readable box, offered to every password manager and form-restore cache on the machine. Secrets are now a field type of their own: masked, excluded from browser autofill, and revealed only on request.
+    *   **The box starts empty whatever is stored, and leaving it empty keeps the stored value.** The new interface saves a section at a time, so an untouched credential still travels with whatever else was edited. Had an empty box meant "empty string", saving an API version would have wiped a working key, and the damage would only have surfaced the next time the service was called. Removal is now its own action, which is the only thing that clears a stored secret.
+    *   (Ref: `admin_settings_fields.py`, `fields.tsx`, `AdminSettingsPage.tsx`, `azure_openai_embedding_key`, `azure_openai_image_gen_key`)
+
+#### Bug Fixes
+
+*   **A Document Extraction Setting Was Appearing Under Image Generation**
+    *   Settings the new admin interface has no description for are placed by matching words in their name against section names. **Analyze images embedded in DOCX and PPTX files** shares the word "image" with Image Generation, so it was filed there — as a bare switch, with no explanation, among settings about producing pictures rather than reading them out of Word and PowerPoint files.
+    *   It now appears under Knowledge, in Document Extraction, alongside the rest of Document Intelligence, and carries the explanation the classic page has always had.
+    *   (Ref: `admin_settings_fields.py`, `enable_office_embedded_image_analysis`, `document-intelligence-section`)
+
+#### User Interface Enhancements
+
+*   **Conditional Settings Follow The Choice They Depend On**
+    *   A setting could previously be shown or hidden by a switch, but not by a choice — the condition was read as true or false, and every non-empty option is true. The API key field, which belongs to key authentication, would therefore have stayed on screen after switching a route to managed identity, next to a note saying it was not being used.
+    *   Conditions now compare the actual value, and a setting whose condition depends on something already hidden is hidden with it. Switching an embedding or image route to API Management now takes the whole direct connection with it, including its key, rather than leaving parts of it behind.
+    *   (Ref: `adminFields.ts`, `isFieldVisible`, `admin_settings_fields.py`, `docs/admin/ai-models.md`)
+
 ### **(v0.261.061)**
 
 #### New Features

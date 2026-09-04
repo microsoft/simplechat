@@ -65,6 +65,9 @@ RELOCATED_CAPABILITIES = {
     "enable_support_menu": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
     "enable_text_plugin": ("actions-config", "actions"),
+    # Matched the token "image" and landed in Image Generation, which is about producing
+    # pictures rather than reading them out of Word and PowerPoint files.
+    "enable_office_embedded_image_analysis": ("document-intelligence-section", "extraction"),
 }
 
 # The rules the ported heuristic depends on. If the renderer stops doing any of

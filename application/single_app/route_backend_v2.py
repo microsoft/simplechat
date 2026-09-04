@@ -626,6 +626,115 @@ def _load_global_model_endpoints(settings=None):
     return endpoints if isinstance(endpoints, list) else []
 
 
+# The classic single-endpoint model catalogs. Each is stored as
+# ``{"selected": [...], "all": [...]}`` -- the deployments last discovered, plus the one
+# in use. The shape is a dict, so it cannot travel through the settings PATCH, which
+# coerces by declared scalar type.
+MODEL_CATALOG_KINDS = {
+    "embedding": {
+        "settings_key": "embedding_model",
+        "discovery_path": "/api/models/embedding",
+        "label": "embedding",
+    },
+    "image": {
+        "settings_key": "image_gen_model",
+        "discovery_path": "/api/models/image",
+        "label": "image generation",
+    },
+}
+
+
+def _read_model_catalog(settings, settings_key):
+    """Return a stored catalog as ``(selected, all)``, tolerating an absent key."""
+    stored = settings.get(settings_key)
+    if not isinstance(stored, dict):
+        return [], []
+
+    selected = stored.get("selected")
+    available = stored.get("all")
+    return (
+        [item for item in selected if isinstance(item, dict)] if isinstance(selected, list) else [],
+        [item for item in available if isinstance(item, dict)] if isinstance(available, list) else [],
+    )
+
+
+def _normalize_model_deployment(entry):
+    """Return one catalog entry reduced to the two fields the application reads."""
+    deployment_name = str(entry.get("deploymentName") or "").strip()
+    if not deployment_name:
+        return None
+
+    model_name = entry.get("modelName")
+    return {
+        "deploymentName": deployment_name,
+        "modelName": str(model_name).strip() if model_name else "",
+    }
+
+
+def normalize_model_catalog(payload, stored_available):
+    """Return ``(catalog, error)`` for a requested classic model catalog.
+
+    ``catalog`` is the ``{"selected": [...], "all": [...]}`` value to store. Both admin
+    interfaces treat these catalogs as single-select, so ``selected`` holds at most one
+    deployment; storing more would offer a choice the rest of the application ignores.
+
+    A selection is required to name a deployment that is in the catalog. The alternative
+    -- accepting it and letting it fail at call time -- produces an admin page that looks
+    correctly configured while every embedding or image request returns a deployment-not
+    -found error, which reads like an outage rather than a settings mistake.
+
+    ``all`` is omitted rather than emptied when the caller has not re-run discovery, so
+    saving a selection from an already-loaded list cannot erase the list it came from.
+    """
+    if not isinstance(payload, dict):
+        return None, "Supply the model selection as an object."
+
+    raw_available = payload.get("models")
+    if raw_available is None:
+        available = list(stored_available)
+    elif isinstance(raw_available, list):
+        available = []
+        seen = set()
+        for entry in raw_available:
+            if not isinstance(entry, dict):
+                return None, "Each model must be an object."
+            deployment = _normalize_model_deployment(entry)
+            if deployment is None:
+                return None, "Each model must name a deployment."
+            if deployment["deploymentName"] in seen:
+                continue
+            seen.add(deployment["deploymentName"])
+            available.append(deployment)
+    else:
+        return None, "Expected a list of models."
+
+    raw_selected = payload.get("selected")
+    if raw_selected is None:
+        return {"selected": [], "all": available}, None
+    if not isinstance(raw_selected, dict):
+        return None, "Supply the selected model as an object, or null to clear it."
+
+    selected = _normalize_model_deployment(raw_selected)
+    if selected is None:
+        return None, "The selected model must name a deployment."
+
+    match = next(
+        (
+            entry
+            for entry in available
+            if entry["deploymentName"] == selected["deploymentName"]
+        ),
+        None,
+    )
+    if match is None:
+        return None, (
+            f"{selected['deploymentName']} is not in the fetched deployment list. "
+            "Fetch the deployments again and choose one of them."
+        )
+
+    return {"selected": [match], "all": available}, None
+
+
 def _find_model_endpoint(endpoints, endpoint_id):
     """Return the endpoint with the given id, or None."""
     reference = str(endpoint_id or "")
@@ -1296,3 +1405,105 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to store the default model"}), 500
+
+    # ``embedding_model`` and ``image_gen_model`` are catalogs -- a list of discovered
+    # deployments plus the one in use -- rather than scalars, so like
+    # ``default_model_selection`` they are declared as ``component`` fields and the
+    # settings PATCH refuses them. These are the routes that write them, and they
+    # enforce the one rule the shape does not: the selection has to be a deployment
+    # that is actually in the catalog.
+    #
+    # Discovery is left where it already is, on ``/api/models/embedding`` and
+    # ``/api/models/image``. Both are admin-gated, both read the same stored endpoint
+    # configuration, and both are what the classic page calls, so re-implementing them
+    # would create a second answer to the same question.
+
+    @bp.route("/api/v2/admin/model-selection/<kind>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_model_selection(kind):
+        """Return the stored deployment catalog for embeddings or image generation.
+
+        The stored list is returned rather than a fresh discovery call, so opening the
+        admin page never depends on Azure Resource Manager being reachable. Refreshing
+        the list is a deliberate action, exactly as it is on the classic page.
+        """
+        catalog_kind = MODEL_CATALOG_KINDS.get(str(kind or "").strip().lower())
+        if catalog_kind is None:
+            return jsonify({"error": "Unknown model selection."}), 404
+
+        try:
+            settings = get_settings()
+            selected, available = _read_model_catalog(
+                settings, catalog_kind["settings_key"]
+            )
+            return (
+                jsonify(
+                    {
+                        "kind": kind,
+                        "selected": selected[0] if selected else None,
+                        "models": available,
+                        "discovery_path": catalog_kind["discovery_path"],
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_MODEL_SELECTION] Failed to read the {kind} catalog: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load the model selection"}), 500
+
+    @bp.route("/api/v2/admin/model-selection/<kind>", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_set_model_selection(kind):
+        """Store the deployment catalog and the single deployment in use."""
+        catalog_kind = MODEL_CATALOG_KINDS.get(str(kind or "").strip().lower())
+        if catalog_kind is None:
+            return jsonify({"error": "Unknown model selection."}), 404
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Model selection payload must be an object."}), 400
+
+        settings_key = catalog_kind["settings_key"]
+        try:
+            settings = get_settings()
+            _selected, stored_available = _read_model_catalog(settings, settings_key)
+            catalog, error = normalize_model_catalog(payload, stored_available)
+            if error:
+                return jsonify({"error": error}), 400
+
+            # ``update_settings`` catches its own exceptions and answers False, so an
+            # unchecked call would report a save that never reached storage.
+            if not update_settings({settings_key: catalog}):
+                return jsonify({"error": "Failed to store the model selection"}), 500
+
+            chosen = catalog["selected"][0]["deploymentName"] if catalog["selected"] else "none"
+            log_event(
+                f"[V2_ADMIN_MODEL_SELECTION] {catalog_kind['label']} deployment set to "
+                f"{chosen} from {len(catalog['all'])} discovered deployment(s)",
+                level=logging.INFO,
+            )
+            return (
+                jsonify(
+                    {
+                        "kind": kind,
+                        "selected": catalog["selected"][0] if catalog["selected"] else None,
+                        "models": catalog["all"],
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_MODEL_SELECTION] Failed to store the {kind} catalog: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to store the model selection"}), 500

@@ -18,6 +18,7 @@ export type AdminFieldType =
     | 'color'
     | 'range'
     | 'number'
+    | 'password'
     | 'image'
     | 'link_list'
     | 'component';
@@ -27,10 +28,16 @@ export interface AdminFieldOption {
     label: string;
 }
 
-/** Shows a field only while another field holds a given value. */
+/**
+ * Shows a field only while another field holds a given value.
+ *
+ * `equals` is a boolean for a capability toggle and a string for a choice, such as an
+ * authentication type. A string is compared as a string rather than for truthiness,
+ * because every non-empty choice is truthy and so would satisfy every condition.
+ */
 export interface AdminFieldDependency {
     key: string;
-    equals: boolean;
+    equals: boolean | string;
 }
 
 /**
@@ -170,16 +177,86 @@ export function asStringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/** Whether a field's `depends_on` condition is currently satisfied. */
-export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
+/**
+ * Whether a field's `depends_on` condition is currently satisfied.
+ *
+ * Two behaviours beyond the plain comparison, both of which exist because the server
+ * schema is flat while the panes it mirrors are nested:
+ *
+ *   - A field whose dependency is itself hidden is hidden too. The Azure OpenAI key sits
+ *     inside the direct-connection block *and* inside the key-authentication block on the
+ *     server-rendered page; a single `depends_on` can only express one of those, so the
+ *     other is inherited from the field it depends on. Without this, switching a section
+ *     to APIM would leave the direct connection's key on screen.
+ *   - A dependency with no stored value falls back to the declared default of the field
+ *     it names, because that is what the application would be applying. Reading an absent
+ *     value as empty would permanently hide anything conditional on a non-empty default.
+ *
+ * `siblings` supplies the fields the dependency may name; pass the section's own list.
+ */
+export function isFieldVisible(
+    field: AdminField,
+    settings: Json,
+    draft: Json,
+    siblings: AdminField[] = [],
+    seen: Set<string> = new Set(),
+): boolean {
     const dependency = field.depends_on;
     if (!dependency) {
         return true;
     }
-    const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
+
+    const stored = Object.prototype.hasOwnProperty.call(draft, dependency.key)
         ? draft[dependency.key]
         : settings[dependency.key];
-    return asBoolean(current) === dependency.equals;
+
+    const parent = siblings.find((candidate) => candidate.key === dependency.key);
+    const current = stored === undefined || stored === null ? parent?.default : stored;
+
+    const satisfied =
+        typeof dependency.equals === 'string'
+            ? asString(current) === dependency.equals
+            : asBoolean(current) === dependency.equals;
+
+    if (!satisfied) {
+        return false;
+    }
+
+    // A malformed schema could describe a cycle, and the schema test only rejects a
+    // field depending on itself. Stopping at a repeat keeps a bad declaration from
+    // hanging the page.
+    if (!parent || !field.key || seen.has(field.key)) {
+        return true;
+    }
+    return isFieldVisible(parent, settings, draft, siblings, new Set(seen).add(field.key));
+}
+
+/**
+ * Whether a secret is already stored for a password field.
+ *
+ * Only presence is reported, never the value. The password control is write-only, so
+ * the page has to be able to say "a key is stored" without putting that key into a
+ * form control to find out.
+ */
+export function hasStoredSecret(settings: Json, key: string | undefined): boolean {
+    if (!key) {
+        return false;
+    }
+    const stored = settings[key];
+    return typeof stored === 'string' && stored.trim().length > 0;
+}
+
+/**
+ * What a password control shows: what has been typed this session, and nothing else.
+ *
+ * `null` is an explicit removal held in the draft. It renders as an empty box with a
+ * pending-removal note rather than as the word "null".
+ */
+export function readSecretValue(field: AdminField, draft: Json): unknown {
+    if (!field.key || !Object.prototype.hasOwnProperty.call(draft, field.key)) {
+        return '';
+    }
+    return draft[field.key];
 }
 
 /** Turn `enable_document_classification` into `Document classification`. */
