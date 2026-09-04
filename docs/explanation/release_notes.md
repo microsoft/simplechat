@@ -2,6 +2,76 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.065)**
+
+#### New Features
+
+*   **The Knowledge Settings Are Configurable In The New Admin Interface**
+    *   Knowledge is the largest group in Admin Settings — five tabs and roughly 150 settings covering web search, URL access, deep research, the search index, document extraction, audio and video, and file sync. In the new admin interface it existed only as a couple of dozen bare switches labelled from their internal key names. Every endpoint, key, limit, domain list, model choice and connection test in the group was simply absent, and the page said so with a link back to the classic one.
+    *   All five tabs are now fully configurable there, and each section is laid out to be worked through rather than scanned: **connect, verify, then tune.**
+    *   **Every section leads with its own switch and a status.** A section reports whether it is off, needs configuration, is waiting on something elsewhere, or is ready — so a long page can be skimmed for what still needs attention instead of opened section by section.
+    *   **Detail arrives when it is needed.** Settings cluster into groups that stay collapsed, and the one that needs attention next opens on its own. Searching still reaches everything, including settings inside a collapsed group.
+    *   **Connections can be tested before they are saved**, against the values currently on screen. Both admin interfaces now offer exactly the same set of tests.
+    *   **Prerequisites are stated where they are felt.** File Sync needs Redis Cache, which is configured in a different group; the section now says so, explains the consequence, and links to it, rather than leaving an administrator to turn File Sync on and watch nothing happen.
+    *   (Ref: `admin_settings_fields.py`, `SettingsSection.tsx`, `ConnectionTest.tsx`, `/api/v2/admin/settings/test-connection`)
+
+*   **Image Support Is Read From Real Model Capability Data**
+    *   Whether a model could be used for Multi-Modal Vision Analysis was decided by matching its name against a pattern. That admitted text-only chat variants, said nothing at all about a self-hosted or internally named deployment, and could not be corrected because the rule was in the code.
+    *   Each model on an endpoint now has a **Reads images** setting under **AI Models**, arriving pre-filled from capability data the application already ships. The field says where its answer came from — set here, from the built-in data, or inferred from the name — so the one worth reviewing is obvious.
+    *   The vision model picker offers only models that report image support, and marks one whose support was inferred rather than known.
+    *   (Ref: `functions_model_capabilities.py`, `static/json/model_capabilities.json`, `/api/models/vision-capability`, [AI Models](../admin/ai-models.md))
+
+*   **File Sync Workspace Assignments Can Now Be Edited**
+    *   File Sync could be restricted to named groups or public workspaces, but the screens for choosing them were never finished, so the lists could not be set from either admin interface. They are now searchable pickers, shown only while the restriction that uses them is turned on.
+    *   (Ref: `file_sync_allowed_group_ids`, `file_sync_allowed_public_workspace_ids`, `AssignmentPicker.tsx`)
+
+#### Bug Fixes
+
+*   **Admin Credentials Are No Longer Sent To The Browser In Plain Text**
+    *   The classic admin page has always replaced stored keys, connection strings and client secrets with a placeholder before rendering. The settings endpoint behind the new admin interface returned the settings document untouched, so every stored credential was delivered to the browser and visible to anyone who could open the page.
+    *   Credentials are now redacted on the way out and on the way back, and submitting an untouched placeholder is recognised as "no change" rather than being written — so saving an unrelated toggle can no longer overwrite a credential.
+    *   (Ref: `/api/v2/admin/settings`, `admin_settings_fields.py`, `redact_admin_settings_secrets_for_form`)
+
+*   **Two Document Extraction Sections Were Unreachable**
+    *   The **Content Understanding** and **Images Inside Office Files** cards existed but were missing from the settings navigation, so neither admin interface could link to them and neither was documented. Both are now navigable sections in both interfaces.
+    *   (Ref: `admin_settings_nav.py`, [Knowledge settings](../admin/knowledge.md#content-understanding-section))
+
+#### User Interface Enhancements
+
+*   **Document Intelligence Is No Longer Inside Out**
+    *   The section opened with a feature toggle and put the endpoint and key that make the feature work at the very bottom, after every option that depends on them. In the new interface the connection comes first, and the settings that need it follow and say so when it is missing.
+    *   (Ref: `document-intelligence-section`)
+
+*   **The Shared Speech Resource Is Explained Before It Is Needed**
+    *   Audio uploads, voice input and voice responses are three separate capabilities that use one Azure Speech resource, and that was explained in a note beneath them. The resource is now configured first, and the long resource ID needed for managed identity can be built from the fields above it instead of typed by hand.
+    *   (Ref: `ai-voice-chat-section`, `ResourceIdBuilder.tsx`)
+
+*   **The Response Completion Sound Moved To Feedback & Alerts**
+    *   It played a local browser sound and required no Azure Speech resource, yet it was the first control in the AI Voice Conversations section. It now sits with the other notification settings under Chat.
+    *   (Ref: `enable_chat_completion_audio_cues`, [Chat settings](../admin/chat.md#desktop-notifications-section))
+
+### **(v0.261.058)**
+
+#### New Features
+
+*   **Generated Images Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated image used to be final. Changing one meant asking again, which cost another paid generation and added another image to the thread — so refining an image a few times left the conversation full of near-duplicates with no way to tell which was current.
+    *   Every generated image now has an **Edit** button, in the thread, in the full-size viewer, and on an approved image proposal card. The editor opens with four tabs: **Ask AI** for describing a change, **Prompt** for the wording that produced the image, **Controls** for shape, quality and background, and **History** for every version it has had.
+    *   **You can point at the part you want changed.** Select a region with a box or a freehand brush and the change is applied there, leaving the rest of the image alone. The editor reports how much of the image is selected, and says plainly that the selection guides the model rather than fixing every pixel outside it.
+    *   **Masking is not mouse-only.** A nine-region grid selects the same areas from the keyboard, producing exactly the shapes a drag would.
+    *   **Nothing is ever deleted.** History shows every version as a thumbnail with who made it and why, holding **compare** reveals the previous one, and restoring an older version moves a pointer rather than discarding newer ones. The image the model originally produced is always kept.
+    *   **Each change builds on the version you are looking at**, so successive edits accumulate instead of each one starting from the original.
+    *   **If your image model cannot edit, the editor says so.** Region editing needs a `gpt-image` deployment; DALL·E 3 has no editing capability at all. On a model that cannot, the selection tools are hidden and the panel names the model or the API version setting responsible, rather than failing after you have selected a region and waited.
+    *   Works in shared conversations as well as personal ones. Any participant can change an image, each change is attributed, and the edit is written through to the underlying image so the owner and exports see the same version; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same image.
+    *   (Ref: `functions_message_image_revisions.py`, `functions_image_edit.py`, `ImageEditor.tsx`, `ImageMaskCanvas.tsx`, `/api/message/<id>/image-revision`, `/api/collaboration/conversations/<id>/messages/<id>/image-revision`, [V2 Inline Image Editing](features/V2_INLINE_IMAGE_EDITING.md))
+
+#### Bug Fixes
+
+*   **Images In Shared Conversations Now Display In The New Interface**
+    *   An image in a shared conversation is served from a different address than one in a personal conversation, and the new interface only recognised the personal form. A shared image therefore rendered as "Image unavailable" rather than as a picture.
+    *   (Ref: `images.ts`, `resolveImageSource`, collaboration image URLs)
+
 ### **(v0.261.057)**
 
 #### New Features
