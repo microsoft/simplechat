@@ -227,14 +227,37 @@ export function Composer() {
      *
      * The toggle only exists where the deployment has orchestration on, so `orchestrating`
      * folds the feature flag and the bootstrap switch into the one boolean every branch below
-     * reads. Held off by default: turning the composer into a planner is a deliberate act, and
-     * a deployment that ships the feature still opens on the chat everyone already knows.
+     * reads.
+     *
+     * On by default wherever the deployment offers it. Defaulting it off was a mistake: an
+     * administrator who switched orchestration on has already made the deliberate choice, and
+     * asking every user to find a toggle before the feature does anything is how it stays
+     * unused. Worse, the composer meanwhile keeps showing the row of capability buttons --
+     * documents, web, image, deep research -- inviting exactly the decisions the planner
+     * exists to make on the user's behalf.
+     *
+     * The toggle remains, because going back to the composer everyone already knows has to
+     * stay one click away.
      */
     const orchestrationConfig = bootstrap?.orchestration;
     const orchestrationAvailable = Boolean(
         features.enable_chat_orchestration && orchestrationConfig?.enabled,
     );
-    const [orchestrationOn, setOrchestrationOn] = useState(false);
+    const [orchestrationOn, setOrchestrationOn] = useState(orchestrationAvailable);
+    // Whether the user has expressed an opinion. The bootstrap resolves after the first
+    // render, so the deployment's answer has to be adopted when it lands -- but adopting it
+    // unconditionally would switch orchestration back on every time the payload refreshed,
+    // overriding somebody who had just turned it off.
+    const orchestrationChosen = useRef(false);
+    useEffect(() => {
+        if (!orchestrationChosen.current) {
+            setOrchestrationOn(orchestrationAvailable);
+        }
+    }, [orchestrationAvailable]);
+    const toggleOrchestration = () => {
+        orchestrationChosen.current = true;
+        setOrchestrationOn((on) => !on);
+    };
     const orchestrating = orchestrationOn && orchestrationAvailable;
 
     // The disclosure that hides the manual controls while orchestrating. Only reachable when the
@@ -1178,7 +1201,7 @@ export function Composer() {
                         {orchestrationAvailable && (
                             <ToolToggle
                                 active={orchestrating}
-                                onClick={() => setOrchestrationOn((on) => !on)}
+                                onClick={toggleOrchestration}
                                 icon={<Workflow size={15} />}
                                 label="Orchestrate"
                             />

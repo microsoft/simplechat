@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.061)**
+
+#### Bug Fixes
+
+*   **Enabling A Feature No Longer Requires Reloading The Chat Tab**
+    *   The new interface read its configuration once, when the page first loaded. An administrator who turned a capability on in Admin Settings — which is a different page, usually a different tab — came back to an open chat that still insisted the capability did not exist, with nothing on screen to explain why.
+    *   The configuration is now re-read whenever the tab comes back to the front, so returning from Admin Settings is enough. This applies to every setting, not just the one that surfaced it.
+    *   (Ref: `bootstrapStore.refresh`, `App.tsx` visibility and focus handling)
+
+#### User Interface Enhancements
+
+*   **Orchestration Is On By Default Where It Is Enabled**
+    *   Orchestration previously had to be switched on in the composer before it did anything, which meant a deployment that had enabled it still opened on a row of capability buttons inviting exactly the decisions the planner exists to make.
+    *   Where an administrator has enabled orchestration, the composer now opens in it, with the document, web, model, agent and reasoning controls folded behind **Manual controls** rather than removed. Turning orchestration off restores the classic composer, and anything chosen under the disclosure still constrains the plan.
+    *   (Ref: `Composer.tsx`, `chat_orchestration_show_manual_controls`)
+
 ### **(v0.261.060)**
 
 #### New Features

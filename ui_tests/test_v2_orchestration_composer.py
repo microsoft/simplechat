@@ -5,7 +5,8 @@ Version: 0.261.059
 Implemented in: 0.261.059
 
 Orchestration inverts the composer. The Orchestrate toggle appears only where the deployment ships
-the feature, is held off by default, and -- once on -- folds the model, agent, reasoning and
+the feature, is on by default wherever the deployment offers it, and -- while on -- folds the
+model, agent, reasoning and
 capability controls behind a "Manual controls" disclosure, because the planner is meant to make
 those choices. File upload and voice input are deliberately NOT folded away: an attachment or a
 spoken prompt is still just input to the question, so they stay on the bar.
@@ -127,23 +128,26 @@ def test_toggle_hidden_unless_feature_and_switch_are_on():
         return False
 
 
-def test_toggle_is_off_by_default_with_classic_controls():
-    """When available the toggle opens off, and the classic manual controls are on the bar."""
-    print("Testing orchestration is off by default with the classic controls shown...")
+def test_toggle_is_on_by_default_with_controls_collapsed():
+    """When the deployment offers orchestration the composer opens in it, controls collapsed."""
+    print("Testing orchestration is on by default with the manual controls collapsed...")
     page = _PAGE
     try:
         page.evaluate(_SEED_COMPOSER, {"features": _features(), "orchestration": _orchestration()})
 
         pressed = page.eval_on_selector('#mount-a [title="Orchestrate"]', "el => el.getAttribute('aria-pressed')")
-        assert pressed == "false", "orchestration must be held off by default"
-        # The classic composer shows its manual controls inline: the Documents capability toggle,
-        # and the ever-present attach and voice controls.
-        assert _has(page, '[title="Documents"]') is True, "the classic composer shows the capability toggles"
+        assert pressed == "true", (
+            "orchestration must be on by default where the administrator enabled it; "
+            "defaulting it off leaves the capability row inviting exactly the decisions "
+            "the planner exists to make"
+        )
+        # The capability toggles are folded away, replaced by the disclosure.
+        assert _has(page, '[title="Documents"]') is False, "the capability toggles must be collapsed"
+        assert _has(page, '[title="Manual controls"]') is True, "the disclosure replaces them"
+        # Attach and voice are never collapsed.
         assert _has(page, '[aria-label="Attach a file"]') is True
         assert _has(page, '[aria-label="Voice input"]') is True
-        # No disclosure yet -- it belongs to orchestration mode.
-        assert _has(page, '[title="Manual controls"]') is False
-        print("  ok  the toggle is off by default and the classic controls are shown")
+        print("  ok  orchestration is on by default and the manual controls are collapsed")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"Test failed: {exc}")
@@ -153,44 +157,63 @@ def test_toggle_is_off_by_default_with_classic_controls():
         return False
 
 
-def test_turning_on_collapses_controls_but_keeps_upload_and_voice():
-    """Orchestrating folds the pickers behind the disclosure; attach and voice stay put."""
-    print("Testing orchestration collapses the manual controls but keeps upload and voice...")
+def test_turning_off_restores_the_classic_composer():
+    """Going back to the composer everyone knows stays one click away."""
+    print("Testing turning orchestration off restores the classic controls...")
     page = _PAGE
     try:
         page.evaluate(_SEED_COMPOSER, {"features": _features(), "orchestration": _orchestration()})
 
-        classic_pressed = _count_pressed(page)
-        assert classic_pressed >= 2, (
-            f"classic mode should show the Orchestrate and capability toggles, saw {classic_pressed}"
-        )
+        # Opens orchestrating, so only the Orchestrate toggle is pressable.
+        assert _count_pressed(page) == 1, "only the Orchestrate toggle should be shown while collapsed"
 
-        # Turn orchestration on.
+        # Turn orchestration off.
         page.click('#mount-a [title="Orchestrate"]')
         page.wait_for_function(
             "() => document.querySelector('#mount-a [title=\"Orchestrate\"]')"
-            ".getAttribute('aria-pressed') === 'true'",
+            ".getAttribute('aria-pressed') === 'false'",
             timeout=5000,
         )
 
-        # The capability toggles and pickers collapse: the only pressable toggle left is Orchestrate
-        # itself, and the Documents capability toggle is gone.
-        assert _has(page, '[title="Documents"]') is False, "the capability toggles must collapse"
-        assert _count_pressed(page) == 1, "only the Orchestrate toggle should remain once collapsed"
-        assert _has(page, '[title="Manual controls"]') is True, "orchestrating offers the disclosure"
+        # The classic composer is back: capability toggles inline, no disclosure.
+        assert _has(page, '[title="Documents"]') is True, "the capability toggles must return"
+        assert _has(page, '[title="Manual controls"]') is False, "the disclosure belongs to orchestration"
+        assert _count_pressed(page) >= 2, "classic mode shows Orchestrate plus the capability toggles"
 
-        # Upload and voice are deliberately kept on the bar.
+        # Upload and voice are unaffected either way.
         assert _has(page, '[aria-label="Attach a file"]') is True, "file upload must stay visible"
         assert _has(page, '[aria-label="Voice input"]') is True, "voice input must stay visible"
+        print("  ok  turning orchestration off restored the classic composer")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"Test failed: {exc}")
+        import traceback
 
-        # Opening the disclosure brings the manual controls back.
+        traceback.print_exc()
+        return False
+
+
+def test_disclosure_restores_the_manual_controls():
+    """While orchestrating, the disclosure brings the pickers back without leaving the mode."""
+    print("Testing the manual controls disclosure...")
+    page = _PAGE
+    try:
+        page.evaluate(_SEED_COMPOSER, {"features": _features(), "orchestration": _orchestration()})
+
+        assert _has(page, '[title="Documents"]') is False, "the pickers start collapsed"
+
         page.click('#mount-a [title="Manual controls"]')
         page.wait_for_function(
             "() => Boolean(document.querySelector('#mount-a [title=\"Documents\"]'))",
             timeout=5000,
         )
+
+        # Still orchestrating -- the disclosure reveals, it does not leave the mode. Anything
+        # chosen here is passed as a seed and constrains the plan rather than being ignored.
+        pressed = page.eval_on_selector('#mount-a [title="Orchestrate"]', "el => el.getAttribute('aria-pressed')")
+        assert pressed == "true", "the disclosure must not leave orchestration mode"
         assert _count_pressed(page) >= 2, "opening the disclosure restores the capability toggles"
-        print("  ok  orchestration collapsed the pickers, kept upload/voice, and the disclosure restored them")
+        print("  ok  the disclosure restored the manual controls without leaving orchestration")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"Test failed: {exc}")
@@ -202,8 +225,9 @@ def test_turning_on_collapses_controls_but_keeps_upload_and_voice():
 
 PAGE_TESTS = [
     test_toggle_hidden_unless_feature_and_switch_are_on,
-    test_toggle_is_off_by_default_with_classic_controls,
-    test_turning_on_collapses_controls_but_keeps_upload_and_voice,
+    test_toggle_is_on_by_default_with_controls_collapsed,
+    test_turning_off_restores_the_classic_composer,
+    test_disclosure_restores_the_manual_controls,
 ]
 
 
