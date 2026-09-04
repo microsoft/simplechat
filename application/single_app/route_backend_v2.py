@@ -69,15 +69,19 @@ from functions_public_workspaces import (
     get_user_visible_public_workspace_ids_from_settings,
 )
 from functions_settings import (
+    ADMIN_SETTINGS_FORM_SECRET_FIELDS,
     WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
     build_migrated_model_endpoints_from_legacy,
     get_settings,
     get_user_settings,
+    is_admin_settings_redacted_secret,
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
     merge_model_endpoint_payload,
     normalize_default_model_selection,
     normalize_model_endpoints,
+    redact_admin_settings_secrets_for_form,
+    resolve_admin_settings_secret_value,
     resolve_default_model_selection,
     resolve_metadata_extraction_model_selection,
     sanitize_settings_for_user,
@@ -735,6 +739,25 @@ def normalize_model_catalog(payload, stored_available):
     return {"selected": [match], "all": available}, None
 
 
+def _resolve_redacted_secrets(updates, current_settings):
+    """Return ``updates`` with any redacted secret marker replaced by the stored value.
+
+    The GET redacts credentials, so a client that round-trips a whole section could hand
+    ``***REDACTED***`` back. Storing that literally would replace a working key with a
+    placeholder, and the failure would surface at the next call to the service rather
+    than at save time.
+
+    Only the marker is rewritten. A real value is a deliberate replacement, and ``None``
+    is the explicit clear a password control sends -- coercing either would defeat the
+    write rules the field schema applies immediately afterwards.
+    """
+    resolved = dict(updates)
+    for key, value in updates.items():
+        if key in ADMIN_SETTINGS_FORM_SECRET_FIELDS and is_admin_settings_redacted_secret(value):
+            resolved[key] = resolve_admin_settings_secret_value(key, value, current_settings)
+    return resolved
+
+
 def _find_model_endpoint(endpoints, endpoint_id):
     """Return the endpoint with the given id, or None."""
     reference = str(endpoint_id or "")
@@ -879,11 +902,19 @@ def register_route_backend_v2_admin(bp):
     @login_required
     @admin_required
     def v2_admin_get_settings():
-        """Return the raw settings document, the admin navigation and the field schema.
+        """Return the settings document, the admin navigation and the field schema.
 
-        Admin settings are not sanitized. Sanitization removes keys, secrets and endpoint
-        configuration, which are exactly the values an administrator is here to manage.
-        Access is restricted to the Admin role by the blueprint guard and the decorator.
+        Admin settings are otherwise unsanitized, and deliberately so: sanitization
+        removes endpoints and configuration, which are exactly the values an
+        administrator is here to manage. Access is restricted to the Admin role by the
+        blueprint guard and the decorator.
+
+        Stored credentials are the one exception. They are replaced with
+        ``ADMIN_SETTINGS_SECRET_REDACTED_VALUE`` by the same helper and the same field
+        list the server-rendered admin form uses, so a key is not readable in a browser
+        devtools payload, a proxy log or a HAR capture merely because the page that asked
+        for it was admin-only. Nothing in the V2 surface needs the real value: the
+        password control is write-only, and presence alone is what it renders.
 
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
@@ -891,13 +922,16 @@ def register_route_backend_v2_admin(bp):
         """
         try:
             settings = get_settings()
+            # Branding assets are read before redaction because they are derived from
+            # non-secret keys, and redaction returns a deep copy either way.
+            branding_assets = _build_branding_assets(settings)
             return (
                 jsonify(
                     {
-                        "settings": settings,
+                        "settings": redact_admin_settings_secrets_for_form(settings),
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
-                        "branding_assets": _build_branding_assets(settings),
+                        "branding_assets": branding_assets,
                         "version": VERSION,
                     }
                 ),
@@ -924,6 +958,10 @@ def register_route_backend_v2_admin(bp):
         Values are normalized against the field schema first, which is what keeps the two
         admin interfaces agreeing on what a valid value is. The update is applied only if
         every supplied key validates, so a save never lands half-applied.
+
+        Because the GET redacts credentials, a client round-tripping a whole section can
+        hand a redaction marker back; it is resolved to the stored value before
+        normalization rather than being stored as a literal.
         """
         payload = request.get_json(silent=True) or {}
         updates = payload.get("settings")
@@ -934,7 +972,7 @@ def register_route_backend_v2_admin(bp):
         try:
             current_settings = get_settings()
             normalized, errors, warnings = normalize_admin_settings_updates(
-                updates, current_settings
+                _resolve_redacted_secrets(updates, current_settings), current_settings
             )
 
             if errors:
@@ -975,7 +1013,10 @@ def register_route_backend_v2_admin(bp):
                     {
                         "success": True,
                         "updated_keys": sorted(normalized.keys()),
-                        "settings": normalized,
+                        # The client merges this into its copy of the settings document,
+                        # so it goes out redacted like the GET. Echoing a just-saved key
+                        # back would undo the redaction for whoever typed it.
+                        "settings": redact_admin_settings_secrets_for_form(normalized),
                         "warnings": warnings,
                     }
                 ),

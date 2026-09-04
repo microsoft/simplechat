@@ -272,6 +272,61 @@ check('a stored selection outside the list is dangling, an empty one is not', ()
     assert.equal(isDanglingSelection([], { deploymentName: 'ada-002' }), true);
 });
 
+check('a null or missing dependency value does not accidentally match', () => {
+    // `asString(null)` is '' and `asString(undefined)` is '', neither of which is 'key'.
+    // The risk is a comparison that coerces both sides and lets a nullish value through.
+    const field = fieldsByKey.azure_openai_embedding_key;
+    assert.equal(
+        isFieldVisible(field, { azure_openai_embedding_authentication_type: null }, {}, []),
+        false,
+    );
+    assert.equal(
+        isFieldVisible(field, { azure_openai_embedding_authentication_type: '' }, {}, []),
+        false,
+    );
+    // With no siblings there is no declared default to fall back to, so an absent value
+    // must not match either.
+    assert.equal(isFieldVisible(field, {}, {}, []), false);
+});
+
+check('a string dependency is case sensitive and not a prefix match', () => {
+    const field = fieldsByKey.azure_openai_embedding_key;
+    for (const nearMiss of ['KEY', 'Key', 'keys', 'ke', ' key', 'key ']) {
+        assert.equal(
+            isFieldVisible(
+                field,
+                {
+                    enable_embedding_apim: false,
+                    azure_openai_embedding_authentication_type: nearMiss,
+                },
+                {},
+                embeddingFields(),
+            ),
+            false,
+            `${nearMiss} matched a condition on 'key'`,
+        );
+    }
+});
+
+check('a boolean dependency is unaffected by the string branch', () => {
+    // Regression guard: widening `equals` must not change how booleans are read.
+    const apimField = fieldsByKey.azure_apim_embedding_endpoint;
+    for (const [stored, expected] of [
+        [true, true],
+        [false, false],
+        ['on', true],
+        ['', false],
+        [null, false],
+        [undefined, false],
+    ]) {
+        assert.equal(
+            isFieldVisible(apimField, { enable_embedding_apim: stored }, {}, []),
+            expected,
+            `enable_embedding_apim=${JSON.stringify(stored)}`,
+        );
+    }
+});
+
 check('the index is the position in the list the select renders', () => {
     assert.equal(findDeploymentIndex(discovered(), { deploymentName: 'ada-002' }), 1);
     assert.equal(findDeploymentIndex(discovered(), { deploymentName: 'retired' }), -1);
