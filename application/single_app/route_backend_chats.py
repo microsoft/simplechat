@@ -204,11 +204,13 @@ from functions_conversation_metadata import collect_conversation_metadata, updat
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content, get_complete_image_content
 from functions_icon_utils import normalize_icon_payload
+from functions_image_api_route import resolve_selected_image_deployment_name
 from functions_image_generation import (
     build_image_proposal_guidance_message,
     generate_chat_image_message,
     image_generation_is_enabled,
     normalize_image_proposal,
+    request_generated_image_source,
     user_request_supports_image_proposals,
 )
 from functions_appinsights import log_event
@@ -16729,7 +16731,6 @@ def register_route_backend_chats(bp):
             gpt_response_length_parameter = None
             tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
-            enable_image_gen_apim = settings.get('enable_image_gen_apim', False)
             should_use_default_model = (
                 _has_chat_agent_selection(request_agent_info)
                 and settings.get('enable_multi_model_endpoints', False)
@@ -18359,83 +18360,16 @@ def register_route_backend_chats(bp):
 
             # Image Generation
             if image_gen_enabled:
-                if enable_image_gen_apim:
-                    image_gen_model = settings.get('azure_apim_image_gen_deployment')
-                    image_gen_client = AzureOpenAI(
-                        api_version=settings.get('azure_apim_image_gen_api_version'),
-                        azure_endpoint=settings.get('azure_apim_image_gen_endpoint'),
-                        api_key=settings.get('azure_apim_image_gen_subscription_key')
-                    )
-                else:
-                    if (settings.get('azure_openai_image_gen_authentication_type') == 'managed_identity'):
-                        token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-                        image_gen_client = AzureOpenAI(
-                            api_version=settings.get('azure_openai_image_gen_api_version'),
-                            azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
-                            azure_ad_token_provider=token_provider
-                        )
-                        image_gen_model_obj = settings.get('image_gen_model', {})
-
-                        if image_gen_model_obj and image_gen_model_obj.get('selected'):
-                            selected_image_gen_model = image_gen_model_obj['selected'][0]
-                            image_gen_model = selected_image_gen_model['deploymentName']
-                    else:
-                        image_gen_client = AzureOpenAI(
-                            api_version=settings.get('azure_openai_image_gen_api_version'),
-                            azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
-                            api_key=settings.get('azure_openai_image_gen_key')
-                        )
-                        image_gen_obj = settings.get('image_gen_model', {})
-                        if image_gen_obj and image_gen_obj.get('selected'):
-                            selected_image_gen_model = image_gen_obj['selected'][0]
-                            image_gen_model = selected_image_gen_model['deploymentName']
+                image_gen_model = resolve_selected_image_deployment_name(settings)
 
                 try:
                     debug_print(f"Generating image with model: {image_gen_model}")
                     debug_print(f"Using prompt: {user_message}")
 
-                    # Azure OpenAI doesn't support response_format parameter
-                    # Different models return different formats automatically
-                    image_response = image_gen_client.images.generate(
-                        prompt=user_message,
-                        n=1,
-                        model=image_gen_model
-                    )
-
-                    debug_print(f"Image response received: {type(image_response)}")
-                    response_dict = json.loads(image_response.model_dump_json())
-                    debug_print(f"Response dict: {response_dict}")
-
-                    # Extract image URL or base64 data with validation
-                    if 'data' not in response_dict or not response_dict['data']:
-                        raise ValueError("No image data in response")
-
-                    image_data = response_dict['data'][0]
-                    debug_print(f"Image data keys: {list(image_data.keys())}")
-
-                    generated_image_url = None
-
-                    # Handle different response formats
-                    if 'url' in image_data and image_data['url']:
-                        # dall-e-3 format: returns URL
-                        generated_image_url = image_data['url']
-                        debug_print(f"Using URL format: {generated_image_url}")
-                    elif 'b64_json' in image_data and image_data['b64_json']:
-                        # gpt-image-1 format: returns base64 data
-                        b64_data = image_data['b64_json']
-                        # Create data URL for frontend
-                        generated_image_url = f"data:image/png;base64,{b64_data}"
-
-                        # Redacted logging for large base64 content
-                        if len(b64_data) > 100:
-                            redacted_content = f"{b64_data[:50]}...{b64_data[-50:]}"
-                            debug_print(f"Using base64 format, length: {len(b64_data)}")
-                            debug_print(f"Base64 content (redacted): {redacted_content}")
-                        else:
-                            debug_print(f"Using base64 format, full content: {b64_data}")
-                    else:
-                        available_keys = list(image_data.keys())
-                        raise ValueError(f"No URL or base64 data in image data. Available keys: {available_keys}")
+                    # Route selection, the request itself and the response shape all
+                    # differ between the images endpoint and the Responses image tool,
+                    # so they live in one helper rather than being repeated here.
+                    generated_image_url = request_generated_image_source(settings, user_message)
 
                     # Validate we have a valid image source
                     if not generated_image_url or generated_image_url == 'null':

@@ -22,7 +22,6 @@ import {
     selectPlan,
     selectStepRuntime,
     useOrchestrationStore,
-    type RunOutcome,
 } from '../../stores/orchestrationStore';
 import {
     applyPlanEdits,
@@ -56,18 +55,6 @@ const costTone: Record<CostClass, string> = {
     low: 'text-text-3',
     medium: 'text-warn',
     high: 'text-danger',
-};
-
-const outcomeTone: Record<RunOutcome, string> = {
-    completed: 'text-ok',
-    failed: 'text-danger',
-    cancelled: 'text-text-3',
-};
-
-const outcomeLabel: Record<RunOutcome, string> = {
-    completed: 'done',
-    failed: 'failed',
-    cancelled: 'stopped',
 };
 
 /** The countdown ring for timed approval, drawn from the fraction of time left. */
@@ -194,38 +181,15 @@ export function OrchestrationPlanCard({
 
     const openReview = () => setDrawerMode('plan');
 
-    // Collapsed: the run has settled. One line that says what happened and reopens the drawer,
-    // because the plan that ran is worth being able to look back at even once it is done.
+    // Settled: nothing in the thread. The plan is still there -- the header's Plan button
+    // opens it, and the drawer's Map view lists every run in the conversation -- but a
+    // finished plan is not something the reader has to act on, and leaving a row under
+    // every answer turns the thread into a log of machinery rather than a conversation.
+    //
+    // This is why the card renders from the store rather than from message markdown: there
+    // is nothing to clean up when it stops being relevant, it simply stops rendering.
     if (historyEntry && !runInFlight) {
-        return (
-            <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
-                <button
-                    type="button"
-                    onClick={openReview}
-                    className="flex w-full items-center gap-2 text-left text-sm text-text-2 hover:text-text-1"
-                    aria-label={`Review the plan: ${summary.step_count} steps, ${outcomeLabel[historyEntry.status]}`}
-                >
-                    <ListChecks size={15} className="shrink-0 text-text-3" />
-                    <span className="text-text-1">Plan</span>
-                    <span aria-hidden="true" className="text-text-3">
-                        ·
-                    </span>
-                    <span>
-                        {summary.step_count} {summary.step_count === 1 ? 'step' : 'steps'}
-                    </span>
-                    <span aria-hidden="true" className="text-text-3">
-                        ·
-                    </span>
-                    <span className={outcomeTone[historyEntry.status]}>
-                        {outcomeLabel[historyEntry.status]}
-                    </span>
-                    <span aria-hidden="true" className="text-text-3">
-                        ·
-                    </span>
-                    <span className="text-accent">view</span>
-                </button>
-            </div>
-        );
+        return null;
     }
 
     // Running: a compact progress line. The full step list is a click away in the drawer, so this

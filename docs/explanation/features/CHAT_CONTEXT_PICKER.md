@@ -3,7 +3,7 @@
 Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
-**Implemented in version:** 0.261.087
+**Implemented in version:** 0.261.089
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal documents,
 `enable_group_workspaces` and `enable_public_workspaces` to reach those scopes.

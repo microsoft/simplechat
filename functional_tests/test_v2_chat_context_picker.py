@@ -2,8 +2,8 @@
 # test_v2_chat_context_picker.py
 """
 Functional test for the V2 chat context picker.
-Version: 0.261.087
-Implemented in: 0.261.087
+Version: 0.261.089
+Implemented in: 0.261.089
 
 The V2 composer shipped with a Documents button that was a plain on/off, and a
 ``selectedDocumentIds`` field that was declared, forwarded to both the chat
@@ -50,7 +50,7 @@ LOGIC_CHECK_TS = Path(__file__).resolve().parent / "test_v2_chat_context_request
 def test_the_version_carries_the_feature():
     """The picker is present from the version it was implemented in."""
     print("\nTesting version...")
-    assert_app_version_at_least("0.261.087")
+    assert_app_version_at_least("0.261.089")
     print("  The application version covers the context picker.")
     return True
 

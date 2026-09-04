@@ -2578,6 +2578,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
             model_deployment_name: event.model_deployment_name,
             agent_display_name: event.agent_display_name,
             augmented: event.augmented,
+            // Carried through so an orchestrated answer shows its sources exactly as a
+            // chat answer does. Dropping these left the reply citing documents in its prose
+            // with no citation chips under it and nothing in the Documents drawer.
+            hybrid_citations: event.hybrid_citations as ChatMessage['hybrid_citations'],
+            web_search_citations:
+                event.web_search_citations as ChatMessage['web_search_citations'],
             metadata: event.metadata,
             thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
         };
@@ -2604,6 +2610,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 reconnectPhase: null,
             };
         });
+
+        // The Documents drawer reads the conversation's used-document list rather than the
+        // message's citations, and the server only extends that list once the run finishes.
+        // Without this refetch the drawer keeps reporting the state it was fetched in --
+        // "No documents used yet" under an answer that plainly used one.
+        if (event.augmented) {
+            void get().loadMetadata(conversationId);
+        }
     },
 
     reassignOrchestrationTurn: ({

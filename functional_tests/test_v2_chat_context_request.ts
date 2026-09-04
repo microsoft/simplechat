@@ -1,8 +1,8 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.087
-// Implemented in: 0.261.087
+// Version: 0.261.089
+// Implemented in: 0.261.089
 //
 // These are the decisions that turn "the user picked a document" into fields the server acts
 // on, and each one fails as a wrong answer rather than an error:

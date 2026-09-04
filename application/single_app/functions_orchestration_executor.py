@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.085
+Version: 0.261.087
 """
 
 import logging
@@ -146,6 +146,11 @@ class RunContext:
     names here are the actual contract with the adapters, not the constructor signature. The
     accumulators (``evidence``, ``citations``, ``artifacts``, ``notes``, ``token_usage``) are
     what each step contributes to and what the terminal step answers from.
+
+    It also carries the request-scoped identity and catalog an adapter needs but cannot look
+    up itself: this object is built on the request thread and then read from the executor's
+    worker thread, where Flask's ``g``, ``session`` and ``current_app`` do not exist. Anything
+    an adapter would otherwise have fished out of ``g`` is captured here instead.
     """
 
     def __init__(
@@ -170,6 +175,10 @@ class RunContext:
         request_correlation_id=None,
         durable_execution_callback=None,
         resolve_source_manifest=None,
+        user_roles=None,
+        user_email=None,
+        agent_catalog=None,
+        user_enable_agents=True,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -197,6 +206,29 @@ class RunContext:
         # adapters fall back to the real resolver. Held here so re-authorization and the
         # tabular adapter use the same seam.
         self.resolve_source_manifest = resolve_source_manifest
+
+        # Request-scoped identity and catalog, captured on the request thread before the run's
+        # worker thread starts. execute_plan runs in a threading.Thread with no Flask request
+        # context, so adapters cannot read g/session/current_app; they read these instead.
+        #
+        # user_roles gates two app-role checks -- UrlAccessUser for reading URLs and
+        # DeepResearchUser for the deep research crawl. It fails CLOSED: an unknown value is
+        # normalized to "no roles", never to "all roles", so a break in this plumbing withholds
+        # a capability rather than granting it to everyone. An empty list is preserved (it means
+        # "authenticated, no roles"), but any non-list is treated as unknown for the same reason.
+        if isinstance(user_roles, (list, tuple, set)):
+            self.user_roles = list(user_roles)
+        else:
+            self.user_roles = None
+        self.user_email = user_email
+        # The agents this user may invoke, as full config records (not the planner projection).
+        # The agent adapter refuses any agent name absent from this list, so a plan can never
+        # invoke an agent the catalog did not offer this user, even after a repair.
+        self.agent_catalog = list(agent_catalog) if agent_catalog else None
+        # Semantic Kernel can be enabled deployment-wide while a user has agents switched off in
+        # their own settings; carried so the agent adapter re-checks it without touching user
+        # state it cannot reach from the worker thread.
+        self.user_enable_agents = bool(user_enable_agents)
 
         # Accumulators.
         self.evidence = []

@@ -1,8 +1,8 @@
 // test_v2_chat_context_tokens.mjs
 //
 // Runtime test for the `#[…]` grammar behind the V2 chat context picker.
-// Version: 0.261.087
-// Implemented in: 0.261.087
+// Version: 0.261.089
+// Implemented in: 0.261.089
 //
 // The composer holds each context reference twice: as a chip above the input and as literal
 // text inside it. Everything that can go wrong with that arrangement is a silent wrong answer
