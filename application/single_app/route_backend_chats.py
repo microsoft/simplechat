@@ -21604,6 +21604,13 @@ def register_route_backend_chats(bp):
                             'requested_document_ids': requested_selected_document_ids,
                             'active_group_ids': effective_active_group_ids,
                             'active_public_workspace_ids': effective_active_public_workspace_ids,
+                            # Recorded here for the same reason the non-streaming path records
+                            # it: without the tags, a retry or edit of this message replays a
+                            # narrower search than the one that produced the answer, because
+                            # _build_replayed_document_context has no tag filter to restore.
+                            # Streaming is the path the V2 client uses, so omitting it here
+                            # meant every tag-filtered message in that client replayed wrong.
+                            'tags': tags_filter,
                             'classification': classifications_to_send
                         }
                         if prior_grounded_source_merge:

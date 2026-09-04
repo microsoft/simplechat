@@ -119,3 +119,14 @@ Use this page when you can see a control in Chat but are not sure what it does o
 | `speech-input-btn` | Starts voice input capture for speech-to-text in chat. | Use it to dictate longer prompts, work hands-free, or reduce typing. | [`enable_speech_to_text_input`]({{ '/admin/knowledge/' | relative_url }}) |
 | `send-recording-btn` | Submits the captured recording for transcription and chat input. | Use it after recording a prompt you want SimpleChat to process. | Always available |
 | `cancel-recording-btn` | Stops and discards the current voice recording. | Use it when you misspoke, captured background noise, or no longer want to send the dictated prompt. | Always available |
+
+## Context references (V2 interface)
+
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They replace the classic scope, tags, and documents dropdowns with one list of what the next message is pointed at. See [Chat Context Picker]({{ '/explanation/features/CHAT_CONTEXT_PICKER/' | relative_url }}) for the full description.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Documents button | Opens a search panel above the composer listing your documents, tags, and workspaces grouped by workspace, with checkboxes. Its first row, **Search all my documents**, is the original on/off relevance search. | Use it to pick the specific documents an answer should come from, rather than hoping a relevance search surfaces them. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
+| `#` in the message box | Searches documents, tags, and workspaces across your personal workspace, your groups, and visible public workspaces, and inserts the chosen one as `#[Name]`. | Use it to name a document while writing, without leaving the sentence to open a menu. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
+| Context chips | Sit above the message box showing every reference the next message carries, grouped by workspace, each removable. Collapse to a per-workspace count once there are more than five. | Use them to confirm what an answer will be grounded in before you send, and to drop anything that should not be. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
+| Chat action on a tag | Opens the composer with that tag carried as a filter, so the message searches whatever holds the tag when it is sent. | Use it to ask questions of a whole grouping rather than of documents chosen one at a time. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}) |
