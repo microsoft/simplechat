@@ -399,10 +399,12 @@ var_redisCachePort = os.getenv("var_redisCachePort") or ""
 
 if not var_redisCacheKind and var_redisCacheHostName:
     # Fall back to the host name suffix when the deployment did not report a cache kind,
-    # so a stale environment cannot mislabel an Azure Cache for Redis instance.
+    # so a stale environment cannot mislabel an Azure Cache for Redis instance. Match the
+    # full suffix rather than a substring so a lookalike host name cannot be misread.
+    _redis_host_name = var_redisCacheHostName.strip().rstrip(".").lower()
     var_redisCacheKind = (
         "managed"
-        if ".redis.azure.net" in var_redisCacheHostName.strip().lower()
+        if _redis_host_name.endswith((".redis.azure.net", ".redisenterprise.cache.azure.net"))
         else "classic"
     )
 var_videoIndexerName = os.getenv("var_videoIndexerName")

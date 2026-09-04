@@ -223,6 +223,36 @@ def test_session_and_app_cache_clients_get_distinct_providers():
     return True
 
 
+def test_admin_connection_test_does_not_expose_credential_errors():
+    """A failed Redis client build must not echo Key Vault or token details to the browser."""
+    print("Testing admin connection test error hardening...")
+    import re
+
+    route_file = os.path.join(APP_DIR, "route_backend_settings.py")
+    with open(route_file, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    start = source.index("def _test_redis_connection(")
+    end = source.index("def _test_embedding_connection(")
+    body = source[start:end]
+
+    construction_block = body[body.index("create_redis_client("):body.index("test_key_simplechat")]
+
+    # Validation messages are our own and safe; credential resolution errors are not.
+    assert "except ValueError" in construction_block, (
+        "Validation errors should be surfaced separately from credential errors."
+    )
+    assert not re.search(r"jsonify\(\{\s*'error':\s*f'[^']*\{str\(client_error\)\}", construction_block), (
+        "The client construction error must not be returned to the browser."
+    )
+    assert "[REDIS_TEST]" in construction_block, (
+        "Credential errors must be logged for diagnosis instead of returned."
+    )
+
+    print("Test passed!")
+    return True
+
+
 def test_version_includes_managed_redis_support():
     """The running application must be at or beyond the implementation version."""
     print("Testing application version...")
@@ -240,6 +270,7 @@ if __name__ == "__main__":
         test_credential_provider_falls_back_without_redis_entraid,
         test_streaming_provider_is_shared_and_one_shot_is_not,
         test_session_and_app_cache_clients_get_distinct_providers,
+        test_admin_connection_test_does_not_expose_credential_errors,
         test_version_includes_managed_redis_support,
     ]
     results = []

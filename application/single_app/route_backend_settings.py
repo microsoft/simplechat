@@ -1678,9 +1678,20 @@ def _test_redis_connection(payload):
             streaming_credentials=False,
             socket_connect_timeout=5
         )
+    except ValueError as validation_error:
+        # Raised by the client factory for missing host, key, or Key Vault secret name.
+        # These messages are our own and safe to show the admin.
+        return jsonify({'error': str(validation_error)}), 400
     except Exception as client_error:
-        log_event(f"[REDIS_TEST] Client construction failed: {str(client_error)}", level="error")
-        return jsonify({'error': f'Redis connection error: {str(client_error)}'}), 500
+        # Client construction resolves credentials, so the error can carry Key Vault secret
+        # names, vault URIs, or token details. Log them and keep the response generic.
+        log_event(
+            f"[REDIS_TEST] Redis client construction failed for auth type '{redis_auth_type}': {str(client_error)}",
+            level="error",
+        )
+        return jsonify({
+            'error': 'Failed to build the Redis connection. Check Application Insights using "[REDIS_TEST]" for details.'
+        }), 500
 
     try:
         test_key = "test_key_simplechat"

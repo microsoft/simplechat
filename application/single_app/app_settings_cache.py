@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 # diagnostics code paths share one place that resolves service type, port, and credentials.
 # These names are re-exported for existing callers.
 from functions_redis_client import (  # noqa: F401
+    AUTH_TYPE_MANAGED_IDENTITY,
     CREDENTIAL_PURPOSE_APP_CACHE,
     REDIS_ENTRA_TOKEN_SCOPE,
     REDIS_TOKEN_REFRESH_BUFFER_SECONDS,
@@ -74,12 +75,10 @@ def create_redis_managed_identity_client(redis_url, settings=None, **redis_kwarg
     Retained as a thin wrapper so existing callers keep working; the port, TLS, and
     credential provider are resolved by functions_redis_client.
     """
-    import functions_redis_client
-
-    return functions_redis_client.create_redis_client(
+    return create_redis_client(
         settings=settings,
         redis_url=redis_url,
-        auth_type=functions_redis_client.AUTH_TYPE_MANAGED_IDENTITY,
+        auth_type=AUTH_TYPE_MANAGED_IDENTITY,
         **redis_kwargs
     )
 
