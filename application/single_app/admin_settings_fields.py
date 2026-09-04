@@ -1504,6 +1504,525 @@ ADMIN_SETTINGS_FIELDS = {
             },
         },
     ],
+    # ------------------------------------------------------------------
+    # Knowledge / Document Extraction
+    #
+    # Reordered relative to the server-rendered pane, which is the point of
+    # describing it. There, "Enable Enhanced extraction" is the first control and
+    # the Document Intelligence endpoint and key are the last, several hundred
+    # lines below, after the extraction mode, formula extraction, Content
+    # Understanding and Office image options. An administrator turns a feature on
+    # and then scrolls past everything that depends on the connection before
+    # reaching the connection itself.
+    #
+    # Here the connection comes first and the behaviour that needs it follows,
+    # declaring `requires` so a toggle flipped without a configured endpoint says
+    # so rather than silently doing nothing.
+    # ------------------------------------------------------------------
+    "document-intelligence-section": [
+        {
+            "key": "enable_document_intelligence_apim",
+            "type": "switch",
+            "label": "Route through API Management",
+            "help": (
+                "Send Document Intelligence requests through API Management for "
+                "centralized monitoring and control instead of reaching the service "
+                "directly."
+            ),
+            "default": False,
+            "group": {
+                "id": "connection",
+                "label": "Connection",
+                "variant": "connection",
+                "help": (
+                    "Document Intelligence reads PDFs and images. Nothing else in this "
+                    "tab works until it is reachable."
+                ),
+            },
+        },
+        {
+            "key": "azure_document_intelligence_endpoint",
+            "type": "text",
+            "label": "Document Intelligence Endpoint",
+            "default": "",
+            "required": True,
+            "placeholder": "https://your-resource.cognitiveservices.azure.com/",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": False},
+        },
+        {
+            "key": "azure_document_intelligence_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity requires the app identity to hold Cognitive Services "
+                "User on the resource."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": False},
+        },
+        {
+            "key": "azure_document_intelligence_key",
+            "type": "secret",
+            "label": "Document Intelligence Key",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_document_intelligence_apim", "equals": False},
+                    {"key": "azure_document_intelligence_authentication_type", "equals": "key"},
+                ]
+            },
+        },
+        {
+            "key": "azure_apim_document_intelligence_endpoint",
+            "type": "text",
+            "label": "API Management Endpoint",
+            "default": "",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_document_intelligence_subscription_key",
+            "type": "secret",
+            "label": "API Management Subscription Key",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_document_intelligence_apim", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test Document Intelligence connection",
+            "help": "Analyses a small sample document using the values above.",
+            "test_type": "azure_doc_intelligence",
+            "test_payload": {
+                "enable_apim": {"key": "enable_document_intelligence_apim"},
+                "document_intelligence_pdf_image_extraction_mode": {
+                    "key": "document_intelligence_pdf_image_extraction_mode"
+                },
+                "document_intelligence_auto_sample_pages": {
+                    "key": "document_intelligence_auto_sample_pages"
+                },
+                "direct.endpoint": {
+                    "key": "azure_document_intelligence_endpoint",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": False},
+                },
+                "direct.auth_type": {
+                    "key": "azure_document_intelligence_authentication_type",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": False},
+                },
+                "direct.key": {
+                    "key": "azure_document_intelligence_key",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": False},
+                },
+                "apim.endpoint": {
+                    "key": "azure_apim_document_intelligence_endpoint",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": True},
+                },
+                "apim.subscription_key": {
+                    "key": "azure_apim_document_intelligence_subscription_key",
+                    "when": {"key": "enable_document_intelligence_apim", "equals": True},
+                },
+            },
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "document_intelligence_pdf_image_extraction_mode",
+            "type": "select",
+            "label": "PDF and Image Extraction Mode",
+            "help": (
+                "Standard is Document Intelligence Read: fastest and cheapest for plain "
+                "text. Enhanced captures tables, page structure, forms and checkbox "
+                "states, at roughly six times the cost per thousand pages. Auto samples "
+                "the first pages and picks."
+            ),
+            "default": "read",
+            "options": [
+                {"value": "read", "label": "Standard — faster text extraction"},
+                {
+                    "value": "layout",
+                    "label": "Enhanced — richer structure, tables and checkbox states",
+                },
+                {
+                    "value": "auto",
+                    "label": "Auto — sample first pages, then choose",
+                },
+            ],
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+        },
+        {
+            "key": "document_intelligence_auto_sample_pages",
+            "type": "number",
+            "label": "Auto Sample Pages",
+            "help": (
+                "How many opening PDF pages Auto inspects. If it finds tables, selection "
+                "marks or figures the whole document uses Enhanced; otherwise it "
+                "finishes with Standard. Images always use Enhanced in Auto mode."
+            ),
+            "default": 3,
+            "min": 1,
+            "max": 20,
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+            "depends_on": {
+                "key": "document_intelligence_pdf_image_extraction_mode",
+                "equals": "auto",
+            },
+        },
+        {
+            "key": "enable_enhanced_extraction",
+            "type": "switch",
+            "label": "Enable Enhanced extraction",
+            "help": (
+                "Uses Azure AI Content Understanding, which returns tables, page "
+                "structure, checkbox states and descriptions of figures and charts. "
+                "Falls back to Document Intelligence Layout where Content Understanding "
+                "is unavailable or unconfigured."
+            ),
+            "default": False,
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+        },
+        {
+            "key": "enable_document_intelligence_formula_extraction",
+            "type": "switch",
+            "label": "Extract mathematical formulas",
+            "help": (
+                "Captures equations as LaTeX rather than approximate OCR text. This is a "
+                "billed Document Intelligence add-on that adds per-page cost to every "
+                "Enhanced extraction, and it has no effect while extraction is Standard."
+            ),
+            "default": False,
+            "group": {"id": "extraction", "label": "Extraction", "variant": "behavior"},
+        },
+    ],
+    # Its own section now. The card has always been in the extraction pane but
+    # was missing from ADMIN_NAV, so neither interface could navigate to it.
+    "content-understanding-section": [
+        {
+            "key": "azure_content_understanding_endpoint",
+            "type": "text",
+            "label": "Foundry Endpoint",
+            "help": (
+                "The Microsoft Foundry resource endpoint, with no trailing path. Leave "
+                "blank and Enhanced extraction falls back to Document Intelligence "
+                "Layout."
+            ),
+            "default": "",
+            "placeholder": "https://your-resource.services.ai.azure.com",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "azure_content_understanding_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity requires the Cognitive Services User role on the "
+                "Foundry resource."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "azure_content_understanding_key",
+            "type": "secret",
+            "label": "Content Understanding Key",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {
+                "key": "azure_content_understanding_authentication_type",
+                "equals": "key",
+            },
+        },
+        {
+            "key": "azure_content_understanding_api_version",
+            "type": "text",
+            "label": "API Version",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+        },
+        {
+            "key": "azure_content_understanding_analyzer_id",
+            "type": "text",
+            "label": "Document Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+        },
+        {
+            "key": "azure_content_understanding_image_analyzer_id",
+            "type": "text",
+            "label": "Image Analyzer",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "analyzers", "label": "Analyzers", "variant": "advanced"},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test Content Understanding connection",
+            "test_type": "content_understanding",
+            "test_payload": {
+                "endpoint": {"key": "azure_content_understanding_endpoint"},
+                "authentication_type": {
+                    "key": "azure_content_understanding_authentication_type"
+                },
+                "key": {"key": "azure_content_understanding_key"},
+                "api_version": {"key": "azure_content_understanding_api_version"},
+                "analyzer_id": {"key": "azure_content_understanding_analyzer_id"},
+                "image_analyzer_id": {
+                    "key": "azure_content_understanding_image_analyzer_id"
+                },
+            },
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+    ],
+    # Also promoted out of the extraction card into a section of its own. It is
+    # independent of Enhanced extraction despite sitting inside it in the V1
+    # markup, which is what made it read as part of that feature.
+    "office-embedded-image-section": [
+        {
+            "key": "enable_office_embedded_image_analysis",
+            "type": "switch",
+            "label": "Analyze images embedded in DOCX and PPTX files",
+            "help": (
+                "Neither extraction engine describes figures inside Word and PowerPoint "
+                "files. With this on, embedded images are pulled out, analysed with "
+                "whichever engine backs the selected extraction mode, and indexed as "
+                "their own citable chunks. Works with Standard extraction too."
+            ),
+            "default": True,
+            "role": "capability",
+        },
+        {
+            "key": "office_embedded_image_min_pixels",
+            "type": "number",
+            "label": "Minimum Image Size (pixels)",
+            "help": "Images narrower or shorter than this are skipped as icons or spacers.",
+            "default": 150,
+            "min": 1,
+            "max": 2000,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_office_embedded_image_analysis", "equals": True},
+        },
+        {
+            "key": "office_embedded_image_max_per_document",
+            "type": "number",
+            "label": "Maximum Images Per Document",
+            "help": "Caps per-document cost. Duplicate images are analysed once.",
+            "default": 25,
+            "min": 0,
+            "max": 200,
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+            "depends_on": {"key": "enable_office_embedded_image_analysis", "equals": True},
+        },
+    ],
+    # Chunk sizes live in a single `chunk_size` object as {key: {value, unit}},
+    # so each field declares its path into it. The assembled object is clamped to
+    # the embedding model's budget on save by PATH_CONTAINER_NORMALIZERS, which
+    # is what the server-rendered form does too: a chunk larger than that budget
+    # can never embed, whatever an administrator saves.
+    #
+    # The cap is stated up front rather than as a warning that only appears once
+    # it has already been exceeded.
+    "chunk-size-section": [
+        {
+            "key": "enable_chunk_size_override",
+            "type": "switch",
+            "label": "Enable custom chunk sizes by file type",
+            "help": (
+                "Applies to new uploads only; documents already indexed keep the chunks "
+                "they were built with. Sizes are capped at what fits in one embedding "
+                "request for the deployed model, and anything larger is reduced on save."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "chunk_size_txt",
+            "type": "number",
+            "label": "TXT (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.txt.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_log",
+            "type": "number",
+            "label": "LOG (words)",
+            "default": 1000,
+            "min": 1,
+            "paths": ["chunk_size.log.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_doc",
+            "type": "number",
+            "label": "DOC (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.doc.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_docm",
+            "type": "number",
+            "label": "DOCM (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.docm.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_docx",
+            "type": "number",
+            "label": "DOCX (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.docx.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_html",
+            "type": "number",
+            "label": "HTML (words)",
+            "default": 1200,
+            "min": 1,
+            "paths": ["chunk_size.html.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_md",
+            "type": "number",
+            "label": "Markdown (words)",
+            "default": 1200,
+            "min": 1,
+            "paths": ["chunk_size.md.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_xml",
+            "type": "number",
+            "label": "XML (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.xml.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_yaml",
+            "type": "number",
+            "label": "YAML (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.yaml.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_yml",
+            "type": "number",
+            "label": "YML (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.yml.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_json",
+            "type": "number",
+            "label": "JSON (characters)",
+            "default": 4000,
+            "min": 1,
+            "paths": ["chunk_size.json.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_csv",
+            "type": "number",
+            "label": "CSV (characters)",
+            "default": 800,
+            "min": 1,
+            "paths": ["chunk_size.csv.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_excel",
+            "type": "number",
+            "label": "Excel (characters)",
+            "default": 800,
+            "min": 1,
+            "paths": ["chunk_size.excel.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_transcript",
+            "type": "number",
+            "label": "Transcripts (words)",
+            "default": 400,
+            "min": 1,
+            "paths": ["chunk_size.transcript.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_pdf",
+            "type": "number",
+            "label": "PDF (pages)",
+            "default": 1,
+            "min": 1,
+            "paths": ["chunk_size.pdf.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+        {
+            "key": "chunk_size_pptx",
+            "type": "number",
+            "label": "PPT/PPTX (slides)",
+            "default": 1,
+            "min": 1,
+            "paths": ["chunk_size.pptx.value"],
+            "group": {"id": "sizes", "label": "Sizes by file type", "variant": "behavior"},
+            "depends_on": {"key": "enable_chunk_size_override", "equals": True},
+        },
+    ],
+    # The model picker itself arrives with the vision capability work, which
+    # replaces the name-matching heuristic both selectors use today.
+    "metadata-extraction-section": [
+        {
+            "key": "enable_extract_meta_data",
+            "type": "switch",
+            "label": "Enable metadata extraction",
+            "help": (
+                "Runs a model over each uploaded document to infer a title, authors, "
+                "subject and keywords, which are then searchable alongside the content."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -2032,7 +2551,62 @@ def write_nested_setting(document, path, value):
     cursor[parts[-1]] = value
 
 
-def _apply_nested_paths(normalized, current_settings):
+def _normalize_chunk_size_container(container, current_settings):
+    """Clamp assembled chunk sizes to the caps the embedding model allows.
+
+    A chunk has to fit in one embedding request, so a size above the model's
+    budget can never embed no matter what is saved. The server-rendered form
+    computes those caps from the deployed embedding model and clamps on save;
+    doing the same here is what stops the two interfaces accepting different
+    values for the same setting.
+
+    Imported lazily because the cap depends on the live settings document, and
+    this module is otherwise a pure declaration that several tests import
+    without ``config`` available.
+    """
+    try:
+        from functions_settings import get_chunk_size_defaults, get_chunk_size_cap
+    except Exception:
+        # Without the caps the safe thing is to leave the values alone rather
+        # than write unclamped ones; the embed path bounds them again anyway.
+        return container, {}
+
+    defaults = get_chunk_size_defaults()
+    warnings = {}
+
+    for key, meta in list(container.items()):
+        if not isinstance(meta, dict) or "value" not in meta:
+            continue
+
+        unit = meta.get("unit") or defaults.get(key, {}).get("unit")
+        if unit:
+            meta["unit"] = unit
+
+        try:
+            value = int(meta["value"])
+        except (TypeError, ValueError):
+            value = defaults.get(key, {}).get("value", 1)
+
+        cap = get_chunk_size_cap(current_settings, unit)
+        clamped = max(1, min(value, cap) if cap else max(1, value))
+        if clamped != value:
+            warnings[f"chunk_size_{key}"] = (
+                f"Reduced to {clamped}, the largest {unit or 'value'} that fits in one "
+                "embedding request for the deployed model."
+            )
+        meta["value"] = clamped
+
+    return container, warnings
+
+
+# Assembled containers that need a final pass once every declared leaf has been
+# written into them. Keyed by the top-level settings key the container lives at.
+PATH_CONTAINER_NORMALIZERS = {
+    "chunk_size": _normalize_chunk_size_container,
+}
+
+
+def _apply_nested_paths(normalized, current_settings, warnings=None):
     """Move path-declared values to where they are actually stored.
 
     Most settings are top-level keys, so the normalized dict can be handed
@@ -2074,6 +2648,15 @@ def _apply_nested_paths(normalized, current_settings):
                 stored = current_settings.get(root)
                 containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
             write_nested_setting(containers[root], remainder, value)
+
+    for root, container in containers.items():
+        container_normalizer = PATH_CONTAINER_NORMALIZERS.get(root)
+        if container_normalizer:
+            containers[root], container_warnings = container_normalizer(
+                container, current_settings
+            )
+            if warnings is not None:
+                warnings.update(container_warnings)
 
     normalized.update(containers)
     return normalized
@@ -2156,7 +2739,7 @@ def normalize_admin_settings_updates(updates, current_settings=None):
 
     # Applied last so the checks above still see flat keys, which is the shape
     # they and the schema are written against.
-    _apply_nested_paths(normalized, current)
+    _apply_nested_paths(normalized, current, warnings)
 
     return normalized, errors, warnings
 
