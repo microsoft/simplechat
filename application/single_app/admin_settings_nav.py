@@ -133,11 +133,18 @@ ADMIN_NAV = [
         "icon": "bi-robot",
         "tabs": [
             {
+                # The nested cards listed here already exist in the V1 pane, so
+                # naming them costs the server-rendered page nothing while giving
+                # the V2 surface -- which draws one section per entry -- somewhere
+                # to put the runtime gate, the workspace permissions and the
+                # Agents page copy instead of one undifferentiated block.
                 "id": "agents",
                 "label": "Agents",
                 "icon": "bi-robot",
                 "sections": [
-                    {"id": "agents-config", "label": "Agents Configuration", "icon": "bi-robot"},
+                    {"id": "agents-config", "label": "Agent Runtime", "icon": "bi-robot"},
+                    {"id": "agent-toggles-card", "label": "Workspace Agent Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
+                    {"id": "agents-page-customization-card", "label": "Agents Page", "icon": "bi-palette"},
                     {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},
                 ],
             },
@@ -146,8 +153,10 @@ ADMIN_NAV = [
                 "label": "Actions",
                 "icon": "bi-plugin",
                 "sections": [
-                    {"id": "document-action-capabilities-card", "label": "Document Action Capabilities", "icon": "bi-files"},
-                    {"id": "actions-config", "label": "Actions Configuration", "icon": "bi-plugin"},
+                    {"id": "document-action-capabilities-card", "label": "Document Actions", "icon": "bi-files"},
+                    {"id": "plugin-feature-toggles", "label": "Workspace Action Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
+                    {"id": "core-plugin-toggles", "label": "Built-in Actions", "icon": "bi-tools"},
+                    {"id": "actions-config", "label": "Global Actions", "icon": "bi-plugin"},
                 ],
             },
             {

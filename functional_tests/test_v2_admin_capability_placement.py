@@ -68,7 +68,7 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security")
+FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security", "agents-actions")
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -83,7 +83,22 @@ RELOCATED_CAPABILITIES = {
     "enable_support_latest_features": ("support-menu-section", "support-menu"),
     "enable_support_menu": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
-    "enable_text_plugin": ("actions-config", "actions"),
+    # Agents & Actions. Before these were declared, enable_semantic_kernel matched
+    # no section at all and was filed under "Other capabilities", and the plugin
+    # toggles were scattered: enable_text_plugin matched "text" in
+    # home-page-text-section, and the rest matched nothing. They now live together
+    # in core-plugin-toggles, which is why actions-config no longer declares any.
+    "enable_semantic_kernel": ("agents-config", "agents"),
+    "enable_agent_template_gallery": ("agent-toggles-card", "agents"),
+    "enable_time_plugin": ("core-plugin-toggles", "actions"),
+    "enable_http_plugin": ("core-plugin-toggles", "actions"),
+    "enable_wait_plugin": ("core-plugin-toggles", "actions"),
+    "enable_math_plugin": ("core-plugin-toggles", "actions"),
+    "enable_text_plugin": ("core-plugin-toggles", "actions"),
+    "enable_default_embedding_model_plugin": ("core-plugin-toggles", "actions"),
+    # Declared under Chat, where it is edited. The Actions surface carries a
+    # read-only mirror of it, which must not claim the key.
+    "enable_fact_memory_plugin": ("fact-memory-section", "chat-experience"),
     # Guessed into the Chat group before the Chat work: "audio", "video" and
     # "file" all reached chat-file-uploads-section, and "enhanced" reached
     # enhanced-citations-section.
@@ -97,7 +112,6 @@ RELOCATED_CAPABILITIES = {
     "enable_chat_completion_audio_cues": ("desktop-notifications-section", "audio-video"),
     "enable_video_file_support": ("video-intelligence-section", "audio-video"),
     "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
-    "enable_default_embedding_model_plugin": ("actions-config", "actions"),
 }
 
 # Keys the scan must skip entirely, because they are not settings an
@@ -266,7 +280,15 @@ def test_non_editable_capabilities_are_suppressed_not_declared():
     print("\nTesting the suppressed capability declarations...")
 
     suppressed = set(fields_module.get_suppressed_capability_keys())
-    declared = fields_module.get_declared_setting_keys()
+    # A read-only mirror is not an editable declaration. It reports a derived
+    # value and names what computes it, which is more use to an administrator
+    # than the key being absent entirely, and it cannot be saved: the schema
+    # rejects a write to a readonly field.
+    editable = {
+        field["key"]
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key") and not field.get("readonly")
+    }
 
     problems = []
     for key in EXPECTED_SUPPRESSED_CAPABILITIES:
@@ -274,7 +296,7 @@ def test_non_editable_capabilities_are_suppressed_not_declared():
             problems.append(
                 f"{key}: not suppressed, so the fallback scan will draw a switch for it"
             )
-        if key in declared:
+        if key in editable:
             problems.append(
                 f"{key}: declared as an editable field, but it is not an editable setting"
             )
@@ -324,8 +346,15 @@ def test_relocated_capabilities_are_declared_where_they_belong():
     declared_sections = {}
     for section_id, field in fields_module.iter_fields():
         key = field.get("key")
-        if key:
-            declared_sections[key] = (section_id, field)
+        if not key:
+            continue
+        # A key may also be declared as a read-only mirror in another section.
+        # The writable declaration is the one that owns the setting, so a mirror
+        # never displaces it here.
+        existing = declared_sections.get(key)
+        if existing and existing[1].get("readonly") is not True and field.get("readonly"):
+            continue
+        declared_sections[key] = (section_id, field)
 
     expected_sections = {
         key: section for key, (section, _pane) in RELOCATED_CAPABILITIES.items()

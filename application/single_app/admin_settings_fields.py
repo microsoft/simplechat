@@ -59,8 +59,8 @@ Beyond a field's type, four optional descriptors shape how a section reads:
     input would otherwise save to a top-level key nothing reads. See
     ``_apply_nested_paths``.
 
-The Appearance, Chat, Knowledge, Workflow, Workspaces and Security groups are
-described in full. Sections with no entry here fall back to the V2 surface's
+The Appearance, Agents & Actions, Chat, Knowledge, Workflow, Workspaces and
+Security groups are described in full. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
 places a key by guessing from shared word stems, and declaring a field is the
@@ -151,9 +151,8 @@ FIELD_TYPES = (
     "string_list",
     "image",
     "link_list",
+    "entry_list",
     "component",
-    "secret",
-    "string_list",
     "id_list",
     "group_picker",
     "status",
@@ -203,6 +202,10 @@ TEXT_INPUT_TYPES = ("text", "email", "url")
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
 USER_AGREEMENT_APPLY_TO_VALUES = ("personal", "group", "public", "chat")
+
+# Mirrors AGENTS_PAGE_PROMOTED_POPULAR_ORDER_OPTIONS in functions_settings.py.
+AGENTS_PAGE_PROMOTED_POPULAR_ORDERS = ("before", "after", "mixed")
+AGENTS_PAGE_HERO_COLOR_MODES = ("single", "two_tone")
 
 LOGO_SCALE_MIN_PERCENT = 50
 LOGO_SCALE_MAX_PERCENT = 500
@@ -261,6 +264,22 @@ WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
     "history is not sent for web search, but any sensitive content you paste into this "
     "message may be sent."
 )
+
+# Document action limits, mirrored from DOCUMENT_ACTION_LIMIT_BOUNDS and
+# DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py, which
+# cannot be imported here for the same reason. Pinned by
+# test_v2_admin_actions_parity.py rather than left to drift.
+DOCUMENT_ACTION_CHAT_MIN_LIMIT = 2
+DOCUMENT_ACTION_CHAT_MAX_LIMIT = 300
+DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT = 3
+DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT = 2
+DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT = 1000
+DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT = 10
+
+# Schemes permitted for administrator-configured navigation links. These render
+# into an anchor href, so allowing arbitrary schemes would let a saved link
+# carry javascript: into every page's navigation.
+EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
 
 # Front Door terminates TLS and rewrites the host, so the value here becomes the
 # base of every generated redirect. A scheme-less or pathful value would produce
@@ -3692,6 +3711,776 @@ ADMIN_SETTINGS_FIELDS = {
             "step": 1,
         },
     ],
+    # --- Agents & Actions -------------------------------------------------
+    #
+    # The V1 pane renders the whole Agents tab as one card with several nested
+    # cards inside it. The fields below are filed under those nested card ids,
+    # which ``ADMIN_NAV`` now names as sections, so the V2 surface can separate
+    # the runtime gate from the workspace permissions and the Agents page copy
+    # without the server-rendered page changing at all.
+    "agents-config": [
+        {
+            "key": "enable_semantic_kernel",
+            "type": "switch",
+            "label": "Enable Agents",
+            "help": (
+                "Runs the Semantic Kernel agent runtime. Everything else in this "
+                "group depends on it: the Agents catalog page, the global agent "
+                "and action tables, and every workspace permission are all "
+                "unavailable while it is off."
+            ),
+            "default": False,
+        },
+        {
+            "key": "per_user_semantic_kernel",
+            "type": "switch",
+            "label": "Workspace Mode",
+            "help": (
+                "Decides where agents and actions come from. Off means everyone "
+                "shares one global set and an administrator picks the single agent "
+                "that answers. On means each user and group keeps their own "
+                "collection, and the workspace permissions become available."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "merge_global_semantic_kernel_with_workspace",
+            "type": "switch",
+            "label": "Add Global Agents and Actions to Workspaces",
+            "help": (
+                "Folds the global set into every workspace collection, so people "
+                "see both what they built and what the organisation publishes. "
+                "Without this, turning on Workspace Mode hides the global set."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_semantic_kernel", "equals": True},
+                {"key": "per_user_semantic_kernel", "equals": True},
+            ],
+        },
+        {
+            # Derived by POST /api/orchestration_settings from the chosen
+            # orchestration mode. The fallback scan used to render it as a live
+            # switch under AI Models, where setting it did nothing.
+            "key": "enable_multi_agent_orchestration",
+            "type": "switch",
+            "label": "Multi-Agent Orchestration",
+            "help": (
+                "Whether the runtime coordinates several agents rather than "
+                "routing to one. Follows the orchestration mode; this deployment "
+                "offers only single-agent orchestration."
+            ),
+            "default": False,
+            "readonly": True,
+            "managed_by": "Agent Orchestration",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            # Reads and writes through /api/orchestration_settings rather than the
+            # settings PATCH, and draws nothing while the deployment offers a
+            # single orchestration type, which is the case today.
+            "type": "component",
+            "component": "agent-orchestration",
+            "label": "Agent Orchestration",
+            "help": (
+                "How a chat is routed across agents. Only appears when this "
+                "deployment offers more than one orchestration type."
+            ),
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+    ],
+    # Rendered by V1 only while Workspace Mode is on, which ``ADMIN_NAV`` now
+    # states as a section condition, so V2 hides the section on the same terms.
+    "agent-toggles-card": [
+        {
+            "key": "allow_user_agents",
+            "type": "switch",
+            "label": "Allow Personal Agents",
+            "help": (
+                "People can build and keep agents in their own workspace. Use a "
+                "personal agent governance policy when only some of them should."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_agents",
+            "type": "switch",
+            "label": "Allow Group Agents",
+            "help": (
+                "Groups can own agents their members share. Group workspaces must "
+                "also be enabled under Workspaces, or the agents stay invisible."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_user_custom_endpoints",
+            "type": "switch",
+            "label": "Allow Personal Custom Endpoints",
+            "help": (
+                "People can point their own agents at a model endpoint they "
+                "configure themselves instead of the deployment's shared models. "
+                "This lets model traffic leave the endpoints you administer."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_custom_endpoints",
+            "type": "switch",
+            "label": "Allow Group Custom Endpoints",
+            "help": (
+                "The same for group-owned agents. Group workspaces must also be "
+                "enabled under Workspaces."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_agent_template_gallery",
+            "type": "switch",
+            "label": "Enable Agent Template Gallery",
+            "help": (
+                "Gives workspace users a gallery of approved agents to start from "
+                "rather than a blank editor, and adds the Agent Template Approvals "
+                "section below."
+            ),
+            "default": True,
+        },
+    ],
+    # Customises the /agents catalog page. That page carries
+    # @enabled_required('enable_semantic_kernel'), so none of this copy is
+    # reachable while agents are off -- which is why every field depends on it.
+    "agents-page-customization-card": [
+        {
+            "key": "agents_page_title",
+            "type": "text",
+            "label": "Hero Title",
+            "help": "Headline at the top of the Agents catalog page.",
+            "default": "Find your next AI partner",
+            "max_length": 120,
+            "fallback_when_empty": True,
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_subtitle",
+            "type": "text",
+            "label": "Hero Subtitle",
+            "help": "Supporting line under the headline.",
+            "default": "Explore specialized agents built to accelerate how you work.",
+            "max_length": 240,
+            "fallback_when_empty": True,
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_hero_color_mode",
+            "type": "select",
+            "label": "Hero Color Mode",
+            "help": "A flat colour, or a gradient between the two colours below.",
+            "default": "single",
+            "options": [
+                {"value": "single", "label": "Single color"},
+                {"value": "two_tone", "label": "Two tone gradient"},
+            ],
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_hero_primary_color",
+            "type": "color",
+            "label": "Primary Color",
+            "help": "Hero background, and the first stop of the gradient.",
+            "default": "#0f172a",
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_hero_secondary_color",
+            "type": "color",
+            "label": "Secondary Color",
+            "help": "Second stop of the gradient.",
+            "default": "#1e293b",
+            "group": "Hero",
+            "depends_on": [
+                {"key": "enable_semantic_kernel", "equals": True},
+                {"key": "agents_page_hero_color_mode", "equals": "two_tone"},
+            ],
+        },
+        {
+            "key": "agents_page_disclaimer_markdown",
+            "type": "textarea",
+            "label": "Disclaimer or Guidance Text",
+            "help": (
+                "Shown under the hero. Use it for who to contact about a new agent, "
+                "or the governance reminder people need before picking one."
+            ),
+            "default": "",
+            "rows": 4,
+            "markdown": True,
+            "max_length": 3000,
+            "placeholder": "Need a new agent? Contact ai-support@example.com.",
+            "group": "Guidance",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_show_instructions_in_details",
+            "type": "switch",
+            "label": "Show Agent Instructions in Details",
+            "help": (
+                "Reveals an agent's system prompt in its details popup and in the "
+                "catalog API response. Turn it off when instructions carry wording "
+                "or internal references you would rather not publish."
+            ),
+            "default": True,
+            "group": "Guidance",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_promoted_popular_order",
+            "type": "select",
+            "label": "Promoted Placement",
+            "help": (
+                "Where promoted agents sit relative to the ones that earned their "
+                "place through usage."
+            ),
+            "default": "before",
+            "options": [
+                {"value": "before", "label": "Before actual popular agents"},
+                {"value": "after", "label": "After actual popular agents"},
+                {"value": "mixed", "label": "Mixed in by usage"},
+            ],
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_promoted_popular_tag_enabled",
+            "type": "switch",
+            "label": "Show Promoted Tag",
+            "help": "Marks promoted agents so their placement is not mistaken for usage.",
+            "default": True,
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_promoted_popular_tag_label",
+            "type": "text",
+            "label": "Promoted Tag Label",
+            "help": "Wording of that tag.",
+            "default": "Promoted",
+            "max_length": 40,
+            "fallback_when_empty": True,
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": [
+                {"key": "enable_semantic_kernel", "equals": True},
+                {"key": "agents_page_promoted_popular_tag_enabled", "equals": True},
+            ],
+        },
+        {
+            # Writes agents_page_promoted_popular_agents into the draft. The list
+            # is normalized on save by the delegated normalizer below.
+            "type": "component",
+            "component": "promoted-popular-agents",
+            "key": "agents_page_promoted_popular_agents",
+            "label": "Promoted Agents",
+            "help": (
+                "Puts chosen agents in the Popular tab before they have any usage "
+                "behind them, which is how a brand new agent gets discovered. "
+                "People only ever see agents already visible to them."
+            ),
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+    ],
+    "agent-template-approvals-section": [
+        {
+            "key": "agent_templates_allow_user_submission",
+            "type": "switch",
+            "label": "Allow User Template Submissions",
+            "help": (
+                "Workspace users can offer an agent they built as a template for "
+                "everyone else, which is how a gallery grows without an admin "
+                "authoring every entry."
+            ),
+            "default": True,
+        },
+        {
+            "key": "agent_templates_require_approval",
+            "type": "switch",
+            "label": "Require Admin Approval",
+            "help": (
+                "Holds submissions in the approvals queue instead of publishing "
+                "them straight into the gallery."
+            ),
+            "default": True,
+            "depends_on": {"key": "agent_templates_allow_user_submission", "equals": True},
+        },
+    ],
+    # --- Actions ----------------------------------------------------------
+    #
+    # Analyze and Comparison are stored as one nested object rather than as six
+    # top-level keys, so each field names the path it writes and the container is
+    # reassembled on save. Both limits are bounded by
+    # DOCUMENT_ACTION_LIMIT_BOUNDS, which the container normalizer enforces.
+    "document-action-capabilities-card": [
+        {
+            "key": "document_action_analyze_enabled",
+            "settings_path": ["document_action_capabilities", "analyze", "enabled"],
+            "type": "switch",
+            "label": "Enable Analyze",
+            "help": (
+                "Offers Analyze in the Action menu in chat and workflows. It reads "
+                "the selected documents in full rather than searching them, so an "
+                "answer covers every one instead of the passages a search returned."
+            ),
+            "default": True,
+            "group": "Analyze",
+        },
+        {
+            "key": "document_action_analyze_chat_max_documents",
+            "settings_path": ["document_action_capabilities", "analyze", "chat_max_documents"],
+            "type": "number",
+            "label": "Analyze: Chat Document Limit",
+            "help": (
+                "Most documents one chat message may analyze. Each one is read in "
+                "full, so this bounds how long a single message can take and how "
+                "much it costs."
+            ),
+            "default": DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_CHAT_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_CHAT_MAX_LIMIT,
+            "group": "Analyze",
+            "depends_on": {"key": "document_action_analyze_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_analyze_workflow_max_documents",
+            "settings_path": [
+                "document_action_capabilities",
+                "analyze",
+                "workflow_max_documents",
+            ],
+            "type": "number",
+            "label": "Analyze: Workflow Document Limit",
+            "help": (
+                "The same limit for a workflow run, which is not waiting on someone "
+                "watching a chat and so can be allowed a far larger batch."
+            ),
+            "default": DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT,
+            "group": "Analyze",
+            "depends_on": {"key": "document_action_analyze_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_comparison_enabled",
+            "settings_path": ["document_action_capabilities", "comparison", "enabled"],
+            "type": "switch",
+            "label": "Enable Document Comparison",
+            "help": (
+                "Offers Document Comparison in the Action menu. It reads one "
+                "baseline document against the others selected, which is what "
+                "answers questions about what changed between versions."
+            ),
+            "default": True,
+            "group": "Comparison",
+        },
+        {
+            "key": "document_action_comparison_chat_max_documents",
+            "settings_path": [
+                "document_action_capabilities",
+                "comparison",
+                "chat_max_documents",
+            ],
+            "type": "number",
+            "label": "Comparison: Chat Document Limit",
+            "help": "Most documents one chat message may compare, including the baseline.",
+            "default": DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_CHAT_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_CHAT_MAX_LIMIT,
+            "group": "Comparison",
+            "depends_on": {"key": "document_action_comparison_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_comparison_workflow_max_documents",
+            "settings_path": [
+                "document_action_capabilities",
+                "comparison",
+                "workflow_max_documents",
+            ],
+            "type": "number",
+            "label": "Comparison: Workflow Document Limit",
+            "help": "The same limit for a workflow run.",
+            "default": DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT,
+            "group": "Comparison",
+            "depends_on": {"key": "document_action_comparison_enabled", "equals": True},
+        },
+    ],
+    # Rendered by V1 only while Workspace Mode is on, matching agent-toggles-card.
+    "plugin-feature-toggles": [
+        {
+            "key": "allow_user_plugins",
+            "type": "switch",
+            "label": "Allow Personal Actions",
+            "help": (
+                "People can create actions in their own workspace. This is a wider "
+                "grant than a personal agent: an action carries an endpoint and the "
+                "credentials to reach it, so the traffic an agent generates is no "
+                "longer limited to destinations you configured."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_plugins",
+            "type": "switch",
+            "label": "Allow Group Actions",
+            "help": (
+                "The same for a group's shared actions. Group workspaces must also "
+                "be enabled under Workspaces."
+            ),
+            "default": False,
+        },
+    ],
+    "core-plugin-toggles": [
+        {
+            "key": "enable_time_plugin",
+            "type": "switch",
+            "label": "Time",
+            "help": (
+                "Lets an agent read the current date and time and calculate with "
+                "them. Without it a model answers date questions from its training "
+                "data, which is always out of date."
+            ),
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_http_plugin",
+            "type": "switch",
+            "label": "HTTP",
+            "help": (
+                "Lets an agent fetch a URL directly. This is the one built-in action "
+                "that reaches outside the deployment, so turn it off where agents "
+                "should only use the connectors you configured."
+            ),
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_wait_plugin",
+            "type": "switch",
+            "label": "Wait",
+            "help": "Lets an agent pause, which workflows use to space out repeated calls.",
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_math_plugin",
+            "type": "switch",
+            "label": "Math",
+            "help": (
+                "Lets an agent calculate rather than predict an answer, which is why "
+                "arithmetic in a reply can be relied on."
+            ),
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_text_plugin",
+            "type": "switch",
+            "label": "Text",
+            "help": "Lets an agent format, trim and reshape text deterministically.",
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_default_embedding_model_plugin",
+            "type": "switch",
+            "label": "Default Embedding Model",
+            "help": (
+                "Exposes the embedding model to agents for similarity work outside "
+                "the normal document search path. Off by default; document search "
+                "already embeds without it."
+            ),
+            "default": False,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_fact_memory_plugin",
+            "type": "switch",
+            "label": "Fact Memory",
+            "help": (
+                "Lets an agent store, update and remove durable facts and "
+                "instructions for the current user or group."
+            ),
+            "default": True,
+            "readonly": True,
+            "managed_by": "Chat \u203a Chat Experience \u203a Fact Memory",
+            "group": "Managed elsewhere",
+        },
+        {
+            "key": "enable_tabular_processing_plugin",
+            "type": "switch",
+            "label": "Tabular Processing",
+            "help": (
+                "Lets an agent analyse a CSV or XLSX file as a whole dataset rather "
+                "than as retrieved passages. The application recomputes this from "
+                "Enhanced Citations on every settings read, so it cannot be set "
+                "independently."
+            ),
+            "default": False,
+            "readonly": True,
+            "managed_by": "Chat \u203a Citations \u203a Enhanced",
+            "group": "Managed elsewhere",
+        },
+    ],
+    # --- Inbound MCP ------------------------------------------------------
+    #
+    # The whole card is gated by ENABLE_MCP_UI, an App Service application
+    # setting with no entry in the settings document, so the fields depend on a
+    # runtime flag rather than a settings key. When the flag is off the section
+    # still renders, showing only the notice that explains how to turn it on --
+    # which is why the notice depends on the same flag being false.
+    "inbound-mcp-configuration": [
+        {
+            "type": "component",
+            "component": "inbound-mcp-disabled-notice",
+            "label": "Inbound MCP preview",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": False},
+        },
+        {
+            "key": "enable_inbound_mcp_server",
+            "type": "switch",
+            "label": "Enable Inbound MCP Server",
+            "help": (
+                "Accepts requests from external MCP clients such as an editor. "
+                "Access stays deny-by-default afterwards: a request must also pass "
+                "the delegated scope, the Entra role, the client allowlist, the "
+                "source allowlist, and a governance policy. Turn this on last."
+            ),
+            "default": False,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_required_scope",
+            "type": "text",
+            "label": "Required Delegated Scope",
+            "help": (
+                "The delegated scope a user's client must present. It has to match "
+                "the scope exposed on the Entra application registration, or every "
+                "request is refused."
+            ),
+            "default": "DelegatedMcpServerAccess",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_required_user_role",
+            "type": "text",
+            "label": "Required Delegated User Role",
+            "help": (
+                "The Entra app role a signed-in user must hold. This decides who "
+                "may connect at all; which tools they then get is decided by "
+                "governance policy."
+            ),
+            "default": "InboundMCPUserAccess",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_required_app_role",
+            "type": "text",
+            "label": "Required App-Only Role",
+            "help": (
+                "Reserved for future service-to-service tools. No tool uses it "
+                "today; personal tools require a delegated user token."
+            ),
+            "default": "InboundMCPAppAccess",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Runtime gate",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "enable_inbound_mcp_rate_limits",
+            "type": "switch",
+            "label": "Enable Tool Throttles",
+            "help": (
+                "Caps how often one caller may invoke each category of tool. On by "
+                "default, and enforced across app instances, so a client stuck in a "
+                "loop cannot exhaust the deployment. It has no effect until the "
+                "server itself is enabled."
+            ),
+            "default": True,
+            "group": "Request limits",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_max_request_bytes",
+            "type": "number",
+            "label": "Max Request Bytes",
+            "help": "Largest request body accepted. Anything bigger is refused unread.",
+            "default": 65536,
+            "min": 1024,
+            "max": 1048576,
+            "group": "Request limits",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_rate_limit_window_seconds",
+            "type": "number",
+            "label": "Throttle Window (Seconds)",
+            "help": "The period each of the three limits below is counted over.",
+            "default": 60,
+            "min": 10,
+            "max": 3600,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_rate_limit_read_per_window",
+            "type": "number",
+            "label": "Read Calls Per Window",
+            "help": "Reads are cheap, so this is the most permissive of the three.",
+            "default": 120,
+            "min": 1,
+            "max": 10000,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_rate_limit_search_per_window",
+            "type": "number",
+            "label": "Search Calls Per Window",
+            "help": "Searches cost an index query each, so they are limited harder than reads.",
+            "default": 30,
+            "min": 1,
+            "max": 10000,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_rate_limit_write_per_window",
+            "type": "number",
+            "label": "Write Calls Per Window",
+            "help": "Writes change stored data, so this is the tightest limit.",
+            "default": 10,
+            "min": 1,
+            "max": 10000,
+            "group": "Request limits",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "enable_inbound_mcp_rate_limits", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_allowed_client_app_entries",
+            "type": "entry_list",
+            "label": "Allowed Client App IDs",
+            "help": (
+                "The Entra application ids permitted to connect. This list is "
+                "required: while it is empty no MCP client can reach the endpoint, "
+                "whatever else is configured."
+            ),
+            "default": [],
+            "value_label": "Client app ID",
+            "placeholder": "00000000-0000-0000-0000-000000000000",
+            "empty_text": "No client apps allowed, so nothing can connect.",
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_allow_external_tenants",
+            "type": "switch",
+            "label": "Allow Additional Tenant IDs",
+            "help": (
+                "Off restricts callers to this deployment's own tenant. Turn it on "
+                "only to admit a named partner tenant; the deployment's own tenant "
+                "is always included."
+            ),
+            "default": False,
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_allowed_tenant_entries",
+            "type": "entry_list",
+            "label": "Allowed Tenant IDs",
+            "help": "Additional tenants whose users may connect.",
+            "default": [],
+            "value_label": "Tenant ID",
+            "placeholder": "00000000-0000-0000-0000-000000000000",
+            "empty_text": "Only this deployment's tenant is allowed.",
+            "group": "Allowlists",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "inbound_mcp_allow_external_tenants", "equals": True},
+            ],
+        },
+        {
+            "key": "inbound_mcp_allow_all_source_ids",
+            "type": "switch",
+            "label": "Allow All Source IDs",
+            "help": (
+                "The source is a client-supplied header, so it identifies rather "
+                "than authenticates. Leaving this on accepts any value at this "
+                "layer; a governance policy still decides who gets tools. Turn it "
+                "off only where a gateway sets and enforces the header."
+            ),
+            "default": True,
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_source_header",
+            "type": "text",
+            "label": "Source Header Name",
+            "help": "The request header the source value is read from.",
+            "default": "X-SimpleChat-MCP-Source",
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "group": "Allowlists",
+            "depends_on": {"flag": "mcp_ui_enabled", "equals": True},
+        },
+        {
+            "key": "inbound_mcp_allowed_source_entries",
+            "type": "entry_list",
+            "label": "Allowed Source IDs",
+            "help": "The source values accepted when not allowing all of them.",
+            "default": [],
+            "value_label": "Source value",
+            "empty_text": "No source values allowed, so no request passes this check.",
+            "group": "Allowlists",
+            "depends_on": [
+                {"flag": "mcp_ui_enabled", "equals": True},
+                {"key": "inbound_mcp_allow_all_source_ids", "equals": False},
+            ],
+        },
+    ],
     "access-denied-message-section": [
         {
             "key": "access_denied_message",
@@ -4213,32 +5002,83 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_app_maintenance", "equals": True},
         },
     ],
-    # `workflow-settings-section` is declared in full below, and that declaration
-    # already carries this role requirement gated on `allow_user_workflows`. This
-    # copy was dead -- a later key wins in a dict literal -- so it is removed
-    # rather than left to become live if the two are ever reordered.
-    "actions-config": [
-        {
-            "key": "enable_text_plugin",
-            "type": "switch",
-            "label": "Enable Text Action",
-            "help": (
-                "Agents can perform text processing operations such as formatting, "
-                "validation and manipulation of strings and text content."
-            ),
-            "default": True,
-        },
-        {
-            "key": "enable_default_embedding_model_plugin",
-            "type": "switch",
-            "label": "Enable Default Embedding Model Action",
-            "help": (
-                "Registers the configured embedding deployment as an action agents "
-                "can call to embed text directly."
-            ),
-            "default": False,
-        },
+}
+
+
+# Maps each schema key to the field name(s) the server-rendered form submits.
+# Most match exactly and are omitted. The entries below are the places where the
+# two shapes genuinely differ, and the parity test uses them to resolve a V1
+# form field to its V2 equivalent.
+LEGACY_FIELD_NAMES = {
+    # Same shape: the Grounding with Bing terms are accepted on the toggle, and
+    # the flag rides along with the save rather than being edited on its own.
+    "enable_web_search": ["enable_web_search", "web_search_consent_accepted"],
+    # V1 submits four independent checkboxes and assembles the array server-side.
+    "user_agreement_apply_to": [
+        "user_agreement_apply_personal",
+        "user_agreement_apply_group",
+        "user_agreement_apply_public",
+        "user_agreement_apply_chat",
     ],
+    # V1 round-trips the list through a hidden JSON field maintained by script.
+    "external_links": ["external_links_json"],
+    # V1 posts the images as part of the settings form; V2 uploads them
+    # separately, so the stored keys are what the schema names.
+    "custom_logo_base64": ["logo_file"],
+    "custom_logo_dark_base64": ["logo_dark_file"],
+    "custom_favicon_base64": ["favicon_file"],
+    # Collected as an acknowledgement on the toggle rather than a stored value.
+    "enable_custom_pages": ["enable_custom_pages", "custom_pages_restart_acknowledged"],
+    # V1 renders this as an inverted "Disable Group Creation" checkbox and flips it
+    # server-side; V2 edits the stored key directly.
+    "enable_group_creation": ["disable_group_creation"],
+    # V1 round-trips the promoted agent list through a hidden JSON field that its
+    # script maintains; V2 edits the stored list directly.
+    "agents_page_promoted_popular_agents": ["agents_page_promoted_popular_agents_json"],
+    # The inbound MCP allowlists take the same shape: a hidden JSON field in V1.
+    "inbound_mcp_allowed_client_app_entries": ["inbound_mcp_allowed_client_app_entries_json"],
+    "inbound_mcp_allowed_tenant_entries": ["inbound_mcp_allowed_tenant_entries_json"],
+    "inbound_mcp_allowed_source_entries": ["inbound_mcp_allowed_source_entries_json"],
+}
+
+# Field names present in the V1 panes covered by a parity test that intentionally
+# have no V2 equivalent, with the reason. The parity test reads this, so an
+# unexplained omission fails rather than passing silently.
+LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
+    "source_review_default_mode": (
+        "Not a real choice. The V1 control is a permanently disabled select "
+        "offering one option, shadowed by a hidden input hard-coded to 'manual', "
+        "and get_source_review_config rewrites any other value back to 'manual' "
+        "on read. Reproducing it would add a control that cannot be changed and "
+        "implies a setting that does not exist. Deep Research states the "
+        "behaviour in its description instead."
+    ),
+    "orchestration_type": (
+        "Saved through POST /api/orchestration_settings, not the settings PATCH. "
+        "V2 renders it from the agent-orchestration component, which reads the "
+        "available types from the server rather than hard-coding them."
+    ),
+    "max_rounds_per_agent": (
+        "Saved through POST /api/orchestration_settings alongside "
+        "orchestration_type, and only meaningful for a multi-agent orchestration "
+        "type. Owned by the agent-orchestration component."
+    ),
+}
+
+# Settings the schema declares that the server-rendered page has no control for,
+# with the reason it is reasonable for V2 to be ahead. The parity test reads this
+# so a V2-only field is a recorded decision rather than an accident.
+V2_ONLY_FIELDS = {
+    "enable_app_maintenance": (
+        "Documented in docs/admin/scale.md but never given a control on the "
+        "server-rendered page. Declared here so it stops being guessed into "
+        "Security > App Role Requirements by the fallback scan, which matched it "
+        "on the shared word stem 'app'."
+    ),
+    "enable_startup_app_maintenance": (
+        "Same as enable_app_maintenance: no server-rendered control, and misfiled "
+        "into Security by the fallback scan until it was declared."
+    ),
 }
 
 
@@ -4322,66 +5162,6 @@ SUPPRESSED_CAPABILITY_KEYS = {
 }
 
 
-# Maps each schema key to the field name(s) the server-rendered form submits.
-# Most match exactly and are omitted. The entries below are the places where the
-# two shapes genuinely differ, and the parity test uses them to resolve a V1
-# form field to its V2 equivalent.
-LEGACY_FIELD_NAMES = {
-    # V1 submits four independent checkboxes and assembles the array server-side.
-    "user_agreement_apply_to": [
-        "user_agreement_apply_personal",
-        "user_agreement_apply_group",
-        "user_agreement_apply_public",
-        "user_agreement_apply_chat",
-    ],
-    # V1 round-trips the list through a hidden JSON field maintained by script.
-    "external_links": ["external_links_json"],
-    # V1 posts the images as part of the settings form; V2 uploads them
-    # separately, so the stored keys are what the schema names.
-    "custom_logo_base64": ["logo_file"],
-    "custom_logo_dark_base64": ["logo_dark_file"],
-    "custom_favicon_base64": ["favicon_file"],
-    # Collected as an acknowledgement on the toggle rather than a stored value.
-    "enable_custom_pages": ["enable_custom_pages", "custom_pages_restart_acknowledged"],
-    # V1 renders this as an inverted "Disable Group Creation" checkbox and flips it
-    # server-side; V2 edits the stored key directly.
-    "enable_group_creation": ["disable_group_creation"],
-    # Same shape: the Grounding with Bing terms are accepted on the toggle, and
-    # the flag rides along with the save rather than being edited on its own.
-    "enable_web_search": ["enable_web_search", "web_search_consent_accepted"],
-}
-
-# Field names present in the V1 panes that intentionally have no V2 equivalent,
-# with the reason. The parity test reads this, so an unexplained omission fails
-# rather than passing silently.
-LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
-    "source_review_default_mode": (
-        "Not a real choice. The V1 control is a permanently disabled select "
-        "offering one option, shadowed by a hidden input hard-coded to 'manual', "
-        "and get_source_review_config rewrites any other value back to 'manual' "
-        "on read. Reproducing it would add a control that cannot be changed and "
-        "implies a setting that does not exist. Deep Research states the "
-        "behaviour in its description instead."
-    ),
-}
-
-# Settings the schema declares that the server-rendered page has no control for,
-# with the reason it is reasonable for V2 to be ahead. The parity test reads this
-# so a V2-only field is a recorded decision rather than an accident.
-V2_ONLY_FIELDS = {
-    "enable_app_maintenance": (
-        "Documented in docs/admin/scale.md but never given a control on the "
-        "server-rendered page. Declared here so it stops being guessed into "
-        "Security > App Role Requirements by the fallback scan, which matched it "
-        "on the shared word stem 'app'."
-    ),
-    "enable_startup_app_maintenance": (
-        "Same as enable_app_maintenance: no server-rendered control, and misfiled "
-        "into Security by the fallback scan until it was declared."
-    ),
-}
-
-
 def get_admin_settings_fields():
     """Return the section-id keyed field schema."""
     return ADMIN_SETTINGS_FIELDS
@@ -4400,11 +5180,23 @@ def iter_fields():
 
 
 def get_field_definition(key):
-    """Return the field definition for a settings key, or None."""
+    """Return the field definition for a settings key, or None.
+
+    A key may be declared twice: once where it is edited, and once as a read-only
+    mirror in a section that only needs to report its state. Fact memory is
+    edited under Chat but affects which actions an agent has, so it appears in
+    both. The writable declaration is the one that governs saving, so it wins
+    regardless of declaration order.
+    """
+    mirror = None
     for _section_id, field in iter_fields():
-        if field.get("key") == key:
-            return field
-    return None
+        if field.get("key") != key:
+            continue
+        if field.get("readonly"):
+            mirror = mirror or field
+            continue
+        return field
+    return mirror
 
 
 def get_declared_setting_keys():
@@ -4457,6 +5249,12 @@ def iter_field_dependencies(field):
 
 def _dependency_is_satisfied(condition, settings):
     """Whether one ``depends_on`` condition holds against a settings mapping."""
+    if not condition.get("key"):
+        # A condition naming a runtime flag is resolved in the browser from the
+        # flags the settings API sends. The server has no settings key to read,
+        # and treating it as unmet here would suppress validation for every field
+        # behind a preview gate.
+        return True
     expected = condition.get("equals", True)
     current = settings.get(condition["key"])
     if isinstance(expected, bool):
@@ -4599,31 +5397,6 @@ def _normalize_text(value, field):
     return text
 
 
-def _normalize_string_list(value, field):
-    """Return ``(items, error)`` for a comma-separated list of short tokens.
-
-    Accepts the list the V2 control sends and the comma string the server-rendered
-    form stores, because both shapes already exist in saved settings documents.
-    """
-    if isinstance(value, str):
-        raw_items = value.replace(";", ",").split(",")
-    elif isinstance(value, list):
-        raw_items = value
-    elif value is None:
-        raw_items = []
-    else:
-        return None, "Expected a list of values."
-
-    max_item_length = field.get("max_item_length", 80)
-    items = []
-    for raw_item in raw_items:
-        item = " ".join(str(raw_item or "").split())[:max_item_length]
-        if item and item not in items:
-            items.append(item)
-
-    if not items and field.get("fallback_when_empty"):
-        items = list(field.get("default") or [])
-    return items, None
 
 
 def _validate_front_door_url(value):
@@ -4768,16 +5541,29 @@ def _normalize_string_list(value, field):
     Stored as a list, matching the settings document. The server-rendered form
     round-trips these through a newline-joined textarea, so a string arriving
     here is split the same way that form's handler splits it.
+
+    Two sets of descriptors are honoured because the two admin groups introduced
+    them separately and both are in use: ``entry_pattern``/``entry_label`` and
+    ``max_entries`` validate the URL Access domain lists, while
+    ``max_item_length`` and ``fallback_when_empty`` bound the Key Vault reminder
+    roles and restore their default when the list is emptied.
     """
     if isinstance(value, list):
         candidates = [str(item or "") for item in value]
     else:
         candidates = re.split(r"[\n,;]+", str(value if value is not None else ""))
 
+    # `entry_max_length` and `max_item_length` name the same cap. The default is
+    # generous enough for a fully qualified domain, which is the longest thing
+    # any declared list holds.
+    max_length = field.get("entry_max_length", field.get("max_item_length", 253))
+
     entries = []
     seen = set()
     for candidate in candidates:
-        entry = candidate.strip()
+        # Collapse internal whitespace as well as trimming, so a value pasted out
+        # of a document does not become a distinct entry from the typed one.
+        entry = " ".join(candidate.split())
         if not entry:
             continue
         # Case-insensitive, matching parse_source_review_list, so an allow list
@@ -4791,11 +5577,16 @@ def _normalize_string_list(value, field):
             return None, f"{entry!r} is not a valid {field.get('entry_label', 'entry')}."
 
         seen.add(folded)
-        entries.append(entry[: field.get("entry_max_length", 253)])
+        entries.append(entry[:max_length])
 
     maximum = field.get("max_entries")
     if maximum is not None and len(entries) > maximum:
         return None, f"Enter at most {maximum} entries."
+
+    if not entries and field.get("fallback_when_empty"):
+        # Emptying the list means "use the default" rather than "allow nobody",
+        # which for the Key Vault reminder roles would silence the reminders.
+        entries = list(field.get("default") or [])
 
     return entries, None
 
@@ -4858,6 +5649,148 @@ def _normalize_id_list(value, field):
         return None, f"Assign at most {maximum} entries."
 
     return ids, None
+def _normalize_promoted_popular_agents(value):
+    """Normalize the Agents page promotion list.
+
+    Imported lazily, and documented here as the exception to the imports-at-top
+    rule: ``functions_settings`` reaches ``config.py``, which builds a Cosmos
+    client at import time, so importing it at module scope would make this
+    schema module unimportable in a plain test process.
+    """
+    from functions_settings import normalize_agents_page_promoted_popular_agents
+
+    return normalize_agents_page_promoted_popular_agents(value)
+
+
+def _normalize_document_action_capabilities(value):
+    """Normalize the assembled document action capabilities container.
+
+    Lazily imported for the same reason as above.
+    """
+    from functions_document_actions import normalize_document_action_capabilities
+
+    return normalize_document_action_capabilities({"document_action_capabilities": value})
+
+
+# Containers assembled from several ``settings_path`` fields, and the function
+# that already owns validating the whole object. Bounds live there, so a limit
+# typed into either admin surface is clamped the same way.
+_CONTAINER_NORMALIZERS = {
+    "document_action_capabilities": _normalize_document_action_capabilities,
+}
+
+
+def _normalize_entry_list(value):
+    """Normalize a ``{value, description}`` allowlist.
+
+    Delegated to ``functions_mcp_server_config`` so both admin surfaces agree on
+    what a row is worth keeping. Imported lazily for the reason given above.
+    """
+    from functions_mcp_server_config import normalize_inbound_mcp_value_entries
+
+    return normalize_inbound_mcp_value_entries(value)
+
+
+def _apply_inbound_mcp_derivations(normalized, current_settings):
+    """Write the flat lists the inbound MCP runtime reads.
+
+    The runtime does not read the ``*_entries`` lists an administrator edits. It
+    reads ``*_ids`` lists, and single-role settings are mirrored into
+    ``*_roles`` arrays. The server-rendered form derives all of those on every
+    save; without the same derivation here, an allowlist edited in V2 would be
+    stored and then ignored.
+
+    The rules are not a straight mapping, which is why this reproduces the whole
+    block rather than a per-key transform: the tenant list only takes effect when
+    additional tenants are allowed and always gains the deployment's own tenant,
+    and the source list collapses to ``*`` when all sources are allowed.
+    """
+    if not any(key.startswith("inbound_mcp_") for key in normalized):
+        return
+
+    from functions_mcp_server_config import (
+        INBOUND_MCP_SETTINGS_DEFAULTS,
+        ensure_inbound_mcp_default_tenant_entry,
+        inbound_mcp_entry_values,
+        normalize_inbound_mcp_single_value,
+        normalize_inbound_mcp_value_entries,
+    )
+
+    def merged(key):
+        """The value this save will leave behind, edited or not."""
+        if key in normalized:
+            return normalized[key]
+        if key in current_settings:
+            return current_settings[key]
+        return INBOUND_MCP_SETTINGS_DEFAULTS.get(key)
+
+    for role_key, roles_key in (
+        ("inbound_mcp_required_user_role", "inbound_mcp_required_user_roles"),
+        ("inbound_mcp_required_app_role", "inbound_mcp_required_app_roles"),
+    ):
+        if role_key not in normalized:
+            continue
+        role = normalize_inbound_mcp_single_value(
+            normalized[role_key],
+            default_value=INBOUND_MCP_SETTINGS_DEFAULTS[role_key],
+            max_length=128,
+        )
+        normalized[role_key] = role
+        normalized[roles_key] = [role] if role else []
+
+    if "inbound_mcp_allowed_client_app_entries" in normalized:
+        entries = normalize_inbound_mcp_value_entries(
+            normalized["inbound_mcp_allowed_client_app_entries"], lowercase=True
+        )
+        normalized["inbound_mcp_allowed_client_app_entries"] = entries
+        normalized["inbound_mcp_allowed_client_app_ids"] = inbound_mcp_entry_values(
+            entries, lowercase=True
+        )
+
+    if (
+        "inbound_mcp_allowed_tenant_entries" in normalized
+        or "inbound_mcp_allow_external_tenants" in normalized
+    ):
+        entries = normalize_inbound_mcp_value_entries(
+            merged("inbound_mcp_allowed_tenant_entries"), lowercase=True
+        )
+        if _coerce_bool(merged("inbound_mcp_allow_external_tenants")):
+            entries = ensure_inbound_mcp_default_tenant_entry(entries)
+            tenant_ids = inbound_mcp_entry_values(entries, lowercase=True)
+        else:
+            # Restricting to the deployment's own tenant is expressed by the id
+            # list, not by clearing the entries, so a partner tenant an admin
+            # added is still there when they turn the switch back on.
+            from config import TENANT_ID
+
+            own_tenant = str(TENANT_ID or "").strip().lower()
+            tenant_ids = [own_tenant] if own_tenant else []
+        normalized["inbound_mcp_allowed_tenant_entries"] = entries
+        normalized["inbound_mcp_allowed_tenant_ids"] = tenant_ids
+
+    if (
+        "inbound_mcp_allowed_source_entries" in normalized
+        or "inbound_mcp_allow_all_source_ids" in normalized
+    ):
+        allow_all = _coerce_bool(merged("inbound_mcp_allow_all_source_ids"))
+        entries = normalize_inbound_mcp_value_entries(
+            merged("inbound_mcp_allowed_source_entries"),
+            default=(
+                INBOUND_MCP_SETTINGS_DEFAULTS["inbound_mcp_allowed_source_entries"]
+                if allow_all
+                else None
+            ),
+        )
+        if not allow_all:
+            # The wildcard row belongs to the allow-all mode. Leaving it in a
+            # controlled list would silently keep accepting every source.
+            entries = [entry for entry in entries if entry.get("value") != "*"]
+        normalized["inbound_mcp_allowed_source_entries"] = entries
+        normalized["inbound_mcp_allowed_source_ids"] = (
+            ["*"] if allow_all else inbound_mcp_entry_values(entries)
+        )
+
+
 
 
 # Keys whose normalization already exists elsewhere. Reusing those functions is
@@ -4883,6 +5816,11 @@ _DELEGATED_NORMALIZERS = {
         normalize_content_safety_violation_message(value)
     ),
     "rate_limit_message": lambda value, field: normalize_rate_limit_message(value),
+    # Declared as a component field, so it never reaches the type-driven
+    # normalization below and would otherwise be written through unvalidated.
+    "agents_page_promoted_popular_agents": lambda value, field: (
+        _normalize_promoted_popular_agents(value)
+    ),
 }
 
 
@@ -4893,8 +5831,15 @@ def _normalize_field_value(key, value, field):
     if field_type in NON_PATCHABLE_TYPES:
         return None, f"{key} cannot be changed through this endpoint.", None
 
-    if key in _DELEGATED_NORMALIZERS:
-        return _DELEGATED_NORMALIZERS[key](value, field), None, None
+    if field.get("readonly"):
+        # A mirror reports a value that something else owns. Accepting a write
+        # here would let the Actions surface set a Chat capability, or set a key
+        # the application recomputes on every read.
+        owner = field.get("managed_by")
+        return None, (
+            f"{key} is managed by {owner}." if owner
+            else f"{key} cannot be changed through this endpoint."
+        ), None
 
     if field_type == "switch":
         return _coerce_bool(value), None, None
@@ -4951,6 +5896,9 @@ def _normalize_field_value(key, value, field):
     if field_type == "string_list":
         entries, error = _normalize_string_list(value, field)
         return entries, error, None
+
+    if field_type == "entry_list":
+        return _normalize_entry_list(value), None, None
 
     if field_type == "id_list":
         ids, error = _normalize_id_list(value, field)
@@ -5084,35 +6032,59 @@ PATH_CONTAINER_NORMALIZERS = {
 
 
 def _apply_nested_paths(normalized, current_settings, warnings=None):
-    """Move path-declared values to where they are actually stored.
+    """Move values to where they are actually stored, when that is not their own key.
 
     Most settings are top-level keys, so the normalized dict can be handed
-    straight to ``update_settings``. Two cases are not:
+    straight to ``update_settings``. Three cases are not, and two different
+    descriptors express them because the two admin surfaces grew them
+    separately:
 
-    A value assembled into a nested object. The server-rendered form builds the
-    Web Search Foundry connection into a single ``web_search_agent`` object, so a
-    field named after the form input would write a top-level key nothing reads.
+    ``paths`` names one or more dotted destinations. A value assembled into a
+    nested object -- the server-rendered form builds the Web Search Foundry
+    connection into a single ``web_search_agent`` object -- or mirrored into
+    more than one key, as URL Access domain lists are stored twice, once under
+    ``url_access_*`` and once under ``source_review_*``. Writing only one leaves
+    Deep Research reading the stale copy.
 
-    A value mirrored into more than one key. URL Access domain lists are stored
-    twice, once under ``url_access_*`` and once under ``source_review_*``, and
-    writing only one leaves Deep Research reading the stale copy.
+    ``settings_path`` names a single destination as a list of segments.
+    ``document_action_capabilities`` holds six values across two action types,
+    and nothing reads a flattened form of them, so writing the flat keys through
+    would save a setting the application never looks at.
 
-    A nested container is rebuilt from the stored one and handed back whole,
-    because ``update_settings`` merges at the top level only. Writing just the
-    changed leaf would replace the object and drop its siblings, so editing the
-    Foundry endpoint would silently discard the agent id and the credentials.
+    Either way the container is rebuilt from the stored object and handed back
+    whole, because ``update_settings`` merges at the top level only. Writing just
+    the changed leaf would replace the object and drop its siblings, so editing
+    the Foundry endpoint would silently discard the agent id and the credentials.
     """
-    nested_fields = get_nested_path_fields()
-    if not nested_fields:
-        return normalized
-
-    pending = {key: normalized.pop(key) for key in list(normalized) if key in nested_fields}
-    if not pending:
-        return normalized
-
-    # One deep copy per containing object, seeded from what is stored so untouched
-    # siblings survive the write.
     containers = {}
+
+    # `settings_path`: a list of segments naming one destination.
+    for key in list(normalized):
+        field = get_field_definition(key)
+        path = (field or {}).get("settings_path")
+        if not path:
+            continue
+
+        value = normalized.pop(key)
+        root = path[0]
+        if root not in containers:
+            stored = current_settings.get(root)
+            containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+
+        node = containers[root]
+        for segment in path[1:-1]:
+            child = node.get(segment)
+            if not isinstance(child, dict):
+                child = {}
+                node[segment] = child
+            node = child
+        node[path[-1]] = value
+
+    # `paths`: one or more dotted destinations, possibly mirroring to several.
+    nested_fields = get_nested_path_fields()
+    pending = {
+        key: normalized.pop(key) for key in list(normalized) if key in nested_fields
+    }
     for key, value in pending.items():
         for path in nested_fields[key]:
             root, _, remainder = path.partition(".")
@@ -5127,16 +6099,23 @@ def _apply_nested_paths(normalized, current_settings, warnings=None):
             write_nested_setting(containers[root], remainder, value)
 
     for root, container in containers.items():
-        container_normalizer = PATH_CONTAINER_NORMALIZERS.get(root)
-        if container_normalizer:
-            containers[root], container_warnings = container_normalizer(
-                container, current_settings
-            )
+        # Two registries, because the two descriptors were introduced with
+        # different normalizer signatures: one reports warnings back to the
+        # caller, the other validates the whole object and returns it.
+        path_normalizer = PATH_CONTAINER_NORMALIZERS.get(root)
+        if path_normalizer:
+            container, container_warnings = path_normalizer(container, current_settings)
             if warnings is not None:
                 warnings.update(container_warnings)
 
-    normalized.update(containers)
+        container_normalizer = _CONTAINER_NORMALIZERS.get(root)
+        if container_normalizer:
+            container = container_normalizer(container)
+
+        normalized[root] = container
+
     return normalized
+
 
 def _validate_identity_header_name(value):
     """Return ``(normalized, error)`` for the model endpoint identity header name.
@@ -5228,6 +6207,15 @@ def normalize_admin_settings_updates(updates, current_settings=None):
             continue
 
         field = get_field_definition(key)
+
+        # Delegated keys are normalized by the function that already owns them,
+        # whatever their field type. This runs before the field lookup so a
+        # component-backed key such as the Agents page promotion list is still
+        # validated rather than written straight through.
+        if key in _DELEGATED_NORMALIZERS:
+            normalized[key] = _DELEGATED_NORMALIZERS[key](value, field)
+            continue
+
         if field is None:
             normalized[key] = value
             continue
@@ -5293,6 +6281,12 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # together or one at a time, so the merged state is the only thing worth
     # judging.
     _apply_cross_field_rules(normalized, current, warnings)
+
+    # Folded last so the checks above still see the flat keys they were written
+    # against, and so a rejected save never assembles a container.
+    if not errors:
+        _apply_nested_paths(normalized, current)
+        _apply_inbound_mcp_derivations(normalized, current)
 
     return normalized, errors, warnings
 

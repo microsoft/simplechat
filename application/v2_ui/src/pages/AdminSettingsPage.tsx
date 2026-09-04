@@ -39,14 +39,18 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
+import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
+import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
 import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
+import { OrchestrationCard } from '../components/admin/OrchestrationCard';
+import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
@@ -59,11 +63,13 @@ import {
     asBoolean,
     asNumber,
     asString,
+    buildFieldIndex,
     collectAppRoleEntries,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
     isFieldVisible,
+    isSectionVisible,
     readFieldValue,
     type AdminField,
     type AdminSettingsPatchResponse,
@@ -261,6 +267,7 @@ export function AdminSettingsPage() {
 
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+    const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
     const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
@@ -274,6 +281,10 @@ export function AdminSettingsPage() {
         }
         return keys;
     }, [schema]);
+
+    // A gate may live inside a nested settings object, so resolving a dependency
+    // needs the schema rather than the key alone.
+    const fieldsByKey = useMemo(() => buildFieldIndex(schema), [schema]);
 
     const suppressedKeys = useMemo(
         () => new Set(data?.suppressed_capabilities ?? []),
@@ -313,9 +324,25 @@ export function AdminSettingsPage() {
         for (const group of data.admin_nav) {
             for (const tab of group.tabs) {
                 for (const section of tab.sections) {
-                    const fields = schema[section.id] ?? [];
                     const capabilities = capabilitiesBySection.get(section.id) ?? [];
                     capabilitiesBySection.delete(section.id);
+
+                    // A section can be conditional on a settings key or a runtime
+                    // flag -- workspace agent permissions only exist while Workspace
+                    // Mode is on, and Inbound MCP only while its App Service setting
+                    // is present. The server-rendered page already honours this; V2
+                    // used to draw the section regardless.
+                    if (!isSectionVisible(section.condition, settings, draft, runtimeFlags, fieldsByKey)) {
+                        continue;
+                    }
+
+                    // Fields whose own dependencies are unmet are dropped here rather
+                    // than at render time, so a section left with nothing to show
+                    // disappears instead of leaving an empty titled panel behind.
+                    const fields = (schema[section.id] ?? []).filter((field) =>
+                        isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags),
+                    );
+
                     if (!fields.length && !capabilities.length) {
                         continue;
                     }
@@ -346,7 +373,7 @@ export function AdminSettingsPage() {
         }
 
         return rendered;
-    }, [data, schema, capabilityRows]);
+    }, [data, schema, capabilityRows, settings, draft, runtimeFlags, fieldsByKey]);
 
     const visibleSections = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -583,7 +610,7 @@ export function AdminSettingsPage() {
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft)) {
+        if (!isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)) {
             return null;
         }
 
@@ -621,6 +648,19 @@ export function AdminSettingsPage() {
                     field={field}
                     value={value}
                     error={error}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'entry_list') {
+            return (
+                <EntryListEditor
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
                     onChange={(next) => field.key && setValue(field.key, next)}
                 />
             );
@@ -683,6 +723,10 @@ export function AdminSettingsPage() {
                             disabled={saving}
                         />
                     );
+                case 'agent-orchestration':
+                    return <OrchestrationCard key={key} help={field.help} />;
+                case 'inbound-mcp-disabled-notice':
+                    return <InboundMcpNotice key={key} />;
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
                 case 'model-picker':
@@ -713,6 +757,17 @@ export function AdminSettingsPage() {
                     );
                 case 'global-identities-list':
                     return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'promoted-popular-agents':
+                    return (
+                        <PromotedAgentsEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
                 case 'app-role-requirements-roster':
                     return (
                         <AppRoleRoster
