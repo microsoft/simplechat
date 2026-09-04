@@ -167,6 +167,8 @@ class RunContext:
         chat_type='personal',
         selection_mode=None,
         doc_scope='all',
+        tags=None,
+        document_filter_mode=None,
         active_group_ids=None,
         active_group_id=None,
         active_public_workspace_id=None,
@@ -193,6 +195,11 @@ class RunContext:
 
         self.selection_mode = selection_mode
         self.doc_scope = doc_scope
+        # The tags the user picked in the composer. Carried for the whole run rather than
+        # per step: a tag is a standing narrowing of what this turn is about, so a step that
+        # searched without it would look more widely than the user asked.
+        self.tags = list(tags or [])
+        self.document_filter_mode = document_filter_mode or 'intersection'
         self.active_group_ids = list(active_group_ids or [])
         self.active_group_id = active_group_id
         self.active_public_workspace_id = active_public_workspace_id

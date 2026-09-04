@@ -113,14 +113,38 @@ export function OrchestrationRunView({
     );
 
     /**
-     * Names for every document the plan touches.
+     * Names for every document the plan touches, and which of them the user chose.
      *
-     * Resolved across the whole plan rather than per step so a document used by two steps is
-     * looked up once, and so the lookup does not restart as steps re-render.
+     * The plan describes its own documents in `inputs`, resolved server-side from the composer's
+     * selection and the relevance probe. Preferring that to a second lookup means a picked
+     * document is named immediately rather than after three fetches, and it is the only source
+     * for `selected_by_user` -- which is the distinction actually worth showing on a card whose
+     * purpose is confirming the planner picked the right thing.
+     */
+    const planInputDocuments = useMemo(() => {
+        const byId = new Map<string, { name: string; selectedByUser: boolean }>();
+        for (const entry of plan?.inputs?.documents ?? []) {
+            byId.set(entry.document_id, {
+                name: entry.display_name,
+                selectedByUser: entry.selected_by_user,
+            });
+        }
+        return byId;
+    }, [plan]);
+
+    /**
+     * Names for anything the plan did not describe.
+     *
+     * Only ids the plan left unnamed are looked up, so the common case costs no request at all.
+     * A step edited after planning, or a plan persisted before the server named its inputs, still
+     * resolves rather than showing a uuid.
      */
     const planDocumentIds = useMemo(
-        () => [...new Set(orderedSteps.flatMap((step) => stepDocumentIds(step)))],
-        [orderedSteps],
+        () =>
+            [...new Set(orderedSteps.flatMap((step) => stepDocumentIds(step)))].filter(
+                (id) => !(planInputDocuments.get(id)?.name),
+            ),
+        [orderedSteps, planInputDocuments],
     );
     const documentTitles = useDocumentTitles(planDocumentIds);
 
@@ -258,10 +282,17 @@ export function OrchestrationRunView({
                                     const isRemoved = removed.has(documentId);
                                     const canRemove =
                                         editable && removable.has(documentId);
-                                    // Falls back to the id while the lookup is in flight, or
-                                    // when the document cannot be read any more, so a chip is
-                                    // never blank.
-                                    const title = documentTitles.get(documentId) ?? documentId;
+                                    const planned = planInputDocuments.get(documentId);
+                                    // The plan's own name first, then a lookup, then the id, so
+                                    // a chip is never blank.
+                                    const title =
+                                        planned?.name ??
+                                        documentTitles.get(documentId) ??
+                                        documentId;
+                                    // Worth distinguishing: a document the user picked is not a
+                                    // decision the planner made, so it is not one they are being
+                                    // asked to check.
+                                    const chosenByUser = planned?.selectedByUser ?? false;
                                     return (
                                         <li
                                             key={documentId}
@@ -269,20 +300,33 @@ export function OrchestrationRunView({
                                                 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]',
                                                 isRemoved
                                                     ? 'border-edge text-text-3 line-through'
-                                                    : 'border-edge-strong text-text-2',
+                                                    : chosenByUser
+                                                      ? 'border-accent/50 bg-accent/5 text-text-2'
+                                                      : 'border-edge-strong text-text-2',
                                             )}
                                         >
                                             <FileText size={10} className="shrink-0" />
                                             <span
                                                 className="max-w-[12rem] truncate"
                                                 title={
-                                                    title === documentId
-                                                        ? documentId
-                                                        : `${title} · ${documentId}`
+                                                    [
+                                                        title === documentId ? null : title,
+                                                        documentId,
+                                                        chosenByUser
+                                                            ? 'You chose this document'
+                                                            : 'Chosen by the planner',
+                                                    ]
+                                                        .filter(Boolean)
+                                                        .join(' · ')
                                                 }
                                             >
                                                 {title}
                                             </span>
+                                            {chosenByUser && !isRemoved ? (
+                                                <span className="text-[10px] text-text-3">
+                                                    yours
+                                                </span>
+                                            ) : null}
                                             {isRemoved ? (
                                                 <button
                                                     type="button"

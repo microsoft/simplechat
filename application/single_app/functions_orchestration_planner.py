@@ -407,10 +407,19 @@ def plan_request(
     turn_id=None,
     seeds=None,
     document_labels=None,
+    request_context=None,
 ):
     """Produce a validated plan, or a question set, for one request.
 
     Returns ``(kind, document)`` where ``kind`` is ``'plan'`` or ``'elicitation'``.
+
+    ``request_context`` describes *this caller*, as opposed to the deployment: their app
+    roles, whether their message contains a URL, whether they have an agent to invoke. It
+    is what the capability request gates read. Passing it here narrows one resolution and
+    thereby three things at once -- what the planner is shown, what the validator will
+    accept, and so what can reach an adapter. Omitting it describes the deployment instead,
+    which is what the admin page and the bootstrap payload want but never what a real
+    request wants.
 
     A planner that fails -- unreachable, unparseable, or producing something that cannot
     be validated -- degrades to a single answering step rather than raising. The user
@@ -422,6 +431,7 @@ def plan_request(
     capabilities = resolve_available_capabilities(
         settings,
         allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        request_context=request_context,
     )
     available_ids = [capability['id'] for capability in capabilities]
 
