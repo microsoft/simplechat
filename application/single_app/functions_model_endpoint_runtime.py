@@ -27,6 +27,7 @@ from model_endpoint_clients import (
     build_openai_style_chat_client,
     infer_model_endpoint_protocol,
     normalize_custom_openai_base_url,
+    resolve_custom_openai_base_url,
     normalize_openai_style_base_url,
     resolve_openai_style_request_api_version,
     SanitizedCustomChatCompletionClient,
@@ -202,6 +203,7 @@ def build_model_endpoint_sync_chat_client(
                 direct_custom=direct_custom,
                 allow_private_custom_endpoints=allow_private_custom_endpoints,
                 default_headers=extra_headers,
+                api_type=api_type,
             ), runtime_protocol
         client_kwargs = {
             'api_version': api_version,
@@ -453,7 +455,7 @@ def build_semantic_kernel_chat_service_for_model(
                 client_kwargs = {
                     'api_key': api_key,
                     'base_url': (
-                        normalize_custom_openai_base_url(endpoint)
+                        resolve_custom_openai_base_url(endpoint, api_type)
                         if direct_custom
                         else normalize_openai_style_base_url(endpoint)
                     ),

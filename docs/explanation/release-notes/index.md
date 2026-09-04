@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.012 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.010 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.009 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -77,6 +78,18 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.012)**
+
+#### New Features
+
+*   **Custom Model Endpoints Now Support Google Gemini, Through A Provider Registry**
+    *   Custom endpoints supported exactly three API types, and each one was hard-coded in five separate places: the allowlist, the request-model resolver, the protocol inference chain, the admin template's option list, and the admin JavaScript. Adding a provider meant editing all five and hoping none were missed.
+    *   An API type is now a single declarative registry entry that carries its wire protocol, which field names the model, how its URL is built, which authentication types it accepts, and which version field applies. The admin API Type list, the model identifier label, and the version fields all render from that registry.
+    *   **Google Gemini is now selectable as a Custom endpoint API type**, reached through its OpenAI-compatible surface so it still runs on SimpleChat's validated-DNS pinned transport.
+    *   Fixed URL handling for endpoints that already carry a version segment. SimpleChat appended `/v1` unconditionally, which turned Gemini's `…/v1beta/openai` base into `…/v1beta/openai/v1` and produced a 404. URL construction is now per-provider, so `/v1` is appended only where it belongs.
+    *   The three existing API types are unchanged, and an unregistered API type is still refused.
+    *   (Ref: `functions_model_endpoint_providers.py`, `functions_model_endpoint_types.py`, `model_endpoint_clients.py`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, `_multiendpoint_modal.html`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
 ### **(v0.261.011)**
 

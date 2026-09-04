@@ -32,6 +32,11 @@ from semantic_kernel.contents.utils.finish_reason import FinishReason
 from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutionSettingsError
 
 from functions_debug import debug_print
+from functions_model_endpoint_providers import (
+    URL_POLICY_APPEND_V1_IF_MISSING,
+    URL_POLICY_AS_GIVEN,
+    get_model_endpoint_provider,
+)
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
@@ -160,17 +165,12 @@ def infer_model_endpoint_protocol(
     """Infer the runtime protocol from provider, endpoint path, and deployment name."""
     normalized_provider = str(provider or "aoai").strip().lower()
     if normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
-        normalized_api_type = normalize_model_endpoint_api_type(
-            normalized_provider,
-            api_type,
+        registered_provider = get_model_endpoint_provider(
+            normalize_model_endpoint_api_type(normalized_provider, api_type)
         )
-        if normalized_api_type == MODEL_ENDPOINT_API_TYPE_OPENAI:
-            return MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
-        if normalized_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
-            return MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
-        if normalized_api_type == MODEL_ENDPOINT_API_TYPE_ANTHROPIC:
-            return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
-        raise ValueError("Custom model endpoints require a supported API type.")
+        if registered_provider is None:
+            raise ValueError("Custom model endpoints require a supported API type.")
+        return registered_provider.protocol
 
     endpoint_path = get_endpoint_path(endpoint)
 
@@ -227,6 +227,26 @@ def normalize_custom_openai_base_url(raw_endpoint: Any) -> str:
     if lowered_endpoint.endswith("/v1"):
         return endpoint.rstrip("/") + "/"
     return endpoint.rstrip("/") + "/v1/"
+
+
+def resolve_custom_openai_base_url(raw_endpoint: Any, api_type: Any = "") -> str:
+    """Resolve a Custom endpoint base URL using the registered provider's URL policy.
+
+    Appending "/v1" is correct for OpenAI and OpenAI-compatible gateways, but wrong
+    for surfaces that already carry their own version segment. Google Gemini's
+    compatible base ends in "/v1beta/openai/", and appending "/v1" to it produces a
+    404, so that provider declares the as-given policy instead.
+    """
+    provider = get_model_endpoint_provider(api_type)
+    url_policy = provider.url_policy if provider else URL_POLICY_APPEND_V1_IF_MISSING
+
+    if url_policy == URL_POLICY_AS_GIVEN:
+        endpoint = normalize_endpoint_text(raw_endpoint)
+        if not endpoint:
+            raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
+        return endpoint.rstrip("/") + "/"
+
+    return normalize_custom_openai_base_url(raw_endpoint)
 
 
 def normalize_anthropic_messages_url(
@@ -459,13 +479,14 @@ def build_openai_style_chat_client(
     *,
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
+    api_type: Any = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
     client_kwargs: Dict[str, Any] = {
         "api_key": token_or_key,
         "base_url": (
-            normalize_custom_openai_base_url(base_url)
+            resolve_custom_openai_base_url(base_url, api_type)
             if direct_custom
             else normalize_openai_style_base_url(base_url)
         ),

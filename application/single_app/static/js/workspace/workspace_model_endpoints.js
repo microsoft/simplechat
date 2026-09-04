@@ -134,12 +134,49 @@ function isCustomProvider(provider = endpointProviderSelect?.value) {
     return provider === "custom";
 }
 
+// The API type registry is rendered server-side from
+// functions_model_endpoint_providers so the option list, the model identifier
+// field, and the version field are declared in exactly one place.
+let customApiTypeRegistry = null;
+
+function getCustomApiTypeRegistry() {
+    if (customApiTypeRegistry) {
+        return customApiTypeRegistry;
+    }
+    customApiTypeRegistry = {};
+    try {
+        const rawRegistry = endpointApiTypeSelect?.dataset?.apiTypes;
+        if (rawRegistry) {
+            JSON.parse(rawRegistry).forEach((apiType) => {
+                customApiTypeRegistry[apiType.value] = apiType;
+            });
+        }
+    } catch (error) {
+        console.error("Unable to parse the model endpoint API type registry.", error);
+    }
+    return customApiTypeRegistry;
+}
+
+function getCustomApiTypeDescriptor(apiType = getCustomApiType()) {
+    return getCustomApiTypeRegistry()[apiType] || null;
+}
+
 function getCustomApiType() {
     return endpointApiTypeSelect?.value || "openai";
 }
 
 function customApiTypeUsesModelName(apiType = getCustomApiType()) {
-    return apiType === "openai" || apiType === "anthropic";
+    const descriptor = getCustomApiTypeDescriptor(apiType);
+    return descriptor ? Boolean(descriptor.usesModelName) : true;
+}
+
+function customApiTypeRequiresApiVersion(apiType = getCustomApiType()) {
+    const descriptor = getCustomApiTypeDescriptor(apiType);
+    return Boolean(descriptor?.requiresApiVersion);
+}
+
+function customApiTypeVersionField(apiType = getCustomApiType()) {
+    return getCustomApiTypeDescriptor(apiType)?.versionField || "";
 }
 
 function getModelRequestName(model) {
@@ -385,8 +422,8 @@ function updateAuthVisibility() {
     syncVersionCustomVisibility();
     setElementVisibility(endpointProjectGroup, isFoundry && !projectNameFromEndpoint);
     setElementVisibility(endpointProjectApiVersionGroup, isFoundry);
-    setElementVisibility(endpointOpenAiApiVersionGroup, !customProvider || apiType === "azure_openai");
-    setElementVisibility(endpointAnthropicVersionGroup, customProvider && apiType === "anthropic");
+    setElementVisibility(endpointOpenAiApiVersionGroup, !customProvider || customApiTypeRequiresApiVersion(apiType));
+    setElementVisibility(endpointAnthropicVersionGroup, customProvider && customApiTypeVersionField(apiType) === "anthropic_version");
     setElementVisibility(endpointSubscriptionGroup, !customProvider && provider === "aoai" && !isApiKey);
     setElementVisibility(endpointResourceGroup, !customProvider && provider === "aoai" && !isApiKey);
     setElementVisibility(miTypeGroup, authType === "managed_identity");
@@ -971,7 +1008,7 @@ function buildEndpointPayload() {
         return null;
     }
 
-    if ((!customProvider || apiType === "azure_openai") && !openAiApiVersion) {
+    if ((!customProvider || customApiTypeRequiresApiVersion(apiType)) && !openAiApiVersion) {
         showToast("OpenAI API version is required.", "warning");
         return null;
     }
@@ -1040,9 +1077,10 @@ function buildEndpointPayload() {
     } : {};
 
     const connection = { endpoint };
-    if (customProvider && apiType === "azure_openai") {
+    const versionField = customProvider ? customApiTypeVersionField(apiType) : "";
+    if (customProvider && versionField === "api_version") {
         connection.api_version = openAiApiVersion;
-    } else if (customProvider && apiType === "anthropic") {
+    } else if (customProvider && versionField === "anthropic_version") {
         connection.anthropic_version = endpointAnthropicVersionInput?.value.trim() || DEFAULT_ANTHROPIC_VERSION;
     } else if (!customProvider) {
         connection.openai_api_version = openAiApiVersion;

@@ -7,6 +7,7 @@ import socket
 from typing import Any, Dict, Iterable
 from urllib.parse import urlparse, urlunparse
 
+from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
@@ -237,6 +238,7 @@ def validate_custom_model_endpoint(
     api_type = get_model_endpoint_api_type(endpoint)
     if not api_type:
         raise ModelEndpointValidationError("Custom endpoint API type is not supported.")
+    registered_provider = get_model_endpoint_provider(api_type)
 
     auth = endpoint.get("auth") if isinstance(endpoint.get("auth"), dict) else {}
     auth_type = str(auth.get("type") or "").strip().lower()
@@ -258,13 +260,12 @@ def validate_custom_model_endpoint(
         allow_private=allow_private,
     )
 
-    if api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
-        _validate_version(connection.get("api_version"), "Azure OpenAI API version")
-    elif api_type == MODEL_ENDPOINT_API_TYPE_ANTHROPIC:
-        _validate_version(
-            connection.get("anthropic_version") or DEFAULT_ANTHROPIC_VERSION,
-            "Anthropic Version",
-        )
+    if registered_provider is not None and registered_provider.version_field:
+        version_value = connection.get(registered_provider.version_field)
+        if registered_provider.default_version:
+            version_value = version_value or registered_provider.default_version
+        if registered_provider.requires_api_version or version_value:
+            _validate_version(version_value, f"{registered_provider.display_name} version")
 
     seen_model_names = set()
     models: Iterable[Any] = endpoint.get("models") or []
@@ -280,9 +281,9 @@ def validate_custom_model_endpoint(
         request_model = resolve_model_endpoint_request_model(endpoint, model)
         if not request_model:
             model_field = (
-                "Deployment Name"
-                if api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI
-                else "Model Name"
+                "Model Name"
+                if registered_provider is not None and registered_provider.uses_model_name
+                else "Deployment Name"
             )
             raise ModelEndpointValidationError(
                 f"Custom endpoint models require {model_field}."

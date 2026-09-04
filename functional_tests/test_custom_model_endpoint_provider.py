@@ -24,6 +24,9 @@ APP_DIR = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 sys.path.insert(0, str(ROOT))
 
+from functions_model_endpoint_providers import (  # noqa: E402
+    get_model_endpoint_provider_ui_options,
+)
 from functions_model_endpoint_types import (  # noqa: E402
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
     MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
@@ -705,9 +708,14 @@ def test_custom_endpoint_ui_contract():
 
     assert '<option value="custom">Custom</option>' in modal
     assert 'id="model-endpoint-api-type"' in modal
-    assert '<option value="openai">OpenAI API</option>' in modal
-    assert '<option value="azure_openai">Azure OpenAI API</option>' in modal
-    assert '<option value="anthropic">Anthropic</option>' in modal
+    # The API type options are rendered from the provider registry rather than
+    # hard-coded, so assert the registry contract instead of literal markup.
+    assert 'data-api-types=' in modal
+    assert 'for api_type in model_endpoint_api_types' in modal
+    registered_api_types = {
+        option["value"] for option in get_model_endpoint_provider_ui_options()
+    }
+    assert {"openai", "azure_openai", "anthropic"}.issubset(registered_api_types)
     assert 'id="model-endpoint-anthropic-version"' in modal
     assert 'name="allow_private_custom_model_endpoints"' in admin_template
 
@@ -717,6 +725,11 @@ def test_custom_endpoint_ui_contract():
         assert "api_type" in script
         assert "anthropic_version" in script
         assert "customApiTypeUsesModelName" in script
+        # Per-API-type behaviour comes from the rendered registry, not from
+        # hard-coded api_type comparisons.
+        assert "getCustomApiTypeRegistry" in script
+        assert "customApiTypeVersionField" in script
+        assert 'apiType === "azure_openai"' not in script
         assert "dataset.responseLengthFor" in script
         assert "model.responseLength = responseLength" in script
 

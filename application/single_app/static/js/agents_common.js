@@ -711,7 +711,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 				const modelId = model.id || model.deploymentName || model.deployment || model.modelName || model.name || '';
 				const deploymentName = model.deploymentName || model.deployment || '';
 				const modelName = model.modelName || model.name || '';
-				const requestModel = provider === 'custom' && ['openai', 'anthropic'].includes(apiType)
+				const requestModel = provider === 'custom' && window.simplechatCustomApiTypeUsesModelName?.(apiType)
 					? modelName
 					: deploymentName || modelName;
 				const displayName = model.displayName || requestModel || modelId;

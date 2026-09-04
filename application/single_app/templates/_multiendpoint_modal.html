@@ -47,12 +47,13 @@
                     </div>
                     <div class="col-md-6 d-none" id="model-endpoint-api-type-group">
                         <label for="model-endpoint-api-type" class="form-label">API Type</label>
-                        <select class="form-select" id="model-endpoint-api-type">
-                            <option value="openai">OpenAI API</option>
-                            <option value="azure_openai">Azure OpenAI API</option>
-                            <option value="anthropic">Anthropic</option>
+                        <select class="form-select" id="model-endpoint-api-type"
+                            data-api-types="{{ model_endpoint_api_types | tojson | forceescape }}">
+                            {% for api_type in model_endpoint_api_types %}
+                            <option value="{{ api_type.value }}">{{ api_type.label }}</option>
+                            {% endfor %}
                         </select>
-                        <div class="form-text">The API type controls request paths, model identifiers, and headers for this Custom endpoint.</div>
+                        <div class="form-text" id="model-endpoint-api-type-help">The API type controls request paths, model identifiers, and headers for this Custom endpoint.</div>
                     </div>
                     <div class="col-md-6">
                         <label for="model-endpoint-endpoint" class="form-label" id="model-endpoint-endpoint-label">Endpoint Fully Qualified Domain Name (FQDN)</label>
