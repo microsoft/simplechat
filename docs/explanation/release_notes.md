@@ -2,6 +2,79 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.090)**
+
+#### New Features
+
+*   **A Saved Prompt Is Now Attached To Your Message, Not Pasted Into It**
+    *   Picking a prompt in the V2 interface used to paste its text into the message box, where it stopped being a prompt: nothing marked where the standing instructions ended and your own question began, taking it back off meant finding and deleting the right paragraphs, and fixing a variable meant editing prose in the middle of what you were writing.
+    *   **The prompt now sits in a card above the message box**, collapsed to its name, its workspace, and how many variables still need a value. The box below stays yours to type in.
+    *   **Expand it** to fill in variables and read the prompt exactly as it will be sent. **Edit** adjusts the wording for this one message and marks the card *Edited*, with a **Reset** that restores the saved text — the saved prompt is never touched, so a one-off tweak does not change it for everyone else. **Remove** takes it off without disturbing anything you have typed.
+    *   **The prompt is sent first and your message follows it**, which is the order the two are actually written in. A prompt that needs no further input can be sent on its own, so Send now works with an attached prompt and an empty box.
+    *   **Variables are resolved when you send, not when you pick.** `{{composer}}` — "what you have already typed" — used to resolve to nothing, because picking the prompt is the first thing you do. It now means the message you wrote underneath the card. A prompt that positions your text this way is not also sent it a second time.
+    *   **Sent messages show the prompt as a collapsed row** above your own words, expanding to the full text, so a reply can be understood by someone who did not pick the prompt. Copying and exporting still yield the whole message, and older messages render exactly as they did.
+    *   The separate fill-in dialog is gone, folded into the card. Its safety rules came with it: auto-filled values stay badged and clearable, values from the conversation are still only ever offered as chips you click, and nothing is pre-filled at all in a shared conversation.
+    *   (Ref: `components/chat/AttachedPromptCard.tsx`, `lib/usePromptVariableValues.ts`, `lib/promptRequest.ts`, `lib/messagePrompt.ts`, [Prompt Composer Card](features/PROMPT_COMPOSER_CARD.md))
+
+*   **Orchestration Plans Now Read The Prompt You Chose**
+    *   The planner was told a selected prompt's *name* and nothing else. "Quarterly review" says nothing about whether the work involves reading documents, searching the web, or comparing two things, which is exactly what a plan has to decide. It is now given the prompt's wording, capped so a long saved prompt cannot crowd out the rest of the planner's context.
+    *   A selected prompt also now counts as you having pointed at something, alongside a chosen document or agent, so a request carrying one is no longer triaged as a remark to answer off the cuff.
+    *   (Ref: `functions_orchestration_context.py` `_selected_prompt`, `functions_orchestration_planner.py` `triage_request`, `functions_orchestration_schema.py` `build_plan_inputs`)
+
+#### Bug Fixes
+
+*   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
+    *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
+    *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+
+### **(v0.261.089)**
+
+#### New Features
+
+*   **Choose Which Documents A Message Uses, And See The Choice**
+    *   The **Documents** button was previously a plain on/off: it meant "search my documents", with no way to say *which* ones and nothing on screen describing what a message would actually look at.
+    *   **You can now name them three ways.** Type `#` in the message box and search; open the Documents picker and tick them; or select documents in your workspace and press **Chat**. Tags have a chat action of their own now too.
+    *   **A reference shows up in two places on purpose.** It becomes a removable chip above the message box, grouped by workspace, and it stays inside your message as `#[Q3 Contract.pdf]` — rendered as a chip rather than raw brackets — so "compare `#[Q3 Contract.pdf]` against `#[Q2 Contract.pdf]`" still reads as a sentence after it is sent. Removing the chip removes the text, and editing the text retires the chip.
+    *   **The row condenses as it fills.** Up to five references show by name; beyond that each workspace collapses to a count you can open, so a long selection does not push the message box off the screen.
+    *   **The `#` menu searches everywhere at once** — your personal workspace, every group you belong to, and every visible public workspace — plus tags and whole workspaces. A scope that is briefly unavailable no longer empties the menu of everything else.
+    *   **The Documents picker opens upward and has a search box**, which the V2 dropdowns did not, and groups results by workspace. The original "search all my documents" behaviour is still there as the first row.
+    *   Documents and tags chosen together are now combined additively, so a document chip beside an unrelated tag chip no longer matches nothing. Selecting several tags still requires a document to carry all of them.
+    *   (Ref: `lib/chatContext.ts`, `lib/chatContextTokens.ts`, `lib/contextMentions.ts`, `components/chat/ContextChips.tsx`, `components/chat/DocumentPickerPopover.tsx`, [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
+
+#### Bug Fixes
+
+*   **Chat From The Workspace Left The V2 Interface**
+    *   Selecting documents in the V2 workspace and pressing **Chat** performed a full page load into the *classic* chat page, quietly moving the user out of V2 by the action most likely to follow choosing a document. It now opens the V2 composer with those documents already referenced.
+    *   (Ref: `DocumentExplorer.onChat`, `lib/chatContextHandoff.ts`)
+
+*   **Retrying A Tag-Filtered Message Searched More Widely Than The Original**
+    *   The streaming chat path — the one the V2 interface uses — recorded which documents a message searched but not which tags, while the non-streaming path recorded both. Retrying or editing such a message therefore replayed a broader search than the one that produced the original answer, which reads as the assistant answering a different question the second time it is asked.
+    *   (Ref: `route_backend_chats.py` `workspace_search` metadata, `route_backend_conversations._build_replayed_document_context`)
+
+*   **Planned Documents Were Listed As Raw Identifiers**
+    *   Each step of an orchestration plan listed the documents it would read as bare uuids. Deciding whether the planner picked the right document is the entire purpose of showing the plan before it runs, and `8f14e45f-ceea-467a-…` does not support that decision. Steps now list documents by name, falling back to the id only when the document can no longer be read.
+    *   (Ref: `lib/documentTitles.ts`, `components/chat/OrchestrationRunView.tsx`)
+
+### **(v0.261.088)**
+
+#### New Features
+
+*   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
+    *   Image generation previously required a dedicated `gpt-image` or DALL-E deployment. A deployment like that is separately approved and is not offered in every subscription or region, so a tenant without one could not switch image generation on at all — the deployment list was filtered to image models, and nothing appeared to select.
+    *   A chat deployment such as `gpt-5.6` can now be selected instead. It has no image endpoint, so SimpleChat asks it through the Responses API's image generation tool rather than the images endpoint, and works out which of the two applies from the model behind the deployment you chose. There is no new setting to configure.
+    *   **Fetch deployments** now lists chat models alongside image models, and excludes embedding deployments, which can produce an image either way.
+    *   A chat deployment offers whole-image regeneration only. Changing part of an image needs the images API, and the editor says so before you paint a region rather than after.
+    *   Existing configurations are untouched. Every deployment that could be selected before still takes the route it always did, including one whose model name was never recorded and one reached through API Management.
+    *   Worth one test generation after selecting a chat deployment: the tool is served by an image model behind the scenes, so a subscription with no image capability at all may still be refused.
+    *   (Ref: `functions_image_api_route.py`, `functions_image_generation.request_generated_image_source`, `/api/models/image`, [Image generation through Responses-capable chat models](features/IMAGE_GENERATION_RESPONSES_MODELS.md))
+
+#### User Interface Enhancements
+
+*   **The Redundant API Management Switch Is Gone From AI Models**
+    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
+    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
+    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](../admin/ai-models.md))
+
 ### **(v0.261.087)**
 
 #### New Features

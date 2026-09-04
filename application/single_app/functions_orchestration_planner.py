@@ -165,8 +165,15 @@ def triage_request(user_message, planner_context=None):
         return COMPLEXITY_TRIVIAL
 
     selected = (planner_context.get('user_selected') or {})
-    if selected.get('documents') or selected.get('agent') or selected.get('web_search'):
-        # The user pointed at something. Whatever they want, it involves that thing.
+    if (
+        selected.get('documents')
+        or selected.get('agent')
+        or selected.get('prompt')
+        or selected.get('web_search')
+    ):
+        # The user pointed at something. Whatever they want, it involves that thing. A saved
+        # prompt counts: reaching for a stored set of instructions is a statement that this is
+        # a piece of work with a shape, not a remark to be answered off the cuff.
         return COMPLEXITY_COMPLEX
 
     if planner_context.get('candidate_documents'):
