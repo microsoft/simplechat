@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for orchestration agent selection.
-Version: 0.261.087
+Version: 0.261.088
 Implemented in: 0.261.087
 
 An agent's configuration is not all equally safe to show a planner. Its naming fields are
