@@ -17,7 +17,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 500,
-      "default": 12
+      "default": 50
     },
     "default_window_unit": {
       "type": "string",

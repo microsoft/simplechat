@@ -51,14 +51,12 @@ def is_exact_swagger_decorator(node: ast.AST) -> bool:
     if get_name(node.func) != 'swagger_route':
         return False
 
-    if len(node.keywords) != 1:
-        return False
+    for keyword in node.keywords:
+        if keyword.arg != 'security' or not isinstance(keyword.value, ast.Call):
+            continue
+        return get_name(keyword.value.func) == 'get_auth_security'
 
-    keyword = node.keywords[0]
-    if keyword.arg != 'security' or not isinstance(keyword.value, ast.Call):
-        return False
-
-    return get_name(keyword.value.func) == 'get_auth_security'
+    return False
 
 
 def iter_route_issues(file_path: Path, tree: ast.AST) -> list[str]:

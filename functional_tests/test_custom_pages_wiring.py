@@ -1,8 +1,9 @@
 # test_custom_pages_wiring.py
 """
 Functional test for Custom Pages wiring.
-Version: 0.242.045
+Version: 0.250.106
 Implemented in: 0.242.023
+Updated in: 0.250.106
 
 This test ensures that the Custom Pages feature is wired through settings,
 navigation, admin metadata management, and fail-closed host routes without
@@ -11,6 +12,7 @@ requiring live Cosmos DB connectivity.
 
 from pathlib import Path
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +21,10 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 
 def read_text(relative_path):
     """Read a repository file as UTF-8 text."""
-    return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    _path = REPO_ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def assert_contains(content, expected, description):
@@ -39,7 +44,7 @@ def test_custom_pages_configuration():
     config = read_text("application/single_app/config.py")
     settings = read_text("application/single_app/functions_settings.py")
 
-    assert_contains(config, 'VERSION = "0.242.045"', "version bump")
+    assert_contains(config, 'VERSION = "0.250.106"', "version bump")
     assert_contains(config, 'cosmos_custom_pages_container_name = "custom_pages"', "custom pages container name")
     assert_contains(config, 'cosmos_custom_pages_container = cosmos_database.create_container_if_not_exists', "custom pages container creation")
     assert_contains(settings, "'enable_custom_pages': False", "custom pages disabled default")
@@ -56,12 +61,12 @@ def test_custom_pages_routes_and_access_controls():
     base_template = read_text("application/single_app/templates/base.html")
 
     for route in (
-        '@app.route("/custom/<slug>", methods=["GET"])',
-        '@app.route("/custom/<slug>.html", methods=["GET"])',
-        '@app.route("/custom/assets/<slug>/<folder>/<path:filename>", methods=["GET"])',
-        '@app.route("/api/custom/<slug>/<path:operation>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])',
-        '@app.route("/api/admin/custom-pages", methods=["GET"])',
-        '@app.route("/api/admin/custom-pages/developer-guide", methods=["GET"])',
+        '@bp.route("/custom/<slug>", methods=["GET"])',
+        '@bp.route("/custom/<slug>.html", methods=["GET"])',
+        '@bp.route("/custom/assets/<slug>/<folder>/<path:filename>", methods=["GET"])',
+        '@bp.route("/api/custom/<slug>/<path:operation>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])',
+        '@bp.route("/api/admin/custom-pages", methods=["GET"])',
+        '@bp.route("/api/admin/custom-pages/developer-guide", methods=["GET"])',
     ):
         assert_contains(routes, route, f"route declaration {route}")
 
@@ -75,7 +80,7 @@ def test_custom_pages_routes_and_access_controls():
     assert_contains(routes, "request-access", "request access metadata helper route")
     assert_contains(routes, "access_request_button_enabled", "access request button settings update")
     assert_contains(routes, "A custom page with this slug already exists.", "duplicate slug create guard")
-    assert_contains(app, "register_route_custom_pages(app)", "custom page route registration")
+    assert_contains(app, "register_route_blueprint('custom_pages', register_route_custom_pages, login_required_blueprint)", "custom page route registration")
     assert_contains(app, "custom_pages_nav=custom_pages_nav", "custom page navigation context")
     assert_contains(base_template, "_custom_pages_drawer.html", "custom pages drawer include")
 
@@ -150,6 +155,14 @@ def test_custom_pages_admin_and_navigation_wiring():
     assert_contains(admin_js, "setupCustomPageFileListEditors", "custom pages file list editor setup")
     assert_contains(admin_js, "addCustomPageFile", "custom pages file list add action")
     assert_contains(admin_js, "removeCustomPageFile", "custom pages file list remove action")
+    assert_contains(admin_js, "createCustomPageOpenAction", "custom page table open action")
+    assert_contains(admin_js, "getCustomPageUrl", "custom page open URL builder")
+    assert_contains(admin_js, "`/custom/${encodeURIComponent(slug)}`", "encoded custom page open URL")
+    assert_contains(admin_js, "openLink.target = \"_blank\"", "custom page open action new tab target")
+    assert_contains(admin_js, "openLink.rel = \"noopener noreferrer\"", "custom page open action tab isolation")
+    assert_contains(admin_js, "Route authorization still applies.", "custom page open action authorization tooltip")
+    assert_contains(admin_js, "Disabled custom pages are not available to open.", "custom page disabled open tooltip")
+    assert_contains(admin_js, "Enable Custom Pages, save settings, and restart the app before opening custom pages.", "custom pages disabled feature open tooltip")
     assert_contains(admin_js, "textContent", "safe DOM text rendering")
 
     drawer_template = read_text("application/single_app/templates/_custom_pages_drawer.html")
@@ -166,6 +179,10 @@ def test_custom_pages_trusted_rendering_boundary():
     helpers = read_text("application/single_app/functions_custom_pages.py")
 
     assert_contains(shell, "xss-check: ignore", "trusted HTML XSS suppression")
+    assert_contains(shell, "custom-page-hero", "rounded custom page hero header")
+    assert_contains(shell, "linear-gradient(135deg, var(--custom-page-hero-color)", "custom page hero gradient")
+    assert_contains(shell, "border-radius: 1rem", "custom page hero rounded corners")
+    assert_contains(shell, "aria-labelledby=\"custom-page-title\"", "custom page hero accessible title reference")
     assert_contains(shell, "deployment-time trusted app-team content", "trusted HTML explanation")
     assert_contains(shell, "{{ custom_page_html | safe }}", "trusted HTML render boundary")
     assert_contains(helpers, "SLUG_PATTERN", "slug validation")

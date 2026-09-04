@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 import json
 from functions_debug import debug_print
 
-def register_route_frontend_control_center(app):
-    @app.route('/admin/control-center', methods=['GET'])
+def register_route_frontend_control_center(bp):
+    @bp.route('/admin/control-center', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -55,9 +55,9 @@ def register_route_frontend_control_center(app):
         except Exception as e:
             debug_print(f"Error loading control center: {e}")
             flash(f"Error loading control center: {str(e)}", "error")
-            return redirect(url_for('admin_settings'))
+            return redirect(url_for('frontend_admin_settings.admin_settings'))
     
-    @app.route('/approvals', methods=['GET'])
+    @bp.route('/approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -87,7 +87,7 @@ def register_route_frontend_control_center(app):
             debug_print(f"Error loading approvals: {e}\n{error_trace}")
             print(f"ERROR IN APPROVALS ROUTE: {e}\n{error_trace}")
             flash(f"Error loading approvals: {str(e)}", "error")
-            return redirect(url_for('index'))
+            return redirect(url_for('public_app.index'))
 
 def get_control_center_statistics():
     """

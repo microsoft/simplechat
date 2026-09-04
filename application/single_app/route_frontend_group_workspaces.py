@@ -8,8 +8,8 @@ from functions_settings import *
 from functions_file_sync import FILE_SYNC_MANAGER_ROLES, is_file_sync_enabled_for_group
 from swagger_wrapper import swagger_route, get_auth_security
 
-def register_route_frontend_group_workspaces(app):
-    @app.route('/group_workspaces', methods=['GET'])
+def register_route_frontend_group_workspaces(bp):
+    @bp.route('/group_workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -37,7 +37,7 @@ def register_route_frontend_group_workspaces(app):
         enable_audio_file_support = settings.get('enable_audio_file_support', False)
         if not user_id:
             print("User not authenticated.")
-            return redirect(url_for('login'))
+            return redirect(url_for('frontend_authentication.login'))
         
         query = """
             SELECT VALUE COUNT(1) 
@@ -58,12 +58,12 @@ def register_route_frontend_group_workspaces(app):
         )
         legacy_count = legacy_docs_from_cosmos[0] if legacy_docs_from_cosmos else 0
         
-        # Get allowed extensions from central function and build allowed extensions string
-        allowed_extensions = sorted(get_allowed_extensions(
-            enable_video=enable_video_file_support in [True, 'True', 'true'],
-            enable_audio=enable_audio_file_support in [True, 'True', 'true']
-        ))
-        allowed_extensions_str = "Allowed: " + ", ".join(allowed_extensions)
+        enable_video_uploads = enable_video_file_support in [True, 'True', 'true']
+        enable_audio_uploads = enable_audio_file_support in [True, 'True', 'true']
+        allowed_extension_categories = get_allowed_extension_categories(
+            enable_video=enable_video_uploads,
+            enable_audio=enable_audio_uploads
+        )
 
         workspace_governance = {
             "group_agents": is_governance_access_allowed("governance_group_agents", user_id),
@@ -89,14 +89,14 @@ def register_route_frontend_group_workspaces(app):
             enable_audio_file_support=enable_audio_file_support,
             enable_file_sharing=enable_file_sharing,
             legacy_docs_count=legacy_count,
-            allowed_extensions=allowed_extensions_str,
+            allowed_extension_categories=allowed_extension_categories,
             group_model_endpoints=group_model_endpoints,
             global_model_endpoints=global_model_endpoints,
                 file_sync_enabled=file_sync_enabled,
                 workspace_governance=workspace_governance
         )
 
-    @app.route('/set_active_group', methods=['POST'])
+    @bp.route('/set_active_group', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -114,4 +114,4 @@ def register_route_frontend_group_workspaces(app):
         except PermissionError:
             return "You are not a member of this group", 403
 
-        return redirect(url_for('group_workspaces'))
+        return redirect(url_for('frontend_group_workspaces.group_workspaces'))

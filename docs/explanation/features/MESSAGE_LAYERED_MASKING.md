@@ -2,6 +2,8 @@
 
 Implemented in version: **0.241.098**
 
+Rendered Markdown selection masking updated in version: **0.250.029**
+
 ## Overview
 
 Layered message masking lets users add multiple text masks to a chat message and independently apply or remove a full-message mask. This avoids the previous binary behavior where masking an already-masked message could only clear every mask.
@@ -12,7 +14,7 @@ Users can now progressively hide more content from future model context without 
 
 ## Dependencies
 
-* `application/single_app/config.py` version `0.241.098`
+* `application/single_app/config.py` version `0.250.029`
 * Bootstrap Icons for mask action icons
 * Cosmos DB message metadata fields: `metadata.masked` and `metadata.masked_ranges`
 * Collaboration event stream for shared conversation updates
@@ -24,9 +26,9 @@ Users can now progressively hide more content from future model context without 
 Mask state is managed as two independent layers:
 
 * Full-message mask: `metadata.masked`, `metadata.masked_by_user_id`, `metadata.masked_timestamp`, and `metadata.masked_by_display_name`
-* Text-range masks: `metadata.masked_ranges`, with canonical `start`, `end`, `text`, user, and timestamp values
+* Text-range masks: `metadata.masked_ranges`, with canonical `start`, `end`, `text`, user, timestamp values, and optional rendered-display offsets for browser highlighting
 
-The shared masking logic lives in `functions_message_masking.py`. It validates selection offsets against stored message content, falls back only when selected text is unique, merges overlapping ranges, and preserves selected ranges when the full-message mask is removed.
+The shared masking logic lives in `functions_message_masking.py`. It validates selection offsets against stored message content, falls back only when selected text is unique, maps rendered Markdown selections back to canonical stored content for formatted messages, merges overlapping ranges, and preserves selected ranges when the full-message mask is removed.
 
 ### API Endpoints
 
@@ -76,6 +78,7 @@ Coverage includes:
 * Additive selected-text masking and range merging
 * Full-message mask removal that preserves selected text masks
 * Canonical stored-content validation for selected ranges
+* Rendered Markdown selection mapping for formatted text and Markdown tables
 * Browser control rendering for mask-plus and mask-minus buttons
 * Collaboration mask endpoint routing and event-driven UI updates
 
@@ -83,4 +86,4 @@ Known limitation: individual selected ranges are merged when adjacent or overlap
 
 ## Version Tracking
 
-The application version was updated in `application/single_app/config.py` to `0.241.098` for this implementation. Functional and UI regression tests include the same version in their headers.
+The application version was updated in `application/single_app/config.py` to `0.250.029` for the rendered Markdown selection masking fix. Functional regression tests include the same version in their headers.

@@ -7,6 +7,8 @@ from datetime import datetime
 from threading import RLock
 from time import monotonic
 from typing import Any, Dict, List, Optional, Set, Tuple
+import base64
+import re
 import uuid
 
 from flask import g, has_request_context
@@ -39,7 +41,12 @@ DEFAULT_ITEM_POLICY_ENTITY_TYPES = {
     "personal_action_type",
     "group_action_type",
     "global_action_type",
+    "mcp_personal_destination",
+    "mcp_group_destination",
+    "mcp_global_destination",
+    "inbound_mcp_source",
 }
+INBOUND_MCP_SYSTEM_SOURCE_POLICY_ID = "system-allow-all-sources"
 
 
 ACTION_TYPE_POLICY_ENTITY_TYPES = {
@@ -72,7 +79,9 @@ ACTION_TYPE_ALIASES = {
     "microsoft_graph": "msgraph",
     "databricks_table": "databricks",
     "databricks": "databricks",
+    "snowflake": "snowflake",
     "tableau": "tableau",
+    "yamcs": "yamcs",
     "chart": "chart",
     "azure_maps": "azure_maps",
     "blob_storage": "blob_storage",
@@ -88,7 +97,9 @@ ACTION_TYPE_LABELS = {
     "mcp": "MCP",
     "msgraph": "Microsoft Graph",
     "databricks": "Databricks",
+    "snowflake": "Snowflake",
     "tableau": "Tableau",
+    "yamcs": "Yamcs",
     "chart": "Chart",
     "azure_maps": "Azure Maps",
     "blob_storage": "Blob Storage",
@@ -102,6 +113,7 @@ LEGACY_ITEM_POLICY_ENTITY_TYPE_ALIASES = {
 
 
 GOVERNANCE_CACHE_TTL_SECONDS = 60
+COSMOS_UNSAFE_ID_CHARS_PATTERN = re.compile(r"[\\/#?\x00-\x1f\x7f]")
 _GOVERNANCE_REQUEST_CACHE_ATTR = "simplechat_governance_request_cache"
 _GOVERNANCE_CACHE_MISS = object()
 _governance_cache_lock = RLock()
@@ -261,11 +273,20 @@ def _get_legacy_item_policy_entity_types(entity_type: str) -> List[str]:
     ]
 
 
+def _safe_item_policy_document_segment(value: str) -> str:
+    normalized_value = str(value or "").strip()
+    if not COSMOS_UNSAFE_ID_CHARS_PATTERN.search(normalized_value):
+        return normalized_value
+    encoded_value = base64.urlsafe_b64encode(normalized_value.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"b64:{encoded_value}"
+
+
 def _item_policy_document_id(entity_type: str, item_id: str, policy_id: str) -> str:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
+    normalized_item_id_segment = _safe_item_policy_document_segment(normalized_item_id)
     normalized_policy_id = str(policy_id or "default").strip() or "default"
-    return f"item:{normalized_entity_type}:{normalized_item_id}:{normalized_policy_id}"
+    return f"item:{normalized_entity_type}:{normalized_item_id_segment}:{normalized_policy_id}"
 
 
 def _legacy_item_policy_document_id(entity_type: str, item_id: str) -> str:
@@ -282,7 +303,8 @@ def _extract_policy_id_from_item_doc(policy: Dict[str, Any], entity_type: str, i
     doc_id = str((policy or {}).get("id") or "").strip()
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
-    prefix = f"item:{normalized_entity_type}:{normalized_item_id}:"
+    normalized_item_id_segment = _safe_item_policy_document_segment(normalized_item_id)
+    prefix = f"item:{normalized_entity_type}:{normalized_item_id_segment}:"
     if doc_id.startswith(prefix):
         suffix = doc_id[len(prefix):].strip()
         if suffix:
@@ -314,6 +336,9 @@ def _normalize_item_policy_doc(policy: Dict[str, Any]) -> Dict[str, Any]:
     normalized_policy["resource_label"] = normalized_resource_label
     normalized_policy["entity_type"] = normalized_entity_type
     normalized_policy["item_id"] = normalized_item_id
+    normalized_policy["system_managed"] = bool(normalized_policy.get("system_managed", False))
+    normalized_policy["managed_by"] = str(normalized_policy.get("managed_by") or "").strip()
+    normalized_policy["managed_reason"] = str(normalized_policy.get("managed_reason") or "").strip()
     normalized_policy.update(_normalize_policy_state(normalized_policy))
     return normalized_policy
 
@@ -353,6 +378,8 @@ def _default_feature_policy_doc(feature_key: str) -> Dict[str, Any]:
         "allow_all": True,
         "allowed_users": [],
         "allowed_groups": [],
+        "denied_users": [],
+        "denied_groups": [],
         "updated_at": datetime.utcnow().isoformat(),
     }
 
@@ -383,6 +410,11 @@ def _default_item_policy_doc(
         "allow_all": True,
         "allowed_users": [],
         "allowed_groups": [],
+        "denied_users": [],
+        "denied_groups": [],
+        "system_managed": False,
+        "managed_by": "",
+        "managed_reason": "",
         "updated_at": datetime.utcnow().isoformat(),
     }
 
@@ -391,6 +423,8 @@ def _normalize_policy_state(payload: Dict[str, Any]) -> Dict[str, Any]:
     allow_all = bool(payload.get("allow_all", True))
     allowed_users = _normalize_str_list(payload.get("allowed_users", []))
     allowed_groups = _normalize_str_list(payload.get("allowed_groups", []))
+    denied_users = _normalize_str_list(payload.get("denied_users", []))
+    denied_groups = _normalize_str_list(payload.get("denied_groups", []))
 
     if allow_all and (allowed_users or allowed_groups):
         allow_all = False
@@ -403,6 +437,8 @@ def _normalize_policy_state(payload: Dict[str, Any]) -> Dict[str, Any]:
         "allow_all": allow_all,
         "allowed_users": allowed_users,
         "allowed_groups": allowed_groups,
+        "denied_users": denied_users,
+        "denied_groups": denied_groups,
     }
 
 
@@ -541,6 +577,10 @@ def _build_diff(before_doc: Dict[str, Any], after_doc: Dict[str, Any]) -> Dict[s
     after_users = set(_normalize_str_list(after_doc.get("allowed_users", [])))
     before_groups = set(_normalize_str_list(before_doc.get("allowed_groups", [])))
     after_groups = set(_normalize_str_list(after_doc.get("allowed_groups", [])))
+    before_denied_users = set(_normalize_str_list(before_doc.get("denied_users", [])))
+    after_denied_users = set(_normalize_str_list(after_doc.get("denied_users", [])))
+    before_denied_groups = set(_normalize_str_list(before_doc.get("denied_groups", [])))
+    after_denied_groups = set(_normalize_str_list(after_doc.get("denied_groups", [])))
 
     return {
         "allow_all": {
@@ -551,6 +591,10 @@ def _build_diff(before_doc: Dict[str, Any], after_doc: Dict[str, Any]) -> Dict[s
         "users_removed": sorted(list(before_users - after_users)),
         "groups_added": sorted(list(after_groups - before_groups)),
         "groups_removed": sorted(list(before_groups - after_groups)),
+        "denied_users_added": sorted(list(after_denied_users - before_denied_users)),
+        "denied_users_removed": sorted(list(before_denied_users - after_denied_users)),
+        "denied_groups_added": sorted(list(after_denied_groups - before_denied_groups)),
+        "denied_groups_removed": sorted(list(before_denied_groups - after_denied_groups)),
     }
 
 
@@ -569,6 +613,8 @@ def upsert_feature_policy(
         "allow_all": normalized_payload["allow_all"],
         "allowed_users": normalized_payload["allowed_users"],
         "allowed_groups": normalized_payload["allowed_groups"],
+        "denied_users": normalized_payload["denied_users"],
+        "denied_groups": normalized_payload["denied_groups"],
         "updated_by": str(actor_user_id or "").strip(),
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -609,6 +655,11 @@ def upsert_item_policy(
         ),
         _default_item_policy_doc(normalized_entity_type, normalized_item_id, normalized_policy_id),
     )
+    existing_system_managed = bool((before_policy or {}).get("system_managed", False))
+    incoming_system_managed = bool((payload or {}).get("system_managed", False))
+    if existing_system_managed and not incoming_system_managed:
+        raise PermissionError("System-managed item governance policies cannot be edited directly.")
+
     normalized_payload = _normalize_policy_state(payload)
     normalized_resource_label = str((payload or {}).get("resource_label") or "").strip()
     normalized_policy_name = str((payload or {}).get("policy_name") or "").strip() or _default_item_policy_name(
@@ -627,6 +678,11 @@ def upsert_item_policy(
         "allow_all": normalized_payload["allow_all"],
         "allowed_users": normalized_payload["allowed_users"],
         "allowed_groups": normalized_payload["allowed_groups"],
+        "denied_users": normalized_payload["denied_users"],
+        "denied_groups": normalized_payload["denied_groups"],
+        "system_managed": incoming_system_managed,
+        "managed_by": str((payload or {}).get("managed_by") or "").strip() if incoming_system_managed else "",
+        "managed_reason": str((payload or {}).get("managed_reason") or "").strip() if incoming_system_managed else "",
         "updated_by": str(actor_user_id or "").strip(),
         "updated_at": datetime.utcnow().isoformat(),
     }
@@ -670,7 +726,7 @@ def upsert_item_policy(
 
 def _read_existing_item_policy_for_delete(entity_type: str, item_id: str, policy_id: Optional[str] = None) -> Tuple[Dict[str, Any], str, str]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
-    normalized_item_id = str(item_id or "").strip()
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
     normalized_policy_id = str(policy_id or "").strip()
     candidate_entity_types = [normalized_entity_type] + _get_legacy_item_policy_entity_types(normalized_entity_type)
 
@@ -693,10 +749,19 @@ def _read_existing_item_policy_for_delete(entity_type: str, item_id: str, policy
     last_exception = None
     for candidate_entity_type in candidate_entity_types:
         try:
-            policies = _read_item_policies(candidate_entity_type, normalized_item_id)
-            if policies:
-                policy = policies[0]
-                document_id = str(policy.get("id") or _item_policy_document_id(candidate_entity_type, normalized_item_id, policy.get("policy_id") or "default"))
+            policies = _read_item_policies(
+                candidate_entity_type,
+                normalized_item_id,
+                include_default=not normalized_policy_id,
+            )
+            for policy in policies:
+                if normalized_policy_id and str(policy.get("policy_id") or "").strip() != normalized_policy_id:
+                    continue
+                document_id = str(policy.get("id") or _item_policy_document_id(
+                    candidate_entity_type,
+                    normalized_item_id,
+                    policy.get("policy_id") or "default",
+                ))
                 return policy, candidate_entity_type, document_id
         except Exception as ex:
             last_exception = ex
@@ -706,17 +771,91 @@ def _read_existing_item_policy_for_delete(entity_type: str, item_id: str, policy
     raise ValueError("Item governance policy not found.")
 
 
+def retarget_item_policy(
+    entity_type: str,
+    item_id: str,
+    payload: Dict[str, Any],
+    original_entity_type: str,
+    original_item_id: str,
+    actor_user_id: str,
+    actor_email: str,
+) -> Dict[str, Any]:
+    normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
+    normalized_item_id = _normalize_item_policy_item_id(normalized_entity_type, item_id)
+    normalized_original_entity_type = _normalize_item_policy_entity_type(original_entity_type)
+    normalized_original_item_id = _normalize_item_policy_item_id(
+        normalized_original_entity_type,
+        original_item_id,
+    )
+    normalized_policy_id = str((payload or {}).get("policy_id") or "").strip()
+
+    if not normalized_policy_id:
+        raise ValueError("Policy ID is required to retarget an item governance policy.")
+
+    if (
+        normalized_entity_type == normalized_original_entity_type
+        and normalized_item_id == normalized_original_item_id
+    ):
+        return upsert_item_policy(
+            entity_type=normalized_entity_type,
+            item_id=normalized_item_id,
+            payload=payload,
+            actor_user_id=actor_user_id,
+            actor_email=actor_email,
+        )
+
+    source_policy, _, source_document_id = _read_existing_item_policy_for_delete(
+        normalized_original_entity_type,
+        normalized_original_item_id,
+        normalized_policy_id,
+    )
+    before_policy = _normalize_item_policy_doc(source_policy)
+    if bool(before_policy.get("system_managed", False)) and not bool((payload or {}).get("system_managed", False)):
+        raise PermissionError("System-managed item governance policies cannot be edited directly.")
+
+    stored = upsert_item_policy(
+        entity_type=normalized_entity_type,
+        item_id=normalized_item_id,
+        payload=payload,
+        actor_user_id=actor_user_id,
+        actor_email=actor_email,
+    )
+
+    if source_document_id != str(stored.get("id") or ""):
+        cosmos_governance_item_policies_container.delete_item(
+            item=source_document_id,
+            partition_key=source_document_id,
+        )
+        invalidate_governance_cache()
+
+    log_governance_change(
+        admin_user_id=str(actor_user_id or "").strip(),
+        admin_email=str(actor_email or "").strip(),
+        action="item_policy_retarget",
+        scope=normalized_entity_type,
+        target_id=normalized_item_id,
+        before_state=before_policy,
+        after_state=stored,
+        change_details=_build_diff(before_policy, stored),
+    )
+
+    return stored
+
+
 def delete_item_policy(
     entity_type: str,
     item_id: str,
     actor_user_id: str,
     actor_email: str,
     policy_id: Optional[str] = None,
+    allow_system_managed: bool = False,
 ) -> Dict[str, Any]:
     normalized_entity_type = _normalize_item_policy_entity_type(entity_type)
     normalized_item_id = str(item_id or "").strip()
     stored_policy, stored_entity_type, document_id = _read_existing_item_policy_for_delete(normalized_entity_type, normalized_item_id, policy_id)
     before_policy = _normalize_item_policy_doc(stored_policy)
+    if bool(before_policy.get("system_managed", False)) and not allow_system_managed:
+        raise PermissionError("System-managed item governance policies cannot be deleted directly.")
 
     cosmos_governance_item_policies_container.delete_item(
         item=document_id,
@@ -757,6 +896,8 @@ def list_feature_policies() -> List[Dict[str, Any]]:
         normalized_row = dict(row)
         normalized_row["allowed_users"] = _normalize_str_list(normalized_row.get("allowed_users", []))
         normalized_row["allowed_groups"] = _normalize_str_list(normalized_row.get("allowed_groups", []))
+        normalized_row["denied_users"] = _normalize_str_list(normalized_row.get("denied_users", []))
+        normalized_row["denied_groups"] = _normalize_str_list(normalized_row.get("denied_groups", []))
         normalized_row["allow_all"] = bool(normalized_row.get("allow_all", True))
         normalized_rows.append(normalized_row)
 
@@ -769,6 +910,8 @@ def list_feature_policies() -> List[Dict[str, Any]]:
         normalized_row = dict(row)
         normalized_row["allowed_users"] = _normalize_str_list(normalized_row.get("allowed_users", []))
         normalized_row["allowed_groups"] = _normalize_str_list(normalized_row.get("allowed_groups", []))
+        normalized_row["denied_users"] = _normalize_str_list(normalized_row.get("denied_users", []))
+        normalized_row["denied_groups"] = _normalize_str_list(normalized_row.get("denied_groups", []))
         normalized_row["allow_all"] = bool(normalized_row.get("allow_all", True))
         normalized_rows.append(normalized_row)
         seen_feature_keys.add(feature_key)
@@ -826,6 +969,41 @@ def list_item_policies(entity_type: Optional[str] = None) -> List[Dict[str, Any]
     )
 
 
+def list_item_policies_by_policy_id(policy_id: str) -> List[Dict[str, Any]]:
+    normalized_policy_id = str(policy_id or "").strip()
+    if not normalized_policy_id:
+        return []
+
+    query = "SELECT * FROM c WHERE c.policy_id = @policy_id"
+    parameters = [{"name": "@policy_id", "value": normalized_policy_id}]
+    rows = list(
+        cosmos_governance_item_policies_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+
+    normalized_rows_by_key = {}
+    for row in rows:
+        normalized_row = _normalize_item_policy_doc(row)
+        row_key = (
+            str(normalized_row.get("entity_type") or ""),
+            str(normalized_row.get("item_id") or ""),
+            str(normalized_row.get("policy_id") or ""),
+        )
+        normalized_rows_by_key[row_key] = normalized_row
+
+    return sorted(
+        normalized_rows_by_key.values(),
+        key=lambda item: (
+            str(item.get("entity_type") or ""),
+            str(item.get("item_id") or ""),
+            str(item.get("policy_name") or ""),
+        ),
+    )
+
+
 def get_user_governance_group_ids(user_id: str) -> Set[str]:
     normalized_user_id = str(user_id or "").strip()
     if not normalized_user_id:
@@ -851,7 +1029,39 @@ def get_user_governance_group_ids(user_id: str) -> Set[str]:
     return _get_cached_governance_value(("user_governance_group_ids", normalized_user_id), load_group_ids)
 
 
-def _passes_policy(policy: Dict[str, Any], user_id: str, group_ids: Set[str]) -> bool:
+def _normalize_group_id_set(group_ids: Any) -> Set[str]:
+    if not isinstance(group_ids, (list, tuple, set)):
+        return set()
+    return {
+        str(group_id or "").strip()
+        for group_id in group_ids
+        if str(group_id or "").strip()
+    }
+
+
+def policy_denies_principal(policy: Dict[str, Any], user_id: str, group_ids: Any) -> bool:
+    if not isinstance(policy, dict):
+        return False
+
+    denied_users = set(_normalize_str_list(policy.get("denied_users", [])))
+    denied_groups = set(_normalize_str_list(policy.get("denied_groups", [])))
+    if not denied_users and not denied_groups:
+        return False
+
+    normalized_user_id = str(user_id or "").strip()
+    if normalized_user_id and normalized_user_id in denied_users:
+        return True
+
+    return bool(_normalize_group_id_set(group_ids).intersection(denied_groups))
+
+
+def policy_allows_principal(policy: Dict[str, Any], user_id: str, group_ids: Any) -> bool:
+    if not isinstance(policy, dict):
+        return False
+
+    if policy_denies_principal(policy, user_id, group_ids):
+        return False
+
     if bool(policy.get("allow_all", True)):
         return True
 
@@ -865,10 +1075,14 @@ def _passes_policy(policy: Dict[str, Any], user_id: str, group_ids: Set[str]) ->
     if normalized_user_id and normalized_user_id in allowed_users:
         return True
 
-    if group_ids.intersection(allowed_groups):
+    if _normalize_group_id_set(group_ids).intersection(allowed_groups):
         return True
 
     return False
+
+
+def _passes_policy(policy: Dict[str, Any], user_id: str, group_ids: Set[str]) -> bool:
+    return policy_allows_principal(policy, user_id, group_ids)
 
 
 def ensure_governance_access(
@@ -901,11 +1115,18 @@ def ensure_governance_access(
     user_group_ids = get_user_governance_group_ids(normalized_user_id)
 
     feature_policy = get_feature_policy(normalized_feature_key)
+    if policy_denies_principal(feature_policy, normalized_user_id, user_group_ids):
+        raise PermissionError(f"Governance policy blocks access for feature '{feature_key}'.")
+
     if not _passes_policy(feature_policy, normalized_user_id, user_group_ids):
         raise PermissionError(f"Governance policy blocks access for feature '{feature_key}'.")
 
     if normalized_item_entity_type and normalized_item_id:
         item_policies = get_item_policies(normalized_item_entity_type, normalized_item_id)
+        if any(policy_denies_principal(item_policy, normalized_user_id, user_group_ids) for item_policy in item_policies):
+            raise PermissionError(
+                f"Governance policy blocks access to {item_entity_type} '{item_id}'."
+            )
         if not any(_passes_policy(item_policy, normalized_user_id, user_group_ids) for item_policy in item_policies):
             raise PermissionError(
                 f"Governance policy blocks access to {item_entity_type} '{item_id}'."
@@ -993,11 +1214,23 @@ def ensure_action_type_access(
 
     user_group_ids = get_user_governance_group_ids(normalized_user_id)
     feature_policy = get_feature_policy(normalized_feature_key)
+    if policy_denies_principal(feature_policy, normalized_user_id, user_group_ids):
+        action_type_label = get_governed_action_type_label(normalized_action_type)
+        raise PermissionError(
+            f"Governance policy blocks access to {normalized_scope} action type '{action_type_label}'."
+        )
+
+    action_type_policies = get_explicit_item_policies(action_type_entity_type, normalized_action_type)
+    if any(policy_denies_principal(policy, normalized_user_id, user_group_ids) for policy in action_type_policies):
+        action_type_label = get_governed_action_type_label(normalized_action_type)
+        raise PermissionError(
+            f"Governance policy blocks access to {normalized_scope} action type '{action_type_label}'."
+        )
+
     if _passes_policy(feature_policy, normalized_user_id, user_group_ids):
         _set_request_cache_value(decision_key, True)
         return
 
-    action_type_policies = get_explicit_item_policies(action_type_entity_type, normalized_action_type)
     if any(_passes_policy(policy, normalized_user_id, user_group_ids) for policy in action_type_policies):
         _set_request_cache_value(decision_key, True)
         return
@@ -1045,6 +1278,9 @@ def is_action_scope_access_allowed(feature_key: str, user_id: str, scope: str) -
 
     user_group_ids = get_user_governance_group_ids(normalized_user_id)
     feature_policy = get_feature_policy(normalized_feature_key)
+    if policy_denies_principal(feature_policy, normalized_user_id, user_group_ids):
+        return False
+
     if _passes_policy(feature_policy, normalized_user_id, user_group_ids):
         return True
 
@@ -1079,6 +1315,9 @@ def ensure_global_action_access(user_id: str, action: Dict[str, Any]) -> None:
 
     user_group_ids = get_user_governance_group_ids(normalized_user_id)
     item_policies = get_item_policies("global_action", action_id)
+    if any(policy_denies_principal(policy, normalized_user_id, user_group_ids) for policy in item_policies):
+        raise PermissionError(f"Governance policy blocks access to global action '{action_id}'.")
+
     if not any(_passes_policy(policy, normalized_user_id, user_group_ids) for policy in item_policies):
         raise PermissionError(f"Governance policy blocks access to global action '{action_id}'.")
 

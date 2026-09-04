@@ -1,8 +1,12 @@
 # test_workspace_file_sync_ui.py
 """
 UI test for workspace File Sync tab.
-Version: 0.241.129
+Version: 0.250.070
 Implemented in: 0.241.042
+Updated in: 0.250.067
+Updated in: 0.250.068
+Updated in: 0.250.069
+Updated in: 0.250.070
 
 This test ensures the workspace Sync tab renders, loads source rows, opens the
 source workflow modal, and queues a manual sync without browser console errors.
@@ -61,6 +65,34 @@ def test_workspace_file_sync_tab():
                 "remote_delete_policy": "ignore",
                 "last_run_status": "completed",
                 "last_run_counts": {"queued": 2, "unchanged": 4, "skipped": 1, "failed": 0},
+            },
+            {
+                "id": "source-2",
+                "name": "Research Blob",
+                "source_type": "azure_blob",
+                "enabled": True,
+                "recursive": True,
+                "connection": {
+                    "account_url": "https://contosodata.blob.core.windows.net",
+                    "container_name": "research",
+                    "blob_prefix": "reports",
+                    "selected_paths": [],
+                },
+                "credentials": {"auth_type": "connection_string", "secret_stored": True},
+                "credential_metadata": {
+                    "credential_type": "sas",
+                    "sas_scope": "container",
+                    "permissions": "rld",
+                    "expires_at": "2030-07-28T00:00:00+00:00",
+                    "https_only": True,
+                    "stored_access_policy": False,
+                    "warnings": ["Container SAS includes permissions File Sync does not need: Delete. Read and List are sufficient."],
+                },
+                "filters": {"include_patterns": [], "exclude_patterns": [], "allowed_extensions": [], "fixed_tags": [], "folder_tag_mode": "parent"},
+                "schedule": {"enabled": False, "interval_minutes": 60},
+                "remote_delete_policy": "ignore",
+                "last_run_status": None,
+                "last_run_counts": {},
             }
         ]
     }
@@ -96,6 +128,28 @@ def test_workspace_file_sync_tab():
             return
         if request.method == "GET" and request.url.endswith("/sources"):
             route.fulfill(status=200, content_type="application/json", body=json.dumps(source_state))
+            return
+        if request.method == "POST" and request.url.endswith("/test-connection"):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "connection": {
+                        "success": True,
+                        "entries_checked": 2,
+                        "read_verified": True,
+                        "credential_metadata": {
+                            "credential_type": "sas",
+                            "sas_scope": "container",
+                            "permissions": "rld",
+                            "expires_at": "2030-07-28T00:00:00+00:00",
+                            "https_only": True,
+                            "stored_access_policy": False,
+                            "warnings": ["Container SAS includes permissions File Sync does not need: Delete. Read and List are sufficient."],
+                        },
+                    }
+                }),
+            )
             return
         if request.method == "GET" and request.url.endswith("/runs"):
             route.fulfill(
@@ -202,13 +256,25 @@ def test_workspace_file_sync_tab():
             expect(identity_view_modal).to_be_hidden()
 
         page.locator("#sync-tab-btn").click()
+        page.locator("#file-sync-root").evaluate("""root => {
+            root.dataset.visibleSourceTypes = 'smb,azure_files,azure_blob';
+            delete root.dataset.fileSyncInitialized;
+            root.replaceChildren();
+            window.initializeFileSyncRoot(root);
+        }""")
         expect(page.get_by_role("button", name="Add Source")).to_be_visible()
         expect(page.get_by_role("button", name="Identities")).to_have_count(0)
         expect(page.get_by_text("Finance Share")).to_be_visible()
         expect(page.get_by_text("SMB Share")).to_be_visible()
         expect(page.get_by_text("queued 2, unchanged 4, skipped 1, failed 0")).to_be_visible()
+        blob_row = page.locator("tr", has_text="Research Blob")
+        expect(blob_row.get_by_text("Container SAS")).to_be_visible()
+        expect(blob_row.get_by_text("Permissions: Read, List, Delete")).to_be_visible()
+        expect(blob_row.get_by_text(re.compile(r"Expires .*days remaining"))).to_be_visible()
+        expect(blob_row.get_by_text("Container SAS includes permissions File Sync does not need: Delete. Read and List are sufficient.")).to_be_visible()
 
-        page.get_by_role("button", name="Delete").click()
+        finance_row = page.locator("tr", has_text="Finance Share")
+        finance_row.get_by_role("button", name="Delete").click()
         expect(page.get_by_role("heading", name="Delete File Sync Source")).to_be_visible()
         expect(page.get_by_role("button", name="Delete Sync Source")).to_be_visible()
         expect(page.get_by_role("button", name="Delete All Files")).to_be_visible()
@@ -218,9 +284,15 @@ def test_workspace_file_sync_tab():
         source_modal = page.locator('[data-file-sync-source-modal="true"]')
         expect(source_modal.get_by_role("heading", name="Add Sync Source")).to_be_visible()
         expect(source_modal.get_by_text("SMB Share")).to_be_visible()
+        expect(source_modal.get_by_text("Azure Blob Storage")).to_be_visible()
+        source_modal.get_by_role("button", name=re.compile("^Azure Blob Storage")).click()
         source_modal.get_by_role("button", name="Configure Source").click()
         expect(source_modal.get_by_text("Source Type")).to_be_visible()
-        expect(source_modal.get_by_label("UNC path")).to_be_visible()
+        expect(source_modal.get_by_label("Blob service URL or account name")).to_be_visible()
+        expect(source_modal.get_by_label("Container name")).to_be_visible()
+        expect(source_modal.get_by_label("Blob prefix")).to_be_visible()
+        expect(source_modal.get_by_text("A container SAS needs Read and List only.")).to_be_visible()
+        expect(source_modal.get_by_text("To sync multiple containers, create one source per container.")).to_be_visible()
         expect(source_modal.get_by_text("Identity and Authentication")).to_be_visible()
         expect(source_modal.get_by_label("Reusable identity")).to_be_visible()
         expect(source_modal.get_by_text("Selection, Subfolders, and Filters")).to_be_visible()
@@ -234,13 +306,27 @@ def test_workspace_file_sync_tab():
         expect(source_modal.get_by_text("Schedule interval minutes")).to_be_hidden()
         expect(source_modal.locator("#file-sync-recursive")).to_be_visible()
         expect(source_modal.get_by_role("button", name="Test Connection")).to_be_visible()
+        source_modal.get_by_label("Authentication").select_option("connection_string")
+        expect(source_modal.get_by_label("Authentication").locator("option:checked")).to_have_text("Blob connection string or SAS")
+        source_modal.get_by_label("Blob connection string, SAS URL, or SAS token").fill(
+            "https://contosodata.blob.core.windows.net/research?sv=fake&spr=https&sr=c&sp=rl&se=2030-07-28T00%3A00%3A00Z&sig=fake"
+        )
+        expect(source_modal.get_by_label("Blob service URL or account name")).to_have_value("https://contosodata.blob.core.windows.net")
+        expect(source_modal.get_by_label("Container name")).to_have_value("research")
+        expect(source_modal.get_by_label("Source name")).to_have_value("research Blob Sync")
+        source_modal.get_by_role("button", name="Test Connection").click()
+        expect(source_modal.get_by_text("Connection OK. Checked 2 top-level item(s).")).to_be_visible()
+        expect(source_modal.get_by_text("Container SAS")).to_be_visible()
+        expect(source_modal.get_by_text("Permissions: Read, List, Delete")).to_be_visible()
+        expect(source_modal.get_by_text(re.compile(r"Expires .*days remaining"))).to_be_visible()
+        expect(source_modal.get_by_text("Container SAS includes permissions File Sync does not need: Delete. Read and List are sufficient.")).to_be_visible()
         source_modal.get_by_role("button", name="Cancel").click()
         expect(source_modal).to_be_hidden()
 
-        page.get_by_role("button", name="History").click()
+        finance_row.get_by_role("button", name="History").click()
         expect(page.get_by_role("heading", name="Sync History")).to_be_visible()
 
-        page.get_by_role("button", name="Sync").click()
+        finance_row.get_by_role("button", name="Sync").click()
         expect(page.get_by_text("Sync run queued.")).to_be_visible()
         assert console_errors == []
     finally:

@@ -7,6 +7,7 @@ import uuid
 
 
 COLLABORATION_KIND = 'collaborative'
+COLLABORATION_SOURCE_KIND = 'collaboration_source'
 
 PERSONAL_MULTI_USER_CHAT_TYPE = 'personal_multi_user'
 GROUP_MULTI_USER_CHAT_TYPE = 'group_multi_user'
@@ -629,12 +630,12 @@ def build_collaboration_message_doc_from_legacy(
         }
     elif legacy_role == 'file':
         filename = _clean_string(legacy_message.get('filename')) or 'file'
-        content = f'[File shared] {filename}'
+        content = f'[FILE_SHARED] {filename}'
     elif legacy_role == 'image':
         is_user_upload = bool(legacy_metadata.get('is_user_upload'))
         if is_user_upload:
             filename = _clean_string(legacy_message.get('filename')) or 'image'
-            content = f'[Uploaded image] {filename}'
+            content = f'[UPLOADED_IMAGE] {filename}'
         else:
             message_kind = MESSAGE_KIND_ASSISTANT
             sender_user = {
@@ -642,7 +643,7 @@ def build_collaboration_message_doc_from_legacy(
                 'display_name': _clean_string(legacy_message.get('agent_display_name')) or 'AI',
                 'email': '',
             }
-            content = '[Generated image]'
+            content = '[GENERATED_IMAGE]'
     elif legacy_role not in ('user', '') and not content.strip():
         return None
 
@@ -678,6 +679,9 @@ def build_collaboration_message_doc_from_legacy(
         'augmented',
         'hybrid_citations',
         'web_search_citations',
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
         'agent_citations',
         'agent_display_name',
         'agent_name',

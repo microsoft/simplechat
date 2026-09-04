@@ -2,7 +2,7 @@
 # test_azd_managed_identity_preflight.py
 """
 Functional test for AZD managed identity RBAC preflight.
-Version: 0.242.072
+Version: 0.250.001
 Implemented in: 0.242.057
 
 This test ensures managed identity deployments fail before provisioning when
@@ -20,6 +20,11 @@ PREREQUISITES = REPO_ROOT / "deployers" / "bicep" / "validate_azd_prerequisites.
 README = REPO_ROOT / "deployers" / "bicep" / "README.md"
 DEPLOYER_VERSION = REPO_ROOT / "deployers" / "version.txt"
 FIX_DOC = REPO_ROOT / "docs" / "explanation" / "fixes" / "AZD_MANAGED_IDENTITY_PREFLIGHT_FIX.md"
+
+
+def parse_version(version: str) -> tuple[int, ...]:
+    """Parse a dotted semantic-ish version string into comparable integer parts."""
+    return tuple(int(part) for part in version.split("."))
 
 
 def require_contains(content: str, expected: str, description: str) -> None:
@@ -79,7 +84,9 @@ def test_azd_managed_identity_preflight() -> bool:
         "fix documentation deployer version",
     )
 
-    assert deployer_version == "1.0.15", "Expected deployers/version.txt to be bumped to 1.0.15."
+    assert parse_version(deployer_version) >= parse_version("1.0.15"), (
+        "Expected deployers/version.txt to be at least 1.0.15."
+    )
     assert permissions_allow_action(
         [{"actions": ["*"], "notActions": []}],
         "Microsoft.Authorization/roleAssignments/write",

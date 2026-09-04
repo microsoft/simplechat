@@ -81,11 +81,12 @@ def connect_with_sql_server_odbc_fallback(
 
         fallback_connection_string = replace_legacy_sql_server_odbc_driver(connection_string)
         log_event(
-            f"[{log_source}] Retrying SQL Server ODBC connection with Driver 18 after Driver 17 was unavailable.",
+            "[SQL_ODBC] Retrying SQL Server ODBC connection with Driver 18 after Driver 17 was unavailable.",
             extra={
                 "legacy_driver": LEGACY_SQL_SERVER_ODBC_DRIVER,
                 "fallback_driver": DEFAULT_SQL_SERVER_ODBC_DRIVER,
                 "error_type": type(ex).__name__,
+                "log_source": log_source,
             },
             debug_only=True,
         )

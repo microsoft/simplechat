@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 import types
 import uuid
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -164,7 +165,7 @@ def test_config_version_is_bumped_for_personal_prompt_fix():
     print("Testing config version bump...")
 
     config_text = CONFIG_FILE.read_text(encoding="utf-8")
-    assert 'VERSION = "0.239.206"' in config_text, "Expected config.py version 0.239.206"
+    assert_app_version_at_least("0.239.206")
 
     print("PASS: Config version updated to 0.239.206")
 

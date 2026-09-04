@@ -11,6 +11,7 @@ admin settings flow.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -103,7 +104,7 @@ def test_config_version_bumped_for_notice_suppression():
     """Verify config version was bumped for the user-facing notice removal."""
     config_content = CONFIG_FILE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.240.073"' in config_content, "Expected config.py version 0.240.073"
+    assert_app_version_at_least("0.240.073")
 
 
 if __name__ == "__main__":

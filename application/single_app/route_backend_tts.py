@@ -266,12 +266,12 @@ def _build_tts_synthesizer(settings, speech_endpoint, speech_region, voice):
     return speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=None)
 
 
-def register_route_backend_tts(app):
+def register_route_backend_tts(bp):
     """
     Text-to-speech API routes using Azure Speech Services
     """
 
-    @app.route("/api/chat/tts", methods=["POST"])
+    @bp.route("/api/chat/tts", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -400,7 +400,7 @@ def register_route_backend_tts(app):
                                     continue  # Retry
                                 else:
                                     debug_print(f"[TTS] ERROR - Rate limit exceeded after {max_retries} retries")
-                                    return jsonify({"error": "Service temporarily unavailable due to high load. Please try again."}), 429
+                                    return jsonify(build_rate_limit_error_payload(settings)), 429
                             elif _is_unsupported_tts_voice_error(error_details) and not unsupported_voice_retry_used:
                                 unsupported_voice_retry_used = True
                                 refreshed_voices = _get_tts_voices_for_synthesis(
@@ -505,7 +505,7 @@ def register_route_backend_tts(app):
             log_event("[TTS] Speech synthesis failed.", extra={"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
             return jsonify({"error": TTS_SYNTHESIS_ERROR_MESSAGE}), 500
 
-    @app.route("/api/chat/tts/voices", methods=["GET"])
+    @bp.route("/api/chat/tts/voices", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

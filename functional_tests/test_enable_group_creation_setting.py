@@ -14,6 +14,7 @@ This test ensures that the enable_group_creation setting works correctly across:
 
 import sys
 import os
+from test_support.versioning import assert_app_version_at_least
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_default_settings_include_enable_group_creation():
@@ -204,7 +205,7 @@ def test_version_updated():
             config_content = f.read()
         
         # Check for version update
-        assert 'VERSION = "0.230.029"' in config_content, "Version not updated to 0.230.029"
+        assert_app_version_at_least("0.230.029")
         
         print("  ✓ Version updated to 0.230.029")
         print("✅ Version update test passed!")

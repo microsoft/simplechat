@@ -22,6 +22,7 @@ from functions_debug import debug_print
 from config import cosmos_personal_actions_container
 import logging
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
 
 
 def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
@@ -216,6 +217,7 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
         result = cosmos_personal_actions_container.upsert_item(body=action_data)
         # Remove Cosmos metadata from response
         cleaned_result = {k: v for k, v in result.items() if not k.startswith('_')}
+        bump_chat_bootstrap_user_cache_version(user_id, reason="personal_action_saved")
         return cleaned_result
         
     except Exception as e:
@@ -247,6 +249,7 @@ def delete_personal_action(user_id, action_id):
             item=action['id'],
             partition_key=user_id
         )
+        bump_chat_bootstrap_user_cache_version(user_id, reason="personal_action_deleted")
         return True
         
     except exceptions.CosmosResourceNotFoundError:

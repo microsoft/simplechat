@@ -12,11 +12,6 @@ var standardRetentionPolicy = {
 // Standard log categories using category groups (recommended for most resources)
 var standardLogCategories = [
   {
-    categoryGroup: 'Audit'
-    enabled: true
-    retentionPolicy: standardRetentionPolicy
-  }
-  {
     categoryGroup: 'allLogs'
     enabled: true
     retentionPolicy: standardRetentionPolicy
@@ -89,11 +84,6 @@ var webAppLogCategories = [
   }
   {
     category: 'AppServicePlatformLogs'
-    enabled: true
-    retentionPolicy: standardRetentionPolicy
-  }
-  {
-    category: 'AppServiceAuthenticationLogs'
     enabled: true
     retentionPolicy: standardRetentionPolicy
   }

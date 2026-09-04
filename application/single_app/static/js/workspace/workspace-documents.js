@@ -32,6 +32,7 @@ const docsSharedOnlyFilter = document.getElementById("docs-shared-only-filter");
 const deleteSelectedBtn = document.getElementById("delete-selected-btn");
 const downloadSelectedBtn = document.getElementById("download-selected-btn");
 const chatSelectedBtn = document.getElementById("chat-selected-btn");
+const extractSelectedMetadataBtn = document.getElementById("extract-selected-metadata-btn");
 const clearSelectionBtn = document.getElementById("clear-selection-btn");
 const documentDeleteModalElement = document.getElementById("documentDeleteModal");
 const documentDeleteModal = documentDeleteModalElement ? new bootstrap.Modal(documentDeleteModalElement) : null;
@@ -53,6 +54,10 @@ function getDocumentConversationUrl(doc) {
         return `/chats?conversation_id=${encodeURIComponent(doc.conversation_id)}`;
     }
     return "";
+}
+
+function isWorkspaceMetadataExtractionEnabled() {
+    return window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true";
 }
 
 function setDocumentConversationStatusElement(element, doc) {
@@ -387,12 +392,39 @@ function getDocumentClassificationBadge(doc) {
     return '<span class="badge bg-secondary">None</span>';
 }
 
+const EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif', '.heic'];
+
 function isPdfDocument(doc) {
     return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
 }
 
-const DOCUMENT_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
-const DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+function isImageDocument(doc) {
+    const fileName = String(doc?.file_name || '').toLowerCase();
+    return EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+}
+
+function supportsExtractionModeChange(doc) {
+    return isPdfDocument(doc) || isImageDocument(doc);
+}
+
+const DOCUMENT_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster, lower-cost text extraction. Best for plain text PDFs and images.';
+const DOCUMENT_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP = 'Enhanced extraction uses Azure AI Content Understanding to preserve tables, page structure, and checkbox states, and to describe figures, charts, and images. Adds latency and higher cost.';
+const DOCUMENT_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+
+function getDocumentExtractionEngine(doc) {
+    return String(doc?.extraction_engine || '').trim().toLowerCase();
+}
+
+function getDocumentExtractionEngineReason(doc) {
+    return String(doc?.extraction_engine_reason || '').trim();
+}
+
+function getDocumentEnhancedTooltipForEngine(engine) {
+    return engine === 'content_understanding'
+        ? DOCUMENT_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP
+        : DOCUMENT_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP;
+}
+
 const DOCUMENT_CITATION_STANDARD_TOOLTIP = 'Standard citations reference indexed text chunks.';
 const DOCUMENT_CITATION_ENHANCED_TOOLTIP = 'Enhanced citations preserve source-file context for richer citation previews and supported file workflows.';
 
@@ -400,8 +432,10 @@ function getDocumentExtractionModeLabelFromMode(mode) {
     return mode === 'layout' ? 'Enhanced' : 'Standard';
 }
 
-function getDocumentExtractionModeTooltipFromMode(mode) {
-    return mode === 'layout' ? DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP : DOCUMENT_EXTRACTION_STANDARD_TOOLTIP;
+function getDocumentExtractionModeTooltipFromMode(mode, engine) {
+    return mode === 'layout'
+        ? getDocumentEnhancedTooltipForEngine(engine)
+        : DOCUMENT_EXTRACTION_STANDARD_TOOLTIP;
 }
 
 function getDocumentExtractionModeIcon(mode) {
@@ -413,9 +447,9 @@ function getDocumentTargetExtractionMode(doc) {
     return currentMode === 'layout' ? 'read' : 'layout';
 }
 
-function getDocumentExtractionChangeTooltip(targetMode) {
+function getDocumentExtractionChangeTooltip(targetMode, engine) {
     return targetMode === 'layout'
-        ? `Extract again with Enhanced extraction. ${DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP}`
+        ? `Extract again with Enhanced extraction. ${getDocumentEnhancedTooltipForEngine(engine)}`
         : `Extract again with Standard extraction. ${DOCUMENT_EXTRACTION_STANDARD_TOOLTIP}`;
 }
 
@@ -426,7 +460,9 @@ function getDocumentExtractionModeLabel(doc) {
 
 function getDocumentExtractionModeTooltip(doc) {
     const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-    return getDocumentExtractionModeTooltipFromMode(mode);
+    const tooltip = getDocumentExtractionModeTooltipFromMode(mode, getDocumentExtractionEngine(doc));
+    const reason = getDocumentExtractionEngineReason(doc);
+    return reason ? `${tooltip} ${reason}.` : tooltip;
 }
 
 function getDocumentCitationTooltip(doc) {
@@ -434,7 +470,7 @@ function getDocumentCitationTooltip(doc) {
 }
 
 function getDocumentExtractionModeBadge(doc) {
-    if (!isPdfDocument(doc)) {
+    if (!supportsExtractionModeChange(doc)) {
         return '';
     }
 
@@ -445,7 +481,7 @@ function getDocumentExtractionModeBadge(doc) {
 }
 
 function getDocumentReprocessDropdownItems(doc) {
-    if (!isPdfDocument(doc)) {
+    if (!supportsExtractionModeChange(doc)) {
         return '';
     }
 
@@ -453,7 +489,7 @@ function getDocumentReprocessDropdownItems(doc) {
     const targetMode = getDocumentTargetExtractionMode(doc);
     const targetLabel = getDocumentExtractionModeLabelFromMode(targetMode);
     const targetIcon = getDocumentExtractionModeIcon(targetMode);
-    const targetTooltip = getDocumentExtractionChangeTooltip(targetMode);
+    const targetTooltip = getDocumentExtractionChangeTooltip(targetMode, getDocumentExtractionEngine(doc));
 
     return `
         <li><hr class="dropdown-divider"></li>
@@ -480,7 +516,7 @@ function getDocumentMetaPills(doc) {
     if (doc.number_of_pages) {
         pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeHtml(String(doc.number_of_pages))} pages</span>`);
     }
-    if (isPdfDocument(doc)) {
+    if (supportsExtractionModeChange(doc)) {
         pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-richtext"></i>${getDocumentExtractionModeLabel(doc)}</span>`);
     }
     if (authors.length) {
@@ -965,6 +1001,18 @@ function isDocumentDeleteModalReady() {
     );
 }
 
+function releaseDocumentDeleteModalFocus() {
+    const activeElement = document.activeElement;
+    if (activeElement && documentDeleteModalElement && documentDeleteModalElement.contains(activeElement) && typeof activeElement.blur === "function") {
+        activeElement.blur();
+    }
+}
+
+function hideDocumentDeleteModal() {
+    releaseDocumentDeleteModalFocus();
+    documentDeleteModal.hide();
+}
+
 function promptDocumentDeleteMode(documentCount = 1) {
     if (!isDocumentDeleteModalReady()) {
         showDocumentDeleteFeedback("Delete confirmation dialog is unavailable. Refresh the page and try again.");
@@ -1001,7 +1049,7 @@ function promptDocumentDeleteMode(documentCount = 1) {
                 return;
             }
             selectedValue = value;
-            documentDeleteModal.hide();
+            hideDocumentDeleteModal();
         };
 
         const handleHidden = () => finalize();
@@ -1075,7 +1123,7 @@ function promptSyncedDocumentDeleteAction(deleteInfo) {
                 return;
             }
             selectedValue = value;
-            documentDeleteModal.hide();
+            hideDocumentDeleteModal();
         };
 
         const handleHidden = () => finalize();
@@ -1154,11 +1202,11 @@ function promptConversationLinkedDocumentDeleteAction(deleteInfo) {
         const handleOpenConversation = () => {
             window.open(conversationUrl, "_blank", "noopener");
             selectedValue = false;
-            documentDeleteModal.hide();
+            hideDocumentDeleteModal();
         };
         const handleDeleteWorkspaceCopy = () => {
             selectedValue = true;
-            documentDeleteModal.hide();
+            hideDocumentDeleteModal();
         };
 
         documentDeleteModalElement.addEventListener("hidden.bs.modal", handleHidden);
@@ -1393,7 +1441,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
             })
             .catch(err => {
                 console.error("Error updating document:", err);
-                alert("Error updating document: " + (err.error || err.message || "Unknown error"));
+                showToast("Error updating document: " + (err.error || err.message || "Unknown error"), 'danger');
             })
             .finally(() => {
                 docSaveBtn.disabled = false;
@@ -1408,7 +1456,7 @@ if (docMetadataForm && docMetadataModalEl) { // Check both exist
 */
 async function uploadWorkspaceFiles(files) {
    if (!files || files.length === 0) {
-       alert("Please select at least one file to upload.");
+       showToast("Please select at least one file to upload.", 'warning');
        return;
    }
 
@@ -1419,7 +1467,7 @@ async function uploadWorkspaceFiles(files) {
    for (const file of files) {
        if (file.size > maxFileSizeBytes) {
            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
-           alert(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`);
+           showToast(`File "${file.name}" (${fileSizeMB} MB) exceeds the maximum allowed size of ${maxFileSizeMB} MB. Please select a smaller file.`, 'warning');
            return;
        }
    }
@@ -1432,6 +1480,20 @@ async function uploadWorkspaceFiles(files) {
 
    let completed = 0;
    let failed = 0;
+
+   function updateWorkspaceUploadRequestSummary() {
+       uploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+   }
+
+   function finishWorkspaceUploadRequests() {
+       fileInput.value = '';
+       docsCurrentPage = 1;
+       fetchUserDocuments();
+       uploadStatusSpan.textContent = failed
+           ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+           : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+       if (progressContainer) progressContainer.innerHTML = '';
+   }
 
    // Helper to create a unique ID for each file
    function makeId(file) {
@@ -1487,7 +1549,7 @@ async function uploadWorkspaceFiles(files) {
                    progressBar.classList.remove('progress-bar-animated');
                }
                if (statusText) {
-                   statusText.textContent = `Uploaded ${file.name} (100%)`;
+                   statusText.textContent = `Queued ${file.name} (100%)`;
                }
                completed++;
            } else {
@@ -1497,18 +1559,13 @@ async function uploadWorkspaceFiles(files) {
                    progressBar.classList.remove('progress-bar-animated');
                }
                if (statusText) {
-                   statusText.textContent = `Failed to upload ${file.name}`;
+                   statusText.textContent = `Upload request did not confirm for ${file.name}`;
                }
                failed++;
            }
-           // Update summary status
-           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           updateWorkspaceUploadRequestSummary();
            if (completed + failed === files.length) {
-               fileInput.value = '';
-               docsCurrentPage = 1;
-               fetchUserDocuments();
-               // Clear upload progress bars after all uploads and table refresh
-               if (progressContainer) progressContainer.innerHTML = '';
+               finishWorkspaceUploadRequests();
            }
        };
 
@@ -1519,15 +1576,12 @@ async function uploadWorkspaceFiles(files) {
                progressBar.classList.remove('progress-bar-animated');
            }
            if (statusText) {
-               statusText.textContent = `Failed to upload ${file.name}`;
+               statusText.textContent = `Upload request did not confirm for ${file.name}`;
            }
            failed++;
-           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           updateWorkspaceUploadRequestSummary();
            if (completed + failed === files.length) {
-               fileInput.value = '';
-               docsCurrentPage = 1;
-               fetchUserDocuments();
-               if (progressContainer) progressContainer.innerHTML = '';
+               finishWorkspaceUploadRequests();
            }
        };
 
@@ -1560,7 +1614,7 @@ if (fileInput && uploadArea && uploadStatusSpan) {
     // Click on area triggers file input
     uploadArea.addEventListener("click", (e) => {
         // Only trigger if not clicking the hidden input itself
-        if (e.target !== fileInput) {
+        if (e.target !== fileInput && !e.target.closest(".workspace-upload-supported-types-trigger")) {
             fileInput.click();
         }
     });
@@ -1939,7 +1993,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || "N/A")}</p>
                     <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(Array.isArray(doc.authors) ? doc.authors.join(", ") : doc.authors || "N/A")}</p>
                     <p class="mb-1"><strong>Pages:</strong> ${escapeHtml(doc.number_of_pages || "N/A")}</p>
-                    ${isPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}</p>` : ''}
+                    ${supportsExtractionModeChange(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}</p>` : ''}
                     <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? `<span class="badge bg-success" title="${escapeHtml(getDocumentCitationTooltip(doc))}">Enhanced</span>` : `<span class="badge bg-secondary" title="${escapeHtml(getDocumentCitationTooltip(doc))}">Standard</span>`}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
@@ -1961,12 +2015,12 @@ function renderDocumentRow(doc) {
             `;
         }
 
-        if (isOwner && isPdfDocument(doc)) {
+        if (isOwner && supportsExtractionModeChange(doc)) {
             const reprocessDocId = escapeHtml(String(docId || ''));
             const extractionActionMode = getDocumentTargetExtractionMode(doc);
             const extractionActionLabel = getDocumentExtractionModeLabelFromMode(extractionActionMode);
             const extractionActionIcon = getDocumentExtractionModeIcon(extractionActionMode);
-            const extractionActionTooltip = getDocumentExtractionChangeTooltip(extractionActionMode);
+            const extractionActionTooltip = getDocumentExtractionChangeTooltip(extractionActionMode, getDocumentExtractionEngine(doc));
             detailsHtml += `
                 <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}">
                     <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel}
@@ -2290,14 +2344,14 @@ function showLegacyUpdatePrompt() {
       if (!res.ok) throw new Error(json.error || res.statusText);
   
       // if your endpoint returns { updated_count, failed_count }, you can use those
-      alert(json.message || 'All done!');
+      showToast(json.message || 'All done!', 'info');
   
       // hide the prompt & reload
       document.getElementById('legacy-update-alert')?.remove();
       fetchUserDocuments();
     } catch (err) {
       console.error('Legacy update failed', err);
-      alert('Failed to upgrade documents: ' + err.message);
+      showToast('Failed to upgrade documents: ' + err.message, 'danger');
       btn.disabled = false;
       btn.textContent = 'Update Now';
     }
@@ -2358,7 +2412,7 @@ window.onEditDocument = function(docId) {
         })
         .catch(err => {
             console.error("Error retrieving document for edit:", err);
-            alert("Error retrieving document details: " + (err.error || err.message || "Unknown error"));
+            showToast("Error retrieving document details: " + (err.error || err.message || "Unknown error"), 'danger');
         });
 }
 
@@ -2366,7 +2420,7 @@ window.onEditDocument = function(docId) {
 window.onExtractMetadata = function (docId, event) {
     // Check window flag - CORRECTED CHECK
     if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
-        alert("Metadata extraction is not enabled."); return;
+        showToast("Metadata extraction is not enabled.", 'info'); return;
     }
     if (!confirm("Run metadata extraction for this document? This may overwrite existing metadata.")) return;
 
@@ -2382,7 +2436,6 @@ window.onExtractMetadata = function (docId, event) {
             console.log("Metadata extraction started/completed:", data);
             // Refresh the list after a short delay to allow backend processing
             setTimeout(fetchUserDocuments, 1500);
-            //alert(data.message || "Metadata extraction process initiated.");
             // Optionally close the details view if open
             const detailsRow = document.getElementById(`details-row-${docId}`);
             if (detailsRow && detailsRow.style.display !== "none") {
@@ -2391,7 +2444,7 @@ window.onExtractMetadata = function (docId, event) {
         })
         .catch(err => {
             console.error("Error calling extract metadata:", err);
-            alert("Error extracting metadata: " + (err.error || err.message || "Unknown error"));
+            showToast("Error extracting metadata: " + (err.error || err.message || "Unknown error"), 'danger');
         })
         .finally(() => {
             if (extractBtn) {
@@ -2429,7 +2482,7 @@ window.deleteDocument = async function(documentId, event) {
         fetchUserDocuments();
     } catch (error) {
         console.error("Error deleting document:", error);
-        alert("Error deleting document: " + (error.error || error.message || "Unknown error"));
+        showToast("Error deleting document: " + (error.error || error.message || "Unknown error"), 'danger');
         if (deleteTrigger && document.body.contains(deleteTrigger)) {
             deleteTrigger.classList.remove('disabled');
             deleteTrigger.removeAttribute('aria-disabled');
@@ -2478,7 +2531,7 @@ window.removeSelfFromDocument = function(documentId, event) {
         })
         .catch(error => {
             console.error("Error removing self from document:", error);
-            alert("Error removing yourself from document: " + (error.error || error.message || "Unknown error"));
+            showToast("Error removing yourself from document: " + (error.error || error.message || "Unknown error"), 'danger');
             // Re-enable button only if it still exists
             if (removeBtn && document.body.contains(removeBtn)) {
                 removeBtn.disabled = false;
@@ -2522,11 +2575,7 @@ function showDocumentReprocessResult(data, extractionMode) {
         ? `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}; ${errorCount} item(s) were skipped.`
         : (data.message || `Queued ${queuedCount} PDF(s) to extract again with ${modeLabel}.`);
 
-    if (window.showToast) {
-        window.showToast(message, errorCount > 0 ? 'warning' : 'success');
-    } else {
-        alert(message);
-    }
+    showToast(message, errorCount > 0 ? 'warning' : 'success');
 }
 
 window.reprocessDocumentExtraction = async function(documentId, extractionMode, event) {
@@ -2543,11 +2592,7 @@ window.reprocessDocumentExtraction = async function(documentId, extractionMode, 
         showDocumentReprocessResult(data, extractionMode);
         fetchUserDocuments();
     } catch (error) {
-        if (window.showToast) {
-            window.showToast(error.message, 'danger');
-        } else {
-            alert(error.message);
-        }
+        showToast(error.message, 'danger');
     }
 };
 
@@ -2568,10 +2613,60 @@ window.reprocessSelectedDocumentExtraction = async function(extractionMode) {
         syncDocumentSelectionModeUI();
         fetchUserDocuments();
     } catch (error) {
-        if (window.showToast) {
-            window.showToast(error.message, 'danger');
-        } else {
-            alert(error.message);
+        showToast(error.message, 'danger');
+    }
+};
+
+async function requestSelectedDocumentMetadataExtraction(documentIds) {
+    const response = await fetch('/api/documents/extract_metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_ids: documentIds }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok && !(Array.isArray(data.queued) && data.queued.length > 0)) {
+        throw new Error(data.error || data.message || 'Unable to queue metadata extraction.');
+    }
+    return data;
+}
+
+function showSelectedDocumentMetadataExtractionResult(data) {
+    const queuedCount = Array.isArray(data.queued) ? data.queued.length : 0;
+    const errorCount = Array.isArray(data.errors) ? data.errors.length : 0;
+    const message = errorCount > 0
+        ? `Queued metadata extraction for ${queuedCount} document(s); ${errorCount} item(s) were skipped.`
+        : (data.message || `Queued metadata extraction for ${queuedCount} document(s).`);
+
+    showToast(message, errorCount > 0 ? 'warning' : 'success');
+}
+
+window.extractSelectedMetadata = async function() {
+    const documentIds = Array.from(selectedDocuments);
+    if (documentIds.length === 0) {
+        return;
+    }
+    if (!isWorkspaceMetadataExtractionEnabled()) {
+        showToast("Metadata extraction is not enabled.", 'info');
+        return;
+    }
+
+    if (extractSelectedMetadataBtn) {
+        extractSelectedMetadataBtn.disabled = true;
+        extractSelectedMetadataBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Extracting...';
+    }
+
+    try {
+        const data = await requestSelectedDocumentMetadataExtraction(documentIds);
+        showSelectedDocumentMetadataExtractionResult(data);
+        selectedDocuments.clear();
+        syncDocumentSelectionModeUI();
+        fetchUserDocuments();
+    } catch (error) {
+        showToast(error.message, 'danger');
+    } finally {
+        if (extractSelectedMetadataBtn) {
+            extractSelectedMetadataBtn.disabled = false;
+            extractSelectedMetadataBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Metadata';
         }
     }
 };
@@ -2611,6 +2706,7 @@ function updateBulkActionButtons() {
     const bulkActionsBar = document.getElementById('bulkActionsBar');
     const selectedCountSpan = document.getElementById('selectedCount');
     const downloadBtn = document.getElementById('download-selected-btn');
+    const extractMetadataBtn = document.getElementById('extract-selected-metadata-btn');
     
     if (selectedDocuments.size > 0) {
         // Show bulk actions bar with count
@@ -2624,7 +2720,10 @@ function updateBulkActionButtons() {
         if (downloadBtn) {
             downloadBtn.classList.toggle('d-none', !personalWorkspaceFileDownloadsEnabled);
         }
-        
+        if (extractMetadataBtn) {
+            extractMetadataBtn.classList.toggle('d-none', !isWorkspaceMetadataExtractionEnabled());
+        }
+
     } else {
         // Hide bulk actions bar
         if (bulkActionsBar) {
@@ -2633,6 +2732,9 @@ function updateBulkActionButtons() {
         }
         if (downloadBtn) {
             downloadBtn.classList.add('d-none');
+        }
+        if (extractMetadataBtn) {
+            extractMetadataBtn.classList.add('d-none');
         }
     }
 }
@@ -2699,7 +2801,7 @@ window.deleteSelectedDocuments = async function() {
     const failed = results.filter((result) => result.status === 'rejected').length;
 
     if (failed > 0) {
-        alert(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`);
+        showToast(`Deleted ${completed} document(s), but failed to delete ${failed} document(s).`, 'danger');
     }
 
     if (selectionModeActive) {
@@ -2765,9 +2867,9 @@ window.removeSelectedDocuments = function() {
         // Update status when all operations complete
         if (completed + failed === documentIds.length) {
             if (failed > 0) {
-                alert(`Removed yourself from ${completed} document(s), but failed for ${failed} document(s).`);
+                showToast(`Removed yourself from ${completed} document(s), but failed for ${failed} document(s).`, 'danger');
             } else {
-                alert(`Successfully removed yourself from ${completed} document(s).`);
+                showToast(`Successfully removed yourself from ${completed} document(s).`, 'success');
             }
             
             // Refresh the documents list
@@ -2800,7 +2902,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (chatSelectedBtn) {
         chatSelectedBtn.addEventListener('click', window.chatWithSelected);
     }
-    
+
+    if (extractSelectedMetadataBtn) {
+        extractSelectedMetadataBtn.addEventListener('click', window.extractSelectedMetadata);
+    }
+
     // Clear selection button
     if (clearSelectionBtn) {
         clearSelectionBtn.addEventListener('click', window.clearDocumentSelection);

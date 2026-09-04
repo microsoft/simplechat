@@ -19,7 +19,8 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.join(ROOT_DIR, "application", "single_app")
 sys.path.insert(0, APP_DIR)
 ADMIN_ROUTE_FILE = os.path.join(APP_DIR, "route_frontend_admin_settings.py")
-ADMIN_TEMPLATE_FILE = os.path.join(APP_DIR, "templates", "admin_settings.html")
+# The DLP card lives in the content-safety admin pane, which admin_settings.html includes.
+ADMIN_TEMPLATE_FILE = os.path.join(APP_DIR, "templates", "admin", "_panes", "content-safety.html")
 FUNCTIONS_SETTINGS_FILE = os.path.join(APP_DIR, "functions_settings.py")
 ADMIN_TEMPLATE = Path(ADMIN_TEMPLATE_FILE)
 
@@ -69,15 +70,36 @@ def read_file_text(path):
         return file_handle.read()
 
 
+def _is_literal_module_assignment(node):
+    """Return True for module-level assignments that evaluate without app imports."""
+    if not isinstance(node, ast.Assign):
+        return False
+    if not all(isinstance(target, ast.Name) for target in node.targets):
+        return False
+    try:
+        ast.literal_eval(node.value)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return True
+
+
 def load_sanitize_settings_for_user():
     """Load the sanitizer function without importing optional app dependencies."""
     source = read_file_text(FUNCTIONS_SETTINGS_FILE)
     tree = ast.parse(source, filename=FUNCTIONS_SETTINGS_FILE)
-    function_node = next(
+    # The sanitizer consults module-level constants and helper functions, so carry the
+    # literal constants and function definitions over instead of importing the module,
+    # which would pull in Azure SDK and Cosmos dependencies this test does not need.
+    body = [
         node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name == "sanitize_settings_for_user"
-    )
-    module = ast.Module(body=[function_node], type_ignores=[])
+        if _is_literal_module_assignment(node) or isinstance(node, ast.FunctionDef)
+    ]
+    if not any(
+        isinstance(node, ast.FunctionDef) and node.name == "sanitize_settings_for_user"
+        for node in body
+    ):
+        raise AssertionError("sanitize_settings_for_user is not defined at module level")
+    module = ast.Module(body=body, type_ignores=[])
     ast.fix_missing_locations(module)
     namespace = {}
     exec(compile(module, FUNCTIONS_SETTINGS_FILE, "exec"), namespace)
@@ -214,7 +236,10 @@ def test_admin_settings_rejects_invalid_dlp_regex_rules_before_update():
     assert parse_index != -1
     assert validate_index > parse_index
     assert update_index > validate_index
-    assert "return redirect(url_for('admin_settings'))" in source[validate_index:update_index]
+    assert (
+        "return redirect(url_for('frontend_admin_settings.admin_settings'))"
+        in source[validate_index:update_index]
+    )
 
 
 def test_presidio_endpoint_settings_are_normalized_without_secret_persistence():

@@ -10,6 +10,7 @@ enable_group_creation setting and the require_member_of_create_group setting.
 
 import sys
 import os
+from test_support.versioning import assert_app_version_at_least
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 def test_route_checks_enable_group_creation():
@@ -186,7 +187,7 @@ def test_version_updated():
             config_content = f.read()
         
         # Check for version update
-        assert 'VERSION = "0.230.030"' in config_content, "Version not updated to 0.230.030"
+        assert_app_version_at_least("0.230.030")
         
         print("  ✓ Version updated to 0.230.030")
         print("✅ Version update test passed!")

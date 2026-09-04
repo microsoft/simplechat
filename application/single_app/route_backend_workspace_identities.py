@@ -25,7 +25,7 @@ from swagger_wrapper import get_auth_security, swagger_route
 WORKSPACE_IDENTITY_MANAGER_ROLES = ("Owner", "Admin", "DocumentManager")
 
 
-def register_route_backend_workspace_identities(app):
+def register_route_backend_workspace_identities(bp):
     def _error(message, status=400):
         return jsonify({"error": message}), status
 
@@ -127,7 +127,7 @@ def register_route_backend_workspace_identities(app):
         delete_result = delete_workspace_identity(scope_type, scope_id, identity_id, user_id)
         return jsonify({"message": "Workspace identity deleted", "delete_result": delete_result}), 200
 
-    @app.route('/api/admin/workspace-identities/global/identities', methods=['GET'])
+    @bp.route('/api/admin/workspace-identities/global/identities', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -138,7 +138,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/global/identities', methods=['POST'])
+    @bp.route('/api/admin/workspace-identities/global/identities', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -149,7 +149,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/global/identities/<identity_id>', methods=['PATCH'])
+    @bp.route('/api/admin/workspace-identities/global/identities/<identity_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -160,7 +160,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/global/identities/<identity_id>', methods=['DELETE'])
+    @bp.route('/api/admin/workspace-identities/global/identities/<identity_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -171,7 +171,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/personal/identities', methods=['GET'])
+    @bp.route('/api/workspace-identities/personal/identities', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -182,7 +182,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/personal/identities', methods=['POST'])
+    @bp.route('/api/workspace-identities/personal/identities', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -193,7 +193,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/personal/identities/<identity_id>', methods=['PATCH'])
+    @bp.route('/api/workspace-identities/personal/identities/<identity_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -204,7 +204,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/personal/identities/<identity_id>', methods=['DELETE'])
+    @bp.route('/api/workspace-identities/personal/identities/<identity_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -215,7 +215,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/group/identities', methods=['GET'])
+    @bp.route('/api/workspace-identities/group/identities', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -226,7 +226,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/group/identities', methods=['POST'])
+    @bp.route('/api/workspace-identities/group/identities', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -237,7 +237,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/group/identities/<identity_id>', methods=['PATCH'])
+    @bp.route('/api/workspace-identities/group/identities/<identity_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -248,7 +248,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/group/identities/<identity_id>', methods=['DELETE'])
+    @bp.route('/api/workspace-identities/group/identities/<identity_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -259,7 +259,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/public/<public_workspace_id>/identities', methods=['GET'])
+    @bp.route('/api/workspace-identities/public/<public_workspace_id>/identities', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -270,7 +270,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/public/<public_workspace_id>/identities', methods=['POST'])
+    @bp.route('/api/workspace-identities/public/<public_workspace_id>/identities', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -281,7 +281,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/public/<public_workspace_id>/identities/<identity_id>', methods=['PATCH'])
+    @bp.route('/api/workspace-identities/public/<public_workspace_id>/identities/<identity_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -292,7 +292,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/workspace-identities/public/<public_workspace_id>/identities/<identity_id>', methods=['DELETE'])
+    @bp.route('/api/workspace-identities/public/<public_workspace_id>/identities/<identity_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -303,7 +303,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities', methods=['GET'])
+    @bp.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -314,7 +314,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities', methods=['POST'])
+    @bp.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -325,7 +325,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities/<identity_id>', methods=['PATCH'])
+    @bp.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities/<identity_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
@@ -336,7 +336,7 @@ def register_route_backend_workspace_identities(app):
         except Exception as error:
             return _map_exception(error)
 
-    @app.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities/<identity_id>', methods=['DELETE'])
+    @bp.route('/api/admin/workspace-identities/<scope_type>/<scope_id>/identities/<identity_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required

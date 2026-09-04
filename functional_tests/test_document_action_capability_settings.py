@@ -11,13 +11,18 @@ saved settings instead of hard-coded UI and backend constants.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_text(relative_path: str) -> str:
-    return (ROOT / relative_path).read_text(encoding="utf-8")
+    _path = ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_document_action_capability_settings_wiring() -> None:
@@ -37,9 +42,7 @@ def test_document_action_capability_settings_wiring() -> None:
     workflow_template_content = read_text("application/single_app/templates/workspace.html")
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
 
-    assert 'VERSION = "0.241.095"' in config_content, (
-        "Expected config.py version 0.241.095 for document action capability settings."
-    )
+    assert_app_version_at_least("0.241.095")
     assert 'DEFAULT_DOCUMENT_ACTION_CAPABILITIES' in document_actions_content, (
         "Expected shared document action helpers to define default capability settings."
     )

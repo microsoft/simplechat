@@ -3,9 +3,25 @@
 import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
+import { AgentInstructionMentions, buildActionToken, buildKnowledgeToken } from "./agent_instruction_mentions.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
 const ASSIGNED_KNOWLEDGE_KEY = 'assigned_knowledge';
+// Ordered step keys for the agent modal. The index in this array is the step
+// number rendered in the DOM (`#agent-step-1` ... `#agent-step-7`) and the
+// position of the matching `.step-indicator`. Reordering steps means reordering
+// this array plus the template markup, never sprinkling new magic numbers.
+const AGENT_STEP_KEYS = Object.freeze([
+  'basic',
+  'model',
+  'actions',
+  'knowledge',
+  'instructions',
+  'advanced',
+  'summary'
+]);
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_singular') : 'public workspace';
+const publicWorkspaceLowerPlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('lower_plural') : 'public workspaces';
 const ASSIGNED_KNOWLEDGE_USER_ACTIONS = Object.freeze(['search', 'analyze', 'compare']);
 const ASSIGNED_KNOWLEDGE_WEB_SOURCE_MODES = Object.freeze(['url_review', 'deep_research']);
 const EMPTY_ASSIGNED_KNOWLEDGE = Object.freeze({
@@ -98,6 +114,12 @@ const SIMPLECHAT_CAPABILITY_DEFINITIONS = [
     key: 'create_personal_collaboration_conversation',
     label: 'Create personal collaborative conversations',
     description: 'Allow the agent to create personal collaborative conversations and invite participants.'
+  },
+  {
+    key: 'raise_workflow_alert',
+    label: 'Raise workflow alerts',
+    description: 'Allow the agent to raise an alert signal while a workflow run is executing, so the workflow\'s alert rules can notify the owner.',
+    defaultEnabled: false
   }
 ];
 const MSGRAPH_CAPABILITY_DEFINITIONS = [
@@ -213,7 +235,7 @@ const CHART_CAPABILITY_DEFINITIONS = [
 export class AgentModalStepper {
   constructor(isAdmin = false, options = {}) {
     this.currentStep = 1;
-    this.maxSteps = 7;
+    this.maxSteps = AGENT_STEP_KEYS.length;
     this.isEditMode = false;
     this.isAdmin = isAdmin; // Track if this is admin context
     this.workspaceScope = options.workspaceScope || (isAdmin ? 'admin' : 'user');
@@ -226,6 +248,7 @@ export class AgentModalStepper {
     this.templateSubmitButton = document.getElementById('agent-modal-submit-template-btn');
     this.foundryPlaceholderInstructions = 'Placeholder instructions: Azure AI Foundry agent manages its own prompt.';
     this.instructionsEditor = null;
+    this.instructionMentions = null;
     this.foundryEndpoints = [];
     this.foundryAgents = [];
     this.assignedKnowledgeCatalog = { sources: [], documents: [], tags: [] };
@@ -279,7 +302,12 @@ export class AgentModalStepper {
       agentModal.addEventListener('shown.bs.modal', () => {
         this.initializeInstructionsEditor();
         this.initializeVoiceControls();
-        this.refreshInstructionsEditor(this.currentStep === 3 && !this.isAnyFoundryType());
+        this.initializeInstructionMentions();
+        this.refreshInstructionsEditor(this.isOnStep('instructions') && !this.isAnyFoundryType());
+      });
+
+      agentModal.addEventListener('hidden.bs.modal', () => {
+        this.instructionMentions?.close();
       });
     }
 
@@ -343,6 +371,9 @@ export class AgentModalStepper {
     
     // Set up display name to generated name conversion
     this.setupNameGeneration();
+
+    // Set up shared agent icon picker and image upload controls
+    agentsCommon.initializeIconControls(document);
     
     // Set up model change listener for reasoning effort
     this.setupModelChangeListener();
@@ -1513,6 +1544,199 @@ export class AgentModalStepper {
     });
   }
 
+  initializeInstructionMentions() {
+    if (!this.instructionMentions) {
+      this.instructionMentions = new AgentInstructionMentions({
+        getActions: () => this.getSelectedActionsWithCapabilities(),
+        getKnowledge: () => this.getAssignedKnowledgeReference()
+      });
+    }
+
+    const brief = document.getElementById('agent-instruction-brief');
+    if (brief) {
+      this.instructionMentions.attachTextarea(brief);
+    }
+
+    if (this.instructionsEditor?.codemirror) {
+      this.instructionMentions.attachCodeMirror(this.instructionsEditor.codemirror);
+    } else {
+      const instructionsInput = document.getElementById('agent-instructions');
+      if (instructionsInput) {
+        this.instructionMentions.attachTextarea(instructionsInput);
+      }
+    }
+  }
+
+  /**
+   * Entering the Instructions step: make sure the knowledge catalog is loaded,
+   * wire the "#" autocomplete, and refresh the reference panel so it reflects
+   * whatever was chosen in the Actions and Knowledge steps.
+   */
+  prepareInstructionsContext() {
+    if (this.isAnyFoundryType()) {
+      this.renderInstructionsContextPanel();
+      return;
+    }
+
+    this.initializeInstructionMentions();
+
+    const knowledgeEnabled = Boolean(document.getElementById('agent-assigned-knowledge-enabled')?.checked);
+    if (knowledgeEnabled && !this.assignedKnowledgeCatalogLoaded) {
+      this.loadAssignedKnowledgeCatalog()
+        .then(() => this.renderInstructionsContextPanel())
+        .catch(() => this.renderInstructionsContextPanel());
+      return;
+    }
+
+    this.renderInstructionsContextPanel();
+  }
+
+  createInstructionsContextItem(title, token, detail = '', badges = []) {
+    const item = document.createElement('div');
+    item.className = 'agent-instructions-context-item';
+
+    const heading = document.createElement('div');
+    heading.className = 'd-flex align-items-center gap-2 flex-wrap';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'agent-instructions-context-item-title';
+    titleEl.textContent = title;
+    heading.appendChild(titleEl);
+
+    badges.forEach(badgeText => {
+      const badge = document.createElement('span');
+      badge.className = 'badge text-bg-secondary';
+      badge.textContent = badgeText;
+      heading.appendChild(badge);
+    });
+
+    item.appendChild(heading);
+
+    if (detail) {
+      const detailEl = document.createElement('div');
+      detailEl.className = 'text-muted small';
+      detailEl.textContent = detail;
+      item.appendChild(detailEl);
+    }
+
+    if (token) {
+      const tokenEl = document.createElement('div');
+      tokenEl.className = 'agent-instructions-context-item-token';
+      tokenEl.textContent = token;
+      item.appendChild(tokenEl);
+    }
+
+    return item;
+  }
+
+  renderInstructionsContextPanel() {
+    const panel = document.getElementById('agent-instructions-context-panel');
+    const actionsContainer = document.getElementById('agent-instructions-context-actions');
+    const knowledgeContainer = document.getElementById('agent-instructions-context-knowledge');
+    if (!panel || !actionsContainer || !knowledgeContainer) {
+      return;
+    }
+
+    panel.classList.toggle('d-none', this.isAnyFoundryType());
+    if (this.isAnyFoundryType()) {
+      return;
+    }
+
+    const actions = this.getSelectedActionsWithCapabilities();
+    const knowledge = this.getAssignedKnowledgeReference();
+
+    actionsContainer.textContent = '';
+    if (!actions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'agent-instructions-context-empty';
+      empty.textContent = 'No actions selected in the Actions step.';
+      actionsContainer.appendChild(empty);
+    } else {
+      actions.forEach(action => {
+        const label = action.display_name || action.name;
+        const item = this.createInstructionsContextItem(
+          label,
+          buildActionToken(label),
+          action.description,
+          action.type ? [action.type] : []
+        );
+
+        if (action.capabilities.length) {
+          const capabilityList = document.createElement('div');
+          capabilityList.className = 'd-flex flex-wrap gap-1 mt-1';
+          action.capabilities.forEach(capability => {
+            const badge = document.createElement('span');
+            badge.className = 'badge text-bg-primary';
+            badge.textContent = capability.key;
+            badge.title = capability.label;
+            capabilityList.appendChild(badge);
+          });
+          item.appendChild(capabilityList);
+        }
+
+        actionsContainer.appendChild(item);
+      });
+    }
+
+    knowledgeContainer.textContent = '';
+    const knowledgeItems = [];
+    if (knowledge.enabled) {
+      knowledge.sources.forEach(source => {
+        knowledgeItems.push(this.createInstructionsContextItem(
+          source.name,
+          buildKnowledgeToken('workspace', source.name),
+          '',
+          ['workspace']
+        ));
+      });
+      knowledge.documents.forEach(documentItem => {
+        const label = documentItem.title || documentItem.file_name;
+        knowledgeItems.push(this.createInstructionsContextItem(
+          label,
+          buildKnowledgeToken('doc', label),
+          documentItem.source_name,
+          ['document']
+        ));
+      });
+      knowledge.tags.forEach(tag => {
+        knowledgeItems.push(this.createInstructionsContextItem(
+          tag,
+          buildKnowledgeToken('tag', tag),
+          '',
+          ['tag']
+        ));
+      });
+      knowledge.web_sources.forEach(webSource => {
+        knowledgeItems.push(this.createInstructionsContextItem(
+          webSource.url,
+          buildKnowledgeToken('web', webSource.url),
+          webSource.mode_label,
+          ['web']
+        ));
+      });
+    }
+
+    if (!knowledgeItems.length) {
+      const empty = document.createElement('div');
+      empty.className = 'agent-instructions-context-empty';
+      empty.textContent = knowledge.enabled
+        ? 'No knowledge items resolved in the Knowledge step.'
+        : 'Assigned knowledge is turned off.';
+      knowledgeContainer.appendChild(empty);
+    } else {
+      knowledgeItems.forEach(item => knowledgeContainer.appendChild(item));
+    }
+
+    const actionsCount = document.getElementById('agent-instructions-context-actions-count');
+    if (actionsCount) {
+      actionsCount.textContent = `${actions.length} action${actions.length === 1 ? '' : 's'}`;
+    }
+    const knowledgeCount = document.getElementById('agent-instructions-context-knowledge-count');
+    if (knowledgeCount) {
+      knowledgeCount.textContent = `${knowledgeItems.length} knowledge item${knowledgeItems.length === 1 ? '' : 's'}`;
+    }
+  }
+
   getInstructionsValue() {
     if (this.instructionsEditor) {
       return this.instructionsEditor.value();
@@ -1680,7 +1904,7 @@ export class AgentModalStepper {
     const modelGroup = document.getElementById('agent-global-model-group');
     const customToggle = document.getElementById('agent-custom-connection-toggle');
     const customFields = document.getElementById('agent-custom-connection-fields');
-    const actionsSection = document.getElementById('agent-step-4');
+    const actionsSection = this.getStepElement('actions');
     const actionsDisabled = document.getElementById('agent-actions-disabled');
     const actionsContainer = document.getElementById('agent-actions-container');
     const actionsHeader = actionsSection?.querySelector('.card');
@@ -1786,6 +2010,12 @@ export class AgentModalStepper {
       } else if (isClassicFoundry) {
         foundryModeNote.textContent = 'Classic Foundry agents run as the signed-in user through the SDK-backed invocation path.';
       }
+    }
+
+    // Switching agent type while the Instructions step is open changes whether
+    // the reference panel and "#" autocomplete apply at all.
+    if (this.isOnStep('instructions')) {
+      this.prepareInstructionsContext();
     }
   }
 
@@ -1928,6 +2158,7 @@ export class AgentModalStepper {
     this.updateGeneratedName();
     this.initializeInstructionsEditor();
     this.initializeVoiceControls();
+    this.initializeInstructionMentions();
     this.syncAgentTypeSelector();
     this.applyAgentTypeVisibility();
     this.updateAgentTypeLock();
@@ -2050,6 +2281,11 @@ export class AgentModalStepper {
     if (additionalSettings) additionalSettings.value = '{}';
     if (instructionBrief) instructionBrief.value = '';
     if (draftStatus) draftStatus.textContent = '';
+    const iconImageData = document.getElementById('agent-icon-image-data');
+    const iconImageFile = document.getElementById('agent-icon-image-file');
+    if (iconImageData) iconImageData.value = '';
+    if (iconImageFile) iconImageFile.value = '';
+    agentsCommon.setIconPayload(document, { kind: 'bootstrap', value: 'bi-robot' });
     this.resetAssignedKnowledgeControls();
     
     // Clear any selected actions
@@ -2494,7 +2730,7 @@ export class AgentModalStepper {
   }
 
   async skipToEnd() {
-    // Skip to the summary step (step 6)
+    // Skip straight to the summary step
     //if (this.actionsToSelect != null && this.actionsToSelect.length > 0) {
     //  this.setSelectedActions(this.actionsToSelect);
     //}
@@ -2534,6 +2770,24 @@ export class AgentModalStepper {
     this.updateAgentTypeLock();
   }
 
+  getStepKey(stepNumber = this.currentStep) {
+    return AGENT_STEP_KEYS[stepNumber - 1] || '';
+  }
+
+  getStepNumber(stepKey) {
+    const index = AGENT_STEP_KEYS.indexOf(stepKey);
+    return index === -1 ? 0 : index + 1;
+  }
+
+  getStepElement(stepKey) {
+    const stepNumber = this.getStepNumber(stepKey);
+    return stepNumber ? document.getElementById(`agent-step-${stepNumber}`) : null;
+  }
+
+  isOnStep(stepKey) {
+    return this.getStepKey() === stepKey;
+  }
+
   showStep(stepNumber) {
     // Hide all steps
     for (let i = 1; i <= this.maxSteps; i++) {
@@ -2549,50 +2803,55 @@ export class AgentModalStepper {
       currentStep.classList.remove('d-none');
     }
 
-    if (stepNumber === 3) {
-      this.initializeInstructionsEditor();
-      this.refreshInstructionsEditor(!this.isAnyFoundryType());
-    }
+    switch (this.getStepKey(stepNumber)) {
+      case 'model': {
+        const isFoundry = this.isAnyFoundryType();
+        const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
+        const modelGroup = document.getElementById('agent-global-model-group');
 
-    if (stepNumber === 2) {
-      const isFoundry = this.isAnyFoundryType();
-      const customConnectionToggle = document.getElementById('agent-custom-connection-toggle');
-      const modelGroup = document.getElementById('agent-global-model-group');
-
-      if (customConnectionToggle) {
-        if (isFoundry) {
-          customConnectionToggle.classList.add('d-none');
-        } else if (!this.isAdmin) {
-          const allowCustomEndpoints = this.workspaceScope === 'group'
-            ? appSettings?.allow_group_custom_endpoints
-            : appSettings?.allow_user_custom_endpoints;
-          customConnectionToggle.classList.toggle('d-none', !allowCustomEndpoints);
-        } else {
-          customConnectionToggle.classList.remove('d-none');
+        if (customConnectionToggle) {
+          if (isFoundry) {
+            customConnectionToggle.classList.add('d-none');
+          } else if (!this.isAdmin) {
+            const allowCustomEndpoints = this.workspaceScope === 'group'
+              ? appSettings?.allow_group_custom_endpoints
+              : appSettings?.allow_user_custom_endpoints;
+            customConnectionToggle.classList.toggle('d-none', !allowCustomEndpoints);
+          } else {
+            customConnectionToggle.classList.remove('d-none');
+          }
         }
+
+        if (modelGroup) {
+          modelGroup.classList.toggle('d-none', isFoundry);
+        }
+        break;
       }
 
-      if (modelGroup) {
-        modelGroup.classList.toggle('d-none', isFoundry);
-      }
-    }
-    
-    // Load actions when reaching step 4
-    if (stepNumber === 4) {
-      if (!this.isAnyFoundryType()) {
-        this.loadAvailableActions();
-      }
-    }
-    
-    if (stepNumber === 5) {
-      if (document.getElementById('agent-assigned-knowledge-enabled')?.checked) {
-        this.loadAssignedKnowledgeCatalog();
-      }
-    }
+      case 'actions':
+        if (!this.isAnyFoundryType()) {
+          this.loadAvailableActions();
+        }
+        break;
 
-    // Populate summary when reaching step 7
-    if (stepNumber === 7) {
-      this.populateSummary();
+      case 'knowledge':
+        if (document.getElementById('agent-assigned-knowledge-enabled')?.checked) {
+          this.loadAssignedKnowledgeCatalog();
+        }
+        break;
+
+      case 'instructions':
+        this.initializeInstructionsEditor();
+        this.prepareInstructionsContext();
+        this.refreshInstructionsEditor(!this.isAnyFoundryType());
+        break;
+
+      case 'summary':
+        this.populateSummary();
+        break;
+
+      default:
+        break;
     }
   }
 
@@ -2666,7 +2925,7 @@ export class AgentModalStepper {
       }
     }
     
-    // Skip button - show on steps 2-5, hide on first and last step
+    // Skip button - show on the intermediate steps, hide on first and last step
     if (skipBtn) {
       if (this.currentStep === 1 || this.currentStep === this.maxSteps) {
         skipBtn.classList.add('d-none');
@@ -2707,8 +2966,8 @@ export class AgentModalStepper {
   }
 
   validateCurrentStep() {
-    switch (this.currentStep) {
-      case 1: // Basic Info
+    switch (this.getStepKey()) {
+      case 'basic': {
         const displayName = document.getElementById('agent-display-name');
         const description = document.getElementById('agent-description');
         
@@ -2724,8 +2983,9 @@ export class AgentModalStepper {
           return false;
         }
         break;
+      }
         
-      case 2: // Model & Connection
+      case 'model':
         if (this.isAnyFoundryType()) {
           const endpoint = document.getElementById('agent-foundry-endpoint');
           const deployment = document.getElementById('agent-foundry-deployment');
@@ -2781,7 +3041,7 @@ export class AgentModalStepper {
         }
         break;
         
-      case 3: // Instructions
+      case 'instructions': {
         const instructionsValue = this.getInstructionsValue();
           if (!this.isAnyFoundryType()) {
             if (!instructionsValue.trim()) {
@@ -2796,24 +3056,25 @@ export class AgentModalStepper {
             }
           }
         break;
+      }
         
-      case 4: // Actions
+      case 'actions':
         if (!this.isAnyFoundryType()) {
           // Actions validation would go here if needed
         }
         break;
         
-      case 5: // Assigned Knowledge
+      case 'knowledge':
         if (!this.validateAssignedKnowledgeStep()) {
           return false;
         }
         break;
 
-      case 6: // Advanced
+      case 'advanced':
         // Advanced settings validation would go here if needed
         break;
         
-      case 7: // Summary
+      case 'summary':
         // Final validation would go here
         break;
     }
@@ -3086,7 +3347,9 @@ export class AgentModalStepper {
       summaryItems.push(`${scopes.group_ids.length} group source${scopes.group_ids.length === 1 ? '' : 's'}`);
     }
     if (scopes.public_workspace_ids?.length) {
-      summaryItems.push(`${scopes.public_workspace_ids.length} public workspace${scopes.public_workspace_ids.length === 1 ? '' : 's'}`);
+      const publicWorkspaceCount = scopes.public_workspace_ids.length;
+      const publicWorkspaceLabel = publicWorkspaceCount === 1 ? publicWorkspaceLowerSingular : publicWorkspaceLowerPlural;
+      summaryItems.push(`${publicWorkspaceCount} ${publicWorkspaceLabel}`);
     }
     if (assignedKnowledge.document_ids?.length) {
       summaryItems.push(`${assignedKnowledge.document_ids.length} specific document${assignedKnowledge.document_ids.length === 1 ? '' : 's'}`);
@@ -3294,7 +3557,7 @@ export class AgentModalStepper {
   getDefaultSimpleChatCapabilities(actionId = '', actionName = '') {
     const defaults = {};
     SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
-      defaults[definition.key] = true;
+      defaults[definition.key] = definition.defaultEnabled !== false;
     });
 
     const action = (this.availableActions || []).find(candidate => {
@@ -3797,6 +4060,124 @@ export class AgentModalStepper {
     return Array.from(selectedCards).map(card => card.getAttribute('data-action-id'));
   }
 
+  findAvailableAction(actionId, actionName) {
+    return (this.availableActions || []).find(candidate => {
+      const candidateId = String(candidate?.id || candidate?.name || '').trim();
+      const candidateName = String(candidate?.name || candidate?.display_name || '').trim();
+      return (actionId && candidateId === actionId) || (actionName && candidateName === actionName);
+    }) || null;
+  }
+
+  getCapabilityDefinitionsForActionType(actionType) {
+    switch (String(actionType || '').toLowerCase()) {
+      case 'simplechat':
+        return SIMPLECHAT_CAPABILITY_DEFINITIONS;
+      case 'msgraph':
+        return MSGRAPH_CAPABILITY_DEFINITIONS;
+      case 'chart':
+        return CHART_CAPABILITY_DEFINITIONS;
+      default:
+        return [];
+    }
+  }
+
+  getEnabledCapabilitiesForAction(actionId, actionName, actionType) {
+    const definitions = this.getCapabilityDefinitionsForActionType(actionType);
+    if (!definitions.length) {
+      return [];
+    }
+
+    let capabilities = {};
+    switch (String(actionType || '').toLowerCase()) {
+      case 'simplechat':
+        capabilities = this.getSimpleChatCapabilitiesForAction(actionId, actionName);
+        break;
+      case 'msgraph':
+        capabilities = this.getMsGraphCapabilitiesForAction(actionId, actionName);
+        break;
+      case 'chart':
+        capabilities = this.getChartCapabilitiesForAction(actionId, actionName);
+        break;
+      default:
+        break;
+    }
+
+    return definitions
+      .filter(definition => Boolean(capabilities[definition.key]))
+      .map(definition => ({
+        key: definition.key,
+        label: definition.label,
+        description: definition.description
+      }));
+  }
+
+  getSelectedActionsWithCapabilities() {
+    if (this.isAnyFoundryType()) {
+      return [];
+    }
+
+    return Array.from(document.querySelectorAll('.action-card.border-primary')).map(card => {
+      const actionId = card.getAttribute('data-action-id') || '';
+      const actionName = card.getAttribute('data-action-name') || '';
+      const actionType = card.getAttribute('data-action-type') || 'custom';
+      const catalogAction = this.findAvailableAction(actionId, actionName);
+      const displayName = String(catalogAction?.display_name || catalogAction?.name || actionName || '').trim();
+
+      return {
+        id: actionId,
+        name: actionName,
+        display_name: displayName || actionName,
+        description: card.getAttribute('data-action-description') || '',
+        type: actionType,
+        is_global: card.getAttribute('data-action-is-global') === 'true',
+        capabilities: this.getEnabledCapabilitiesForAction(actionId, actionName, actionType)
+      };
+    });
+  }
+
+  getAssignedKnowledgeReference() {
+    const empty = { enabled: false, sources: [], documents: [], tags: [], web_sources: [] };
+    if (this.isAnyFoundryType()) {
+      return empty;
+    }
+
+    const config = this.normalizeAssignedKnowledge(this.getAssignedKnowledgeConfig());
+    if (!config.enabled) {
+      return empty;
+    }
+
+    const selectedSourceKeys = this.getAssignedKnowledgeSelectedSourceKeys(config);
+    const sources = (this.assignedKnowledgeCatalog.sources || [])
+      .filter(source => selectedSourceKeys.has(this.getCatalogSourceKey(source)))
+      .map(source => ({
+        scope: String(source.scope || ''),
+        id: String(source.id || ''),
+        name: String(source.label || source.id || '')
+      }));
+
+    const documents = this.getResolvedAssignedKnowledgeDocuments(config).map(({ documentItem, reasons }) => ({
+      id: String(documentItem.id || ''),
+      title: String(documentItem.title || documentItem.file_name || ''),
+      file_name: String(documentItem.file_name || documentItem.title || ''),
+      source_name: String(documentItem.source_name || ''),
+      scope: String(documentItem.scope || ''),
+      tags: Array.isArray(documentItem.tags) ? documentItem.tags.map(tag => String(tag)) : [],
+      is_explicit: reasons.includes('explicit')
+    }));
+
+    return {
+      enabled: true,
+      sources,
+      documents,
+      tags: this.normalizeStringArray(config.tags || []),
+      web_sources: (config.web_sources || []).map(webSource => ({
+        url: String(webSource.url || ''),
+        mode: this.normalizeAssignedKnowledgeWebSourceMode(webSource.mode),
+        mode_label: this.getAssignedKnowledgeWebSourceModeLabel(webSource.mode)
+      }))
+    };
+  }
+
   setSelectedActions(actionIds) {
     if (!Array.isArray(actionIds)) return;
     
@@ -4153,7 +4534,9 @@ export class AgentModalStepper {
           display_name: displayName,
           description,
           brief,
-          existing_instructions: existingInstructions
+          existing_instructions: existingInstructions,
+          selected_actions: this.getSelectedActionsWithCapabilities(),
+          assigned_knowledge: this.getAssignedKnowledgeReference()
         })
       });
       const result = await response.json().catch(() => ({}));

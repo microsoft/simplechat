@@ -1,6 +1,6 @@
 # Simple Chat - Deployment using Terraform
 
-[Return to Main](../README.md)
+[Return to Main](../../README.md)
 
 ## Login to Azure CLI
 
@@ -49,7 +49,7 @@ If you plan to reuse enterprise-managed networking, make sure these prerequisite
 For detailed networking guidance, see:
 
 - [../bicep/README.md](../bicep/README.md)
-- [../../docs/how-to/enterprise_networking.md](../../docs/how-to/enterprise_networking.md)
+- [../../docs/guides/enterprise-networking.md](../../docs/guides/enterprise-networking.md)
 
 ## Configure Terraform Secrets
  
@@ -71,6 +71,8 @@ ACR_PASSWORD = "your_acr_password"
 
 Terraform defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned dedicated container autoscale throughput. Free Search and serverless Cosmos DB remain configurable for short-lived MVP phases, but they are not the repository defaults because they can hit semantic query, indexing, or request-unit limits during document-heavy testing.
 
+Terraform also assigns the application managed identity the `SimpleChat Cosmos Throughput Operator` custom role on the deployed Cosmos account. It is limited to Cosmos account/database/container throughput discovery and mutation, throughput-operation reads, autoscale migration operations, and metrics reads; it does not replace Cosmos DB data-plane permissions. The optional Data Management source backup boost is capped at 10,000 RU/s and restores the captured capacity after completion, cancellation, failure, or durable recovery. Review the additional Cosmos cost before enabling it. Serverless, unsupported shared/dedicated throughput layouts, and capacity already above 10,000 RU/s remain portal-managed.
+
 ## Deploy initial container
 
 Terraform does not build the container image itself. It expects `image_name` to point to an image tag that already exists in your Azure Container Registry.
@@ -91,7 +93,7 @@ If you use `az acr build`, run it from the repository root so the Docker build c
 
 - For **code-only** container updates, publish a new image to ACR and follow the existing App Service container rollout process instead of rerunning Terraform for every release.
 - Use Terraform when you are intentionally changing infrastructure or configuration that belongs in Terraform state.
-- See [../../docs/how-to/upgrade_paths.md](../../docs/how-to/upgrade_paths.md) for the native-vs-container upgrade guide and the ACR/image-only rollout notes.
+- See [../../docs/guides/upgrade-paths.md](../../docs/guides/upgrade-paths.md) for the native-vs-container upgrade guide and the ACR/image-only rollout notes.
 
 ## Terraform deployment
 

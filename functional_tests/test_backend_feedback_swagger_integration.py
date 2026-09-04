@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for backend feedback swagger integration.
-Version: 0.229.069
+Version: 0.250.075
 Implemented in: 0.229.069
 
 This test ensures that all feedback endpoints in route_backend_feedback.py 
@@ -61,9 +61,14 @@ def test_feedback_swagger_decorators():
         expected_endpoints = [
             '/feedback/submit',
             '/feedback/review',
+            '/feedback/review/stats',
+            '/feedback/review/export',
             '/feedback/review/<feedbackId>',  # GET and PATCH versions
+            '/feedback/review/<feedbackId>/archive',
             '/feedback/retest/<feedbackId>',
-            '/feedback/my'
+            '/feedback/my',
+            '/feedback/my/stats',
+            '/feedback/my/export',
         ]
         
         # Track found decorators
@@ -73,7 +78,7 @@ def test_feedback_swagger_decorators():
         lines = content.split('\n')
         
         for i, line in enumerate(lines):
-            if '@app.route(' in line:
+            if '@bp.route(' in line:
                 # Found a route, check if next line has swagger decorator
                 if i + 1 < len(lines) and '@swagger_route(security=get_auth_security())' in lines[i + 1]:
                     decorated_endpoints += 1
@@ -82,9 +87,9 @@ def test_feedback_swagger_decorators():
                     print(f"❌ Missing swagger decorator for: {line.strip()}")
                     return False
         
-        # Verify we found all expected endpoints (6 total)
-        if decorated_endpoints != 6:
-            print(f"❌ Expected 6 decorated endpoints, found {decorated_endpoints}")
+        expected_route_count = 12
+        if decorated_endpoints != expected_route_count:
+            print(f"❌ Expected {expected_route_count} decorated endpoints, found {decorated_endpoints}")
             return False
             
         print(f"✅ All {decorated_endpoints} feedback endpoints properly decorated")
@@ -115,7 +120,7 @@ def test_feedback_decorator_order():
         route_count = 0
         
         for i, line in enumerate(lines):
-            if '@app.route(' in line:
+            if '@bp.route(' in line:
                 route_count += 1
                 
                 # Check if decorators are in correct order
@@ -161,8 +166,12 @@ def test_feedback_endpoint_coverage():
             'feedback_review_get',
             'feedback_review_get_single',
             'feedback_review_update',
+            'feedback_review_archive',
+            'feedback_review_delete',
             'feedback_retest',
-            'feedback_my'
+            'feedback_my',
+            'feedback_my_stats',
+            'feedback_my_export',
         ]
         
         found_functions = []
@@ -205,7 +214,7 @@ def test_feedback_auth_security_integration():
         
         # Count occurrences of security integration
         security_decorators = content.count('@swagger_route(security=get_auth_security())')
-        app_routes = content.count('@app.route(')
+        app_routes = content.count('@bp.route(')
         
         if security_decorators != app_routes:
             print(f"❌ Mismatch: {app_routes} routes but {security_decorators} security decorators")
@@ -241,12 +250,11 @@ def test_feedback_role_based_access():
             content = f.read()
         
         # Count admin and user required decorators
-        admin_required_count = content.count('@admin_required')
+        admin_required_count = content.count('@feedback_admin_required')
         user_required_count = content.count('@user_required')
         
-        # Expected: 4 admin endpoints (review, get_single, update, retest) + 2 user endpoints (submit, my)
-        expected_admin = 4
-        expected_user = 2
+        expected_admin = 8
+        expected_user = 4
         
         if admin_required_count != expected_admin:
             print(f"❌ Expected {expected_admin} @admin_required decorators, found {admin_required_count}")
@@ -283,8 +291,7 @@ def test_feedback_enabled_required_preservation():
         # All feedback endpoints should have @enabled_required("enable_user_feedback")
         enabled_required_count = content.count('@enabled_required("enable_user_feedback")')
         
-        # All 6 endpoints should have enabled_required
-        expected_enabled_required = 6
+        expected_enabled_required = 12
         
         if enabled_required_count != expected_enabled_required:
             print(f"❌ Expected {expected_enabled_required} @enabled_required decorators, found {enabled_required_count}")

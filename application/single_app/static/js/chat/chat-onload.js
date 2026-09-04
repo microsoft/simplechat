@@ -24,6 +24,8 @@ import { initializeReasoningToggle } from "./chat-reasoning.js";
 import { initializeSpeechInput } from "./chat-speech-input.js";
 import { initChatTutorial } from "./chat-tutorial.js";
 
+const publicWorkspaceLowerSingular = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel("lower_singular") : "public workspace";
+
 
 function clearFeatureActionParam() {
     const url = new URL(window.location.href);
@@ -228,17 +230,17 @@ window.addEventListener('DOMContentLoaded', async () => {
                   // Trigger change to update UI
                   handleDocumentSelectChange();
                   
-                  showToast('Public workspace activated for chat', 'success');
+                  showToast(`${publicWorkspaceLowerSingular} activated for chat`, 'success');
               } else {
                   console.error('Failed to set active public workspace:', data.error || data.message);
-                  showToast('Failed to activate public workspace', 'error');
+                  showToast(`Failed to activate ${publicWorkspaceLowerSingular}`, 'error');
                   // Fall back to normal document handling
                   populateDocumentSelectScope();
               }
           })
           .catch(error => {
               console.error('Error setting active public workspace:', error);
-              showToast('Error activating public workspace', 'error');
+              showToast(`Error activating ${publicWorkspaceLowerSingular}`, 'error');
               // Fall back to normal document handling
               populateDocumentSelectScope();
           });
@@ -329,8 +331,11 @@ window.addEventListener('DOMContentLoaded', async () => {
                        if (textEl) {
                            if (docIdsToSelect.length === 1) {
                                // Find the label from the dropdown item
-                               const matchItem = docDropdownItems
-                                   ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${docIdsToSelect[0]}"] span`)
+                               const matchRow = docDropdownItems
+                                   ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${docIdsToSelect[0]}"]`)
+                                   : null;
+                               const matchItem = matchRow
+                                   ? (matchRow.querySelector('.chat-document-option-title') || matchRow.querySelector('span'))
                                    : null;
                                textEl.textContent = matchItem ? matchItem.textContent : "1 document selected";
                            } else {

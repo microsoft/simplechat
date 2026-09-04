@@ -18,6 +18,7 @@ from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
     execute_control_center_refresh,
     get_control_center_auto_refresh_schedule,
+    is_control_center_auto_refresh_due,
     parse_control_center_auto_refresh_datetime,
 )
 from functions_cosmos_throughput import (
@@ -25,9 +26,19 @@ from functions_cosmos_throughput import (
     calculate_cosmos_throughput_autoscale_interval_seconds,
     evaluate_and_apply_cosmos_throughput_scaling,
 )
+from functions_app_maintenance import (
+    APP_MAINTENANCE_LOCK_NAME,
+    calculate_app_maintenance_sleep_seconds,
+    get_app_maintenance_settings,
+    run_app_maintenance_once,
+)
 from functions_debug import debug_print
 from functions_data_management import check_due_data_management_jobs_once
 from functions_file_sync import check_due_file_sync_sources_once
+from functions_keyvault_reminders import (
+    KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
+    check_due_key_vault_secret_reminders_once,
+)
 from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
 from functions_personal_workflows import (
     compute_next_run_at,
@@ -41,7 +52,7 @@ from functions_group_workflows import (
     update_group_workflow_runtime_fields,
 )
 from functions_settings import get_settings, is_group_workflows_enabled_for_group, update_settings
-from functions_workflow_runner import run_group_workflow, run_personal_workflow
+from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
 
 
 def _get_lock_holder_id():
@@ -234,6 +245,7 @@ def check_logging_timers_once():
 def check_expired_approvals_once():
     """Auto-deny expired approval requests and return the affected count."""
     from functions_approvals import auto_deny_expired_approvals
+    from functions_simplechat_operations import auto_deny_expired_generated_file_approvals
 
     lock_document = acquire_distributed_task_lock('approval_expiry', lease_seconds=1800)
     if not lock_document:
@@ -244,6 +256,18 @@ def check_expired_approvals_once():
         denied_count = auto_deny_expired_approvals()
         if denied_count > 0:
             print(f"Auto-denied {denied_count} expired approval request(s).")
+
+        try:
+            expired_file_count = auto_deny_expired_generated_file_approvals()
+            if expired_file_count > 0:
+                print(f"Auto-denied {expired_file_count} expired generated file approval(s).")
+        except Exception as exc:
+            # Staged file expiry must never take down the Control Center approval sweep.
+            print(f"Error expiring staged generated file approvals: {exc}")
+            log_event(
+                f"Error expiring staged generated file approvals: {exc}",
+                level=logging.ERROR,
+            )
     finally:
         release_distributed_task_lock(lock_document)
 
@@ -302,13 +326,14 @@ def _seed_control_center_auto_refresh_next_run(settings, current_time):
         'control_center_auto_refresh_time': schedule['time'],
         'control_center_auto_refresh_hour': schedule['hour'],
         'control_center_auto_refresh_minute': schedule['minute'],
+        'control_center_auto_refresh_timezone': schedule['timezone'],
         'control_center_auto_refresh_next_run': next_run.isoformat(),
     })
     return next_run
 
 
 def check_control_center_auto_refresh_once():
-    """Run the scheduled Control Center refresh when its daily UTC schedule is due."""
+    """Run the scheduled Control Center refresh when its UTC timestamp is due."""
     settings = get_settings()
     if not settings.get('control_center_auto_refresh_enabled', True):
         return None
@@ -319,12 +344,15 @@ def check_control_center_auto_refresh_once():
         _seed_control_center_auto_refresh_next_run(settings, current_time)
         return None
 
-    if current_time < next_run:
+    if not is_control_center_auto_refresh_due(settings, current_time=current_time):
         return None
 
     lock_document = acquire_distributed_task_lock('control_center_auto_refresh', lease_seconds=7200)
     if not lock_document:
-        debug_print('Skipping Control Center auto-refresh because another worker holds the lease.')
+        log_event(
+            '[CONTROL_CENTER_AUTO_REFRESH] Skipped scheduled refresh because another worker holds the lease.',
+            debug_only=True,
+        )
         return None
 
     try:
@@ -337,11 +365,32 @@ def check_control_center_auto_refresh_once():
         if not next_run:
             _seed_control_center_auto_refresh_next_run(settings, current_time)
             return None
-        if current_time < next_run:
+        if not is_control_center_auto_refresh_due(settings, current_time=current_time):
             return None
 
-        print(f"Executing scheduled Control Center auto-refresh at {current_time.isoformat()}")
-        return execute_control_center_refresh(manual_execution=False)
+        schedule = get_control_center_auto_refresh_schedule(settings)
+        log_event(
+            '[CONTROL_CENTER_AUTO_REFRESH] Starting scheduled Control Center metrics refresh.',
+            extra={
+                'scheduled_run_utc': next_run.isoformat(),
+                'schedule_time': schedule['time'],
+                'schedule_timezone': schedule['timezone'],
+            },
+            level=logging.INFO,
+        )
+        result = execute_control_center_refresh(manual_execution=False)
+        log_event(
+            '[CONTROL_CENTER_AUTO_REFRESH] Scheduled Control Center metrics refresh completed.',
+            extra={
+                'success': bool(result and result.get('success')),
+                'refreshed_users': result.get('refreshed_users', 0) if result else 0,
+                'failed_users': result.get('failed_users', 0) if result else 0,
+                'refreshed_groups': result.get('refreshed_groups', 0) if result else 0,
+                'failed_groups': result.get('failed_groups', 0) if result else 0,
+            },
+            level=logging.INFO,
+        )
+        return result
     finally:
         release_distributed_task_lock(lock_document)
 
@@ -388,8 +437,12 @@ def run_control_center_auto_refresh_loop():
         try:
             check_control_center_auto_refresh_once()
         except Exception as exc:
-            print(f"Error in Control Center auto-refresh check: {exc}")
-            log_event(f"Error in Control Center auto-refresh check: {exc}", level=logging.ERROR)
+            log_event(
+                '[CONTROL_CENTER_AUTO_REFRESH] Error checking the scheduled Control Center refresh.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
         time.sleep(300)
 
@@ -412,7 +465,7 @@ def check_cosmos_throughput_autoscale_once():
 
         refresh_id = f"background-{uuid.uuid4()}"
         log_event(
-            '[CosmosThroughput] Background autoscale check starting.',
+            '[COSMOS_THROUGHPUT] Background autoscale check starting.',
             extra={'refresh_id': refresh_id},
         )
         result = evaluate_and_apply_cosmos_throughput_scaling(settings, refresh_id=refresh_id)
@@ -422,7 +475,7 @@ def check_cosmos_throughput_autoscale_once():
         decision = result.get('decision') or {}
         scale_result = result.get('scale_result') or {}
         log_event(
-            '[CosmosThroughput] Background autoscale check completed.',
+            '[COSMOS_THROUGHPUT] Background autoscale check completed.',
             extra={
                 'refresh_id': refresh_id,
                 'decision_reason': decision.get('reason'),
@@ -442,7 +495,7 @@ def get_cosmos_throughput_autoscale_sleep_seconds():
         return calculate_cosmos_throughput_autoscale_interval_seconds(get_settings())
     except Exception as exc:
         log_event(
-            '[CosmosThroughput] Failed to calculate autoscale check interval; using default.',
+            '[COSMOS_THROUGHPUT] Failed to calculate autoscale check interval; using default.',
             extra={
                 'error': str(exc),
                 'sleep_seconds': COSMOS_THROUGHPUT_AUTOSCALE_DEFAULT_INTERVAL_SECONDS,
@@ -459,11 +512,11 @@ def run_cosmos_throughput_autoscale_loop():
             check_cosmos_throughput_autoscale_once()
         except Exception as exc:
             print(f"Error in Cosmos throughput autoscale check: {exc}")
-            log_event(f"[CosmosThroughput] Error in autoscale check: {exc}", level=logging.ERROR)
+            log_event(f"[COSMOS_THROUGHPUT] Error in autoscale check: {exc}", level=logging.ERROR)
 
         sleep_seconds = get_cosmos_throughput_autoscale_sleep_seconds()
         log_event(
-            '[CosmosThroughput] Background autoscale check sleeping.',
+            '[COSMOS_THROUGHPUT] Background autoscale check sleeping.',
             extra={
                 'sleep_seconds': sleep_seconds,
                 'metrics_window_minutes': int(sleep_seconds / 60),
@@ -508,18 +561,26 @@ def check_due_workflows_once():
                         pass
 
                 started_at = datetime.now(timezone.utc).isoformat()
+                active_run_id = create_workflow_run_id()
                 update_personal_workflow_runtime_fields(
                     user_id,
                     workflow_id,
                     {
                         'status': 'running',
+                        'active_run_id': active_run_id,
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                         'last_run_started_at': started_at,
                         'last_run_trigger_source': trigger_source,
                         'last_run_error': '',
                     },
                 )
 
-                result = run_personal_workflow(refreshed_workflow, trigger_source=trigger_source)
+                result = run_personal_workflow(
+                    refreshed_workflow,
+                    trigger_source=trigger_source,
+                    run_id=active_run_id,
+                )
                 update_fields = dict(result.get('workflow_updates') or {})
                 update_fields['status'] = 'idle'
                 update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
@@ -527,7 +588,7 @@ def check_due_workflows_once():
                 results.append({'scope': 'personal', 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
             except Exception as exc:
                 log_event(
-                    f"[WorkflowScheduler] Error executing workflow {workflow_id}: {exc}",
+                    f"[WORKFLOW_SCHEDULER] Error executing workflow {workflow_id}: {exc}",
                     extra={
                         'workflow_id': workflow_id,
                         'user_id': user_id,
@@ -584,18 +645,26 @@ def check_due_workflows_once():
                         pass
 
                 started_at = datetime.now(timezone.utc).isoformat()
+                active_run_id = create_workflow_run_id()
                 update_group_workflow_runtime_fields(
                     group_id,
                     workflow_id,
                     {
                         'status': 'running',
+                        'active_run_id': active_run_id,
+                        'cancellation_requested_at': None,
+                        'cancellation_requested_by': '',
                         'last_run_started_at': started_at,
                         'last_run_trigger_source': trigger_source,
                         'last_run_error': '',
                     },
                 )
 
-                result = run_group_workflow(refreshed_workflow, trigger_source=trigger_source)
+                result = run_group_workflow(
+                    refreshed_workflow,
+                    trigger_source=trigger_source,
+                    run_id=active_run_id,
+                )
                 update_fields = dict(result.get('workflow_updates') or {})
                 update_fields['status'] = 'idle'
                 update_fields['next_run_at'] = compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc))
@@ -603,7 +672,7 @@ def check_due_workflows_once():
                 results.append({'scope': 'group', 'group_id': group_id, 'workflow_id': workflow_id, 'success': bool(result.get('success'))})
             except Exception as exc:
                 log_event(
-                    f"[WorkflowScheduler] Error executing group workflow {workflow_id}: {exc}",
+                    f"[WORKFLOW_SCHEDULER] Error executing group workflow {workflow_id}: {exc}",
                     extra={
                         'workflow_id': workflow_id,
                         'group_id': group_id,
@@ -637,7 +706,7 @@ def run_workflow_scheduler_loop():
             check_due_workflows_once()
         except Exception as exc:
             print(f"Error in workflow scheduler check: {exc}")
-            log_event(f"[WorkflowScheduler] Error in workflow scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[WORKFLOW_SCHEDULER] Error in workflow scheduler check: {exc}", level=logging.ERROR)
 
         time.sleep(5)
 
@@ -649,10 +718,13 @@ def run_file_sync_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('file_sync_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_file_sync_sources_once()
+                due_sources = check_due_file_sync_sources_once()
+                debug_print(f"File Sync scheduler tick processed {len(due_sources or [])} source(s).")
+            else:
+                debug_print('Skipping File Sync scheduler tick because another worker holds the lease.')
         except Exception as exc:
             print(f"Error in File Sync scheduler check: {exc}")
-            log_event(f"[FileSync] Error in scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[FILE_SYNC] Error in scheduler check: {exc}", level=logging.ERROR)
         finally:
             if lock_document:
                 release_distributed_task_lock(lock_document)
@@ -667,10 +739,17 @@ def run_tabular_generated_output_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('tabular_generated_output_scheduler_scan', lease_seconds=120)
             if lock_document:
-                check_due_tabular_generated_output_runs_once()
+                processed_run_ids = check_due_tabular_generated_output_runs_once()
+                debug_print(
+                    f"Tabular generated-output scheduler tick processed {len(processed_run_ids or [])} run(s)."
+                )
+            else:
+                debug_print(
+                    'Skipping tabular generated-output scheduler tick because another worker holds the lease.'
+                )
         except Exception as exc:
             print(f"Error in tabular generated-output scheduler check: {exc}")
-            log_event(f"[Tabular Generated Output] Error in scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[TABULAR_GENERATED_OUTPUT] Error in scheduler check: {exc}", level=logging.ERROR)
         finally:
             if lock_document:
                 release_distributed_task_lock(lock_document)
@@ -678,17 +757,20 @@ def run_tabular_generated_output_scheduler_loop():
         time.sleep(30)
 
 
-def run_data_management_scheduler_loop():
-    """Queue due Data Management backup jobs across scaled-out workers."""
+def run_data_management_scheduler_loop(app=None):
+    """Queue due backup and recoverable migration jobs across scaled-out workers."""
     while True:
         lock_document = None
         try:
             lock_document = acquire_distributed_task_lock('data_management_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_data_management_jobs_once()
+                due_jobs = check_due_data_management_jobs_once(app=app)
+                debug_print(f"Data Management scheduler tick processed {len(due_jobs or [])} job(s).")
+            else:
+                debug_print('Skipping Data Management scheduler tick because another worker holds the lease.')
         except Exception as exc:
             print(f"Error in Data Management scheduler check: {exc}")
-            log_event(f"[DataManagement] Error in scheduler check: {exc}", level=logging.ERROR)
+            log_event(f"[DATA_MANAGEMENT] Error in scheduler check: {exc}", level=logging.ERROR)
         finally:
             if lock_document:
                 release_distributed_task_lock(lock_document)
@@ -696,7 +778,70 @@ def run_data_management_scheduler_loop():
         time.sleep(60)
 
 
-def start_background_task_threads():
+def run_app_maintenance_loop():
+    """Run idempotent app maintenance tasks under a distributed lock."""
+    while True:
+        lock_document = None
+        sleep_seconds = 3600
+        try:
+            settings = get_settings()
+            maintenance_settings = get_app_maintenance_settings(settings)
+            sleep_seconds = maintenance_settings.get('check_interval_seconds', 3600)
+            if maintenance_settings.get('enabled') and maintenance_settings.get('run_on_startup'):
+                lock_document = acquire_distributed_task_lock(
+                    APP_MAINTENANCE_LOCK_NAME,
+                    lease_seconds=maintenance_settings.get('lease_seconds', 300),
+                )
+                if lock_document:
+                    maintenance_result = run_app_maintenance_once(triggered_by='background', settings=settings)
+                    sleep_seconds = calculate_app_maintenance_sleep_seconds(
+                        maintenance_result,
+                        maintenance_settings,
+                    )
+        except Exception as exc:
+            log_event(
+                '[APP_MAINTENANCE] Error in maintenance scheduler loop.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(max(int(sleep_seconds or 3600), 15))
+
+
+def run_key_vault_secret_reminder_loop():
+    """Run due Key Vault secret expiration reminder checks under a distributed lock."""
+    while True:
+        lock_document = None
+        sleep_seconds = 21600
+        try:
+            settings = get_settings()
+            sleep_seconds = int(settings.get('key_vault_secret_expiration_scan_interval_seconds') or 21600)
+            if settings.get('enable_key_vault_secret_expiration_reminders'):
+                lock_document = acquire_distributed_task_lock(
+                    KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
+                    lease_seconds=600,
+                )
+                if lock_document:
+                    check_due_key_vault_secret_reminders_once(settings=settings)
+        except Exception as exc:
+            log_event(
+                '[KEY_VAULT_REMINDERS] Error in reminder scheduler loop.',
+                extra={'error': str(exc)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+
+        time.sleep(max(int(sleep_seconds or 21600), 900))
+
+
+def start_background_task_threads(app=None):
     """Start all background task loops for the current process."""
     task_specs = [
         ('Logging timer background task started.', run_logging_timer_loop),
@@ -707,7 +852,9 @@ def start_background_task_threads():
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
-        ('Data Management scheduler background task started.', run_data_management_scheduler_loop),
+        ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
+        ('App maintenance background task started.', run_app_maintenance_loop),
+        ('Key Vault secret reminder background task started.', run_key_vault_secret_reminder_loop),
     ]
 
     started_threads = []

@@ -1,0 +1,13 @@
+# media_pending.yml
+#
+# Images that exist but are branded "Screenshot pending" placeholders rather
+# than real captures. They ship so the pages render, but they are listed on
+# /contributing/media-status/ so they are not silently forgotten.
+#
+# To resolve one: capture the real screenshot and overwrite the file at the
+# listed path, then delete its entry here.
+
+release_v0_261_001:
+  label: "SimpleChat v0.261.001 Latest Features"
+  note: "Every card in the user and admin Latest Features catalogs has a real 1280x720 capture. Two admin cards ship deliberately without a screenshot because they describe backend behavior with no dedicated panel: Feedback Safety Lifecycle and Index Auto-Login."
+  items: []

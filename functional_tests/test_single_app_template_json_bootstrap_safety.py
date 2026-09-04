@@ -12,6 +12,7 @@ characters or quotes.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -89,7 +90,7 @@ def test_single_app_templates_bootstrap_json_with_direct_literals():
     """Verify single_app templates bootstrap JSON with direct Jinja literals."""
     config_content = CONFIG_FILE.read_text(encoding="utf-8")
 
-    assert 'VERSION = "0.240.073"' in config_content, "Expected config.py version 0.240.073"
+    assert_app_version_at_least("0.240.073")
 
     failures = []
     for template_name, case in TEMPLATE_CASES.items():

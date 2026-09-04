@@ -69,8 +69,8 @@ def build_agents_page_config(settings):
     }
 
 
-def register_route_frontend_agents(app):
-    @app.route('/agents', methods=['GET'])
+def register_route_frontend_agents(bp):
+    @bp.route('/agents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required

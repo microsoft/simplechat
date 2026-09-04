@@ -15,6 +15,7 @@ from pathlib import Path
 import importlib
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +38,7 @@ def test_workflow_priority_alert_contracts():
     notifications_js_content = read_text("application/single_app/static/js/notifications.js")
     feature_doc_content = read_text("docs/explanation/features/WORKFLOW_PRIORITY_ALERTS.md")
 
-    assert 'VERSION = "0.241.095"' in config_content
+    assert_app_version_at_least("0.241.095")
     assert "WORKFLOW_ALERT_PRIORITIES = {'none', 'low', 'medium', 'high'}" in workflow_store_content
     assert "'alert_priority': alert_priority," in workflow_store_content
     assert 'id="workflow-alert-priority"' in workspace_template_content
@@ -51,7 +52,7 @@ def test_workflow_priority_alert_contracts():
     assert "default_label='Open workflow'" in workflow_runner_content
     assert 'def _summarize_workflow_alert_text(text, max_length=140):' in workflow_runner_content
     assert 'def _select_preferred_workflow_alert_targets(targets):' in workflow_runner_content
-    assert 'def _build_workflow_alert_content(workflow, run_record, execution_result, priority):' in workflow_runner_content
+    assert 'def _build_workflow_alert_content(workflow, run_record, execution_result, priority, decision=None):' in workflow_runner_content
     assert "'alert_summary': alert_content.get('alert_summary')," in workflow_runner_content
     assert "'alert_detail': alert_content.get('alert_detail')," in workflow_runner_content
     assert 'plugin_logger.clear_invocations_for_conversation(user_id, conversation_id)' in workflow_runner_content

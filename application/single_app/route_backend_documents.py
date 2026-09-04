@@ -12,6 +12,14 @@ from functions_file_sync import (
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_PERSONAL,
+    is_document_access_shadow_validation_enabled,
+    query_items_with_cosmos_diagnostics,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+    query_document_access_index_tag_counts,
+)
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
@@ -346,8 +354,8 @@ def _find_accessible_citation_document(user_id, document_id, scope_name):
 
     return None
 
-def register_route_backend_documents(app):
-    @app.route('/api/get_file_content', methods=['POST'])
+def register_route_backend_documents(bp):
+    @bp.route('/api/get_file_content', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -510,7 +518,7 @@ def register_route_backend_documents(app):
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="Error retrieving file content: " + str(e))
             return jsonify({'error': f'Error retrieving file content: {str(e)}'}), 500
     
-    @app.route('/api/documents/upload', methods=['POST'])
+    @bp.route('/api/documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -651,7 +659,7 @@ def register_route_backend_documents(app):
         }), response_status
 
 
-    @app.route('/api/documents', methods=['GET'])
+    @bp.route('/api/documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -694,6 +702,7 @@ def register_route_backend_documents(app):
         # Add user_id prefix for shared_user_ids with status
         user_id_prefix = f"{user_id},"
         query_params.append({"name": "@user_id_prefix", "value": user_id_prefix})
+        shadow_tags_filter = []
 
         # Replace the main ownership/shared condition
         query_conditions[0] = (
@@ -753,6 +762,7 @@ def register_route_backend_documents(app):
             tags_list = sanitize_tags_for_filter(tags_filter)
 
             if tags_list:
+                shadow_tags_filter = tags_list
                 # Each tag must exist in the document's tags array
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"
@@ -762,6 +772,17 @@ def register_route_backend_documents(app):
 
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
+        shadow_filters = {
+            'search': search_term,
+            'classification': classification_filter,
+            'classification_none_matches_literal': True,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'tags': shadow_tags_filter,
+            'array_match_mode': 'contains',
+        }
+        used_document_access_index = False
 
         # --- 3) Query matching documents, then collapse to current revisions before paginating ---
         try:
@@ -771,17 +792,71 @@ def register_route_backend_documents(app):
                 FROM c
                 WHERE {where_clause}
             """
-            matching_docs = list(cosmos_user_documents_container.query_items(
-                query=data_query_str,
-                parameters=query_params,
-                enable_cross_partition_query=True
-            ))
-
-            current_docs = sort_documents(
-                select_current_documents(matching_docs),
-                sort_by=sort_by,
-                sort_order=sort_order,
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
+                filters=shadow_filters,
             )
+
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(
+                    index_read_result.get('documents', []),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_user_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_query_str,
+                            parameters=query_params,
+                            enable_cross_partition_query=True
+                        )
+                        source_current_docs = sort_documents(
+                            select_current_documents(matching_docs),
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                            user_id=user_id,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='api_get_user_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PERSONAL, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_user_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_query_str,
+                    parameters=query_params,
+                    enable_cross_partition_query=True
+                )
+
+                current_docs = sort_documents(
+                    select_current_documents(matching_docs),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                    user_id=user_id,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='api_get_user_documents',
+                )
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -803,23 +878,32 @@ def register_route_backend_documents(app):
 
         
         # --- new: do we have any legacy documents? ---
-        try:
-            legacy_q = """
-                SELECT VALUE COUNT(1)
-                FROM c
-                WHERE c.user_id = @user_id
-                    AND NOT IS_DEFINED(c.percentage_complete)
-            """
-            legacy_docs = list(
-                cosmos_user_documents_container.query_items(
-                    query=legacy_q,
-                    parameters=[{"name":"@user_id","value":user_id}],
-                    enable_cross_partition_query=True
-                )
+        legacy_count = 0
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
             )
-            legacy_count = legacy_docs[0] if legacy_docs else 0
-        except Exception as e:
-            debug_print(f"Error executing legacy query: {e}")
+            if legacy_count_result.get('success'):
+                legacy_count = legacy_count_result.get('legacy_count', 0)
+        else:
+            try:
+                legacy_q = """
+                    SELECT VALUE COUNT(1)
+                    FROM c
+                    WHERE c.user_id = @user_id
+                        AND NOT IS_DEFINED(c.percentage_complete)
+                """
+                legacy_docs = list(
+                    cosmos_user_documents_container.query_items(
+                        query=legacy_q,
+                        parameters=[{"name":"@user_id","value":user_id}],
+                        enable_cross_partition_query=True
+                    )
+                )
+                legacy_count = legacy_docs[0] if legacy_docs else 0
+            except Exception as e:
+                debug_print(f"Error executing legacy query: {e}")
 
         # --- 5) Return results ---
         file_downloads_enabled = is_personal_workspace_file_download_enabled(get_settings())
@@ -832,7 +916,7 @@ def register_route_backend_documents(app):
             "needs_legacy_update_check": legacy_count > 0
         }), 200
 
-    @app.route('/api/documents/<document_id>', methods=['GET'])
+    @bp.route('/api/documents/<document_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -844,7 +928,7 @@ def register_route_backend_documents(app):
         
         return get_document(user_id, document_id)
 
-    @app.route('/api/documents/<document_id>/versions', methods=['GET'])
+    @bp.route('/api/documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -864,7 +948,7 @@ def register_route_backend_documents(app):
             'versions': versions,
         }), 200
 
-    @app.route('/api/documents/<document_id>/download', methods=['GET'])
+    @bp.route('/api/documents/<document_id>/download', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -886,13 +970,13 @@ def register_route_backend_documents(app):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed personal document download',
+                '[DOCUMENT_DOWNLOAD] Failed personal document download',
                 {'document_id': document_id, 'error': str(exc)},
                 debug_only=True,
             )
             return jsonify({'error': 'Unable to download document'}), 500
 
-    @app.route('/api/documents/download', methods=['POST'])
+    @bp.route('/api/documents/download', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -939,13 +1023,13 @@ def register_route_backend_documents(app):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed personal document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed personal document ZIP download',
                 {'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )
             return jsonify({'error': 'Unable to download selected documents'}), 500
 
-    @app.route('/api/documents/<document_id>', methods=['PATCH'])
+    @bp.route('/api/documents/<document_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1091,7 +1175,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/documents/<document_id>', methods=['DELETE'])
+    @bp.route('/api/documents/<document_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1162,7 +1246,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
+    @bp.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1195,7 +1279,70 @@ def register_route_backend_documents(app):
             'document_id': document_id
         }), 200
 
-    @app.route('/api/documents/reprocess_extraction', methods=['POST'])
+    @bp.route('/api/documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_extract_user_metadata_batch():
+        """
+        POST /api/documents/extract_metadata
+        Queues background metadata extraction jobs for selected user documents.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        settings = get_settings()
+        if not settings.get('enable_extract_meta_data'):
+            return jsonify({'error': 'Metadata extraction not enabled'}), 403
+
+        payload = request.get_json(silent=True) or {}
+        document_ids = payload.get('document_ids')
+        if not isinstance(document_ids, list):
+            document_id = payload.get('document_id')
+            document_ids = [document_id] if document_id else []
+        document_ids = list(dict.fromkeys(
+            str(document_id).strip()
+            for document_id in document_ids
+            if str(document_id or '').strip()
+        ))
+        if not document_ids:
+            return jsonify({'error': 'At least one document ID is required.'}), 400
+
+        queued = []
+        errors = []
+        for document_id in document_ids:
+            try:
+                document_item = get_document_metadata(document_id=document_id, user_id=user_id)
+                if not document_item:
+                    errors.append({'document_id': document_id, 'error': 'Document not found.'})
+                    continue
+                if document_item.get('user_id') != user_id:
+                    errors.append({'document_id': document_id, 'error': 'Only the document owner can extract metadata for this document.'})
+                    continue
+
+                current_app.extensions['executor'].submit_stored(
+                    f"{document_id}_metadata",
+                    process_metadata_extraction_background,
+                    document_id=document_id,
+                    user_id=user_id
+                )
+                queued.append({'document_id': document_id})
+            except Exception as e:
+                errors.append({'document_id': document_id, 'error': str(e)})
+
+        if queued:
+            invalidate_personal_search_cache(user_id)
+
+        status_code = 202 if queued and not errors else (207 if queued else 400)
+        return jsonify({
+            'message': f'Queued {len(queued)} document(s) for metadata extraction.',
+            'queued': queued,
+            'errors': errors,
+        }), status_code
+
+    @bp.route('/api/documents/reprocess_extraction', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1210,6 +1357,8 @@ def register_route_backend_documents(app):
         if raw_mode not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
             return jsonify({'error': 'Extraction mode must be Standard or Enhanced.'}), 400
         target_mode = normalize_document_intelligence_manual_extraction_mode(raw_mode)
+        if target_mode == 'layout' and not is_enhanced_extraction_enabled(get_settings()):
+            return jsonify({'error': 'Enhanced extraction is disabled. Enable it in Admin Settings first.'}), 400
 
         document_ids = payload.get('document_ids')
         if not isinstance(document_ids, list):
@@ -1258,7 +1407,7 @@ def register_route_backend_documents(app):
             'errors': errors,
         }), status_code
 
-    @app.route("/api/get_citation", methods=["POST"])
+    @bp.route("/api/get_citation", methods=["POST"])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1323,7 +1472,7 @@ def register_route_backend_documents(app):
 
         return jsonify({"error": "Citation not found in user, group, or public docs"}), 404
         
-    @app.route('/api/documents/upgrade_legacy', methods=['POST'])
+    @bp.route('/api/documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1338,7 +1487,7 @@ def register_route_backend_documents(app):
 
     # ============= TAG MANAGEMENT API ENDPOINTS =============
     
-    @app.route('/api/documents/tags', methods=['GET'])
+    @bp.route('/api/documents/tags', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1349,15 +1498,25 @@ def register_route_backend_documents(app):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        from functions_documents import get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
         
         try:
-            tags = get_workspace_tags(user_id)
+            index_tag_result = query_document_access_index_tag_counts(
+                DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                user_id=user_id,
+            )
+            if index_tag_result.get('success'):
+                tags = build_workspace_tags_from_counts(
+                    index_tag_result.get('tag_counts', {}),
+                    user_id,
+                )
+            else:
+                tags = get_workspace_tags(user_id)
             return jsonify({'tags': tags}), 200
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/tags', methods=['POST'])
+    @bp.route('/api/documents/tags', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1404,11 +1563,11 @@ def register_route_backend_documents(app):
             tag_defs = settings_dict.get('tag_definitions', {})
             personal_tags = tag_defs.get('personal', {})
             
-            debug_print(f"[CREATE TAG] Retrieved user_settings keys: {list(user_settings.keys())}")
-            debug_print(f"[CREATE TAG] Retrieved settings_dict keys: {list(settings_dict.keys())}")
-            debug_print(f"[CREATE TAG] Retrieved tag_defs keys: {list(tag_defs.keys())}")
-            debug_print(f"[CREATE TAG] Retrieved personal_tags: {personal_tags}")
-            debug_print(f"[CREATE TAG] Existing personal tag count: {len(personal_tags)}")
+            debug_print(f"[CREATE_TAG] Retrieved user_settings keys: {list(user_settings.keys())}")
+            debug_print(f"[CREATE_TAG] Retrieved settings_dict keys: {list(settings_dict.keys())}")
+            debug_print(f"[CREATE_TAG] Retrieved tag_defs keys: {list(tag_defs.keys())}")
+            debug_print(f"[CREATE_TAG] Retrieved personal_tags: {personal_tags}")
+            debug_print(f"[CREATE_TAG] Existing personal tag count: {len(personal_tags)}")
             
             # Check if tag already exists
             if normalized_tag in personal_tags:
@@ -1420,13 +1579,13 @@ def register_route_backend_documents(app):
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
             
-            debug_print(f"[CREATE TAG] After adding new tag, personal_tags: {personal_tags}")
-            debug_print(f"[CREATE TAG] New personal tag count: {len(personal_tags)}")
+            debug_print(f"[CREATE_TAG] After adding new tag, personal_tags: {personal_tags}")
+            debug_print(f"[CREATE_TAG] New personal tag count: {len(personal_tags)}")
             
             tag_defs['personal'] = personal_tags
             
-            debug_print(f"[CREATE TAG] Final tag_defs to save: {tag_defs}")
-            debug_print(f"[CREATE TAG] Calling update_user_settings with: {{'tag_definitions': tag_defs}}")
+            debug_print(f"[CREATE_TAG] Final tag_defs to save: {tag_defs}")
+            debug_print(f"[CREATE_TAG] Calling update_user_settings with: {{'tag_definitions': tag_defs}}")
             
             # Only update the tag_definitions field, not the entire settings object
             update_user_settings(user_id, {'tag_definitions': tag_defs})
@@ -1442,7 +1601,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/bulk-tag', methods=['POST'])
+    @bp.route('/api/documents/bulk-tag', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1467,7 +1626,7 @@ def register_route_backend_documents(app):
         action = data.get('action')
         tags_input = data.get('tags', [])
         
-        debug_print(f"[Bulk Tag] Received request: user_id={user_id}, action={action}, tags={tags_input}, doc_count={len(document_ids)}")
+        debug_print(f"[BULK_TAG] Received request: user_id={user_id}, action={action}, tags={tags_input}, doc_count={len(document_ids)}")
         
         if not document_ids or not isinstance(document_ids, list):
             return jsonify({'error': 'document_ids must be a non-empty array'}), 400
@@ -1525,7 +1684,7 @@ def register_route_backend_documents(app):
                     
                     if not document_results:
                         error_msg = 'Document not found or access denied'
-                        debug_print(f"[Bulk Tag] Error for doc {doc_id}: {error_msg}")
+                        debug_print(f"[BULK_TAG] Error for doc {doc_id}: {error_msg}")
                         results['errors'].append({
                             'document_id': doc_id,
                             'error': error_msg
@@ -1533,7 +1692,7 @@ def register_route_backend_documents(app):
                         continue
                     
                     doc = document_results[0]
-                    debug_print(f"[Bulk Tag] Processing doc {doc_id}, current tags: {doc.get('tags', [])}")
+                    debug_print(f"[BULK_TAG] Processing doc {doc_id}, current tags: {doc.get('tags', [])}")
                     
                     current_tags = doc.get('tags', [])
                     new_tags = []
@@ -1548,7 +1707,7 @@ def register_route_backend_documents(app):
                         # Replace all tags
                         new_tags = normalized_tags
                     
-                    debug_print(f"[Bulk Tag] New tags for doc {doc_id}: {new_tags}")
+                    debug_print(f"[BULK_TAG] New tags for doc {doc_id}: {new_tags}")
                     
                     # Update document
                     update_document(
@@ -1567,11 +1726,11 @@ def register_route_backend_documents(app):
                         'document_id': doc_id,
                         'tags': new_tags
                     })
-                    debug_print(f"[Bulk Tag] Successfully updated doc {doc_id}")
+                    debug_print(f"[BULK_TAG] Successfully updated doc {doc_id}")
                     
                 except Exception as doc_error:
                     error_msg = str(doc_error)
-                    debug_print(f"[Bulk Tag] Exception for doc {doc_id}: {error_msg}")
+                    debug_print(f"[BULK_TAG] Exception for doc {doc_id}: {error_msg}")
                     import traceback
                     traceback.print_exc()
                     results['errors'].append({
@@ -1589,7 +1748,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/tags/<tag_name>', methods=['PATCH'])
+    @bp.route('/api/documents/tags/<tag_name>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1604,19 +1763,19 @@ def register_route_backend_documents(app):
             "color": "#3b82f6"            // optional
         }
         """
-        debug_print(f"[UPDATE TAG] Starting update for tag: {tag_name}")
+        debug_print(f"[UPDATE_TAG] Starting update for tag: {tag_name}")
         
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        debug_print(f"[UPDATE TAG] User ID: {user_id}")
+        debug_print(f"[UPDATE_TAG] User ID: {user_id}")
         
         data = request.get_json()
         new_name = data.get('new_name')
         new_color = data.get('color')
         
-        debug_print(f"[UPDATE TAG] Request data - new_name: {new_name}, new_color: {new_color}")
+        debug_print(f"[UPDATE_TAG] Request data - new_name: {new_name}, new_color: {new_color}")
         
         from functions_documents import (
             normalize_tag, validate_tag_color, validate_tags, get_documents,
@@ -1626,24 +1785,24 @@ def register_route_backend_documents(app):
         from utils_cache import invalidate_personal_search_cache
         
         try:
-            debug_print(f"[UPDATE TAG] Normalizing tag name...")
+            debug_print(f"[UPDATE_TAG] Normalizing tag name...")
             normalized_old_tag = normalize_tag(tag_name)
-            debug_print(f"[UPDATE TAG] Normalized old tag: {normalized_old_tag}")
+            debug_print(f"[UPDATE_TAG] Normalized old tag: {normalized_old_tag}")
             
             # Handle rename
             if new_name:
-                debug_print(f"[UPDATE TAG] Handling rename operation...")
+                debug_print(f"[UPDATE_TAG] Handling rename operation...")
                 # Validate new name
                 is_valid, error_msg, normalized_new = validate_tags([new_name])
                 if not is_valid:
-                    debug_print(f"[UPDATE TAG] Validation failed: {error_msg}")
+                    debug_print(f"[UPDATE_TAG] Validation failed: {error_msg}")
                     return jsonify({'error': error_msg}), 400
                 
                 normalized_new_tag = normalized_new[0]
-                debug_print(f"[UPDATE TAG] Normalized new tag: {normalized_new_tag}")
+                debug_print(f"[UPDATE_TAG] Normalized new tag: {normalized_new_tag}")
                 
                 # Query documents directly from Cosmos DB
-                debug_print(f"[UPDATE TAG] Querying documents from database...")
+                debug_print(f"[UPDATE_TAG] Querying documents from database...")
                 
                 query = """
                     SELECT *
@@ -1660,7 +1819,7 @@ def register_route_backend_documents(app):
                     )
                 )
                 
-                debug_print(f"[UPDATE TAG] Found {len(documents)} total documents")
+                debug_print(f"[UPDATE_TAG] Found {len(documents)} total documents")
                 
                 # Get latest version of each document
                 latest_documents = {}
@@ -1670,7 +1829,7 @@ def register_route_backend_documents(app):
                         latest_documents[file_name] = doc
                 
                 all_docs = list(latest_documents.values())
-                debug_print(f"[UPDATE TAG] Processing {len(all_docs)} unique documents")
+                debug_print(f"[UPDATE_TAG] Processing {len(all_docs)} unique documents")
                 
                 updated_count = 0
                 
@@ -1694,33 +1853,33 @@ def register_route_backend_documents(app):
                         
                         updated_count += 1
                 
-                debug_print(f"[UPDATE TAG] Updated {updated_count} documents")
+                debug_print(f"[UPDATE_TAG] Updated {updated_count} documents")
                 
                 # Update tag definition
-                debug_print(f"[UPDATE TAG] Updating tag definition in settings...")
+                debug_print(f"[UPDATE_TAG] Updating tag definition in settings...")
                 user_settings = get_user_settings(user_id)
                 settings_dict = user_settings.get('settings', {})
                 tag_defs = settings_dict.get('tag_definitions', {})
                 personal_tags = tag_defs.get('personal', {})
                 
-                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                debug_print(f"[UPDATE_TAG] Current personal_tags keys: {list(personal_tags.keys())}")
                 
                 if normalized_old_tag in personal_tags:
                     old_def = personal_tags.pop(normalized_old_tag)
                     personal_tags[normalized_new_tag] = old_def
-                    debug_print(f"[UPDATE TAG] Renamed tag in definitions")
+                    debug_print(f"[UPDATE_TAG] Renamed tag in definitions")
                 else:
-                    debug_print(f"[UPDATE TAG] WARNING: Old tag not found in personal_tags!")
+                    debug_print(f"[UPDATE_TAG] WARNING: Old tag not found in personal_tags!")
                     
                 tag_defs['personal'] = personal_tags
-                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                debug_print(f"[UPDATE_TAG] Calling update_user_settings...")
                 update_user_settings(user_id, {'tag_definitions': tag_defs})
                 
                 # Invalidate cache
-                debug_print(f"[UPDATE TAG] Invalidating search cache...")
+                debug_print(f"[UPDATE_TAG] Invalidating search cache...")
                 invalidate_personal_search_cache(user_id)
                 
-                debug_print(f"[UPDATE TAG] Rename completed successfully")
+                debug_print(f"[UPDATE_TAG] Rename completed successfully")
                 return jsonify({
                     'message': f'Tag renamed from "{normalized_old_tag}" to "{normalized_new_tag}"',
                     'documents_updated': updated_count
@@ -1728,7 +1887,7 @@ def register_route_backend_documents(app):
             
             # Handle color change only
             if new_color:
-                debug_print(f"[UPDATE TAG] Handling color change operation...")
+                debug_print(f"[UPDATE_TAG] Handling color change operation...")
                 is_valid_color, color_error, normalized_color = validate_tag_color(new_color, normalized_old_tag)
                 if not is_valid_color:
                     return jsonify({'error': color_error}), 400
@@ -1738,14 +1897,14 @@ def register_route_backend_documents(app):
                 tag_defs = settings_dict.get('tag_definitions', {})
                 personal_tags = tag_defs.get('personal', {})
                 
-                debug_print(f"[UPDATE TAG] Current personal_tags keys: {list(personal_tags.keys())}")
-                debug_print(f"[UPDATE TAG] Looking for tag: {normalized_old_tag}")
+                debug_print(f"[UPDATE_TAG] Current personal_tags keys: {list(personal_tags.keys())}")
+                debug_print(f"[UPDATE_TAG] Looking for tag: {normalized_old_tag}")
                 
                 if normalized_old_tag in personal_tags:
-                    debug_print(f"[UPDATE TAG] Found tag, updating color to: {normalized_color}")
+                    debug_print(f"[UPDATE_TAG] Found tag, updating color to: {normalized_color}")
                     personal_tags[normalized_old_tag]['color'] = normalized_color
                 else:
-                    debug_print(f"[UPDATE TAG] Tag not found, creating new entry with color: {normalized_color}")
+                    debug_print(f"[UPDATE_TAG] Tag not found, creating new entry with color: {normalized_color}")
                     from datetime import datetime, timezone
                     personal_tags[normalized_old_tag] = {
                         'color': normalized_color,
@@ -1753,11 +1912,11 @@ def register_route_backend_documents(app):
                     }
                 
                 tag_defs['personal'] = personal_tags
-                debug_print(f"[UPDATE TAG] Final tag_defs to save: {tag_defs}")
-                debug_print(f"[UPDATE TAG] Calling update_user_settings...")
+                debug_print(f"[UPDATE_TAG] Final tag_defs to save: {tag_defs}")
+                debug_print(f"[UPDATE_TAG] Calling update_user_settings...")
                 update_user_settings(user_id, {'tag_definitions': tag_defs})
                 
-                debug_print(f"[UPDATE TAG] Color change completed successfully")
+                debug_print(f"[UPDATE_TAG] Color change completed successfully")
                 return jsonify({
                     'message': f'Tag color updated for "{normalized_old_tag}"',
                     'tag': {
@@ -1766,16 +1925,16 @@ def register_route_backend_documents(app):
                     }
                 }), 200
             
-            debug_print(f"[UPDATE TAG] No updates specified!")
+            debug_print(f"[UPDATE_TAG] No updates specified!")
             return jsonify({'error': 'No updates specified'}), 400
             
         except Exception as e:
-            debug_print(f"[UPDATE TAG] ERROR: {str(e)}")
+            debug_print(f"[UPDATE_TAG] ERROR: {str(e)}")
             import traceback
             traceback.print_exc()
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
+    @bp.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1796,7 +1955,7 @@ def register_route_backend_documents(app):
             normalized_tag = normalize_tag(tag_name)
             
             # Query documents directly from Cosmos DB
-            debug_print(f"[DELETE TAG] Querying documents from database...")
+            debug_print(f"[DELETE_TAG] Querying documents from database...")
             
             query = """
                 SELECT *
@@ -1813,7 +1972,7 @@ def register_route_backend_documents(app):
                 )
             )
             
-            debug_print(f"[DELETE TAG] Found {len(documents)} total documents")
+            debug_print(f"[DELETE_TAG] Found {len(documents)} total documents")
             
             # Get latest version of each document
             latest_documents = {}
@@ -1823,7 +1982,7 @@ def register_route_backend_documents(app):
                     latest_documents[file_name] = doc
             
             all_docs = list(latest_documents.values())
-            debug_print(f"[DELETE TAG] Processing {len(all_docs)} unique documents")
+            debug_print(f"[DELETE_TAG] Processing {len(all_docs)} unique documents")
             
             updated_count = 0
             
@@ -1869,7 +2028,7 @@ def register_route_backend_documents(app):
             return jsonify({'error': str(e)}), 500
 
     # ============= DOCUMENT SHARING API ENDPOINTS =============
-    @app.route('/api/documents/<document_id>/share', methods=['POST'])
+    @bp.route('/api/documents/<document_id>/share', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1923,7 +2082,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error sharing document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/unshare', methods=['DELETE'])
+    @bp.route('/api/documents/<document_id>/unshare', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1958,12 +2117,16 @@ def register_route_backend_documents(app):
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
+        except DocumentSearchAclProjectionDeferredError as exc:
+            response = jsonify({'error': str(exc)})
+            response.headers['Retry-After'] = '150'
+            return response, 503
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/shared-users', methods=['GET'])
+    @bp.route('/api/documents/<document_id>/shared-users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2032,7 +2195,7 @@ def register_route_backend_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error getting shared users: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/remove-self', methods=['DELETE'])
+    @bp.route('/api/documents/<document_id>/remove-self', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2083,7 +2246,7 @@ def register_route_backend_documents(app):
             debug_print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
             return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
 
-    @app.route('/api/documents/<document_id>/approve-share', methods=['POST'])
+    @bp.route('/api/documents/<document_id>/approve-share', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -2115,17 +2278,22 @@ def register_route_backend_documents(app):
             if updated:
                 document_item['shared_user_ids'] = new_shared_user_ids
                 document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-                cosmos_user_documents_container.upsert_item(document_item)
+                persisted_document = cosmos_user_documents_container.upsert_item(document_item)
+                document_for_sync = persisted_document if isinstance(persisted_document, dict) else document_item
+                sync_document_access_index_for_document_fail_open(
+                    document_for_sync,
+                    operation='document_share_approved',
+                )
                 # Update all chunks with the new shared_user_ids
                 try:
-                    chunks = get_all_chunks(document_id, document_item.get('user_id'))
+                    chunks = get_all_chunks(document_id, document_for_sync.get('user_id'))
                     for chunk in chunks:
                         chunk_id = chunk.get('id')
                         if chunk_id:
                             try:
                                 update_chunk_metadata(
                                     chunk_id=chunk_id,
-                                    user_id=document_item.get('user_id'),
+                                    user_id=document_for_sync.get('user_id'),
                                     group_id=None,
                                     public_workspace_id=None,
                                     document_id=document_id,

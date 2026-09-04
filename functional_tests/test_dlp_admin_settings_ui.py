@@ -17,7 +17,11 @@ import sys
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_FILE = os.path.join(ROOT_DIR, "application", "single_app", "functions_settings.py")
 ADMIN_ROUTE_FILE = os.path.join(ROOT_DIR, "application", "single_app", "route_frontend_admin_settings.py")
-ADMIN_TEMPLATE_FILE = os.path.join(ROOT_DIR, "application", "single_app", "templates", "admin_settings.html")
+ADMIN_SETTINGS_FILE = os.path.join(ROOT_DIR, "application", "single_app", "templates", "admin_settings.html")
+# The DLP card lives in the content-safety admin pane, which admin_settings.html includes.
+ADMIN_TEMPLATE_FILE = os.path.join(
+    ROOT_DIR, "application", "single_app", "templates", "admin", "_panes", "content-safety.html"
+)
 ADMIN_JS_FILE = os.path.join(ROOT_DIR, "application", "single_app", "static", "js", "admin", "admin_settings.js")
 
 
@@ -194,7 +198,7 @@ def test_admin_js_uses_d_none_for_dlp_toggles():
 def test_admin_settings_form_contains_csrf_token():
     """Admin settings form should submit a per-session CSRF token."""
     print("Testing admin settings CSRF template field...")
-    template = read_file_text(ADMIN_TEMPLATE_FILE)
+    template = read_file_text(ADMIN_SETTINGS_FILE)
 
     form_index = template.find('id="admin-settings-form"')
     token_index = template.find('name="admin_settings_csrf_token"', form_index)

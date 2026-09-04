@@ -948,13 +948,12 @@ function startAutoSendCountdown() {
             autoSendCountdown = null;
             autoSendTimeout = null;
             
-            console.log('[Auto-Send] About to trigger click...');
-            // Trigger the send by programmatically clicking the button
-            // This ensures all normal send handlers fire
+            console.log('[Auto-Send] Sending transcribed voice turn...');
             requestAnimationFrame(() => {
-                console.log('[Auto-Send] Clicking send button NOW');
-                sendBtn.click();
-                console.log('[Auto-Send] Click triggered, conversation ID after:', window.currentConversationId || 'NEW');
+                sendMessage({
+                    inputModality: 'voice',
+                    responseModality: 'voice'
+                });
             });
         }
     };

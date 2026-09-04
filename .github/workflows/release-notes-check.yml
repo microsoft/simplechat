@@ -16,19 +16,21 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         
     - name: Get changed files
       id: changed-files
-      uses: tj-actions/changed-files@v46.0.1
+      uses: tj-actions/changed-files@9426d40962ed5378910ee2e21d5f8c6fcbf2dd96 # v47.0.6
       with:
         files_yaml: |
           application:
             - 'application/**'
           release_notes:
             - 'docs/explanation/release_notes.md'
+          latest_features:
+            - 'application/single_app/support_menu_config.py'
             
     - name: Check for feature/fix keywords in PR
       id: check-keywords
@@ -94,6 +96,45 @@ jobs:
         echo "needs_notes=$needs_notes" >> $GITHUB_OUTPUT
         echo "reason=$reason" >> $GITHUB_OUTPUT
         
+    - name: Determine if latest features update is recommended
+      id: require-latest-features
+      env:
+        APPLICATION_CHANGED: ${{ steps.changed-files.outputs.application_any_changed }}
+        LATEST_FEATURES_CHANGED: ${{ steps.changed-files.outputs.latest_features_any_changed }}
+        HAS_FEATURE: ${{ steps.check-keywords.outputs.has_feature }}
+      run: |
+        echo ""
+        echo "================================"
+        echo "✨ Latest Features Analysis"
+        echo "================================"
+        echo "Application files changed: $APPLICATION_CHANGED"
+        echo "Latest Features catalog updated: $LATEST_FEATURES_CHANGED"
+        echo "Feature keywords found: $HAS_FEATURE"
+        echo "================================"
+        echo ""
+
+        needs_latest_features="false"
+        latest_features_reason=""
+
+        if [[ "$APPLICATION_CHANGED" == "true" && "$HAS_FEATURE" == "true" && "$LATEST_FEATURES_CHANGED" != "true" ]]; then
+          needs_latest_features="true"
+          latest_features_reason="Feature-related keywords detected and files under application/ changed, but application/single_app/support_menu_config.py was not updated"
+          echo "⚠️ Latest Features catalog review recommended."
+          echo "📝 Reason: $latest_features_reason"
+          echo "💡 If this change is user-facing or admin-facing, consider adding or updating a Latest Features card."
+        elif [[ "$LATEST_FEATURES_CHANGED" == "true" ]]; then
+          echo "✅ Latest Features catalog was updated."
+        elif [[ "$APPLICATION_CHANGED" != "true" ]]; then
+          echo "ℹ️  No files under application/ changed - Latest Features catalog update not required."
+        elif [[ "$HAS_FEATURE" != "true" ]]; then
+          echo "ℹ️  No feature keywords detected - Latest Features catalog update optional."
+        else
+          echo "ℹ️  Latest Features catalog update optional."
+        fi
+
+        echo "needs_latest_features=$needs_latest_features" >> $GITHUB_OUTPUT
+        echo "reason=$latest_features_reason" >> $GITHUB_OUTPUT
+
     - name: Validate release notes update
       env:
         APPLICATION_CHANGED: ${{ steps.changed-files.outputs.application_any_changed }}
@@ -141,7 +182,7 @@ jobs:
 
     - name: Post PR comment (when notes needed but missing)
       if: steps.require-notes.outputs.needs_notes == 'true' && steps.changed-files.outputs.release_notes_any_changed != 'true'
-      uses: actions/github-script@v7
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       with:
         script: |
           const reason = '${{ steps.require-notes.outputs.reason }}';
@@ -193,5 +234,46 @@ jobs:
           
           ---
           *This is an automated reminder. If this PR doesn't require release notes (e.g., internal refactoring, documentation-only changes), you can ignore this message.*`
+            });
+          }
+
+    - name: Post PR comment (when latest features likely needed but missing)
+      if: steps.require-latest-features.outputs.needs_latest_features == 'true'
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          const reason = '${{ steps.require-latest-features.outputs.reason }}';
+          const marker = '✨ Latest Features Catalog Reminder';
+
+          // Check if we already commented
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+
+          const botComment = comments.find(comment =>
+            comment.user.type === 'Bot' &&
+            comment.body.includes(marker)
+          );
+
+          if (!botComment) {
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## ${marker}
+
+          This PR appears to contain application changes for a feature, but the in-app Latest Features catalog was not updated.
+
+          **Reason:** ${reason}
+
+          ### ✨ Please consider reviewing:
+          ` + '`application/single_app/support_menu_config.py`' + `
+
+          If this change is visible to end users or admins, consider adding or updating a Latest Features card. If this is internal-only, no catalog update is needed.
+
+          ---
+          *This is an automated, non-blocking reminder. You can ignore it when the change does not need a Latest Features card.*`
             });
           }

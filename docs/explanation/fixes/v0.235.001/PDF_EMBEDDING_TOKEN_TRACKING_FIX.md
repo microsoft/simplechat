@@ -162,6 +162,6 @@ embedding_model_deployment_name: "text-embedding-3-small"
 ```
 
 ## Related Documentation
-- [Embedding Token Tracking Feature](../features/EMBEDDING_TOKEN_TRACKING.md)
+- [Embedding Token Tracking Feature](../../features/v0.235.001/EMBEDDING_TOKEN_TRACKING.md)
 - Main implementation: `application/single_app/functions_documents.py`
 - Test: `functional_tests/test_embedding_token_tracking.py`

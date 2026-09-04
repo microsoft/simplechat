@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 DATABRICKS_PLUGIN_TYPE = "databricks"
 DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE = "databricks_table"
+DATABRICKS_DISCOVERY_PLUGIN_TYPES = {DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE}
 DATABRICKS_CLOUD_AZURE_COMMERCIAL = "azure_commercial"
 DATABRICKS_DEFAULT_CLOUD = DATABRICKS_CLOUD_AZURE_COMMERCIAL
 DATABRICKS_SQL_STATEMENTS_PATH = "/api/2.0/sql/statements"
@@ -24,6 +25,10 @@ DATABRICKS_ALLOWED_READ_STATEMENTS = {
     "EXPLAIN",
     "WITH",
 }
+
+
+def is_builtin_databricks_discovery_type(plugin_type: Any) -> bool:
+    return str(plugin_type or "").strip().lower() in DATABRICKS_DISCOVERY_PLUGIN_TYPES
 
 
 def _as_bool(value: Any, default_value: bool = False) -> bool:

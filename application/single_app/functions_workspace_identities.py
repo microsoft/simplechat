@@ -52,7 +52,7 @@ WORKSPACE_IDENTITY_USAGE_ALIASES = {
     "general": "action",
 }
 WORKSPACE_IDENTITY_USAGE_SOURCE_TYPES = {
-    "file_sync": ["smb", "azure_files", "onedrive", "google_drive", "google_shared_drive"],
+    "file_sync": ["smb", "azure_files", "azure_blob", "onedrive", "google_drive", "google_shared_drive"],
     "action": ["action"],
 }
 WORKSPACE_IDENTITY_USAGE_AUTH_TYPES = {
@@ -67,8 +67,12 @@ ACTION_IDENTITY_OPENAPI_TYPES = {"openapi"}
 ACTION_IDENTITY_OPENAPI_AUTH_TYPES = {"api_key", "bearer_token", "username_password"}
 ACTION_IDENTITY_DATABRICKS_TYPES = {"databricks", "databricks_table"}
 ACTION_IDENTITY_DATABRICKS_AUTH_TYPES = {"api_key", "bearer_token", "managed_identity"}
+ACTION_IDENTITY_SNOWFLAKE_TYPES = {"snowflake"}
+ACTION_IDENTITY_SNOWFLAKE_AUTH_TYPES = {"api_key", "bearer_token", "username_password"}
 ACTION_IDENTITY_TABLEAU_TYPES = {"tableau"}
 ACTION_IDENTITY_TABLEAU_AUTH_TYPES = {"api_key", "username_password"}
+ACTION_IDENTITY_YAMCS_TYPES = {"yamcs"}
+ACTION_IDENTITY_YAMCS_AUTH_TYPES = {"api_key", "bearer_token", "username_password"}
 
 
 def _now_iso() -> str:
@@ -464,8 +468,12 @@ def _get_action_identity_auth_types_for_plugin(action_data: Dict[str, Any]) -> S
         return ACTION_IDENTITY_OPENAPI_AUTH_TYPES
     if plugin_type in ACTION_IDENTITY_DATABRICKS_TYPES:
         return ACTION_IDENTITY_DATABRICKS_AUTH_TYPES
+    if plugin_type in ACTION_IDENTITY_SNOWFLAKE_TYPES:
+        return ACTION_IDENTITY_SNOWFLAKE_AUTH_TYPES
     if plugin_type in ACTION_IDENTITY_TABLEAU_TYPES:
         return ACTION_IDENTITY_TABLEAU_AUTH_TYPES
+    if plugin_type in ACTION_IDENTITY_YAMCS_TYPES:
+        return ACTION_IDENTITY_YAMCS_AUTH_TYPES
     return ACTION_IDENTITY_AUTH_TYPES
 
 
@@ -519,8 +527,12 @@ def _apply_action_identity_auth(action_data: Dict[str, Any], identity_auth: Dict
         _apply_sql_action_identity_auth(action_auth, additional_fields, identity_auth)
     elif plugin_type in ACTION_IDENTITY_OPENAPI_TYPES:
         _apply_openapi_action_identity_auth(action_auth, additional_fields, identity_auth)
+    elif plugin_type in ACTION_IDENTITY_SNOWFLAKE_TYPES:
+        _apply_snowflake_action_identity_auth(action_auth, additional_fields, identity_auth)
     elif plugin_type in ACTION_IDENTITY_TABLEAU_TYPES:
         _apply_tableau_action_identity_auth(action_auth, additional_fields, identity_auth)
+    elif plugin_type in ACTION_IDENTITY_YAMCS_TYPES:
+        _apply_yamcs_action_identity_auth(action_auth, additional_fields, identity_auth)
     else:
         _apply_generic_action_identity_auth(action_auth, identity_auth)
 
@@ -609,6 +621,49 @@ def _apply_tableau_action_identity_auth(
         additional_fields["auth_method"] = "username_password"
 
 
+def _apply_snowflake_action_identity_auth(
+    action_auth: Dict[str, Any],
+    additional_fields: Dict[str, Any],
+    identity_auth: Dict[str, Any],
+) -> None:
+    auth_type = _normalize_text(identity_auth.get("auth_type"), 50).lower()
+    if auth_type == "username_password":
+        action_auth["type"] = "username_password"
+        action_auth["identity"] = identity_auth.get("username", "")
+        action_auth["key"] = identity_auth.get("password", "")
+        additional_fields["auth_method"] = "password"
+        additional_fields["user"] = identity_auth.get("username", "")
+    elif auth_type == "api_key":
+        action_auth["type"] = "key"
+        action_auth["key"] = _identity_secret(identity_auth)
+        additional_fields["auth_method"] = "key_pair"
+    elif auth_type == "bearer_token":
+        action_auth["type"] = "key"
+        action_auth["key"] = _identity_secret(identity_auth)
+        additional_fields["auth_method"] = "oauth"
+
+
+def _apply_yamcs_action_identity_auth(
+    action_auth: Dict[str, Any],
+    additional_fields: Dict[str, Any],
+    identity_auth: Dict[str, Any],
+) -> None:
+    auth_type = _normalize_text(identity_auth.get("auth_type"), 50).lower()
+    if auth_type == "username_password":
+        action_auth["type"] = "username_password"
+        action_auth["identity"] = identity_auth.get("username", "")
+        action_auth["key"] = identity_auth.get("password", "")
+        additional_fields["auth_method"] = "username_password"
+    elif auth_type == "api_key":
+        action_auth["type"] = "key"
+        action_auth["key"] = _identity_secret(identity_auth)
+        additional_fields["auth_method"] = "api_key"
+    elif auth_type == "bearer_token":
+        action_auth["type"] = "key"
+        action_auth["key"] = _identity_secret(identity_auth)
+        additional_fields["auth_method"] = "bearer_token"
+
+
 def _apply_generic_action_identity_auth(action_auth: Dict[str, Any], identity_auth: Dict[str, Any]) -> None:
     auth_type = _normalize_text(identity_auth.get("auth_type"), 50).lower()
     if auth_type == "api_key":
@@ -667,7 +722,7 @@ def identity_supports_usage(
 
 def log_workspace_identity_reference_block(scope_type: str, scope_id: str, identity_id: str, reference_count: int) -> None:
     log_event(
-        "[WorkspaceIdentity] Delete blocked because identity is still referenced.",
+        "[WORKSPACE_IDENTITY] Delete blocked because identity is still referenced.",
         extra={
             "scope_type": scope_type,
             "scope_id": scope_id,

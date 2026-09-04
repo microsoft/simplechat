@@ -240,7 +240,7 @@ def get_msgraph_pending_action(user_id, action_id):
         return None
     except Exception as exc:
         log_event(
-            f'[MSGraphPendingActions] Error fetching action {normalized_action_id}: {exc}',
+            f'[MS_GRAPH_PENDING_ACTIONS] Error fetching action {normalized_action_id}: {exc}',
             extra={'user_id': normalized_user_id, 'action_id': normalized_action_id},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -284,7 +284,7 @@ def list_msgraph_pending_actions(user_id, conversation_id='', workflow_id='', ru
         return [_strip_cosmos_metadata(item) for item in items[:limit]]
     except Exception as exc:
         log_event(
-            f'[MSGraphPendingActions] Error listing pending actions: {exc}',
+            f'[MS_GRAPH_PENDING_ACTIONS] Error listing pending actions: {exc}',
             extra={
                 'user_id': normalized_user_id,
                 'conversation_id': normalized_conversation_id,
@@ -523,7 +523,7 @@ def schedule_msgraph_pending_action_auto_commit(action, token):
             committed_action, error = _commit_msgraph_pending_action_with_token(user_id, action_id, token)
             if error:
                 log_event(
-                    '[MSGraphPendingActions] Delayed action auto-send failed.',
+                    '[MS_GRAPH_PENDING_ACTIONS] Delayed action auto-send failed.',
                     extra={
                         'user_id': user_id,
                         'action_id': action_id,
@@ -534,7 +534,7 @@ def schedule_msgraph_pending_action_auto_commit(action, token):
                 )
             elif committed_action:
                 log_event(
-                    '[MSGraphPendingActions] Delayed action auto-send completed.',
+                    '[MS_GRAPH_PENDING_ACTIONS] Delayed action auto-send completed.',
                     extra={'user_id': user_id, 'action_id': action_id},
                 )
         finally:
@@ -547,7 +547,7 @@ def schedule_msgraph_pending_action_auto_commit(action, token):
     with _scheduled_timer_lock:
         _scheduled_timers[action_id] = timer
     timer.start()
-    debug_print(f'[MSGraphPendingActions] Scheduled delayed action {action_id} in {delay_seconds:.1f}s')
+    debug_print(f'[MS_GRAPH_PENDING_ACTIONS] Scheduled delayed action {action_id} in {delay_seconds:.1f}s')
     return True
 
 

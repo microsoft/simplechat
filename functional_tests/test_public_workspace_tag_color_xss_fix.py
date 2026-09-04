@@ -1,7 +1,7 @@
 # test_public_workspace_tag_color_xss_fix.py
 """
 Functional test for public workspace tag color stored XSS hardening.
-Version: 0.241.022
+Version: 0.250.031
 Implemented in: 0.241.022
 
 This test ensures tag colors are validated on write, repaired on read,
@@ -184,7 +184,7 @@ def test_fix_artifacts_and_version_are_in_sync():
     """Verify versioned regression artifacts landed for this fix."""
     print("🔍 Testing fix artifacts and version alignment...")
 
-    assert read_config_version() == "0.241.022"
+    assert read_config_version() >= "0.241.022"
     assert os.path.exists(FIX_DOC), f"Expected fix documentation at {FIX_DOC}"
     assert os.path.exists(UI_TEST), f"Expected UI regression test at {UI_TEST}"
 

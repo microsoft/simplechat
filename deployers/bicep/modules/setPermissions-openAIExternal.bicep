@@ -25,13 +25,26 @@ resource openAIUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = i
   }
 }
 
-resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity') {
+resource openAIenterpriseAppUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (authenticationType == 'managed_identity' && !empty(enterpriseAppServicePrincipalId)) {
   scope: openAiService
   name: guid(openAiService.id, enterpriseAppServicePrincipalId, 'enterpriseApp-CognitiveServicesOpenAIUserRole')
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
       '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+    )
+    principalId: enterpriseAppServicePrincipalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource openAIenterpriseAppCognitiveServicesUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(enterpriseAppServicePrincipalId)) {
+  scope: openAiService
+  name: guid(openAiService.id, enterpriseAppServicePrincipalId, 'enterpriseApp-CognitiveServicesUserRole')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'a97b65f3-24c7-4388-baec-2e87135dc908'
     )
     principalId: enterpriseAppServicePrincipalId
     principalType: 'ServicePrincipal'

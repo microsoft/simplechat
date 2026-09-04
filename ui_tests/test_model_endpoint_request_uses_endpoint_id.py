@@ -1,16 +1,18 @@
 # test_model_endpoint_request_uses_endpoint_id.py
 """
 UI test for model endpoint request identity wiring.
-Version: 0.242.072
-Implemented in: 0.241.179
+Version: 0.250.203
+Implemented in: 0.250.003; updated in 0.250.203
 
 This test ensures the admin multi-endpoint modal exposes the supported
 providers, shows the APIM provider guidance, handles Foundry API version
 selection and project endpoint parsing, exposes setup guidance and model icon
 picker controls, and sends the endpoint ID in the test-model request payload so
-the backend can resolve Key Vault-backed secrets.
+the backend can resolve Key Vault-backed secrets. It also validates per-model
+response length and identity header override serialization.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -67,15 +69,22 @@ def test_model_endpoint_request_uses_endpoint_id():
             page.locator("#add-model-endpoint-btn").click()
             expect(page.locator("#modelEndpointModal")).to_be_visible()
             expect(page.get_by_test_id("model-endpoint-inline-guidance-toggle")).to_be_visible()
+            expect(page.locator("#model-endpoint-identity-mode")).to_be_visible()
+            expect(page.locator("#model-endpoint-identity-header-name")).to_be_visible()
+            expect(page.locator("#model-endpoint-identity-value-type")).to_be_visible()
 
             page.get_by_test_id("model-endpoint-inline-guidance-toggle").click()
             expect(page.locator("#model-endpoint-inline-guidance")).to_be_visible()
             expect(page.get_by_text("Azure OpenAI", exact=True).first).to_be_visible()
             expect(page.get_by_text("Foundry (classic)", exact=True).first).to_be_visible()
+            expect(page.get_by_text("Use separate endpoints when Grok, Meta/Llama, DeepSeek")).to_be_visible()
 
             provider_options = page.locator("#model-endpoint-provider option").all_text_contents()
             assert provider_options == ["Azure OpenAI", "Foundry (classic)", "New Foundry"]
             expect(page.get_by_text("If using classic Foundry, use Foundry (classic). If using the application-based runtime, use New Foundry.")).to_be_visible()
+
+            page.locator("#model-endpoint-provider").select_option("aifoundry")
+            expect(page.locator("#model-endpoint-openai-api-version")).to_have_value("v1")
 
             page.locator("#model-endpoint-provider").select_option("new_foundry")
             expect(page.locator("#model-endpoint-endpoint-label")).to_have_text("Project Endpoint")
@@ -108,8 +117,12 @@ def test_model_endpoint_request_uses_endpoint_id():
             page.locator("#model-endpoint-endpoint").fill("https://example.openai.azure.com")
             page.locator("#model-endpoint-auth-type").select_option("api_key")
             page.locator("#model-endpoint-api-key").fill("temporary-ui-secret")
+            page.locator("#model-endpoint-identity-mode").select_option("enabled")
+            page.locator("#model-endpoint-identity-header-name").fill("x-test-model-identity")
+            page.locator("#model-endpoint-identity-value-type").select_option("user_upn_tenant_id")
             page.locator("#model-endpoint-add-model-btn").click()
             page.locator("input[data-deployment-name-for]").first.fill("gpt-4o")
+            page.locator("input[data-response-length-for]").first.fill("2048")
             expect(page.locator(".model-icon-preview").first).to_be_visible()
             expect(page.locator(".model-icon-picker-button").first).to_contain_text("bi-stars")
             page.locator(".model-icon-picker-button").first.click()
@@ -126,6 +139,16 @@ def test_model_endpoint_request_uses_endpoint_id():
             expect(page.locator("#modelEndpointModal")).to_be_visible()
             assert captured_request.get("id") == "stored-endpoint-123"
             assert captured_request.get("model", {}).get("deploymentName") == "gpt-4o"
+
+            page.locator("#model-endpoint-save-btn").click()
+            endpoint_payload = page.locator("#model_endpoints_json").input_value()
+            saved_endpoints = json.loads(endpoint_payload)
+            assert '"responseLength":2048' in endpoint_payload
+            assert saved_endpoints[0]["identity_header"] == {
+                "mode": "enabled",
+                "header_name": "x-test-model-identity",
+                "value_type": "user_upn_tenant_id",
+            }
         finally:
             context.close()
             browser.close()

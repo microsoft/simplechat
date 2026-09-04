@@ -1,8 +1,9 @@
 # test_chat_sidebar_toggle_controls.py
 """
 UI test for the unified chat navigation shell.
-Version: 0.241.018
+Version: 0.250.196
 Implemented in: 0.241.018
+Top-navigation crash regression added in: 0.250.196
 
 This test ensures that chats in top-nav mode use the adaptive conversation
 rail, preserve compact desktop top-nav links, and become the hamburger drawer
@@ -100,8 +101,13 @@ def test_chat_sidebar_desktop_uses_sidebar_toggle_without_inline_duplicate(playw
         expect(page.locator("#chat-sidebar-inline-toggle")).to_have_count(0)
         expect(page.locator("#floating-expand-btn")).to_have_count(0)
         expect(page.locator("#topNavMobileMenu")).to_have_count(0)
+        expect(page.locator("nav.top-nav-bar")).to_be_visible()
         expect(page.locator(".top-nav-chat-nav")).to_be_visible()
         expect(page.locator(".top-nav-chat-nav .nav-link").first).to_be_visible()
+
+        page.locator("#userDropdown").click()
+        expect(page.locator(".top-nav-user-menu.show")).to_be_visible()
+        page.locator("#userDropdown").click()
 
         sidebar_toggle.click()
         page.wait_for_function("document.body.classList.contains('sidebar-collapsed')")

@@ -18,7 +18,7 @@ from functions_image_messages import build_image_message_documents, decode_image
 
 
 INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE = 'simpleimage'
-IMAGE_PROPOSAL_GUIDANCE_MARKER = '[Opt-in Image Generation Proposal Guidance]'
+IMAGE_PROPOSAL_GUIDANCE_MARKER = '[OPT_IN_IMAGE_GENERATION_PROPOSAL_GUIDANCE]'
 IMAGE_PROPOSAL_PROMPT_MAX_LENGTH = 4000
 IMAGE_PROPOSAL_TEXT_MAX_LENGTH = 600
 IMAGE_PROPOSAL_ID_MAX_LENGTH = 120
@@ -333,7 +333,7 @@ def generate_chat_image_message(
             cosmos_messages_container.upsert_item(image_document)
 
     log_event(
-        '[ImageGeneration] Generated chat image message',
+        '[IMAGE_GENERATION] Generated chat image message',
         extra={
             'conversation_id': conversation_id,
             'message_id': image_message_id,

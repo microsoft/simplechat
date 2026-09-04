@@ -17,7 +17,10 @@ from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-ADMIN_TEMPLATE_FILE = ROOT_DIR / "application" / "single_app" / "templates" / "admin_settings.html"
+# The DLP card lives in the content-safety admin pane, which admin_settings.html includes.
+ADMIN_TEMPLATE_FILE = (
+    ROOT_DIR / "application" / "single_app" / "templates" / "admin" / "_panes" / "content-safety.html"
+)
 PREVIEW_SCRIPT = ROOT_DIR / "tools" / "local_dev" / "render_dlp_admin_preview.py"
 
 

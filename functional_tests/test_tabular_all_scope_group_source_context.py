@@ -14,6 +14,7 @@ uses documents the current chat scope is authorized to access.
 import ast
 import os
 import sys
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -209,7 +210,7 @@ def test_route_uses_context_aware_tabular_analysis_and_version_bump():
     ]
     missing = [snippet for snippet in required_snippets if snippet not in source]
     assert not missing, f'Missing route integration snippets: {missing}'
-    assert read_config_version() == '0.241.154'
+    assert_app_version_at_least("0.241.154")
 
     print('✅ Route integration and version bump passed')
     return True

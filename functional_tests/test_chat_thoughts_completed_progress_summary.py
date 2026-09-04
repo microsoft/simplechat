@@ -9,6 +9,7 @@ showing a live progress bar and that reduction activities close cleanly.
 """
 
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,9 +27,7 @@ def test_completed_thought_progress_summaries_are_not_live() -> None:
     comparison_content = _read('application/single_app/functions_document_comparison.py')
     route_content = _read('application/single_app/route_backend_chats.py')
 
-    assert 'VERSION = "0.241.023"' in config_content, (
-        'Expected config.py version 0.241.023 for the completed thought progress summary fix.'
-    )
+    assert_app_version_at_least("0.241.023")
     assert ': (state.completed || (counters.totalCount > 0 && counters.runningCount === 0));' in thoughts_content, (
         'Expected completed thought histories to derive completion when no activity remains running.'
     )

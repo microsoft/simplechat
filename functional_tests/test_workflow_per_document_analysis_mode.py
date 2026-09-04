@@ -15,6 +15,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -183,14 +184,15 @@ def test_workflow_per_document_ui_and_new_tab_contracts():
     workspace_template = _read('application/single_app/templates/workspace.html')
     group_template = _read('application/single_app/templates/group_workspaces.html')
 
-    assert 'VERSION = "0.241.182"' in config
+    assert_app_version_at_least("0.241.182")
     assert 'id="workflow-analysis-per-document"' in workspace_template
     assert 'Run each document separately' in workspace_template
     assert 'id="workflow-analysis-per-document"' in group_template
     assert 'Run each document separately' in group_template
     assert 'const DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT = "per_document";' in workflow_js
-    assert 'analysis_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisMode : DOCUMENT_ANALYSIS_MODE_COMBINED' in workflow_js
-    assert 'workflowAnalysisPerDocumentToggle.checked = documentAction.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT' in workflow_js
+    assert 'analysis_mode: actionType === DOCUMENT_ACTION_ANALYZE' in workflow_js
+    assert 'normalizeWorkflowAnalysisMode(source.analysis_mode)' in workflow_js
+    assert 'workflowAnalysisPerDocumentToggle.checked = action.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT' in workflow_js
     assert 'target="_blank" rel="noopener"' in workflow_js
     assert 'element.target = conversationUrl ? "_blank" : "";' in workflow_js
     assert "const targetWindow = window.open('about:blank', '_blank');" in notifications_js

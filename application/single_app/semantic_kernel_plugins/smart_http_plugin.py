@@ -192,7 +192,7 @@ class SmartHttpPlugin:
             "plugin_type": "SmartHttpPlugin"
         }
         self.function_calls.append(call_data)
-        self.logger.info(f"[Smart HTTP Plugin] Tracked function call: {function_name} ({duration:.3f}s) -> {url}")
+        self.logger.info(f"[SMART_HTTP_PLUGIN] Tracked function call: {function_name} ({duration:.3f}s) -> {url}")
         
     @async_plugin_logger("SmartHttpPlugin")
     @kernel_function(
@@ -385,8 +385,8 @@ class SmartHttpPlugin:
         """Process PDF content using Document Intelligence with large PDF support."""
         try:
             # Import here to avoid circular imports
-            from functions_content import extract_content_with_azure_di
-            from functions_settings import get_document_intelligence_pdf_image_extraction_mode, get_settings
+            from functions_content import extract_content_with_extraction_engine
+            from functions_settings import get_effective_document_intelligence_pdf_image_extraction_mode, get_settings
             from config import initialize_clients, CLIENTS
             
             # Check if pdf_bytes is actually string content (error case)
@@ -425,12 +425,13 @@ class SmartHttpPlugin:
                 if pdf_size > max_di_size:
                     return f"📄 **PDF TOO LARGE FOR PROCESSING**\n📍 Source: {uri}\n📊 File size: {pdf_size:,} bytes (exceeds {max_di_size:,} byte limit for Document Intelligence)\n\n⚠️  This PDF is too large for automated text extraction. Please try:\n• A smaller PDF document\n• Specific sections of the document\n• Contact the document provider for a text version"
                 
-                extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
                 if extraction_mode == 'auto':
                     extraction_mode = 'read'
-                pages_data = extract_content_with_azure_di(
+                pages_data, _engine_used, _engine_fallback = extract_content_with_extraction_engine(
                     temp_file_path,
-                    extraction_mode=extraction_mode
+                    extraction_mode=extraction_mode,
+                    settings=settings
                 )
                 
                 if not pages_data:
@@ -564,11 +565,13 @@ class SmartHttpPlugin:
         try:
             # Import settings and AzureOpenAI here to avoid circular imports
             from functions_settings import get_settings
+            from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
             from openai import AzureOpenAI
             from azure.identity import DefaultAzureCredential, get_bearer_token_provider
             from config import cognitive_services_scope
             
             settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(settings)
             
             # Set up Azure OpenAI client (similar to functions_documents.py)
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
@@ -583,7 +586,8 @@ class SmartHttpPlugin:
                 gpt_client = AzureOpenAI(
                     api_version=settings.get('azure_apim_gpt_api_version'),
                     azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-                    api_key=settings.get('azure_apim_gpt_subscription_key')
+                    api_key=settings.get('azure_apim_gpt_subscription_key'),
+                    default_headers=extra_headers or None,
                 )
             else:
                 if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
@@ -594,13 +598,15 @@ class SmartHttpPlugin:
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_openai_gpt_api_version'),
                         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-                        azure_ad_token_provider=token_provider
+                        azure_ad_token_provider=token_provider,
+                        default_headers=extra_headers or None,
                     )
                 else:
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_openai_gpt_api_version'),
                         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-                        api_key=settings.get('azure_openai_gpt_key')
+                        api_key=settings.get('azure_openai_gpt_key'),
+                        default_headers=extra_headers or None,
                     )
             
             # Chunk the content into manageable pieces (about 100k chars each)

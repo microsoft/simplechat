@@ -19,6 +19,10 @@ const GOVERNANCE_ITEM_ENTITY_LABELS = {
     personal_action_type: 'Personal Action Type',
     group_action_type: 'Group Action Type',
     global_action_type: 'Global Action Type',
+    mcp_personal_destination: 'MCP Personal Destination',
+    mcp_group_destination: 'MCP Group Destination',
+    mcp_global_destination: 'MCP Global Destination',
+    inbound_mcp_source: 'Inbound MCP Source',
 };
 
 const GOVERNANCE_ITEM_LOOKUP_HINTS = {
@@ -28,7 +32,65 @@ const GOVERNANCE_ITEM_LOOKUP_HINTS = {
     personal_action_type: 'Select an action type users can create and use in personal workspaces.',
     group_action_type: 'Select an action type groups can create and use in group workspaces.',
     global_action_type: 'Select an action type users can use from configured global actions.',
+    mcp_personal_destination: 'Enter a personal MCP destination pattern such as preconfiguration:microsoft_learn, *.contoso.com, or *.',
+    mcp_group_destination: 'Enter a group MCP destination pattern. Use group:<group-id>::<pattern> for a specific group override.',
+    mcp_global_destination: 'Enter a global/admin MCP destination pattern such as preconfiguration:github, https://example.com/mcp*, or *.',
+    inbound_mcp_source: 'Choose * for any accepted source or choose a configured source ID from the Inbound MCP settings.',
 };
+
+const GOVERNANCE_POLICY_HELP_CONTENT = {
+    mcp_personal_destination: {
+        title: 'Personal MCP destination policy',
+        purpose: 'Use this when you want to allow a remote outbound MCP destination for personal workspaces.',
+        configuration: [
+            'Entity type: mcp_personal_destination.',
+            'Item ID examples: preconfiguration:microsoft_learn, preset:generic, *.fedorg.gov, https://mcp.fedorg.gov/mcp*, or * for any remote destination after identity and auth checks.',
+            'Keep "Allow all users" off unless every user with MCP action access should be able to use that destination.',
+        ],
+    },
+    mcp_group_destination: {
+        title: 'Group MCP destination policy',
+        purpose: 'Use this when a destination should be allowed for group workspace actions.',
+        configuration: [
+            'Entity type: mcp_group_destination.',
+            'Item ID examples: preconfiguration:github for all governed groups, or group:<group-id>::https://mcp.fedorg.gov/mcp* for one group-specific override.',
+            'Use allowed users or groups to restrict who can use this destination from group workflows.',
+        ],
+    },
+    mcp_global_destination: {
+        title: 'Global MCP destination policy',
+        purpose: 'Use this for admin-managed or enterprise-wide MCP destinations that are configured centrally.',
+        configuration: [
+            'Entity type: mcp_global_destination.',
+            'Item ID examples: preconfiguration:github, preset:generic, transport:streamable-http, *.fedorg.gov, or * for any governed global destination.',
+            'Prefer specific preconfiguration, preset, host, or transport patterns before using the broad * wildcard.',
+        ],
+    },
+    inbound_mcp_source: {
+        title: 'Inbound MCP source policy',
+        purpose: 'Use this single policy type to decide which delegated users or groups can use SimpleChat as an inbound MCP server and which accepted source IDs they can use.',
+        configuration: [
+            'Entity type: inbound_mcp_source.',
+            'Item ID: choose * for any accepted source, or choose a specific source ID configured in Admin Settings > Inbound MCP Server.',
+            'Keep "Allow all users" off unless every user with the required Entra role and delegated scope should be able to use that source.',
+            'The source value comes from the configured source header when present. Treat it as advisory unless a trusted gateway sets or validates it.',
+        ],
+    },
+};
+
+const GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES = new Set([
+    'mcp_personal_destination',
+    'mcp_group_destination',
+    'mcp_global_destination',
+]);
+
+const GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES = new Set([
+    'inbound_mcp_source',
+]);
+
+const GOVERNANCE_CUSTOM_ITEM_ID_ENTITY_TYPES = new Set([
+    ...GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES,
+]);
 
 const GOVERNANCE_ACTION_TYPE_ALIASES = {
     sql_query: 'sql',
@@ -44,6 +106,7 @@ const GOVERNANCE_ACTION_TYPE_ALIASES = {
     msgraph: 'msgraph',
     databricks_table: 'databricks',
     databricks: 'databricks',
+    snowflake: 'snowflake',
     tableau: 'tableau',
     chart: 'chart',
     azure_maps: 'azure_maps',
@@ -59,6 +122,7 @@ const GOVERNANCE_ACTION_TYPE_LABELS = {
     mcp: 'MCP',
     msgraph: 'Microsoft Graph',
     databricks: 'Databricks',
+    snowflake: 'Snowflake',
     tableau: 'Tableau',
     chart: 'Chart',
     azure_maps: 'Azure Maps',
@@ -83,6 +147,14 @@ const GOVERNANCE_ALLOWLIST_TRUNCATE_ID_LENGTH = 35;
 
 const GOVERNANCE_ITEM_REVIEW_DEFAULT_PAGE_SIZE = 25;
 const GOVERNANCE_ITEM_EDITOR_PAGE_SIZE_DEFAULT = 50;
+const GOVERNANCE_FEATURE_TAB_HASH = '#feature-governance';
+const GOVERNANCE_POLICIES_TAB_HASH = '#governance-policies';
+const GOVERNANCE_MCP_TAB_HASH = '#mcp-governance';
+const GOVERNANCE_ADMIN_TAB_IDS = [
+    'feature-governance',
+    'governance-policies',
+    'mcp-governance',
+];
 
 const governanceItemReviewState = {
     search: '',
@@ -96,6 +168,9 @@ let governanceAllowListEditorContext = null;
 let governanceItemPolicyDeleteModal = null;
 let governanceItemPolicyDeleteContext = null;
 let governanceItemPolicyEditorModal = null;
+let governanceItemPolicyEditorContext = null;
+let governanceItemPolicyUsersModal = null;
+let governancePolicyHelpModal = null;
 const governanceItemLookupState = {
     global_endpoint: [],
     global_agent: [],
@@ -103,6 +178,10 @@ const governanceItemLookupState = {
     personal_action_type: [],
     group_action_type: [],
     global_action_type: [],
+    mcp_personal_destination: [],
+    mcp_group_destination: [],
+    mcp_global_destination: [],
+    inbound_mcp_source: [],
 };
 
 const governanceAllowListSelectionViewState = {
@@ -204,12 +283,29 @@ function buildAllowListSummary(users, groups, allowAll = false) {
     return `${usersCount} user${usersCount === 1 ? '' : 's'}, ${groupsCount} group${groupsCount === 1 ? '' : 's'}`;
 }
 
+function buildBlockListSummary(users, groups) {
+    const usersCount = Array.isArray(users) ? users.length : 0;
+    const groupsCount = Array.isArray(groups) ? groups.length : 0;
+    if (usersCount === 0 && groupsCount === 0) {
+        return 'No users or groups blocked';
+    }
+    return `${usersCount} user${usersCount === 1 ? '' : 's'}, ${groupsCount} group${groupsCount === 1 ? '' : 's'} blocked`;
+}
+
 function getGovernanceUsersInputForFeatureRow(row) {
     return row?.querySelector('.governance-allowed-users') || null;
 }
 
 function getGovernanceGroupsInputForFeatureRow(row) {
     return row?.querySelector('.governance-allowed-groups') || null;
+}
+
+function getGovernanceDeniedUsersInputForFeatureRow(row) {
+    return row?.querySelector('.governance-denied-users') || null;
+}
+
+function getGovernanceDeniedGroupsInputForFeatureRow(row) {
+    return row?.querySelector('.governance-denied-groups') || null;
 }
 
 function getGovernanceFeatureAllowAllInput(row) {
@@ -228,12 +324,28 @@ function getItemGroupsInput() {
     return document.getElementById('governance-item-groups');
 }
 
+function getItemDeniedUsersInput() {
+    return document.getElementById('governance-item-denied-users');
+}
+
+function getItemDeniedGroupsInput() {
+    return document.getElementById('governance-item-denied-groups');
+}
+
 function getItemEntityTypeInput() {
     return document.getElementById('governance-item-entity-type');
 }
 
 function getItemIdInput() {
     return document.getElementById('governance-item-id');
+}
+
+function getItemIdCustomInput() {
+    return document.getElementById('governance-item-id-custom');
+}
+
+function getItemIdLookupControls() {
+    return document.getElementById('governance-item-id-lookup-controls');
 }
 
 function getItemPolicyIdInput() {
@@ -294,6 +406,7 @@ function buildGovernanceItemLookupOption(option) {
     const label = option.subtitle ? `${option.label} (${option.subtitle})` : option.label;
     const element = document.createElement('option');
     element.value = option.value;
+    element.dataset.resourceLabel = option.label;
     element.textContent = label;
     return element;
 }
@@ -319,6 +432,47 @@ function getAdminEndpointLookupOptionsFromWindow() {
         }, 'Endpoint'))
         .filter((endpoint) => endpoint !== null)
         .filter((endpoint, index, arr) => arr.findIndex((candidate) => candidate.value === endpoint.value) === index);
+}
+
+function getInboundMcpSourceLookupOptionsFromSettings() {
+    const allowAllSources = Boolean(document.getElementById('inbound_mcp_allow_all_source_ids')?.checked);
+    const wildcardOption = {
+        value: '*',
+        label: 'All accepted source IDs (*)',
+        subtitle: 'Wildcard source policy',
+    };
+    if (allowAllSources) {
+        return [wildcardOption];
+    }
+
+    const sourceEntriesInput = document.getElementById('inbound_mcp_allowed_source_entries_json');
+    let sourceEntries = [];
+    try {
+        const parsed = JSON.parse(sourceEntriesInput?.value || '[]');
+        sourceEntries = Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+        sourceEntries = [];
+    }
+
+    const seenValues = new Set();
+    seenValues.add(wildcardOption.value);
+
+    const configuredOptions = sourceEntries
+        .map((entry) => normalizeGovernanceLookupOption({
+            value: entry?.value,
+            label: entry?.description || entry?.value,
+            subtitle: entry?.description ? entry?.value : '',
+        }, 'Source'))
+        .filter((option) => option !== null)
+        .filter((option) => option.value !== '*')
+        .filter((option) => {
+            if (seenValues.has(option.value)) {
+                return false;
+            }
+            seenValues.add(option.value);
+            return true;
+        });
+    return [wildcardOption, ...configuredOptions];
 }
 
 async function fetchAdminGlobalAgentLookupOptions() {
@@ -413,6 +567,11 @@ async function loadGovernanceItemLookup(entityType, forceReload = false) {
         return [];
     }
 
+    if (normalizedEntityType === 'inbound_mcp_source') {
+        governanceItemLookupState.inbound_mcp_source = getInboundMcpSourceLookupOptionsFromSettings();
+        return governanceItemLookupState.inbound_mcp_source;
+    }
+
     if (!forceReload && Array.isArray(governanceItemLookupState[normalizedEntityType]) && governanceItemLookupState[normalizedEntityType].length > 0) {
         return governanceItemLookupState[normalizedEntityType];
     }
@@ -469,6 +628,7 @@ function renderGovernanceItemLookupOptions(entityType, preferredValue = '') {
     } else {
         itemIdInput.value = '';
     }
+    syncGovernanceItemResourceLabelFromSelection();
 
     const hint = GOVERNANCE_ITEM_LOOKUP_HINTS[entityType] || 'Select a delegated item.';
     if (options.length > 0) {
@@ -479,15 +639,53 @@ function renderGovernanceItemLookupOptions(entityType, preferredValue = '') {
     }
 }
 
+function isGovernanceItemPolicyEditMode() {
+    return Boolean(governanceItemPolicyEditorContext?.originalPolicyId);
+}
+
+function applyGovernanceItemTargetEditState() {
+    const entityType = normalizeGovernanceItemEntityType(getItemEntityTypeInput()?.value || '');
+    const usesCustomItemId = isGovernanceCustomItemIdEntityType(entityType);
+    const entityTypeInput = getItemEntityTypeInput();
+    const itemIdInput = getItemIdInput();
+    const itemIdCustomInput = getItemIdCustomInput();
+    const filterInput = getItemLookupFilterInput();
+    const refreshButton = document.getElementById('governance-item-id-refresh-btn');
+
+    if (entityTypeInput) {
+        entityTypeInput.disabled = false;
+    }
+    if (itemIdInput) {
+        itemIdInput.disabled = usesCustomItemId;
+    }
+    if (itemIdCustomInput) {
+        itemIdCustomInput.disabled = !usesCustomItemId;
+    }
+    if (filterInput) {
+        filterInput.disabled = usesCustomItemId;
+    }
+    if (refreshButton) {
+        refreshButton.disabled = usesCustomItemId;
+    }
+}
+
 async function refreshGovernanceItemLookup(entityType, forceReload = false, preferredValue = '') {
+    const normalizedEntityType = normalizeGovernanceItemEntityType(entityType);
+    if (isGovernanceCustomItemIdEntityType(normalizedEntityType)) {
+        syncGovernanceItemIdMode(normalizedEntityType, preferredValue);
+        applyGovernanceItemTargetEditState();
+        return;
+    }
+
     const refreshButton = document.getElementById('governance-item-id-refresh-btn');
     if (refreshButton) {
         refreshButton.disabled = true;
     }
 
     try {
-        await loadGovernanceItemLookup(entityType, forceReload);
-        renderGovernanceItemLookupOptions(entityType, preferredValue);
+        syncGovernanceItemIdMode(normalizedEntityType, preferredValue);
+        await loadGovernanceItemLookup(normalizedEntityType, forceReload);
+        renderGovernanceItemLookupOptions(normalizedEntityType, preferredValue);
     } catch (error) {
         renderGovernanceItemLookupOptions(entityType, '');
         setGovernanceItemLookupStatus(error.message || 'Failed to load delegated item lookup.', 'danger');
@@ -495,27 +693,37 @@ async function refreshGovernanceItemLookup(entityType, forceReload = false, pref
         if (refreshButton) {
             refreshButton.disabled = false;
         }
+        applyGovernanceItemTargetEditState();
     }
 }
 
 function updateFeatureAllowListSummary(row) {
     const usersInput = getGovernanceUsersInputForFeatureRow(row);
     const groupsInput = getGovernanceGroupsInputForFeatureRow(row);
+    const deniedUsersInput = getGovernanceDeniedUsersInputForFeatureRow(row);
+    const deniedGroupsInput = getGovernanceDeniedGroupsInputForFeatureRow(row);
     const summaryEl = row?.querySelector('.governance-allowlist-summary');
-    if (!usersInput || !groupsInput || !summaryEl) {
+    const blockSummaryEl = row?.querySelector('.governance-blocklist-summary');
+    if (!usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput || !summaryEl || !blockSummaryEl) {
         return;
     }
 
     const users = splitPrincipalList(usersInput.value);
     const groups = splitPrincipalList(groupsInput.value);
+    const deniedUsers = splitPrincipalList(deniedUsersInput.value);
+    const deniedGroups = splitPrincipalList(deniedGroupsInput.value);
     summaryEl.textContent = buildAllowListSummary(users, groups, getGovernanceFeatureAllowAllInput(row)?.checked);
+    blockSummaryEl.textContent = buildBlockListSummary(deniedUsers, deniedGroups);
 }
 
 function updateItemAllowListSummary() {
     const usersInput = getItemUsersInput();
     const groupsInput = getItemGroupsInput();
+    const deniedUsersInput = getItemDeniedUsersInput();
+    const deniedGroupsInput = getItemDeniedGroupsInput();
     const summaryInput = document.getElementById('governance-item-allowlist-summary');
-    if (!usersInput || !groupsInput || !summaryInput) {
+    const blockSummaryInput = document.getElementById('governance-item-blocklist-summary');
+    if (!usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput || !summaryInput || !blockSummaryInput) {
         return;
     }
 
@@ -524,6 +732,10 @@ function updateItemAllowListSummary() {
         splitPrincipalList(groupsInput.value),
         getItemAllowAllInput()?.checked,
     );
+    blockSummaryInput.value = buildBlockListSummary(
+        splitPrincipalList(deniedUsersInput.value),
+        splitPrincipalList(deniedGroupsInput.value),
+    );
 }
 
 function applyFeatureAllowAllUiState(row) {
@@ -531,7 +743,9 @@ function applyFeatureAllowAllUiState(row) {
     const editButton = row?.querySelector('.governance-edit-feature-allowlist-btn');
     const usersInput = getGovernanceUsersInputForFeatureRow(row);
     const groupsInput = getGovernanceGroupsInputForFeatureRow(row);
-    if (!allowAllInput || !usersInput || !groupsInput) {
+    const deniedUsersInput = getGovernanceDeniedUsersInputForFeatureRow(row);
+    const deniedGroupsInput = getGovernanceDeniedGroupsInputForFeatureRow(row);
+    if (!allowAllInput || !usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput) {
         return;
     }
 
@@ -552,7 +766,9 @@ function applyItemAllowAllUiState() {
     const allowedPrincipalsControls = document.getElementById('governance-item-allowed-principals-controls');
     const usersInput = getItemUsersInput();
     const groupsInput = getItemGroupsInput();
-    if (!allowAllInput || !usersInput || !groupsInput) {
+    const deniedUsersInput = getItemDeniedUsersInput();
+    const deniedGroupsInput = getItemDeniedGroupsInput();
+    if (!allowAllInput || !usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput) {
         return;
     }
 
@@ -615,6 +831,60 @@ function buildItemPolicyEntityLabel(entityType) {
 function normalizeGovernanceItemEntityType(entityType) {
     const normalizedEntityType = String(entityType || '').trim();
     return normalizedEntityType === 'endpoint' ? 'global_endpoint' : normalizedEntityType;
+}
+
+function isGovernanceMcpDestinationEntityType(entityType) {
+    return GOVERNANCE_MCP_DESTINATION_ENTITY_TYPES.has(normalizeGovernanceItemEntityType(entityType));
+}
+
+function isGovernanceCustomItemIdEntityType(entityType) {
+    return GOVERNANCE_CUSTOM_ITEM_ID_ENTITY_TYPES.has(normalizeGovernanceItemEntityType(entityType));
+}
+
+function getCurrentGovernanceItemIdValue() {
+    const entityType = normalizeGovernanceItemEntityType(getItemEntityTypeInput()?.value || '');
+    if (isGovernanceCustomItemIdEntityType(entityType)) {
+        return String(getItemIdCustomInput()?.value || '').trim();
+    }
+    return String(getItemIdInput()?.value || '').trim();
+}
+
+function syncGovernanceItemIdMode(entityType, preferredValue = '') {
+    const normalizedEntityType = normalizeGovernanceItemEntityType(entityType);
+    const usesCustomItemId = isGovernanceCustomItemIdEntityType(normalizedEntityType);
+    const lookupControls = getItemIdLookupControls();
+    const itemIdInput = getItemIdInput();
+    const customInput = getItemIdCustomInput();
+    const filterInput = getItemLookupFilterInput();
+    const refreshButton = document.getElementById('governance-item-id-refresh-btn');
+
+    if (lookupControls) {
+        lookupControls.classList.toggle('d-none', usesCustomItemId);
+    }
+    if (itemIdInput) {
+        itemIdInput.disabled = usesCustomItemId;
+    }
+    if (filterInput) {
+        filterInput.disabled = usesCustomItemId;
+    }
+    if (refreshButton) {
+        refreshButton.disabled = usesCustomItemId;
+    }
+    if (customInput) {
+        customInput.classList.toggle('d-none', !usesCustomItemId);
+        customInput.disabled = !usesCustomItemId;
+        if (usesCustomItemId) {
+            customInput.value = String(preferredValue || '').trim();
+        } else {
+            customInput.value = '';
+        }
+    }
+
+    if (usesCustomItemId) {
+        setGovernanceItemLookupStatus(GOVERNANCE_ITEM_LOOKUP_HINTS[normalizedEntityType] || 'Enter an MCP destination pattern.', 'muted');
+    }
+    syncGovernanceItemResourceLabelFromSelection();
+    applyGovernanceItemTargetEditState();
 }
 
 function mapGovernanceLevelToToastVariant(level = 'info') {
@@ -697,6 +967,10 @@ function showGovernanceToast(message, variant = 'success') {
     });
 }
 
+function hasGovernanceAdminSurface() {
+    return GOVERNANCE_ADMIN_TAB_IDS.some((tabId) => document.getElementById(tabId));
+}
+
 function getGovernanceFeatureToggle(featureKey) {
     const toggle = document.getElementById(featureKey);
     return toggle instanceof HTMLInputElement ? toggle : null;
@@ -775,40 +1049,58 @@ function buildFeaturePolicyRow(policy) {
     allowAll.checked = Boolean(policy.allow_all);
     allowAllCell.appendChild(allowAll);
 
-    const usersCell = document.createElement('td');
+    const allowListCell = document.createElement('td');
     const usersInput = document.createElement('input');
     usersInput.type = 'text';
     usersInput.className = 'form-control form-control-sm governance-allowed-users d-none';
     usersInput.value = joinPrincipalList(policy.allowed_users);
-    usersCell.appendChild(usersInput);
+    allowListCell.appendChild(usersInput);
 
-    const usersSummary = document.createElement('div');
-    usersSummary.className = 'small text-body-secondary governance-allowlist-summary';
-    usersSummary.textContent = buildAllowListSummary(policy.allowed_users, policy.allowed_groups, allowAll.checked);
-    usersCell.appendChild(usersSummary);
+    const groupsInput = document.createElement('input');
+    groupsInput.type = 'text';
+    groupsInput.className = 'form-control form-control-sm governance-allowed-groups d-none';
+    groupsInput.value = joinPrincipalList(policy.allowed_groups);
+    allowListCell.appendChild(groupsInput);
+
+    const allowListSummary = document.createElement('div');
+    allowListSummary.className = 'small text-body-secondary governance-allowlist-summary';
+    allowListSummary.textContent = buildAllowListSummary(policy.allowed_users, policy.allowed_groups, allowAll.checked);
+    allowListCell.appendChild(allowListSummary);
 
     const usersEditButton = document.createElement('button');
     usersEditButton.type = 'button';
     usersEditButton.className = 'btn btn-sm btn-outline-primary mt-1 governance-edit-feature-allowlist-btn';
     usersEditButton.textContent = 'Edit Allow List';
-    usersCell.appendChild(usersEditButton);
+    allowListCell.appendChild(usersEditButton);
 
-    const groupsCell = document.createElement('td');
-    const groupsInput = document.createElement('input');
-    groupsInput.type = 'text';
-    groupsInput.className = 'form-control form-control-sm governance-allowed-groups d-none';
-    groupsInput.value = joinPrincipalList(policy.allowed_groups);
-    groupsCell.appendChild(groupsInput);
+    const blockListCell = document.createElement('td');
+    const deniedUsersInput = document.createElement('input');
+    deniedUsersInput.type = 'text';
+    deniedUsersInput.className = 'form-control form-control-sm governance-denied-users d-none';
+    deniedUsersInput.value = joinPrincipalList(policy.denied_users);
+    blockListCell.appendChild(deniedUsersInput);
 
-    const groupsSummary = document.createElement('div');
-    groupsSummary.className = 'small text-body-secondary';
-    groupsSummary.textContent = 'Includes group IDs added in the editor.';
-    groupsCell.appendChild(groupsSummary);
+    const deniedGroupsInput = document.createElement('input');
+    deniedGroupsInput.type = 'text';
+    deniedGroupsInput.className = 'form-control form-control-sm governance-denied-groups d-none';
+    deniedGroupsInput.value = joinPrincipalList(policy.denied_groups);
+    blockListCell.appendChild(deniedGroupsInput);
+
+    const blockListSummary = document.createElement('div');
+    blockListSummary.className = 'small text-body-secondary governance-blocklist-summary';
+    blockListSummary.textContent = buildBlockListSummary(policy.denied_users, policy.denied_groups);
+    blockListCell.appendChild(blockListSummary);
+
+    const blockEditButton = document.createElement('button');
+    blockEditButton.type = 'button';
+    blockEditButton.className = 'btn btn-sm btn-outline-danger mt-1 governance-edit-feature-blocklist-btn';
+    blockEditButton.textContent = 'Edit Block List';
+    blockListCell.appendChild(blockEditButton);
 
     row.appendChild(featureCell);
     row.appendChild(allowAllCell);
-    row.appendChild(usersCell);
-    row.appendChild(groupsCell);
+    row.appendChild(allowListCell);
+    row.appendChild(blockListCell);
 
     applyFeatureAllowAllUiState(row);
     syncGovernanceFeaturePolicyRowVisibility(row);
@@ -855,8 +1147,10 @@ async function saveFeaturePolicies() {
         const allowAllInput = row.querySelector('.governance-allow-all');
         const usersInput = row.querySelector('.governance-allowed-users');
         const groupsInput = row.querySelector('.governance-allowed-groups');
+        const deniedUsersInput = row.querySelector('.governance-denied-users');
+        const deniedGroupsInput = row.querySelector('.governance-denied-groups');
 
-        if (!featureKey || !allowAllInput || !usersInput || !groupsInput) {
+        if (!featureKey || !allowAllInput || !usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput) {
             continue;
         }
 
@@ -864,6 +1158,8 @@ async function saveFeaturePolicies() {
             allow_all: allowAllInput.checked,
             allowed_users: splitPrincipalList(usersInput.value),
             allowed_groups: splitPrincipalList(groupsInput.value),
+            denied_users: splitPrincipalList(deniedUsersInput.value),
+            denied_groups: splitPrincipalList(deniedGroupsInput.value),
         };
 
         const response = await fetch(`/api/admin/governance/policies/${encodeURIComponent(featureKey)}`, {
@@ -884,24 +1180,126 @@ async function saveFeaturePolicies() {
     showGovernanceToast('Governance feature policies saved successfully.', 'success');
 }
 
+function buildGovernanceItemPolicyDetails(policy) {
+    const policyData = policy || {};
+    const entityType = normalizeGovernanceItemEntityType(policyData.entity_type);
+    const itemId = String(policyData.item_id || '');
+    const policyId = String(policyData.policy_id || '');
+    const resourceLabel = String(policyData.resource_label || '').trim();
+    const policyName = String(policyData.policy_name || '').trim() || buildDefaultItemPolicyName(entityType, itemId, resourceLabel);
+    return {
+        entity_type: entityType,
+        item_id: itemId,
+        policy_id: policyId,
+        policy_name: policyName,
+        resource_label: resourceLabel,
+        allow_all: Boolean(policyData.allow_all),
+        allowed_users: uniquePrincipalList(Array.isArray(policyData.allowed_users) ? policyData.allowed_users : []),
+        allowed_groups: uniquePrincipalList(Array.isArray(policyData.allowed_groups) ? policyData.allowed_groups : []),
+        denied_users: uniquePrincipalList(Array.isArray(policyData.denied_users) ? policyData.denied_users : []),
+        denied_groups: uniquePrincipalList(Array.isArray(policyData.denied_groups) ? policyData.denied_groups : []),
+        system_managed: Boolean(policyData.system_managed),
+        managed_reason: String(policyData.managed_reason || '').trim(),
+    };
+}
+
+function applyGovernanceItemPolicyActionDataset(button, policyDetails) {
+    button.dataset.entityType = policyDetails.entity_type;
+    button.dataset.itemId = policyDetails.item_id;
+    button.dataset.policyId = policyDetails.policy_id;
+    button.dataset.policyName = policyDetails.policy_name;
+    button.dataset.resourceLabel = policyDetails.resource_label;
+    button.dataset.allowAll = policyDetails.allow_all ? 'true' : 'false';
+    button.dataset.allowedUsers = JSON.stringify(policyDetails.allowed_users);
+    button.dataset.allowedGroups = JSON.stringify(policyDetails.allowed_groups);
+    button.dataset.deniedUsers = JSON.stringify(policyDetails.denied_users);
+    button.dataset.deniedGroups = JSON.stringify(policyDetails.denied_groups);
+}
+
+function readGovernanceItemPolicyActionDataset(button) {
+    return {
+        entity_type: button?.dataset?.entityType || '',
+        item_id: button?.dataset?.itemId || '',
+        policy_id: button?.dataset?.policyId || '',
+        policy_name: button?.dataset?.policyName || '',
+        resource_label: button?.dataset?.resourceLabel || '',
+        allow_all: button?.dataset?.allowAll === 'true',
+        allowed_users: parseGovernancePrincipalDataset(button?.dataset?.allowedUsers),
+        allowed_groups: parseGovernancePrincipalDataset(button?.dataset?.allowedGroups),
+        denied_users: parseGovernancePrincipalDataset(button?.dataset?.deniedUsers),
+        denied_groups: parseGovernancePrincipalDataset(button?.dataset?.deniedGroups),
+    };
+}
+
+function appendGovernanceItemPolicyNameSuffix(policyName, suffix) {
+    const baseName = String(policyName || '').trim() || 'Delegated Item Policy';
+    const suffixLabel = String(suffix || '').trim();
+    return suffixLabel ? `${baseName} (${suffixLabel})` : baseName;
+}
+
+function cloneGovernanceItemPolicyForAction(policy, actionType) {
+    const policyDetails = buildGovernanceItemPolicyDetails(policy);
+    const inverse = actionType === 'inverse';
+    return {
+        ...policyDetails,
+        policy_id: '',
+        policy_name: appendGovernanceItemPolicyNameSuffix(policyDetails.policy_name, inverse ? 'inverse' : 'duplicate'),
+        allowed_users: inverse ? [...policyDetails.denied_users] : [...policyDetails.allowed_users],
+        allowed_groups: inverse ? [...policyDetails.denied_groups] : [...policyDetails.allowed_groups],
+        denied_users: inverse ? [...policyDetails.allowed_users] : [...policyDetails.denied_users],
+        denied_groups: inverse ? [...policyDetails.allowed_groups] : [...policyDetails.denied_groups],
+        system_managed: false,
+        managed_reason: '',
+    };
+}
+
+function createGovernanceItemPolicyActionButton(policyDetails, options) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = options.className;
+    button.textContent = options.label;
+    if (options.title) {
+        button.title = options.title;
+    }
+    if (options.disabled) {
+        button.disabled = true;
+    }
+    applyGovernanceItemPolicyActionDataset(button, policyDetails);
+    return button;
+}
+
 function buildItemPolicyRow(policy) {
     const row = document.createElement('tr');
+    const policyDetails = buildGovernanceItemPolicyDetails(policy);
+    const entityType = policyDetails.entity_type;
+    const itemId = policyDetails.item_id;
+    const policyId = policyDetails.policy_id;
+    const resourceLabel = policyDetails.resource_label;
+    const policyName = policyDetails.policy_name;
+    const allowAll = policyDetails.allow_all;
+    const systemManaged = policyDetails.system_managed;
 
     const policyCell = document.createElement('td');
     const entityTypeCell = document.createElement('td');
-    const entityType = normalizeGovernanceItemEntityType(policy.entity_type);
-    const itemId = String(policy.item_id || '');
-    const policyId = String(policy.policy_id || '');
-    const resourceLabel = String(policy.resource_label || '').trim();
-    const policyName = String(policy.policy_name || '').trim() || buildDefaultItemPolicyName(entityType, itemId, resourceLabel);
-    const allowAll = Boolean(policy.allow_all);
-    const allowedUsers = Array.isArray(policy.allowed_users) ? policy.allowed_users : [];
-    const allowedGroups = Array.isArray(policy.allowed_groups) ? policy.allowed_groups : [];
 
     const policyNameEl = document.createElement('div');
     policyNameEl.className = 'fw-semibold';
     policyNameEl.textContent = policyName;
     policyCell.appendChild(policyNameEl);
+    if (systemManaged) {
+        const systemBadge = document.createElement('span');
+        systemBadge.className = 'badge text-bg-secondary mt-1';
+        systemBadge.textContent = 'System-managed';
+        policyCell.appendChild(systemBadge);
+
+        const reason = policyDetails.managed_reason;
+        if (reason) {
+            const reasonElement = document.createElement('div');
+            reasonElement.className = 'small text-muted mt-1';
+            reasonElement.textContent = reason;
+            policyCell.appendChild(reasonElement);
+        }
+    }
 
     policyCell.title = policyId ? `Policy ID: ${policyId}` : policyName;
 
@@ -916,44 +1314,48 @@ function buildItemPolicyRow(policy) {
     const allowAllCell = document.createElement('td');
     allowAllCell.textContent = allowAll ? 'Yes' : 'No';
 
-    const usersCell = document.createElement('td');
-    renderGovernancePrincipalReviewCell(usersCell, 'users', allowedUsers);
-
-    const groupsCell = document.createElement('td');
-    renderGovernancePrincipalReviewCell(groupsCell, 'groups', allowedGroups);
-
     const actionsCell = document.createElement('td');
-    actionsCell.className = 'text-nowrap';
-    const editButton = document.createElement('button');
-    editButton.type = 'button';
-    editButton.className = 'btn btn-sm btn-outline-primary governance-edit-item-policy-btn';
-    editButton.textContent = 'Edit';
-    editButton.dataset.entityType = entityType;
-    editButton.dataset.itemId = itemId;
-    editButton.dataset.policyId = policyId;
-    editButton.dataset.policyName = policyName;
-    editButton.dataset.resourceLabel = resourceLabel;
-    editButton.dataset.allowAll = allowAll ? 'true' : 'false';
-    editButton.dataset.allowedUsers = JSON.stringify(allowedUsers);
-    editButton.dataset.allowedGroups = JSON.stringify(allowedGroups);
-    actionsCell.appendChild(editButton);
+    const actionsGroup = document.createElement('div');
+    actionsGroup.className = 'd-flex flex-wrap gap-2';
 
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'btn btn-sm btn-outline-danger ms-2 governance-delete-item-policy-btn';
-    deleteButton.textContent = 'Delete';
-    deleteButton.dataset.entityType = entityType;
-    deleteButton.dataset.itemId = itemId;
-    deleteButton.dataset.policyId = policyId;
-    deleteButton.dataset.policyName = policyName;
-    actionsCell.appendChild(deleteButton);
+    actionsGroup.appendChild(createGovernanceItemPolicyActionButton(policyDetails, {
+        className: 'btn btn-sm btn-outline-secondary governance-show-item-policy-users-btn',
+        label: 'Show Users',
+        title: 'Show allowed and blocked users and groups for this policy.',
+    }));
+
+    actionsGroup.appendChild(createGovernanceItemPolicyActionButton(policyDetails, {
+        className: 'btn btn-sm btn-outline-secondary governance-duplicate-item-policy-btn',
+        label: 'Duplicate',
+        title: 'Clone this policy with a new ID.',
+    }));
+
+    actionsGroup.appendChild(createGovernanceItemPolicyActionButton(policyDetails, {
+        className: 'btn btn-sm btn-outline-secondary governance-inverse-item-policy-btn',
+        label: 'Inverse',
+        title: 'Clone this policy and swap allowed and blocked users and groups.',
+    }));
+
+    actionsGroup.appendChild(createGovernanceItemPolicyActionButton(policyDetails, {
+        className: 'btn btn-sm btn-outline-primary governance-edit-item-policy-btn',
+        label: 'Edit',
+        title: systemManaged ? 'System-managed policies cannot be edited.' : '',
+        disabled: systemManaged,
+    }));
+
+    const deleteButton = createGovernanceItemPolicyActionButton(policyDetails, {
+        className: 'btn btn-sm btn-outline-danger governance-delete-item-policy-btn',
+        label: 'Delete',
+        title: systemManaged ? 'System-managed policies cannot be deleted.' : '',
+        disabled: systemManaged,
+    });
+    actionsGroup.appendChild(deleteButton);
+    actionsCell.appendChild(actionsGroup);
 
     row.appendChild(policyCell);
     row.appendChild(entityTypeCell);
     row.appendChild(itemIdCell);
     row.appendChild(allowAllCell);
-    row.appendChild(usersCell);
-    row.appendChild(groupsCell);
     row.appendChild(actionsCell);
 
     return row;
@@ -1008,6 +1410,102 @@ function renderGovernancePrincipalReviewCell(cell, listType, ids, hydrateMissing
     }
 }
 
+function ensureGovernanceItemPolicyUsersModal() {
+    let modalElement = document.getElementById('governance-item-policy-users-modal');
+    if (!modalElement) {
+        const modalMarkup = `
+            <div class="modal fade" id="governance-item-policy-users-modal" tabindex="-1" aria-labelledby="governance-item-policy-users-title" aria-hidden="true">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <div>
+                                <h5 class="modal-title mb-1" id="governance-item-policy-users-title">Delegated Item Policy Principals</h5>
+                                <div class="small text-muted" id="governance-item-policy-users-summary"></div>
+                            </div>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">List</th>
+                                            <th scope="col">Count</th>
+                                            <th scope="col">Principals</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="governance-item-policy-users-body"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const wrapper = document.createElement('div');
+    // xss-check: ignore - modalMarkup is a static Bootstrap shell; untrusted values are populated with DOM APIs.
+        wrapper.innerHTML = modalMarkup.trim();
+        modalElement = wrapper.firstElementChild;
+        document.body.appendChild(modalElement);
+    }
+
+    if (!governanceItemPolicyUsersModal) {
+        governanceItemPolicyUsersModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    }
+
+    return modalElement;
+}
+
+function appendGovernanceItemPolicyUsersRow(tbody, label, listType, ids) {
+    const normalizedIds = uniquePrincipalList(ids);
+    const row = document.createElement('tr');
+
+    const labelCell = document.createElement('td');
+    labelCell.className = 'fw-semibold';
+    labelCell.textContent = label;
+
+    const countCell = document.createElement('td');
+    countCell.textContent = String(normalizedIds.length);
+
+    const principalsCell = document.createElement('td');
+    renderGovernancePrincipalReviewCell(principalsCell, listType, normalizedIds);
+
+    row.appendChild(labelCell);
+    row.appendChild(countCell);
+    row.appendChild(principalsCell);
+    tbody.appendChild(row);
+}
+
+function openGovernanceItemPolicyUsersModal(policy) {
+    const modalElement = ensureGovernanceItemPolicyUsersModal();
+    const policyDetails = buildGovernanceItemPolicyDetails(policy);
+    const title = modalElement.querySelector('#governance-item-policy-users-title');
+    const summary = modalElement.querySelector('#governance-item-policy-users-summary');
+    const body = modalElement.querySelector('#governance-item-policy-users-body');
+
+    if (title) {
+        title.textContent = `Principals: ${policyDetails.policy_name}`;
+    }
+    if (summary) {
+        const entityLabel = buildItemPolicyEntityLabel(policyDetails.entity_type);
+        const itemLabel = policyDetails.resource_label || policyDetails.item_id || 'Unspecified item';
+        summary.textContent = `${entityLabel} - ${itemLabel} - Allow All: ${policyDetails.allow_all ? 'Yes' : 'No'}`;
+    }
+    if (body) {
+        body.textContent = '';
+        appendGovernanceItemPolicyUsersRow(body, 'Allow Users', 'users', policyDetails.allowed_users);
+        appendGovernanceItemPolicyUsersRow(body, 'Allow Groups', 'groups', policyDetails.allowed_groups);
+        appendGovernanceItemPolicyUsersRow(body, 'Block Users', 'users', policyDetails.denied_users);
+        appendGovernanceItemPolicyUsersRow(body, 'Block Groups', 'groups', policyDetails.denied_groups);
+    }
+
+    governanceItemPolicyUsersModal?.show();
+}
+
 function parseGovernancePrincipalDataset(value) {
     try {
         const parsed = JSON.parse(value || '[]');
@@ -1027,10 +1525,34 @@ function ensureGovernanceItemIdOption(itemIdInput, itemId, label = '') {
     if (!hasOption) {
         const option = document.createElement('option');
         option.value = normalizedItemId;
+        option.dataset.resourceLabel = label || normalizedItemId;
         option.textContent = label ? `${label} (${truncateGovernanceId(normalizedItemId)})` : normalizedItemId;
         itemIdInput.appendChild(option);
     }
     itemIdInput.value = normalizedItemId;
+}
+
+function syncGovernanceItemResourceLabelFromSelection() {
+    const entityType = normalizeGovernanceItemEntityType(getItemEntityTypeInput()?.value || '');
+    const itemId = getCurrentGovernanceItemIdValue();
+    const resourceLabelInput = getItemResourceLabelInput();
+    if (!resourceLabelInput) {
+        return;
+    }
+
+    if (!itemId) {
+        resourceLabelInput.value = '';
+        return;
+    }
+
+    if (isGovernanceCustomItemIdEntityType(entityType)) {
+        resourceLabelInput.value = itemId;
+        return;
+    }
+
+    const itemIdInput = getItemIdInput();
+    const selectedOption = itemIdInput?.selectedOptions?.[0];
+    resourceLabelInput.value = String(selectedOption?.dataset?.resourceLabel || selectedOption?.textContent || itemId).trim();
 }
 
 function resetGovernanceItemEditorSelectionViewState() {
@@ -1252,22 +1774,34 @@ async function openGovernanceItemPolicyEditor(policy = null) {
     const resourceLabelInput = getItemResourceLabelInput();
     const entityTypeInput = getItemEntityTypeInput();
     const itemIdInput = getItemIdInput();
+    const itemIdCustomInput = getItemIdCustomInput();
     const itemFilterInput = getItemLookupFilterInput();
     const allowAllInput = getItemAllowAllInput();
     const usersInput = getItemUsersInput();
     const groupsInput = getItemGroupsInput();
+    const deniedUsersInput = getItemDeniedUsersInput();
+    const deniedGroupsInput = getItemDeniedGroupsInput();
 
-    if (!entityTypeInput || !itemIdInput || !allowAllInput || !usersInput || !groupsInput) {
+    if (!entityTypeInput || !itemIdInput || !allowAllInput || !usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput) {
         return;
     }
 
     const entityType = normalizeGovernanceItemEntityType(policy?.entity_type) || 'global_agent';
     const itemId = String(policy?.item_id || '').trim();
+    const policyId = String(policy?.policy_id || '').trim();
     const resourceLabel = String(policy?.resource_label || '').trim();
     const policyName = String(policy?.policy_name || '').trim() || buildDefaultItemPolicyName(entityType, itemId, resourceLabel);
 
+    governanceItemPolicyEditorContext = policyId
+        ? {
+            originalEntityType: entityType,
+            originalItemId: itemId,
+            originalPolicyId: policyId,
+        }
+        : null;
+
     if (title) {
-        title.textContent = policy?.policy_id ? 'Edit Delegated Item Policy' : 'New Delegated Item Policy';
+        title.textContent = policyId ? 'Edit Delegated Item Policy' : 'New Delegated Item Policy';
     }
     if (itemFilterInput) {
         itemFilterInput.value = '';
@@ -1275,7 +1809,7 @@ async function openGovernanceItemPolicyEditor(policy = null) {
 
     entityTypeInput.value = entityType;
     if (policyIdInput) {
-        policyIdInput.value = String(policy?.policy_id || '').trim();
+        policyIdInput.value = policyId;
     }
     if (policyNameInput) {
         policyNameInput.value = policyName;
@@ -1289,16 +1823,35 @@ async function openGovernanceItemPolicyEditor(policy = null) {
     renderGovernanceItemEditorGroupResults([]);
     setGovernanceItemEditorStatus('');
 
-    await refreshGovernanceItemLookup(entityType, false, itemId);
-    ensureGovernanceItemIdOption(itemIdInput, itemId, resourceLabel);
+    syncGovernanceItemIdMode(entityType, itemId);
+    if (isGovernanceCustomItemIdEntityType(entityType)) {
+        if (itemIdCustomInput) {
+            itemIdCustomInput.value = itemId;
+        }
+    } else {
+        await refreshGovernanceItemLookup(entityType, false, itemId);
+        ensureGovernanceItemIdOption(itemIdInput, itemId, resourceLabel);
+    }
+    applyGovernanceItemTargetEditState();
+    if (policyId) {
+        setGovernanceItemLookupStatus('Editing an existing delegated item policy. Changing the target will move this policy to the selected delegated item when saved.', 'warning');
+    }
 
     allowAllInput.checked = policy ? Boolean(policy.allow_all) : true;
     usersInput.value = joinPrincipalList(policy?.allowed_users || []);
     groupsInput.value = joinPrincipalList(policy?.allowed_groups || []);
+    deniedUsersInput.value = joinPrincipalList(policy?.denied_users || []);
+    deniedGroupsInput.value = joinPrincipalList(policy?.denied_groups || []);
 
     applyItemAllowAllUiState();
     governanceItemPolicyEditorModal?.show();
-    itemIdInput.focus();
+    if (policyId) {
+        policyNameInput?.focus();
+    } else if (isGovernanceCustomItemIdEntityType(entityType)) {
+        itemIdCustomInput?.focus();
+    } else {
+        itemIdInput.focus();
+    }
 }
 
 async function openGovernanceDelegatedItemEditorFromResource(options = {}) {
@@ -1313,7 +1866,7 @@ async function openGovernanceDelegatedItemEditorFromResource(options = {}) {
     }
 
     if (typeof window.openAdminSettingsTab === 'function') {
-        window.openAdminSettingsTab('#governance');
+        window.openAdminSettingsTab(GOVERNANCE_POLICIES_TAB_HASH, 'governance-item-policies-section');
     }
 
     await openGovernanceItemPolicyEditor({
@@ -1324,10 +1877,132 @@ async function openGovernanceDelegatedItemEditorFromResource(options = {}) {
         allow_all: true,
         allowed_users: [],
         allowed_groups: [],
+        denied_users: [],
+        denied_groups: [],
     });
 }
 
 window.openGovernanceDelegatedItemEditor = openGovernanceDelegatedItemEditorFromResource;
+
+async function openGovernanceMcpDestinationPolicyEditor(entityType) {
+    const normalizedEntityType = normalizeGovernanceItemEntityType(entityType);
+    if (!isGovernanceMcpDestinationEntityType(normalizedEntityType)) {
+        setGovernanceStatus('Unknown MCP destination policy scope.', 'warning');
+        return;
+    }
+
+    await openGovernanceItemPolicyEditor({
+        entity_type: normalizedEntityType,
+        item_id: '',
+        policy_name: '',
+        resource_label: '',
+        allow_all: true,
+        allowed_users: [],
+        allowed_groups: [],
+        denied_users: [],
+        denied_groups: [],
+    });
+}
+
+async function openGovernanceInboundMcpPolicyEditor(options = {}) {
+    const entityType = normalizeGovernanceItemEntityType(options.entityType || options.entity_type || '');
+    let itemId = String(options.itemId || options.item_id || '').trim();
+    if (!GOVERNANCE_INBOUND_MCP_QUICK_CREATE_ENTITY_TYPES.has(entityType)) {
+        setGovernanceStatus('Unknown inbound MCP governance policy type.', 'warning');
+        return;
+    }
+    if (entityType === 'inbound_mcp_source' && !itemId) {
+        itemId = '*';
+    }
+
+    await openGovernanceItemPolicyEditor({
+        entity_type: entityType,
+        item_id: itemId,
+        policy_name: String(options.policyName || options.policy_name || '').trim(),
+        resource_label: String(options.resourceLabel || options.resource_label || '').trim() || itemId,
+        allow_all: false,
+        allowed_users: [],
+        allowed_groups: [],
+        denied_users: [],
+        denied_groups: [],
+    });
+}
+
+function ensureGovernancePolicyHelpModal() {
+    let modalElement = document.getElementById('governance-policy-help-modal');
+    if (!modalElement) {
+        const modalMarkup = `
+            <div class="modal fade" id="governance-policy-help-modal" tabindex="-1" aria-labelledby="governance-policy-help-title" aria-hidden="true">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="governance-policy-help-title">Governance policy help</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body" id="governance-policy-help-body"></div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const wrapper = document.createElement('div');
+        // xss-check: ignore - modalMarkup is a static Bootstrap shell; dynamic content is populated with textContent.
+        wrapper.innerHTML = modalMarkup.trim();
+        modalElement = wrapper.firstElementChild;
+        document.body.appendChild(modalElement);
+    }
+
+    if (!governancePolicyHelpModal) {
+        governancePolicyHelpModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    }
+
+    return modalElement;
+}
+
+function appendGovernanceHelpSection(body, title, lines) {
+    const heading = document.createElement('h6');
+    heading.className = 'mb-2';
+    heading.textContent = title;
+    body.appendChild(heading);
+
+    const list = document.createElement('ul');
+    list.className = 'mb-3';
+    (Array.isArray(lines) ? lines : []).forEach((line) => {
+        const item = document.createElement('li');
+        item.textContent = String(line || '');
+        list.appendChild(item);
+    });
+    body.appendChild(list);
+}
+
+function openGovernancePolicyHelpModal(helpKey) {
+    const content = GOVERNANCE_POLICY_HELP_CONTENT[String(helpKey || '').trim()];
+    if (!content) {
+        setGovernanceStatus('No help content is available for this governance policy.', 'warning');
+        return;
+    }
+
+    const modalElement = ensureGovernancePolicyHelpModal();
+    const title = modalElement.querySelector('#governance-policy-help-title');
+    const body = modalElement.querySelector('#governance-policy-help-body');
+    if (!title || !body) {
+        return;
+    }
+
+    title.textContent = content.title;
+    body.textContent = '';
+
+    const purpose = document.createElement('p');
+    purpose.className = 'mb-3';
+    purpose.textContent = content.purpose;
+    body.appendChild(purpose);
+
+    appendGovernanceHelpSection(body, 'Configuration examples', content.configuration);
+    governancePolicyHelpModal?.show();
+}
 
 function ensureGovernanceItemPolicyEditorModal() {
     let modalElement = document.getElementById('governance-item-policy-editor-modal');
@@ -1345,12 +2020,12 @@ function ensureGovernanceItemPolicyEditorModal() {
                         </div>
                         <div class="modal-body">
                             <div class="alert alert-info py-2 small" role="alert">
-                                Delegated item policies are OR combined whitelists. Action type policies grant create/use entitlement for a type; global action policies grant access to one configured global action.
+                                Delegated item policies are OR combined allow lists with optional block lists. Blocked users and groups are denied before allow settings are evaluated.
                             </div>
                             <div class="row g-3 mb-3">
                                 <div class="col-lg-8">
                                     <label class="form-label" for="governance-item-policy-name">Policy Name</label>
-                                    <input type="text" class="form-control" id="governance-item-policy-name" placeholder="Friendly name for this whitelist">
+                                    <input type="text" class="form-control" id="governance-item-policy-name" placeholder="Friendly name for this policy">
                                 </div>
                                 <div class="col-lg-4">
                                     <label class="form-label" for="governance-item-resource-label">Resource Label</label>
@@ -1367,19 +2042,26 @@ function ensureGovernanceItemPolicyEditorModal() {
                                         <option value="personal_action_type">Personal Action Type</option>
                                         <option value="group_action_type">Group Action Type</option>
                                         <option value="global_action_type">Global Action Type</option>
+                                        <option value="mcp_personal_destination">MCP Personal Destination</option>
+                                        <option value="mcp_group_destination">MCP Group Destination</option>
+                                        <option value="mcp_global_destination">MCP Global Destination</option>
+                                        <option value="inbound_mcp_source">Inbound MCP Source</option>
                                     </select>
                                 </div>
                                 <div class="col-lg-6 col-md-8">
                                     <label class="form-label" for="governance-item-id-filter">Delegated Item</label>
-                                    <input type="search" class="form-control mb-2" id="governance-item-id-filter" placeholder="Filter delegated items by name or ID">
-                                    <div class="input-group">
-                                        <select class="form-select" id="governance-item-id">
-                                            <option value="">Loading items...</option>
-                                        </select>
-                                        <button type="button" class="btn btn-outline-secondary" id="governance-item-id-refresh-btn" title="Refresh lookup" aria-label="Refresh delegated item lookup">
-                                            <i class="bi bi-arrow-clockwise"></i>
-                                        </button>
+                                    <div id="governance-item-id-lookup-controls">
+                                        <input type="search" class="form-control mb-2" id="governance-item-id-filter" placeholder="Filter delegated items by name or ID">
+                                        <div class="input-group">
+                                            <select class="form-select" id="governance-item-id">
+                                                <option value="">Loading items...</option>
+                                            </select>
+                                            <button type="button" class="btn btn-outline-secondary" id="governance-item-id-refresh-btn" title="Refresh lookup" aria-label="Refresh delegated item lookup">
+                                                <i class="bi bi-arrow-clockwise"></i>
+                                            </button>
+                                        </div>
                                     </div>
+                                    <input type="text" class="form-control d-none" id="governance-item-id-custom" placeholder="Access scope, source, destination pattern, legacy item key, or *" disabled>
                                     <div class="form-text" id="governance-item-id-status">Choose an entity type to load available delegated items.</div>
                                 </div>
                                 <div class="col-lg-3 col-md-4">
@@ -1396,6 +2078,14 @@ function ensureGovernanceItemPolicyEditorModal() {
                             <div class="mt-3">
                                 <label class="form-label" for="governance-item-allowlist-summary">Allowed Principals</label>
                                 <input type="text" class="form-control" id="governance-item-allowlist-summary" placeholder="No users or groups allowed" readonly>
+                            </div>
+                            <div class="mt-3">
+                                <label class="form-label" for="governance-item-blocklist-summary">Blocked Principals</label>
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="governance-item-blocklist-summary" placeholder="No users or groups blocked" readonly>
+                                    <button type="button" class="btn btn-outline-danger" id="governance-item-edit-blocklist-btn">Edit Block List</button>
+                                </div>
+                                <div class="form-text">Blocked users and groups are denied even when Allow All or allowed principals would otherwise grant access.</div>
                             </div>
 
                             <div class="mt-3 pt-3 border-top d-none" id="governance-item-allowed-principals-controls">
@@ -1569,6 +2259,8 @@ function ensureGovernanceItemPolicyEditorModal() {
                                 <input type="text" class="form-control" id="governance-item-policy-id">
                                 <input type="text" class="form-control" id="governance-item-users">
                                 <input type="text" class="form-control" id="governance-item-groups">
+                                <input type="text" class="form-control" id="governance-item-denied-users">
+                                <input type="text" class="form-control" id="governance-item-denied-groups">
                             </div>
                         </div>
                         <div class="modal-footer">
@@ -1746,6 +2438,7 @@ function wireGovernanceItemPolicyEditorHandlers(modalElement) {
                 filterInput.value = '';
             }
             await refreshGovernanceItemLookup(entityType, false, '');
+            syncGovernanceItemResourceLabelFromSelection();
         });
     }
 
@@ -1765,10 +2458,49 @@ function wireGovernanceItemPolicyEditorHandlers(modalElement) {
         });
     }
 
+    const itemIdInput = modalElement.querySelector('#governance-item-id');
+    if (itemIdInput) {
+        itemIdInput.addEventListener('change', () => {
+            syncGovernanceItemResourceLabelFromSelection();
+        });
+    }
+
+    const itemIdCustomInput = modalElement.querySelector('#governance-item-id-custom');
+    if (itemIdCustomInput) {
+        itemIdCustomInput.addEventListener('input', () => {
+            syncGovernanceItemResourceLabelFromSelection();
+        });
+    }
+
     const allowAllInput = modalElement.querySelector('#governance-item-allow-all');
     if (allowAllInput) {
         allowAllInput.addEventListener('change', () => {
             applyItemAllowAllUiState();
+        });
+    }
+
+    const editBlockListButton = modalElement.querySelector('#governance-item-edit-blocklist-btn');
+    if (editBlockListButton) {
+        editBlockListButton.addEventListener('click', () => {
+            const deniedUsersInput = getItemDeniedUsersInput();
+            const deniedGroupsInput = getItemDeniedGroupsInput();
+            if (!deniedUsersInput || !deniedGroupsInput) {
+                return;
+            }
+
+            openGovernanceAllowListEditor({
+                title: 'Edit Item Block List',
+                description: 'Manage users and groups explicitly blocked for this delegated item policy. Blocked principals are denied even if allow-all or allow-list settings would otherwise grant access.',
+                getUsers: () => splitPrincipalList(deniedUsersInput.value),
+                getGroups: () => splitPrincipalList(deniedGroupsInput.value),
+                setValues: (users, groups) => {
+                    deniedUsersInput.value = joinPrincipalList(users);
+                    deniedGroupsInput.value = joinPrincipalList(groups);
+                    updateItemAllowListSummary();
+                },
+            }, {
+                returnToModalElement: modalElement,
+            });
         });
     }
 
@@ -2054,35 +2786,38 @@ async function deleteGovernanceItemPolicyFromContext() {
     }
 
     const { entityType, itemId, policyId } = governanceItemPolicyDeleteContext;
-    const deleteUrl = policyId
-        ? `/api/admin/governance/item-policies/${encodeURIComponent(entityType)}/${encodeURIComponent(itemId)}/${encodeURIComponent(policyId)}`
-        : `/api/admin/governance/item-policies/${encodeURIComponent(entityType)}/${encodeURIComponent(itemId)}`;
-    const response = await fetch(
-        deleteUrl,
-        {
-            method: 'DELETE',
-            headers: {
-                Accept: 'application/json',
-            },
-        }
-    );
+    const response = await fetch('/api/admin/governance/item-policies/delete', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+        },
+        body: JSON.stringify({
+            entity_type: entityType,
+            item_id: itemId,
+            policy_id: policyId,
+        }),
+    });
 
     if (!response.ok) {
-        throw new Error('Unable to delete item governance policy.');
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Unable to delete item governance policy.');
     }
 
     governanceItemPolicyDeleteModal?.hide();
     governanceItemPolicyDeleteContext = null;
 
     const entityTypeInput = document.getElementById('governance-item-entity-type');
-    const itemIdInput = document.getElementById('governance-item-id');
     const policyIdInput = getItemPolicyIdInput();
-    if (entityTypeInput?.value === entityType && itemIdInput?.value === itemId && (!policyId || policyIdInput?.value === policyId)) {
+    if (entityTypeInput?.value === entityType && getCurrentGovernanceItemIdValue() === itemId && (!policyId || policyIdInput?.value === policyId)) {
         const allowAllInput = getItemAllowAllInput();
         const usersInput = getItemUsersInput();
         const groupsInput = getItemGroupsInput();
+        const deniedUsersInput = getItemDeniedUsersInput();
+        const deniedGroupsInput = getItemDeniedGroupsInput();
         const policyNameInput = getItemPolicyNameInput();
         const resourceLabelInput = getItemResourceLabelInput();
+        const itemIdCustomInput = getItemIdCustomInput();
         if (policyIdInput) {
             policyIdInput.value = '';
         }
@@ -2100,6 +2835,15 @@ async function deleteGovernanceItemPolicyFromContext() {
         }
         if (groupsInput) {
             groupsInput.value = '';
+        }
+        if (deniedUsersInput) {
+            deniedUsersInput.value = '';
+        }
+        if (deniedGroupsInput) {
+            deniedGroupsInput.value = '';
+        }
+        if (itemIdCustomInput) {
+            itemIdCustomInput.value = '';
         }
         applyItemAllowAllUiState();
     }
@@ -2141,6 +2885,9 @@ function wireGovernanceItemReviewHandlers(panelElement) {
     panelElement.dataset.reviewWired = 'true';
     itemPolicyReviewBody.addEventListener('click', async (event) => {
         const target = event.target;
+        const showUsersButton = target instanceof HTMLElement ? target.closest('.governance-show-item-policy-users-btn') : null;
+        const duplicateButton = target instanceof HTMLElement ? target.closest('.governance-duplicate-item-policy-btn') : null;
+        const inverseButton = target instanceof HTMLElement ? target.closest('.governance-inverse-item-policy-btn') : null;
         const editButton = target instanceof HTMLElement ? target.closest('.governance-edit-item-policy-btn') : null;
         const deleteButton = target instanceof HTMLElement ? target.closest('.governance-delete-item-policy-btn') : null;
 
@@ -2154,20 +2901,37 @@ function wireGovernanceItemReviewHandlers(panelElement) {
             return;
         }
 
+        if (showUsersButton) {
+            openGovernanceItemPolicyUsersModal(readGovernanceItemPolicyActionDataset(showUsersButton));
+            return;
+        }
+
+        if (duplicateButton || inverseButton) {
+            const cloneSourceButton = duplicateButton || inverseButton;
+            const clonedPolicy = cloneGovernanceItemPolicyForAction(
+                readGovernanceItemPolicyActionDataset(cloneSourceButton),
+                inverseButton ? 'inverse' : 'duplicate',
+            );
+
+            try {
+                await openGovernanceItemPolicyEditor(clonedPolicy);
+                setGovernanceItemEditorStatus(
+                    inverseButton
+                        ? 'Review and save the inverse policy. Allowed and blocked users/groups were swapped; Allow All was preserved.'
+                        : 'Review and save the duplicated policy. A new policy ID will be assigned when saved.',
+                    'info',
+                );
+            } catch (error) {
+                setGovernanceStatus(error.message || 'Failed to open delegated item policy editor.', 'danger');
+            }
+            return;
+        }
+
         if (!editButton) {
             return;
         }
 
-        const policy = {
-            entity_type: editButton.dataset.entityType || '',
-            item_id: editButton.dataset.itemId || '',
-            policy_id: editButton.dataset.policyId || '',
-            policy_name: editButton.dataset.policyName || '',
-            resource_label: editButton.dataset.resourceLabel || '',
-            allow_all: editButton.dataset.allowAll === 'true',
-            allowed_users: parseGovernancePrincipalDataset(editButton.dataset.allowedUsers),
-            allowed_groups: parseGovernancePrincipalDataset(editButton.dataset.allowedGroups),
-        };
+        const policy = readGovernanceItemPolicyActionDataset(editButton);
 
         try {
             await openGovernanceItemPolicyEditor(policy);
@@ -2203,7 +2967,7 @@ function renderGovernanceItemReviewRows(itemPolicies) {
     if (!Array.isArray(itemPolicies) || itemPolicies.length === 0) {
         const emptyRow = document.createElement('tr');
         const emptyCell = document.createElement('td');
-        emptyCell.colSpan = 7;
+        emptyCell.colSpan = 5;
         emptyCell.className = 'text-center text-muted';
         emptyCell.textContent = 'No delegated item policies found.';
         emptyRow.appendChild(emptyCell);
@@ -2987,7 +3751,7 @@ function applyGovernanceAllowListToContext() {
     governanceAllowListEditorModal?.hide();
 }
 
-function openGovernanceAllowListEditor(context) {
+function openGovernanceAllowListEditor(context, options = {}) {
     if (!context || typeof context.getUsers !== 'function' || typeof context.getGroups !== 'function' || typeof context.setValues !== 'function') {
         return;
     }
@@ -3029,6 +3793,23 @@ function openGovernanceAllowListEditor(context) {
     renderGovernanceAllowListGroupResults([]);
     renderGovernanceAllowListEditorSelections();
     setGovernanceAllowListEditorStatus('');
+
+    const returnToModalElement = options.returnToModalElement instanceof HTMLElement ? options.returnToModalElement : null;
+    if (returnToModalElement?.classList.contains('show')) {
+        const returnToModal = bootstrap.Modal.getOrCreateInstance(returnToModalElement);
+        const allowListModalElement = document.getElementById('governanceAllowListEditorModal');
+        const showAllowListEditor = () => {
+            governanceAllowListEditorModal?.show();
+        };
+        const restoreReturnModal = () => {
+            returnToModal.show();
+        };
+
+        returnToModalElement.addEventListener('hidden.bs.modal', showAllowListEditor, { once: true });
+        allowListModalElement?.addEventListener('hidden.bs.modal', restoreReturnModal, { once: true });
+        returnToModal.hide();
+        return;
+    }
 
     governanceAllowListEditorModal?.show();
 }
@@ -3307,22 +4088,25 @@ async function saveItemPolicy(event) {
     }
 
     const entityTypeInput = document.getElementById('governance-item-entity-type');
-    const itemIdInput = document.getElementById('governance-item-id');
     const policyIdInput = getItemPolicyIdInput();
     const policyNameInput = getItemPolicyNameInput();
     const resourceLabelInput = getItemResourceLabelInput();
     const allowAllInput = document.getElementById('governance-item-allow-all');
     const usersInput = document.getElementById('governance-item-users');
     const groupsInput = document.getElementById('governance-item-groups');
+    const deniedUsersInput = getItemDeniedUsersInput();
+    const deniedGroupsInput = getItemDeniedGroupsInput();
 
-    if (!entityTypeInput || !itemIdInput || !allowAllInput || !usersInput || !groupsInput) {
+    if (!entityTypeInput || !allowAllInput || !usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput) {
         return;
     }
 
     const entityType = normalizeGovernanceItemEntityType(entityTypeInput.value);
-    const itemId = String(itemIdInput.value || '').trim();
-    const resourceLabel = String(resourceLabelInput?.value || '').trim();
+    const itemId = getCurrentGovernanceItemIdValue();
+    syncGovernanceItemResourceLabelFromSelection();
+    const resourceLabel = String(resourceLabelInput?.value || '').trim() || (isGovernanceCustomItemIdEntityType(entityType) ? itemId : '');
     const policyName = String(policyNameInput?.value || '').trim() || buildDefaultItemPolicyName(entityType, itemId, resourceLabel);
+    const editContext = isGovernanceItemPolicyEditMode() ? governanceItemPolicyEditorContext : null;
 
     if (!entityType || !itemId) {
         setGovernanceItemEditorStatus('Entity type and item ID are required for item governance policies.', 'warning');
@@ -3334,29 +4118,40 @@ async function saveItemPolicy(event) {
         return;
     }
 
+    if (editContext && String(policyIdInput?.value || '').trim() !== editContext.originalPolicyId) {
+        setGovernanceItemEditorStatus('The policy ID cannot be changed while moving or editing an existing delegated item policy.', 'warning');
+        return;
+    }
+
     const payload = {
+        entity_type: entityType,
+        item_id: itemId,
         policy_id: String(policyIdInput?.value || '').trim(),
         policy_name: policyName,
         resource_label: resourceLabel,
         allow_all: allowAllInput.checked,
         allowed_users: allowAllInput.checked ? [] : splitPrincipalList(usersInput.value),
         allowed_groups: allowAllInput.checked ? [] : splitPrincipalList(groupsInput.value),
+        denied_users: splitPrincipalList(deniedUsersInput.value),
+        denied_groups: splitPrincipalList(deniedGroupsInput.value),
     };
+    if (editContext) {
+        payload.original_entity_type = editContext.originalEntityType;
+        payload.original_item_id = editContext.originalItemId;
+    }
 
-    const response = await fetch(
-        `/api/admin/governance/item-policies/${encodeURIComponent(entityType)}/${encodeURIComponent(itemId)}`,
-        {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-            },
-            body: JSON.stringify(payload),
-        }
-    );
+    const response = await fetch('/api/admin/governance/item-policies', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
 
     if (!response.ok) {
-        throw new Error('Unable to save item governance policy.');
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || 'Unable to save item governance policy.');
     }
 
     await loadItemPolicies();
@@ -3391,7 +4186,7 @@ function wireGovernanceHandlers() {
         linkButton.addEventListener('click', () => {
             const targetId = String(linkButton.getAttribute('data-governance-target') || '').trim();
             if (typeof window.openAdminSettingsTab === 'function') {
-                window.openAdminSettingsTab('#governance');
+                window.openAdminSettingsTab(GOVERNANCE_FEATURE_TAB_HASH);
             }
             window.setTimeout(() => {
                 const target = document.getElementById(targetId);
@@ -3411,6 +4206,40 @@ function wireGovernanceHandlers() {
         });
     });
 
+    document.querySelectorAll('.governance-new-mcp-destination-policy-btn').forEach((button) => {
+        button.addEventListener('click', async () => {
+            try {
+                await openGovernanceMcpDestinationPolicyEditor(button.dataset.governanceMcpDestinationEntity || '');
+            } catch (error) {
+                setGovernanceStatus(error.message || 'Failed to open MCP destination policy editor.', 'danger');
+            }
+        });
+    });
+
+    document.querySelectorAll('.governance-new-inbound-mcp-policy-btn').forEach((button) => {
+        button.addEventListener('click', async () => {
+            try {
+                if (button.dataset.governanceOpenTab === 'true' && typeof window.openAdminSettingsTab === 'function') {
+                    window.openAdminSettingsTab(GOVERNANCE_MCP_TAB_HASH, 'governance-inbound-mcp-section');
+                }
+                await openGovernanceInboundMcpPolicyEditor({
+                    entityType: button.dataset.governanceInboundMcpEntity || '',
+                    itemId: button.dataset.governanceInboundMcpItem || '',
+                    policyName: button.dataset.governanceInboundMcpPolicyName || '',
+                    resourceLabel: button.dataset.governanceInboundMcpResourceLabel || '',
+                });
+            } catch (error) {
+                setGovernanceStatus(error.message || 'Failed to open inbound MCP policy editor.', 'danger');
+            }
+        });
+    });
+
+    document.querySelectorAll('.governance-policy-help-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+            openGovernancePolicyHelpModal(button.dataset.governanceHelpKey || '');
+        });
+    });
+
     const featurePolicyTableBody = document.getElementById('governance-feature-policies-body');
     if (featurePolicyTableBody) {
         featurePolicyTableBody.addEventListener('change', (event) => {
@@ -3427,15 +4256,33 @@ function wireGovernanceHandlers() {
         featurePolicyTableBody.addEventListener('click', (event) => {
             const target = event.target;
             const editButton = target instanceof HTMLElement ? target.closest('.governance-edit-feature-allowlist-btn') : null;
-            if (!editButton) {
+            const blockEditButton = target instanceof HTMLElement ? target.closest('.governance-edit-feature-blocklist-btn') : null;
+            if (!editButton && !blockEditButton) {
                 return;
             }
 
-            const row = editButton.closest('tr');
+            const row = (editButton || blockEditButton).closest('tr');
             const usersInput = getGovernanceUsersInputForFeatureRow(row);
             const groupsInput = getGovernanceGroupsInputForFeatureRow(row);
+            const deniedUsersInput = getGovernanceDeniedUsersInputForFeatureRow(row);
+            const deniedGroupsInput = getGovernanceDeniedGroupsInputForFeatureRow(row);
             const featureKey = String(row?.dataset?.featureKey || '').trim();
-            if (!usersInput || !groupsInput || !featureKey) {
+            if (!usersInput || !groupsInput || !deniedUsersInput || !deniedGroupsInput || !featureKey) {
+                return;
+            }
+
+            if (blockEditButton) {
+                openGovernanceAllowListEditor({
+                    title: `Edit Block List: ${GOVERNANCE_FEATURE_LABELS[featureKey] || featureKey}`,
+                    description: 'Manage users and groups explicitly blocked for this feature policy. Blocked principals are denied even if allow-all or allow-list settings would otherwise grant access.',
+                    getUsers: () => splitPrincipalList(deniedUsersInput.value),
+                    getGroups: () => splitPrincipalList(deniedGroupsInput.value),
+                    setValues: (users, groups) => {
+                        deniedUsersInput.value = joinPrincipalList(users);
+                        deniedGroupsInput.value = joinPrincipalList(groups);
+                        updateFeatureAllowListSummary(row);
+                    },
+                });
                 return;
             }
 
@@ -3560,7 +4407,7 @@ function wireGovernanceHandlers() {
 }
 
 async function initializeGovernanceTab() {
-    if (!document.getElementById('governance')) {
+    if (!hasGovernanceAdminSurface()) {
         return;
     }
 

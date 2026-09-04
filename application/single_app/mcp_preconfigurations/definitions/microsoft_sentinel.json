@@ -1,0 +1,77 @@
+{
+    "id": "microsoft_sentinel",
+    "version": "1.0.0",
+    "displayName": "Microsoft Sentinel MCP Server",
+    "description": "Create an enterprise MCP action template for an organization-hosted Microsoft Sentinel MCP server with governed, identity-backed security operations data access.",
+    "provider": "Microsoft",
+    "category": "Security Operations",
+    "enabled": true,
+    "developmentOnly": false,
+    "sortOrder": 70,
+    "presetId": "generic",
+    "endpoint": "https://sentinel-mcp.example.com/mcp",
+    "transport": "streamable_http",
+    "authRequirement": "identity",
+    "implementation": {
+        "id": "microsoft_sentinel",
+        "schemaVersion": "1.0.0"
+    },
+    "additionalSettings": {
+        "dataSensitivity": "high",
+        "defaultAccessMode": "read_only",
+        "requiredProducts": [
+            "microsoft_sentinel_data_lake",
+            "microsoft_defender"
+        ],
+        "toolCollections": [
+            "incidents_read",
+            "alerts_read",
+            "entities_read",
+            "hunting_read"
+        ]
+    },
+    "catalogTier": "enterprise",
+    "authTier": "delegated_oauth_entra",
+    "deploymentModel": "organization_hosted_remote",
+    "disabledByDefault": true,
+    "requiresAdminEnablement": true,
+    "requiresEndpointReview": true,
+    "defaults": {
+        "auth_method": "identity",
+        "api_key_header_name": "X-API-Key",
+        "load_tools": false,
+        "load_prompts": false,
+        "request_timeout": 30,
+        "connect_timeout": 10,
+        "sse_read_timeout": 300,
+        "retry_count": 0,
+        "retry_backoff_seconds": 1,
+        "allowed_tool_names": []
+    },
+    "scopeEligibility": ["personal", "group", "global"],
+    "destinationTags": ["microsoft", "sentinel", "security-operations", "enterprise"],
+    "requiredGovernanceGates": [
+        "destination_allowlist",
+        "source_allowlist",
+        "preconfiguration_policy",
+        "per_tool_allowlist",
+        "audit_logging",
+        "identity_review",
+        "least_privilege_permissions",
+        "operator_review"
+    ],
+    "riskLabel": "high",
+    "documentationUrl": "https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-overview",
+    "ui": {
+        "helpText": "Enterprise template only. Replace the example endpoint with an organization-hosted Sentinel MCP endpoint and enable only after identity, source, destination, per-tool, and audit controls are reviewed."
+    },
+    "operatorNotes": [
+        "Requires Microsoft Sentinel data lake onboarding and product-specific access prerequisites.",
+        "Use least-privilege Entra/RBAC assignments and begin with narrow read-oriented tool collections."
+    ],
+    "warnings": [
+        "Microsoft Sentinel MCP can expose sensitive alerts, incidents, entities, evidence, and hunting/query results.",
+        "Do not enable broad Sentinel tool sets or action-oriented tools until governance and audit controls are mature.",
+        "This template is hidden unless explicitly allowed with a preconfiguration:microsoft_sentinel MCP destination policy."
+    ]
+}

@@ -8,6 +8,7 @@ const searchDocumentsBtn = document.getElementById("search-documents-btn");
 const docSelectEl = document.getElementById("document-select"); // Hidden select element
 const searchDocumentsContainer = document.getElementById("search-documents-container"); // Container for scope/doc/class
 const searchDocumentsMobileClose = document.getElementById("search-documents-mobile-close");
+const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel("plural") : "Public Workspaces";
 
 // Custom dropdown elements
 const docDropdown = document.getElementById("document-dropdown");
@@ -1114,7 +1115,7 @@ function buildScopeDropdown() {
   if (publicWorkspaces.length > 0) {
     const pubHeader = document.createElement("div");
     pubHeader.classList.add("dropdown-header", "small", "text-muted", "px-2", "pt-2", "pb-1");
-    pubHeader.textContent = "Public Workspaces";
+    pubHeader.textContent = publicWorkspacePlural;
     scopeDropdownItems.appendChild(pubHeader);
 
     publicWorkspaces.forEach(ws => {
@@ -1434,6 +1435,10 @@ function getDocumentDisplayName(documentItem) {
   return (documentItem.title || documentItem.file_name || 'Untitled Document').trim() || 'Untitled Document';
 }
 
+function getDocumentFileName(documentItem) {
+  return String((documentItem || {}).file_name || '').trim();
+}
+
 function createDropdownHeader(label) {
   const header = document.createElement('div');
   header.classList.add('dropdown-header', 'small', 'text-muted', 'px-2', 'pt-2', 'pb-1');
@@ -1448,10 +1453,16 @@ function createDropdownDivider() {
 }
 
 function buildDocumentDescriptor(documentItem, sectionLabel) {
+  const displayName = getDocumentDisplayName(documentItem);
+  const fileName = getDocumentFileName(documentItem);
+  const showsFileName = Boolean(fileName) && fileName.toLowerCase() !== displayName.toLowerCase();
+
   return {
     id: documentItem.id,
-    label: getDocumentDisplayName(documentItem),
-    searchLabel: `${getDocumentDisplayName(documentItem)} ${sectionLabel}`.trim(),
+    label: displayName,
+    fileName: fileName,
+    secondaryLabel: showsFileName ? fileName : '',
+    searchLabel: [displayName, fileName, sectionLabel].filter(Boolean).join(' '),
     tags: documentItem.tags || [],
     classification: documentItem.document_classification || '',
   };
@@ -1483,7 +1494,7 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
     dropdownItem.classList.add('dropdown-item', 'd-flex', 'align-items-center');
     dropdownItem.setAttribute('data-document-id', doc.id);
     dropdownItem.setAttribute('data-search-role', 'item');
-    dropdownItem.setAttribute('title', doc.label);
+    dropdownItem.setAttribute('title', doc.secondaryLabel ? `${doc.label}\n${doc.secondaryLabel}` : doc.label);
     dropdownItem.dataset.searchLabel = doc.searchLabel;
     dropdownItem.dataset.tags = JSON.stringify(doc.tags || []);
     dropdownItem.dataset.classification = doc.classification || '';
@@ -1497,14 +1508,23 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
     checkbox.style.pointerEvents = 'none';
     checkbox.style.minWidth = '16px';
 
-    const label = document.createElement('span');
-    label.textContent = doc.label;
-    label.style.overflow = 'hidden';
-    label.style.textOverflow = 'ellipsis';
-    label.style.whiteSpace = 'nowrap';
+    const labelWrapper = document.createElement('span');
+    labelWrapper.classList.add('chat-document-option-text');
+
+    const primaryLabel = document.createElement('span');
+    primaryLabel.classList.add('chat-document-option-title');
+    primaryLabel.textContent = doc.label;
+    labelWrapper.appendChild(primaryLabel);
+
+    if (doc.secondaryLabel) {
+      const secondaryLabel = document.createElement('span');
+      secondaryLabel.classList.add('chat-document-option-filename', 'text-muted');
+      secondaryLabel.textContent = doc.secondaryLabel;
+      labelWrapper.appendChild(secondaryLabel);
+    }
 
     dropdownItem.appendChild(checkbox);
-    dropdownItem.appendChild(label);
+    dropdownItem.appendChild(labelWrapper);
     docDropdownItems.appendChild(dropdownItem);
   });
 }
@@ -2102,7 +2122,12 @@ function initializeDocumentDropdown() {
    Load Tags for Selected Scope
 --------------------------------------------------------------------------- */
 export async function loadTagsForScope() {
-  if (!chatTagsFilter) return;
+  if (!chatTagsFilter) {
+    // Keep the tags control out of its initial loading state when the hidden
+    // filter select is absent, otherwise the button stays stuck on "Loading tags...".
+    hideTagsDropdown();
+    return;
+  }
 
   // Clear existing options in both hidden select and custom dropdown
   chatTagsFilter.innerHTML = '';
@@ -2604,8 +2629,11 @@ function syncDropdownButtonText() {
     textEl.textContent = isExplicitDocumentSelectionMode() ? "Select Documents" : "All Documents";
   } else if (count === 1) {
     const selectedDocumentId = selectedDocumentOptions[0].value;
-    const labelSpan = docDropdownItems
-      ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${selectedDocumentId}"] span`)
+    const selectedItem = docDropdownItems
+      ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${selectedDocumentId}"]`)
+      : null;
+    const labelSpan = selectedItem
+      ? (selectedItem.querySelector('.chat-document-option-title') || selectedItem.querySelector('span'))
       : null;
     textEl.textContent = labelSpan ? labelSpan.textContent : "1 document selected";
   } else {

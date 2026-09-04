@@ -1,0 +1,57 @@
+---
+layout: null
+permalink: /search-index.json
+---
+{%- comment -%}
+Search index for the documentation site.
+
+The previous index (search.json) contained title, description and keywords only.
+Because 88% of entries had no description and no page body was ever indexed,
+search was effectively a substring match against page titles. This version
+indexes real page content so queries match what readers actually read.
+
+Excluded from the index:
+  - Engineering notes under explanation/features and explanation/fixes. Those
+    are excluded from the build entirely (they were 84% of the old index).
+  - The 404 page and the media status worklist, which are not reader content.
+  - Body text of generated release-notes pages, which are large changelogs; their
+    titles and descriptions are still indexed so version lookups work.
+{%- endcomment -%}
+{%- assign indexable = site.pages | where_exp: "item", "item.title" -%}
+[
+{%- assign first = true -%}
+{%- for item in indexable -%}
+    {%- assign skip = false -%}
+    {%- if item.url contains '/404' -%}{%- assign skip = true -%}{%- endif -%}
+    {%- if item.url contains '/contributing/media-status' -%}{%- assign skip = true -%}{%- endif -%}
+    {%- if item.noindex -%}{%- assign skip = true -%}{%- endif -%}
+
+    {%- unless skip -%}
+        {%- comment -%} Large changelog pages are indexed by metadata only. {%- endcomment -%}
+        {%- assign body = '' -%}
+        {%- unless item.url contains '/explanation/release-notes/' or item.url contains '/explanation/release_notes' -%}
+            {%- assign body = item.content | strip_html | normalize_whitespace | truncate: 3000, '' -%}
+        {%- endunless -%}
+
+        {%- comment -%} Guarantee every entry has a description; fall back to the opening prose. {%- endcomment -%}
+        {%- assign desc = item.description -%}
+        {%- unless desc -%}
+            {%- assign desc = item.content | strip_html | normalize_whitespace | truncate: 180 -%}
+        {%- endunless -%}
+
+        {%- assign section = item.section | default: 'Docs' -%}
+        {%- assign audience = item.audience | default: '' -%}
+
+        {%- if first == false -%},{%- endif -%}
+        {%- assign first = false -%}
+    {
+        "title": {{ item.title | jsonify }},
+        "url": {{ item.url | relative_url | jsonify }},
+        "section": {{ section | jsonify }},
+        "audience": {{ audience | jsonify }},
+        "description": {{ desc | jsonify }},
+        "body": {{ body | jsonify }}
+    }
+    {%- endunless -%}
+{%- endfor -%}
+]

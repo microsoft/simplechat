@@ -57,11 +57,21 @@ from functions_activity_logging import (
     log_general_admin_action,
 )
 from functions_governance import ensure_governance_access, upsert_item_policy
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 
 bpa = Blueprint('admin_agents', __name__)
+bpa.before_request(login_required_blueprint())
 
 AGENT_INSTRUCTION_FIELD_LIMIT = 6000
 AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
+AGENT_INSTRUCTION_CONTEXT_ITEM_LIMIT = 40
+AGENT_INSTRUCTION_CONTEXT_CAPABILITY_LIMIT = 30
+AGENT_INSTRUCTION_CONTEXT_LABEL_LIMIT = 200
+AGENT_INSTRUCTION_CONTEXT_DESCRIPTION_LIMIT = 400
+# Per-item caps alone still allow a very large prompt, so the rendered context
+# blocks also share a single total character budget.
+AGENT_INSTRUCTION_CONTEXT_TOTAL_LIMIT = 8000
+AGENT_INSTRUCTION_CONTEXT_TRUNCATION_NOTE = '- (additional items omitted)'
 
 
 def _redact_catalog_agent_instructions(catalog):
@@ -107,11 +117,16 @@ def _resolve_agent_instruction_model(settings):
 
 def _create_agent_instruction_client(settings):
     """Create an Azure OpenAI client from existing app GPT/APIM settings."""
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': get_current_user_id()},
+    )
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version') or settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
             api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         )
 
     auth_type = str(settings.get('azure_openai_gpt_authentication_type') or 'key').strip().lower()
@@ -124,27 +139,213 @@ def _create_agent_instruction_client(settings):
             api_version=settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
             azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         )
 
     return AzureOpenAI(
         api_version=settings.get('azure_openai_gpt_api_version'),
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
         api_key=settings.get('azure_openai_gpt_key'),
+        default_headers=extra_headers or None,
     )
 
 
-def _build_agent_instruction_messages(display_name, description, brief, existing_instructions):
+def _truncate_agent_instruction_context_block(block, budget):
+    """Trim a rendered context block to fit the shared character budget.
+
+    Per-item caps bound each entry, but not how many entries arrive, so the
+    combined blocks also share a total budget before they reach the model.
+    """
+    if not block:
+        return ''
+    if len(block) <= budget:
+        return block
+
+    lines = block.split('\n')
+    header = lines[0]
+    note = AGENT_INSTRUCTION_CONTEXT_TRUNCATION_NOTE
+    if len(header) + len(note) + 1 > budget:
+        return ''
+
+    kept = [header]
+    used = len(header)
+    for line in lines[1:]:
+        projected = used + 1 + len(line)
+        if projected + len(note) + 1 > budget:
+            break
+        kept.append(line)
+        used = projected
+
+    kept.append(note)
+    return '\n'.join(kept)
+
+
+def _apply_agent_instruction_context_budget(actions_context, knowledge_context):
+    """Bound the combined size of the rendered action and knowledge blocks."""
+    total_budget = AGENT_INSTRUCTION_CONTEXT_TOTAL_LIMIT
+    if len(actions_context) + len(knowledge_context) <= total_budget:
+        return actions_context, knowledge_context
+
+    # Each block is guaranteed half the budget, and any headroom the other block
+    # does not need rolls over.
+    half_budget = total_budget // 2
+    actions_budget = half_budget + max(0, half_budget - len(knowledge_context))
+    trimmed_actions = _truncate_agent_instruction_context_block(actions_context, actions_budget)
+    knowledge_budget = total_budget - len(trimmed_actions)
+    trimmed_knowledge = _truncate_agent_instruction_context_block(knowledge_context, knowledge_budget)
+    return trimmed_actions, trimmed_knowledge
+
+
+def _format_agent_instruction_token_value(value):
+    """Render a reference token value, quoting it when it contains separators."""
+    normalized_value = _normalize_agent_instruction_draft_input(
+        value,
+        AGENT_INSTRUCTION_CONTEXT_LABEL_LIMIT,
+    )
+    if not normalized_value:
+        return ''
+    if any(character in normalized_value for character in (' ', ':', '"')):
+        return '"{0}"'.format(normalized_value.replace('"', "'"))
+    return normalized_value
+
+
+def _format_agent_instruction_actions_context(selected_actions):
+    """Summarize the client-supplied selected actions for the drafting prompt.
+
+    The payload is untrusted display context only. It is normalized, truncated,
+    and bounded here so it can never be used to widen authorization or to bloat
+    the prompt.
+    """
+    if not isinstance(selected_actions, list):
+        return ''
+
+    lines = []
+    for action in selected_actions[:AGENT_INSTRUCTION_CONTEXT_ITEM_LIMIT]:
+        if not isinstance(action, dict):
+            continue
+        label = _normalize_agent_instruction_draft_input(
+            action.get('display_name') or action.get('name'),
+            AGENT_INSTRUCTION_CONTEXT_LABEL_LIMIT,
+        )
+        if not label:
+            continue
+
+        token_value = _format_agent_instruction_token_value(label)
+        description = _normalize_agent_instruction_draft_input(
+            action.get('description'),
+            AGENT_INSTRUCTION_CONTEXT_DESCRIPTION_LIMIT,
+        )
+        action_type = _normalize_agent_instruction_draft_input(action.get('type'), 100)
+
+        detail = f'- #action:{token_value}'
+        if action_type:
+            detail += f' (type: {action_type})'
+        if description:
+            detail += f' — {description}'
+        lines.append(detail)
+
+        capabilities = action.get('capabilities')
+        if not isinstance(capabilities, list):
+            continue
+        for capability in capabilities[:AGENT_INSTRUCTION_CONTEXT_CAPABILITY_LIMIT]:
+            if not isinstance(capability, dict):
+                continue
+            capability_key = _normalize_agent_instruction_draft_input(
+                capability.get('key'),
+                AGENT_INSTRUCTION_CONTEXT_LABEL_LIMIT,
+            )
+            if not capability_key:
+                continue
+            capability_label = _normalize_agent_instruction_draft_input(
+                capability.get('label'),
+                AGENT_INSTRUCTION_CONTEXT_LABEL_LIMIT,
+            )
+            capability_token = _format_agent_instruction_token_value(capability_key)
+            capability_line = f'    - #action:{token_value}:{capability_token}'
+            if capability_label:
+                capability_line += f' — {capability_label}'
+            lines.append(capability_line)
+
+    if not lines:
+        return ''
+    return 'Actions selected for this agent (reference only these):\n' + '\n'.join(lines)
+
+
+def _format_agent_instruction_knowledge_context(assigned_knowledge):
+    """Summarize the client-supplied assigned knowledge for the drafting prompt."""
+    if not isinstance(assigned_knowledge, dict) or not assigned_knowledge.get('enabled'):
+        return ''
+
+    lines = []
+
+    def _append_entries(entries, token_type, label_keys, detail_keys=()):
+        if not isinstance(entries, list):
+            return
+        for entry in entries[:AGENT_INSTRUCTION_CONTEXT_ITEM_LIMIT]:
+            if isinstance(entry, dict):
+                label = next(
+                    (entry.get(key) for key in label_keys if str(entry.get(key) or '').strip()),
+                    '',
+                )
+                detail = next(
+                    (entry.get(key) for key in detail_keys if str(entry.get(key) or '').strip()),
+                    '',
+                )
+            else:
+                label = entry
+                detail = ''
+
+            token_value = _format_agent_instruction_token_value(label)
+            if not token_value:
+                continue
+
+            line = f'- #knowledge:{token_type}:{token_value}'
+            normalized_detail = _normalize_agent_instruction_draft_input(
+                detail,
+                AGENT_INSTRUCTION_CONTEXT_DESCRIPTION_LIMIT,
+            )
+            if normalized_detail:
+                line += f' — {normalized_detail}'
+            lines.append(line)
+
+    _append_entries(assigned_knowledge.get('sources'), 'workspace', ('name', 'id'), ('scope',))
+    _append_entries(assigned_knowledge.get('documents'), 'doc', ('title', 'file_name'), ('source_name',))
+    _append_entries(assigned_knowledge.get('tags'), 'tag', ('name', 'tag'))
+    _append_entries(assigned_knowledge.get('web_sources'), 'web', ('url',), ('mode_label', 'mode'))
+
+    if not lines:
+        return ''
+    return 'Assigned knowledge available to this agent (reference only these):\n' + '\n'.join(lines)
+
+
+def _build_agent_instruction_messages(
+    display_name,
+    description,
+    brief,
+    existing_instructions,
+    *,
+    selected_actions=None,
+    assigned_knowledge=None,
+):
     """Build the prompt for drafting editable SimpleChat agent instructions."""
     display_name = _normalize_agent_instruction_draft_input(display_name, 500)
     description = _normalize_agent_instruction_draft_input(description)
     brief = _normalize_agent_instruction_draft_input(brief)
     existing_instructions = _normalize_agent_instruction_draft_input(existing_instructions)
+    actions_context = _format_agent_instruction_actions_context(selected_actions)
+    knowledge_context = _format_agent_instruction_knowledge_context(assigned_knowledge)
+    actions_context, knowledge_context = _apply_agent_instruction_context_budget(
+        actions_context,
+        knowledge_context,
+    )
 
     user_sections = [
         f'Agent display name: {display_name or "Not provided"}',
         f'Agent description: {description or "Not provided"}',
         f'Author brief: {brief or "Not provided"}',
     ]
+    user_sections.append(actions_context or 'Actions selected for this agent: None')
+    user_sections.append(knowledge_context or 'Assigned knowledge available to this agent: None')
     if existing_instructions:
         user_sections.append(f'Existing instructions to improve or preserve where useful:\n{existing_instructions}')
 
@@ -155,7 +356,21 @@ def _build_agent_instruction_messages(display_name, description, brief, existing
                 'You write production-ready SimpleChat agent instructions. '
                 'Return only the finished instructions in Markdown. '
                 'Be specific about role, goals, workflow, boundaries, tool use, and response style. '
-                'Do not include code fences, preambles, or commentary about how the instructions were created.'
+                'Do not include code fences, preambles, or commentary about how the instructions were created.\n\n'
+                'SimpleChat instructions support inline reference tokens that point at the actions and '
+                'knowledge already configured for this agent. Use them wherever the instructions explain '
+                'when or why to use a capability or a document:\n'
+                '  #action:<ActionName> references a selected action.\n'
+                '  #action:<ActionName>:<capability_key> references one enabled capability of that action.\n'
+                '  #knowledge:doc:<Document Title> references an assigned document.\n'
+                '  #knowledge:workspace:<Workspace Name> references an assigned workspace.\n'
+                '  #knowledge:tag:<tag> references an assigned tag limit.\n'
+                '  #knowledge:web:<url> references an assigned web source.\n'
+                'Wrap a value in double quotes when it contains a space or a colon, for example '
+                '#knowledge:doc:"Employee Handbook.pdf".\n'
+                'Only reference actions, capabilities, and knowledge items that appear in the provided lists. '
+                'Never invent a token for something that was not listed, and omit the tokens entirely when '
+                'no actions or knowledge were provided.'
             ),
         },
         {
@@ -704,6 +919,8 @@ def draft_agent_instructions():
             description,
             brief,
             existing_instructions,
+            selected_actions=request_data.get('selected_actions'),
+            assigned_knowledge=request_data.get('assigned_knowledge'),
         )
         response = client.chat.completions.create(
             **_build_agent_instruction_api_params(model_name, messages)
@@ -715,7 +932,7 @@ def draft_agent_instructions():
             return jsonify({'error': 'The model did not return instructions.'}), 502
 
         log_event(
-            '[AgentInstructions] Agent instructions drafted.',
+            '[AGENT_INSTRUCTIONS] Agent instructions drafted.',
             extra={
                 'user_id': str(user_id),
                 'agent_scope': agent_scope,
@@ -726,7 +943,7 @@ def draft_agent_instructions():
         return jsonify({'success': True, 'instructions': instructions})
     except Exception as exc:
         log_event(
-            f'[AgentInstructions] Error drafting agent instructions: {exc}',
+            f'[AGENT_INSTRUCTIONS] Error drafting agent instructions: {exc}',
             level=logging.ERROR,
             exceptionTraceback=True,
         )
@@ -1327,7 +1544,7 @@ def get_agents_catalog():
         return jsonify({'agents': catalog}), 200
     except Exception as exc:
         log_event(
-            '[AgentsCatalog] Failed to load accessible agent catalog.',
+            '[AGENTS_CATALOG] Failed to load accessible agent catalog.',
             extra={'user_id': user_id, 'error': str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -1357,7 +1574,7 @@ def get_popular_agents_catalog():
         return jsonify({'agents': popular_agents}), 200
     except Exception as exc:
         log_event(
-            '[AgentsCatalog] Failed to load popular agents.',
+            '[AGENTS_CATALOG] Failed to load popular agents.',
             extra={'user_id': user_id, 'error': str(exc)},
             level=logging.ERROR,
             exceptionTraceback=True,
@@ -2000,4 +2217,3 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
         "enable_multi_model_endpoints": effective_multi_flag,
         "model_endpoints": combined_endpoints,
     })
-    

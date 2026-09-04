@@ -1,0 +1,1540 @@
+# functions_generated_file_exports.py
+"""Format-neutral planning and rendering for generated chat file exports."""
+
+import html
+import io
+import json
+import os
+import re
+import tempfile
+from datetime import datetime
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from xml.etree import ElementTree
+
+from defusedxml import ElementTree as DefusedElementTree
+from defusedxml.common import DefusedXmlException
+
+from functions_assistant_table_exports import (
+    assistant_table_export_requested,
+    build_assistant_table_csv,
+    build_csv_output_clarification_guidance,
+    extract_assistant_table_entries,
+)
+
+
+GENERATED_FILE_FORMAT_CSV = 'csv'
+GENERATED_FILE_FORMAT_DOCX = 'docx'
+GENERATED_FILE_FORMAT_PDF = 'pdf'
+GENERATED_FILE_FORMATS = {
+    GENERATED_FILE_FORMAT_CSV,
+    GENERATED_FILE_FORMAT_DOCX,
+    GENERATED_FILE_FORMAT_PDF,
+}
+SUPPORTED_GENERATED_EXPORT_FORMATS = {'csv', 'json', 'xml'}
+# Only these payloads are withheld from the streamed assistant text, so only their cards
+# replace it. CSV narratives stream intact and must stay visible above the artifact card.
+ASSISTANT_TEXT_SUPPRESSING_FORMATS = {'json', 'xml'}
+GENERATED_FILE_PREVIEW_ROWS = 3
+REQUESTED_ARTIFACT_FORMATS = ('csv', 'json', 'xml', 'md', 'docx', 'pdf')
+STRUCTURED_ARTIFACT_FORMAT_MARKERS = {
+    'json': (
+        'json artifact',
+        'json export',
+        'json output',
+        'convert into json',
+        'convert to json',
+        'return json',
+        'return only json',
+        'respond with json',
+        'format as json',
+        'output as json',
+        'save as json',
+        'export as json',
+        'download as json',
+        'create json',
+        'create a json',
+        'make json',
+        'make a json',
+        'generate json',
+        'generate a json',
+    ),
+    'xml': (
+        'xml artifact',
+        'xml export',
+        'xml output',
+        'convert into xml',
+        'convert to xml',
+        'populate xml',
+        'populate the xml',
+        'return xml',
+        'return only xml',
+        'respond with xml',
+        'format as xml',
+        'output as xml',
+        'save as xml',
+        'export as xml',
+        'download as xml',
+        'create xml',
+        'create an xml',
+        'make xml',
+        'make an xml',
+        'generate xml',
+        'generate an xml',
+    ),
+}
+STRUCTURED_ARTIFACT_ACTION_PATTERN = (
+    r'convert|populate|create|make|build|generate|produce|return|respond|format|output|save|export|download'
+)
+STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN = (
+    r'convert|transform|translate|turn|put|place|write|map|load|insert|transfer|copy|move'
+)
+FUNCTION_RESULT_ROW_KEYS = (
+    'rows',
+    'data',
+    'items',
+    'results',
+    'records',
+    'value',
+    'values',
+    'result',
+    'body',
+    'output',
+    'payload',
+)
+FUNCTION_RESULT_ROW_COUNT_KEYS = (
+    'row_count',
+    'returned_rows',
+    'total_rows',
+    'total_count',
+    'record_count',
+)
+# Below this a stored action reads as a lookup, not the dataset a request is asking for.
+PRIOR_TURN_SUBSTANTIVE_ROW_COUNT = 10
+# Actions advertise partial results in different ways, so accept the common spellings.
+FUNCTION_RESULT_TRUNCATION_KEYS = {
+    'truncated',
+    'istruncated',
+    'wastruncated',
+    'resultstruncated',
+    'rowstruncated',
+}
+FUNCTION_RESULT_TRUNCATION_MAX_DEPTH = 3
+FUNCTION_RESULT_TRUNCATION_MAX_ITEMS = 20
+FUNCTION_RESULT_CONTROL_KEYS = {
+    'count',
+    'detail',
+    'error',
+    'errormessage',
+    'hasmore',
+    'message',
+    'metadata',
+    'meta',
+    'nextlink',
+    'nextpage',
+    'pagination',
+    'returnedrows',
+    'status',
+    'statuscode',
+    'success',
+    'summary',
+    'total',
+    'totalcount',
+    'totalmatches',
+}
+FUNCTION_RESULT_SENSITIVE_KEY_FRAGMENTS = (
+    'accesstoken',
+    'apikey',
+    'authorization',
+    'clientsecret',
+    'connectionstring',
+    'credential',
+    'password',
+    'privatekey',
+    'secret',
+    'sharedaccesssignature',
+    'subscriptionkey',
+    'token',
+)
+TABULAR_FUNCTION_RESULT_PLUGIN_NAMES = {'tabularprocessingplugin'}
+XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8"?>'
+XML_ROOT_PATTERN = re.compile(r'<(?P<tag>[A-Za-z_][A-Za-z0-9_.:-]*)(?:\s[^<>]*)?>')
+DOCX_OUTPUT_REQUEST_PATTERNS = (
+    re.compile(
+        r'\b(?:build|create|download|export|generate|make|prepare|save|turn|convert)\b'
+        r'.{0,120}\b(?:a\s+)?(?:word|docx)(?:\s+(?:document|file|output|report))?\b'
+    ),
+    re.compile(r'\b(?:word|docx)\s+(?:document|file|output|report|version)\b'),
+    re.compile(r'\b(?:get|give)\s+(?:me\s+)?(?:a|the|one)\s+(?:word|docx)\b'),
+    re.compile(r'\b(?:need|want)\s+(?:(?:a|the|one)\s+)?(?:word|docx)\b'),
+    re.compile(r'\b(?:in|as)\s+(?:a\s+)?(?:word|docx)(?:\s+(?:document|file|report))?\b'),
+)
+PDF_OUTPUT_REQUEST_PATTERNS = (
+    re.compile(
+        r'\b(?:build|create|download|export|generate|make|prepare|save|turn|convert)\b'
+        r'.{0,120}\b(?:a\s+)?pdf(?:\s+(?:document|file|output|report))?\b'
+    ),
+    re.compile(r'\bpdf\s+(?:document|file|output|report|version)\b'),
+    re.compile(r'\b(?:get|give)\s+(?:me\s+)?(?:a|the|one)\s+pdf\b'),
+    re.compile(r'\b(?:need|want)\s+(?:(?:a|the|one)\s+)?pdf\b'),
+    re.compile(r'\b(?:in|as)\s+(?:a\s+)?pdf(?:\s+(?:document|file|report))?\b'),
+)
+PDF_EXPORT_CSS = """
+body { font-family: sans-serif; font-size: 10pt; color: #172033; }
+h1 { font-size: 20pt; color: #173b5f; margin-bottom: 10pt; }
+h2 { font-size: 14pt; color: #173b5f; margin-top: 16pt; }
+p { line-height: 1.35; margin-bottom: 8pt; }
+table { border-collapse: collapse; width: 100%; margin-top: 8pt; }
+th { background-color: #e8eef5; font-weight: bold; }
+th, td { border: 0.6pt solid #aab7c4; padding: 4pt; vertical-align: top; }
+"""
+
+MARKDOWN_OUTPUT_REQUEST_PATTERNS = (
+    re.compile(
+        r'\b(?:build|create|download|export|generate|make|prepare|save|write)\b'
+        r'.{0,120}\b(?:markdown|md)(?:\s+(?:analysis|artifact|document|file|output|report))?\b'
+    ),
+    re.compile(r'\b(?:markdown|md)\s+(?:analysis|artifact|document|file|output|report|version)\b'),
+    re.compile(r'\b(?:in|as)\s+(?:a\s+)?(?:markdown|md)(?:\s+(?:document|file|report))?\b'),
+)
+
+PASSTHROUGH_DERIVED_OUTPUT_PATTERNS = (
+    re.compile(r'\b(?:derive|derived|classify|classification|categorize|category|calculate|computed?|map|mapping)\b'),
+    re.compile(r'\b(?:score|rank|judge|evaluate|determine|flag|label|extract|populate|fill)\b'),
+    re.compile(r'\b(?:analy[sz]e|summari[sz]e)\b'),
+    re.compile(r'\b(?:exactly|only)\s+(?:these\s+)?(?:fields|columns)\b'),
+    re.compile(r'\b(?:output|requested|derived)\s+(?:fields|columns|schema)\b'),
+    re.compile(r'\bone\s+output\s+row\s+(?:for|per)\s+(?:each|every|source)\s+row\b'),
+)
+PASSTHROUGH_COPY_PATTERNS = (
+    re.compile(r'\b(?:unchanged|as-is|as\s+is|verbatim|raw|original)\s+(?:copy|rows?|data|table|result|results)\b'),
+    re.compile(r'\b(?:copy|export|download|save)\b[\w\s,.:;\-/]{0,100}\b(?:unchanged|as-is|as\s+is|verbatim|raw|original|source)\b'),
+)
+PASSTHROUGH_SERIALIZE_PATTERNS = (
+    re.compile(r'\b(?:build|create|download|export|format|generate|make|prepare|save|serialize|convert)\b[\w\s,.:;\-/]{0,100}\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b'),
+    re.compile(r'\b(?:csv|json|xml|docx|word|pdf|spreadsheet)\b[\w\s,.:;\-/]{0,100}\b(?:export|download|file|format|copy)\b'),
+)
+
+# The one schema clarification build_csv_output_clarification_guidance() asks the model to send.
+CSV_CLARIFICATION_REPLY_PATTERNS = (
+    re.compile(r'\b(?:should|shall|does|do)\s+(?:each|every|the)\s+(?:csv\s+)?(?:row|record|line|entry)\b'),
+    re.compile(r'\b(?:which|what)\s+(?:columns?|fields?)\b'),
+    re.compile(r'\b(?:columns?|fields?)\s+(?:should|would|do)\s+(?:it|they|the\s+\w+)\s+include\b'),
+)
+CSV_CLARIFICATION_REPLY_MAX_CHARS = 500
+# A retrieval action that dwarfs the turn's other calls is the payload; the rest are lookups.
+DOMINANT_FUNCTION_RESULT_MIN_ROWS = 10
+DOMINANT_FUNCTION_RESULT_RATIO = 5
+ROW_SOURCE_ASSISTANT = 'assistant response'
+ROW_SOURCE_CURRENT_ACTION = 'structured function result'
+ROW_SOURCE_EARLIER_ACTION = 'earlier action result'
+FUNCTION_RESULT_ROW_SOURCES = frozenset({ROW_SOURCE_CURRENT_ACTION, ROW_SOURCE_EARLIER_ACTION})
+CSV_PUBLICATION_GUIDANCE = (
+    'The server serializes the authorized action results into the requested CSV artifact and '
+    'attaches the file after generation. Do not claim that you cannot create or attach files, '
+    'do not tell the user to copy or save rows manually, and do not paste a sample of the rows '
+    'in place of the artifact.'
+)
+# Agents commonly re-request an action from the same start time, which re-reads rows already held.
+GENERATED_FILE_PAGING_GUIDANCE = (
+    'When an action reports that its results were truncated, request the remaining data with a '
+    'window that starts after the last row you already have instead of repeating the original '
+    'range, and say plainly that the data is partial if you cannot retrieve the rest.'
+)
+GENERATED_FILE_TRUNCATED_ROWS_NOTE = (
+    'The source action reported truncated results, so this file covers only the rows it returned.'
+)
+
+
+def _normalize_question_for_artifact_detection(user_question: str) -> str:
+    return re.sub(r'\s+', ' ', str(user_question or '').strip().casefold())
+
+
+def _iter_request_clauses(normalized_question: str):
+    for match in re.finditer(r'[^.!?;\n]+', normalized_question):
+        clause = match.group(0).strip()
+        if clause:
+            leading_offset = len(match.group(0)) - len(match.group(0).lstrip())
+            yield clause, match.start() + leading_offset
+
+
+def _first_pattern_position(normalized_question: str, patterns) -> Optional[int]:
+    positions = [match.start() for pattern in patterns for match in [pattern.search(normalized_question)] if match]
+    return min(positions) if positions else None
+
+
+def _format_aliases(output_format: str) -> Tuple[str, ...]:
+    aliases = {
+        'docx': ('docx', 'word'),
+        'md': ('md', 'markdown'),
+    }
+    return aliases.get(output_format, (output_format,))
+
+
+def _clause_negates_output_format(clause: str, output_format: str) -> bool:
+    return any(
+        _structured_artifact_format_is_negated(clause, format_alias)
+        for format_alias in _format_aliases(output_format)
+    )
+
+
+def _first_csv_artifact_position(user_question: str, normalized_question: str) -> Optional[int]:
+    if not assistant_table_export_requested(user_question):
+        return None
+    for clause, clause_offset in _iter_request_clauses(normalized_question):
+        if _clause_negates_output_format(clause, 'csv'):
+            continue
+        for marker in ('csv', 'spreadsheet'):
+            marker_position = clause.find(marker)
+            if marker_position >= 0:
+                return clause_offset + marker_position
+    return 0
+
+
+def _collect_structured_artifact_format_matches(normalized_question: str) -> List[Tuple[int, str]]:
+    matches = []
+    destination_formats_by_clause_offset = {}
+    for clause, clause_offset in _iter_request_clauses(normalized_question):
+        for output_format in ('json', 'xml'):
+            if output_format not in clause or _clause_negates_output_format(clause, output_format):
+                continue
+            destination_match = re.search(
+                rf'\b(?:{STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN})\b'
+                rf'[\w\s,():;\-/]{{0,120}}\b(?:into|in|to|as)\s+'
+                rf'(?:(?:an?|the)\s+)?(?:new\s+)?{output_format}'
+                rf'(?:\s+(?:artifact|document|file|format|output|template))?\b',
+                clause,
+            )
+            if destination_match:
+                format_position = clause.find(output_format, destination_match.start())
+                matches.append((clause_offset + (format_position if format_position >= 0 else destination_match.start()), output_format))
+                destination_formats_by_clause_offset.setdefault(clause_offset, set()).add(output_format)
+
+    for clause, clause_offset in _iter_request_clauses(normalized_question):
+        destination_formats = destination_formats_by_clause_offset.get(clause_offset, set())
+        for output_format in ('json', 'xml'):
+            if output_format not in clause or _clause_negates_output_format(clause, output_format):
+                continue
+            if destination_formats and output_format not in destination_formats:
+                continue
+            marker_positions = [
+                clause.find(marker)
+                for marker in STRUCTURED_ARTIFACT_FORMAT_MARKERS[output_format]
+                if marker in clause
+            ]
+            if marker_positions:
+                matches.append((clause_offset + min(marker_positions), output_format))
+                continue
+            generic_match = re.search(
+                rf'\b(?:{STRUCTURED_ARTIFACT_ACTION_PATTERN})\b'
+                rf'[\w\s.,:;\-/]{{0,80}}\b(?:an?\s+)?{output_format}\b',
+                clause,
+            )
+            if generic_match:
+                format_position = clause.find(output_format, generic_match.start())
+                matches.append((clause_offset + (format_position if format_position >= 0 else generic_match.start()), output_format))
+    return matches
+
+
+def get_requested_artifact_formats(user_question: str) -> List[str]:
+    """Return explicitly requested artifact formats in user-request order."""
+    normalized_question = _normalize_question_for_artifact_detection(user_question)
+    if not normalized_question:
+        return []
+
+    matches = []
+    csv_position = _first_csv_artifact_position(user_question, normalized_question)
+    if csv_position is not None:
+        matches.append((csv_position, 'csv'))
+    matches.extend(_collect_structured_artifact_format_matches(normalized_question))
+
+    format_pattern_sets = {
+        'md': MARKDOWN_OUTPUT_REQUEST_PATTERNS,
+        'docx': DOCX_OUTPUT_REQUEST_PATTERNS,
+        'pdf': PDF_OUTPUT_REQUEST_PATTERNS,
+    }
+    for output_format, patterns in format_pattern_sets.items():
+        position = _first_pattern_position(normalized_question, patterns)
+        if position is None:
+            continue
+        containing_clause = next(
+            (
+                clause
+                for clause, clause_offset in _iter_request_clauses(normalized_question)
+                if clause_offset <= position < clause_offset + len(clause)
+            ),
+            normalized_question,
+        )
+        if _clause_negates_output_format(containing_clause, output_format):
+            continue
+        matches.append((position, output_format))
+
+    ordered_formats = []
+    for _, output_format in sorted(matches, key=lambda item: (item[0], REQUESTED_ARTIFACT_FORMATS.index(item[1]))):
+        if output_format not in ordered_formats:
+            ordered_formats.append(output_format)
+    return ordered_formats
+
+
+def get_requested_structured_artifact_formats(user_question: str) -> List[str]:
+    """Return requested durable structured artifact formats in user-request order."""
+    return [
+        output_format
+        for output_format in get_requested_artifact_formats(user_question)
+        if output_format in SUPPORTED_GENERATED_EXPORT_FORMATS
+    ]
+
+
+def get_requested_generated_file_formats(user_question: str) -> List[str]:
+    """Return requested single-reply generated file formats in user-request order."""
+    return [
+        output_format
+        for output_format in get_requested_artifact_formats(user_question)
+        if output_format in GENERATED_FILE_FORMATS
+    ]
+
+
+def get_requested_generated_file_format(user_question: str) -> Optional[str]:
+    """Return the requested generated file format, if any."""
+    requested_formats = get_requested_generated_file_formats(user_question)
+    return requested_formats[0] if requested_formats else None
+
+
+def get_requested_structured_artifact_format(user_question: str) -> Optional[str]:
+    """Return a requested CSV, JSON, or XML artifact target without resolving source orchestration."""
+    requested_formats = get_requested_structured_artifact_formats(user_question)
+    return requested_formats[0] if requested_formats else None
+
+
+def _structured_artifact_format_is_negated(clause: str, output_format: str) -> bool:
+    """Return whether a clause directly negates creating the target structured format."""
+    return bool(
+        re.search(
+            rf"\b(?:do\s+not|don't|dont|never)\s+"
+            rf"(?:{STRUCTURED_ARTIFACT_ACTION_PATTERN}|{STRUCTURED_ARTIFACT_DESTINATION_ACTION_PATTERN})"
+            rf"\b[\w\s.,:;\-/]{{0,80}}\b{output_format}\b",
+            clause,
+        )
+        or re.search(rf'\bwithout\s+(?:(?:an?|the)\s+)?{output_format}\b', clause)
+    )
+
+
+def generated_file_export_requested(user_question: str) -> bool:
+    """Return whether the user asked for a supported generated file artifact."""
+    return get_requested_generated_file_format(user_question) is not None
+
+
+def _question_requires_derived_output(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_DERIVED_OUTPUT_PATTERNS)
+
+
+def _question_requests_unchanged_copy(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_COPY_PATTERNS)
+
+
+def _question_requests_serialization(normalized_question: str) -> bool:
+    return any(pattern.search(normalized_question) for pattern in PASSTHROUGH_SERIALIZE_PATTERNS)
+
+
+def _collect_row_schema(rows: Sequence[Dict[str, Any]]) -> List[str]:
+    for row in rows or []:
+        if isinstance(row, dict):
+            return [str(field_name or '').strip() for field_name in row if str(field_name or '').strip()]
+    return []
+
+
+def evaluate_generated_file_passthrough_eligibility(
+    user_question: str,
+    rows: Optional[Sequence[Dict[str, Any]]] = None,
+    public_output_schema: Optional[Sequence[str]] = None,
+    carried_output_format: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return whether raw rows can satisfy a requested generated file contract."""
+    normalized_question = _normalize_question_for_artifact_detection(user_question)
+    normalized_rows = [row for row in list(rows or []) if isinstance(row, dict)]
+    if not normalized_rows:
+        return {'allowed': False, 'reason_code': 'source_result_incomplete'}
+
+    normalized_public_schema = [
+        str(field_name or '').strip()
+        for field_name in list(public_output_schema or [])
+        if str(field_name or '').strip()
+    ]
+    if normalized_public_schema:
+        expected_schema = set(normalized_public_schema)
+        if _collect_row_schema(normalized_rows) != normalized_public_schema:
+            return {'allowed': False, 'reason_code': 'schema_not_satisfied'}
+        if any(set(row.keys()) != expected_schema for row in normalized_rows):
+            return {'allowed': False, 'reason_code': 'schema_not_satisfied'}
+
+    if _question_requests_unchanged_copy(normalized_question):
+        return {'allowed': True, 'reason_code': 'explicit_unchanged_copy'}
+    if _question_requires_derived_output(normalized_question):
+        return {'allowed': False, 'reason_code': 'derived_output_requires_transform'}
+    if _question_requests_serialization(normalized_question):
+        return {'allowed': True, 'reason_code': 'explicit_format_conversion'}
+    if carried_output_format:
+        # The format contract came from the earlier request this reply answers.
+        return {'allowed': True, 'reason_code': 'pending_format_clarification'}
+    return {'allowed': False, 'reason_code': 'no_explicit_passthrough_contract'}
+
+
+def build_generated_file_output_guidance(
+    user_question: str,
+    requested_format: Optional[str] = None,
+) -> str:
+    """Return shared model guidance for a requested generated output format."""
+    output_format = (
+        str(requested_format or '').strip().lower()
+        or get_requested_generated_file_format(user_question)
+        or get_requested_structured_artifact_format(user_question)
+    )
+    if output_format == GENERATED_FILE_FORMAT_CSV:
+        clarification_guidance = build_csv_output_clarification_guidance(user_question)
+        return ' '.join(
+            guidance_part
+            for guidance_part in (
+                clarification_guidance,
+                CSV_PUBLICATION_GUIDANCE,
+                GENERATED_FILE_PAGING_GUIDANCE,
+            )
+            if guidance_part
+        )
+    if output_format == 'json':
+        return (
+            'The user requested a downloadable JSON artifact. The server will validate and attach the file after '
+            'generation. Return ONLY the complete valid JSON payload needed for that file. Do not wrap it in Markdown, '
+            'add explanations, claim that files cannot be attached, tell the user to copy or save content manually, '
+            'or mention the publication mechanism.'
+        )
+    if output_format == 'xml':
+        return (
+            'The user requested a downloadable XML artifact. The server will validate and attach the file after '
+            'generation. Return ONLY one complete well-formed XML document needed for that file. Do not wrap it in '
+            'Markdown, add explanations, claim that files cannot be attached, tell the user to copy or save content '
+            'manually, or mention the publication mechanism.'
+        )
+    if output_format in {GENERATED_FILE_FORMAT_DOCX, GENERATED_FILE_FORMAT_PDF}:
+        return (
+            f'The user requested a downloadable {output_format.upper()} artifact. The server renders and '
+            'attaches the file after generation. Provide a clear final response grounded in the available '
+            'evidence. Structured function results from this turn may be included as labeled tables in the '
+            'generated file. Do not claim that you cannot create or attach files, do not tell the user to '
+            'copy or save the content manually, do not invent rows, and do not claim an attachment exists '
+            f'before the file-output finalizer publishes it. {GENERATED_FILE_PAGING_GUIDANCE}'
+        )
+    return ''
+
+
+def get_generated_file_export_content(assistant_result: Any) -> str:
+    """Return the structured document-action reply when it supersedes a concise artifact reply."""
+    if not isinstance(assistant_result, dict):
+        return str(assistant_result or '')
+
+    analysis_result = assistant_result.get('analysis_result')
+    if isinstance(analysis_result, dict):
+        analysis_reply = str(analysis_result.get('analysis_reply') or '').strip()
+        if analysis_reply:
+            return analysis_reply
+
+    return str(assistant_result.get('reply') or '')
+
+
+def build_generated_file_export(
+    user_question: str,
+    assistant_content: str,
+    function_results: Optional[List[Dict[str, Any]]] = None,
+    prior_function_results_loader: Optional[Callable[[], Optional[List[Dict[str, Any]]]]] = None,
+    pending_output_format: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build a generated file payload from final assistant content and function-result evidence."""
+    output_format = get_requested_generated_file_format(user_question) or _normalize_pending_output_format(
+        pending_output_format,
+    )
+    if output_format not in GENERATED_FILE_FORMATS:
+        return None
+    carried_output_format = (
+        output_format if not get_requested_generated_file_format(user_question) else None
+    )
+
+    assistant_text = str(assistant_content or '').strip()
+    assistant_rows = extract_assistant_table_entries(assistant_text)
+    if not assistant_rows and _assistant_reply_requests_clarification(assistant_text):
+        return None
+    function_rows = extract_authorized_function_result_rows(function_results)
+    row_provenance = ROW_SOURCE_CURRENT_ACTION
+    rows_truncated = function_results_report_truncated_rows(function_results) if function_rows else False
+    if not assistant_rows and not function_rows and prior_function_results_loader is not None:
+        # This turn answered from evidence gathered earlier, so reuse those rows instead of none.
+        prior_function_results = prior_function_results_loader()
+        function_rows = extract_authorized_function_result_rows(prior_function_results)
+        if function_rows:
+            row_provenance = ROW_SOURCE_EARLIER_ACTION
+            rows_truncated = function_results_report_truncated_rows(prior_function_results)
+    function_passthrough = evaluate_generated_file_passthrough_eligibility(
+        user_question,
+        rows=function_rows,
+        carried_output_format=carried_output_format,
+    ) if function_rows else {'allowed': False, 'reason_code': 'source_result_incomplete'}
+
+    if output_format == GENERATED_FILE_FORMAT_CSV:
+        use_function_rows = bool(function_rows) and bool(function_passthrough.get('allowed')) and (
+            not assistant_rows
+            or _assistant_rows_sample_function_rows(assistant_rows, function_rows)
+        )
+        rows = function_rows if use_function_rows else assistant_rows
+        if not rows:
+            return None
+        row_source = row_provenance if use_function_rows else ROW_SOURCE_ASSISTANT
+        return _build_generated_file_payload(
+            output_format=output_format,
+            file_content=build_assistant_table_csv(rows),
+            rows=rows,
+            row_source=row_source,
+            assistant_content=assistant_text,
+            passthrough_reason_code=(function_passthrough.get('reason_code') if use_function_rows else None),
+            rows_truncated=rows_truncated if use_function_rows else False,
+        )
+
+    if not assistant_text and not assistant_rows and not function_rows:
+        return None
+    rows = function_rows if function_rows and function_passthrough.get('allowed') else assistant_rows
+    if not assistant_text and not rows:
+        return None
+    row_source = row_provenance if rows and rows is function_rows else ROW_SOURCE_ASSISTANT
+    title = _build_generated_file_title(output_format)
+    if output_format == GENERATED_FILE_FORMAT_DOCX:
+        file_content = _render_docx_file_export(title, assistant_text, rows, row_source)
+    else:
+        file_content = _render_pdf_file_export(title, assistant_text, rows, row_source)
+    return _build_generated_file_payload(
+        output_format=output_format,
+        file_content=file_content,
+        rows=rows,
+        row_source=row_source,
+        assistant_content=assistant_text,
+        title=title,
+        passthrough_reason_code=(
+            function_passthrough.get('reason_code') if row_source in FUNCTION_RESULT_ROW_SOURCES else None
+        ),
+        rows_truncated=rows_truncated if row_source in FUNCTION_RESULT_ROW_SOURCES else False,
+    )
+
+
+def build_structured_artifact_rows_payload(
+    user_question: str,
+    output_format: str,
+    function_results: Optional[List[Dict[str, Any]]] = None,
+    prior_function_results_loader: Optional[Callable[[], Optional[List[Dict[str, Any]]]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Serialize authorized action rows when a JSON or XML reply did not carry the payload."""
+    normalized_output_format = str(output_format or '').strip().lower()
+    if normalized_output_format not in {'json', 'xml'}:
+        return None
+
+    function_rows = extract_authorized_function_result_rows(function_results)
+    row_provenance = ROW_SOURCE_CURRENT_ACTION
+    rows_truncated = function_results_report_truncated_rows(function_results) if function_rows else False
+    if not function_rows and prior_function_results_loader is not None:
+        prior_function_results = prior_function_results_loader()
+        function_rows = extract_authorized_function_result_rows(prior_function_results)
+        if function_rows:
+            row_provenance = ROW_SOURCE_EARLIER_ACTION
+            rows_truncated = function_results_report_truncated_rows(prior_function_results)
+    if not function_rows:
+        return None
+
+    function_passthrough = evaluate_generated_file_passthrough_eligibility(
+        user_question,
+        rows=function_rows,
+    )
+    if not function_passthrough.get('allowed'):
+        return None
+
+    if normalized_output_format == 'json':
+        file_content = serialize_generated_json(function_rows)
+    else:
+        file_content = serialize_generated_xml(function_rows, root_name='GeneratedRows')
+    return {
+        'file_content': file_content,
+        'rows': function_rows,
+        'row_count': len(function_rows),
+        'row_source': row_provenance,
+        'passthrough_reason_code': function_passthrough.get('reason_code'),
+        'rows_truncated': rows_truncated,
+    }
+
+
+def extract_authorized_function_result_rows(function_results: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """Return structured rows from successful non-tabular action results."""
+    function_row_groups = _collect_authorized_function_row_groups(function_results)
+    if not function_row_groups:
+        return []
+
+    dominant_rows = _select_dominant_function_row_group(function_row_groups)
+    if dominant_rows is not None:
+        return dominant_rows
+    if len(function_row_groups) == 1:
+        return function_row_groups[0][1]
+
+    source_column = _get_function_result_source_column(function_row_groups)
+    combined_rows = []
+    for function_label, rows in function_row_groups:
+        for row in rows:
+            normalized_row = dict(row)
+            normalized_row[source_column] = function_label
+            combined_rows.append(normalized_row)
+    return combined_rows
+
+
+def _collect_authorized_function_row_groups(
+    function_results: Optional[List[Dict[str, Any]]],
+) -> List[Tuple[str, List[Dict[str, Any]]]]:
+    """Group authorized rows by action, so paged calls to one action stay one dataset."""
+    grouped_rows: Dict[str, List[Dict[str, Any]]] = {}
+    # Agents often re-page an action from the same start, so pages overlap rather than extend.
+    seen_group_rows: Dict[str, set] = {}
+    for function_result in function_results or []:
+        if not isinstance(function_result, dict):
+            continue
+        if function_result.get('success') is False or _is_tabular_function_result(function_result):
+            continue
+
+        structured_rows = _extract_function_result_rows(
+            _parse_function_result_payload(function_result.get('function_result')),
+        )
+        if not structured_rows:
+            continue
+        function_label = _get_function_result_label(function_result)
+        group_rows = grouped_rows.setdefault(function_label, [])
+        seen_rows = seen_group_rows.setdefault(function_label, set())
+        page_signatures = set()
+        for structured_row in structured_rows:
+            row_signature = _build_function_result_row_signature(structured_row)
+            # Repeats inside one response are records the action counted, so only drop rows an
+            # earlier page of the same action already contributed.
+            if row_signature is not None:
+                if row_signature in seen_rows:
+                    continue
+                page_signatures.add(row_signature)
+            group_rows.append(structured_row)
+        seen_rows.update(page_signatures)
+    return list(grouped_rows.items())
+
+
+def _build_function_result_row_signature(row: Any) -> Optional[Tuple[Tuple[str, str], ...]]:
+    if not isinstance(row, dict):
+        return None
+    try:
+        return tuple(sorted(
+            (_normalize_function_result_key(key), _serialize_row_signature_value(value))
+            for key, value in row.items()
+        ))
+    except TypeError:
+        return None
+
+
+def _serialize_row_signature_value(value: Any) -> str:
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, default=str, sort_keys=True)
+    return '' if value is None else str(value)
+
+
+def function_results_report_truncated_rows(
+    function_results: Optional[List[Dict[str, Any]]],
+) -> bool:
+    """Report whether a row-contributing action said it returned only part of the matching data."""
+    for function_result in function_results or []:
+        if not isinstance(function_result, dict):
+            continue
+        if function_result.get('success') is False or _is_tabular_function_result(function_result):
+            continue
+        payload = _parse_function_result_payload(function_result.get('function_result'))
+        if not _extract_function_result_rows(payload):
+            continue
+        if _payload_reports_truncation(payload):
+            return True
+    return False
+
+
+def _payload_reports_truncation(payload: Any, depth: int = 0) -> bool:
+    if depth > FUNCTION_RESULT_TRUNCATION_MAX_DEPTH:
+        return False
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if _normalize_function_result_key(key) not in FUNCTION_RESULT_TRUNCATION_KEYS:
+                continue
+            if value is True or str(value).strip().casefold() == 'true':
+                return True
+        return any(
+            _payload_reports_truncation(value, depth + 1)
+            for value in payload.values()
+            if isinstance(value, (dict, list))
+        )
+    if isinstance(payload, list):
+        return any(
+            _payload_reports_truncation(item, depth + 1)
+            for item in payload[:FUNCTION_RESULT_TRUNCATION_MAX_ITEMS]
+            if isinstance(item, (dict, list))
+        )
+    return False
+
+
+def _select_dominant_function_row_group(
+    function_row_groups: Sequence[Tuple[str, List[Dict[str, Any]]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Return the retrieval result set when the turn's other actions are only lookups."""
+    if len(function_row_groups) < 2:
+        return None
+
+    dominant_label, dominant_rows = max(function_row_groups, key=lambda group: len(group[1]))
+    if len(dominant_rows) < DOMINANT_FUNCTION_RESULT_MIN_ROWS:
+        return None
+
+    supporting_row_count = sum(
+        len(rows) for label, rows in function_row_groups if label != dominant_label
+    )
+    if len(dominant_rows) < supporting_row_count * DOMINANT_FUNCTION_RESULT_RATIO:
+        return None
+    return dominant_rows
+
+
+def select_prior_turn_action_citations(
+    assistant_messages: Optional[Sequence[Dict[str, Any]]],
+    substantive_row_count: int = PRIOR_TURN_SUBSTANTIVE_ROW_COUNT,
+) -> List[Dict[str, Any]]:
+    """Pick the newest stored action group holding a dataset, reading compact citations only.
+
+    Callers pass assistant messages newest first and hydrate only the returned citations.
+    """
+    fallback_citations: List[Dict[str, Any]] = []
+    for assistant_message in assistant_messages or []:
+        if not isinstance(assistant_message, dict):
+            continue
+        compact_citations = assistant_message.get('agent_citations')
+        if not isinstance(compact_citations, list):
+            continue
+
+        grouped_citations: Dict[str, Dict[str, Any]] = {}
+        for citation in compact_citations:
+            if not isinstance(citation, dict):
+                continue
+            estimated_rows = estimate_function_result_row_count(citation)
+            if not estimated_rows:
+                continue
+            action_label = str(
+                citation.get('function_name') or citation.get('plugin_name') or '',
+            ).strip()
+            action_group = grouped_citations.setdefault(
+                action_label,
+                {'citations': [], 'estimated_rows': 0},
+            )
+            action_group['citations'].append(citation)
+            action_group['estimated_rows'] += estimated_rows
+
+        if not grouped_citations:
+            continue
+        best_group = max(grouped_citations.values(), key=lambda group: group['estimated_rows'])
+        if best_group['estimated_rows'] >= substantive_row_count:
+            return list(best_group['citations'])
+        if not fallback_citations:
+            fallback_citations = list(best_group['citations'])
+    return fallback_citations
+
+
+def estimate_function_result_row_count(function_result: Optional[Dict[str, Any]]) -> int:
+    """Estimate an action's stored rows from its compacted citation, reading no payload."""
+    if not isinstance(function_result, dict):
+        return 0
+    if function_result.get('success') is False or _is_tabular_function_result(function_result):
+        return 0
+    return _estimate_payload_row_count(
+        _parse_function_result_payload(function_result.get('function_result')),
+    )
+
+
+def _estimate_payload_row_count(payload: Any, depth: int = 0) -> int:
+    if depth > 4:
+        return 0
+    if isinstance(payload, list):
+        estimated_rows = 0
+        for item in payload:
+            # Compaction replaces the dropped tail of a list with this marker.
+            if isinstance(item, dict) and set(item) == {'remaining_items'}:
+                estimated_rows += _coerce_row_count(item.get('remaining_items'))
+            else:
+                estimated_rows += 1
+        return estimated_rows
+    if not isinstance(payload, dict):
+        return 0
+
+    normalized_keys = {_normalize_function_result_key(key): key for key in payload}
+    for count_key in FUNCTION_RESULT_ROW_COUNT_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(count_key))
+        declared_row_count = _coerce_row_count(payload.get(matching_key)) if matching_key else 0
+        if declared_row_count:
+            return declared_row_count
+
+    for row_key in FUNCTION_RESULT_ROW_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(row_key))
+        if matching_key is None:
+            continue
+        estimated_rows = _estimate_payload_row_count(payload.get(matching_key), depth + 1)
+        if estimated_rows:
+            return estimated_rows
+    return 1 if _normalize_function_result_row(payload, is_data_row=False) else 0
+
+
+def _coerce_row_count(value: Any) -> int:
+    try:
+        row_count = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return row_count if row_count > 0 else 0
+
+
+def _normalize_pending_output_format(pending_output_format: Optional[str]) -> Optional[str]:
+    normalized_format = str(pending_output_format or '').strip().lower()
+    return normalized_format if normalized_format in GENERATED_FILE_FORMATS else None
+
+
+def resolve_pending_generated_file_format(
+    user_question: str,
+    previous_assistant_content: str,
+) -> Optional[str]:
+    """Carry one unanswered CSV schema clarification forward to the reply that answers it."""
+    if not str(user_question or '').strip():
+        return None
+    if get_requested_artifact_formats(user_question):
+        return None
+    if not _assistant_reply_requests_clarification(previous_assistant_content):
+        return None
+    return GENERATED_FILE_FORMAT_CSV
+
+
+def _assistant_reply_requests_clarification(assistant_content: str) -> bool:
+    """Return whether the reply is the schema clarification rather than the answer."""
+    normalized_content = _normalize_question_for_artifact_detection(assistant_content)
+    if '?' not in normalized_content or len(normalized_content) > CSV_CLARIFICATION_REPLY_MAX_CHARS:
+        return False
+    return any(pattern.search(normalized_content) for pattern in CSV_CLARIFICATION_REPLY_PATTERNS)
+
+
+def _normalized_row_text_map(row: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        _normalize_function_result_key(column_name): (
+            '' if value is None else str(value).strip()
+        )
+        for column_name, value in row.items()
+    }
+
+
+def _assistant_rows_sample_function_rows(
+    assistant_rows: Sequence[Dict[str, Any]],
+    function_rows: Sequence[Dict[str, Any]],
+) -> bool:
+    """Return whether the assistant table is an excerpt of the same authorized rows."""
+    if not assistant_rows or len(assistant_rows) >= len(function_rows):
+        return False
+
+    assistant_row_maps = []
+    assistant_columns = []
+    seen_columns = set()
+    for assistant_row in assistant_rows:
+        if not isinstance(assistant_row, dict):
+            return False
+        row_map = _normalized_row_text_map(assistant_row)
+        assistant_row_maps.append(row_map)
+        for column_name in row_map:
+            if column_name and column_name not in seen_columns:
+                seen_columns.add(column_name)
+                assistant_columns.append(column_name)
+    if not assistant_columns:
+        return False
+
+    function_projections = set()
+    for function_row in function_rows:
+        if not isinstance(function_row, dict):
+            return False
+        row_map = _normalized_row_text_map(function_row)
+        if not seen_columns.issubset(row_map):
+            return False
+        function_projections.add(tuple(row_map[column_name] for column_name in assistant_columns))
+
+    return all(
+        tuple(row_map.get(column_name, '') for column_name in assistant_columns) in function_projections
+        for row_map in assistant_row_maps
+    )
+
+
+def has_generated_file_output(existing_outputs: Optional[List[Dict[str, Any]]], output_format: str) -> bool:
+    """Return whether an existing generated artifact already covers an output format."""
+    normalized_output_format = str(output_format or '').strip().lower()
+    if not normalized_output_format:
+        return False
+    for output in existing_outputs or []:
+        if not isinstance(output, dict):
+            continue
+        existing_output_format = str(output.get('output_format') or '').strip().lower()
+        existing_file_name = str(output.get('file_name') or '').strip().lower()
+        if existing_output_format == normalized_output_format or existing_file_name.endswith(f'.{normalized_output_format}'):
+            return True
+    return False
+
+
+def build_generated_file_artifact_metadata(
+    export_payload: Dict[str, Any],
+    upload_result: Dict[str, Any],
+    conversation_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Build public artifact metadata after an authorized generated-file upload."""
+    uploaded_message = upload_result.get('message') if isinstance(upload_result, dict) else {}
+    uploaded_message = uploaded_message if isinstance(uploaded_message, dict) else {}
+    artifact_message_id = str(uploaded_message.get('id') or '').strip()
+    if not artifact_message_id:
+        return None
+
+    generated_file_name = str(export_payload.get('file_name') or '').strip()
+    normalized_output_format = str(export_payload.get('output_format') or '').strip().lower()
+    artifact_metadata = {
+        'capability': str(export_payload.get('capability') or 'file_export').strip().lower() or 'file_export',
+        'artifact_message_id': artifact_message_id,
+        'conversation_id': str(conversation_id or '').strip(),
+        'storage_scope': 'chat',
+        'file_name': uploaded_message.get('file_name') or generated_file_name,
+        'output_format': normalized_output_format,
+        'summary': str(export_payload.get('summary') or '').strip(),
+        'suppress_assistant_text': normalized_output_format in ASSISTANT_TEXT_SUPPRESSING_FORMATS,
+    }
+    row_count = export_payload.get('row_count')
+    if isinstance(row_count, int) and row_count > 0:
+        artifact_metadata['row_count'] = row_count
+    preview_rows = export_payload.get('preview_rows')
+    if isinstance(preview_rows, list) and preview_rows:
+        artifact_metadata['preview_rows'] = preview_rows
+        if isinstance(preview_rows[0], dict):
+            artifact_metadata['preview_columns'] = list(preview_rows[0])[:50]
+    preview_lines = export_payload.get('preview_lines')
+    if isinstance(preview_lines, list) and preview_lines:
+        artifact_metadata['preview_lines'] = preview_lines
+    row_source = str(export_payload.get('row_source') or '').strip()
+    if row_source:
+        artifact_metadata['row_source'] = row_source
+    if export_payload.get('rows_truncated'):
+        artifact_metadata['rows_truncated'] = True
+
+    # Surfaced immediately so the participant who asked for the file sees the pending state in
+    # the same response instead of a download button that would be refused.
+    approval_state = str(uploaded_message.get('approval_state') or '').strip()
+    if approval_state:
+        artifact_metadata['approval'] = {
+            'state': approval_state,
+            'is_pending': approval_state == 'pending_approval',
+            'viewer_is_requester': True,
+            'viewer_can_approve': False,
+        }
+    return artifact_metadata
+
+
+def _build_generated_file_payload(
+    output_format: str,
+    file_content: Any,
+    rows: Sequence[Dict[str, Any]],
+    row_source: str,
+    assistant_content: str,
+    title: str = '',
+    passthrough_reason_code: Optional[str] = None,
+    rows_truncated: bool = False,
+) -> Dict[str, Any]:
+    normalized_output_format = str(output_format or '').strip().lower()
+    row_count = len(rows or [])
+    normalized_title = str(title or _build_generated_file_title(normalized_output_format)).strip()
+    payload = {
+        'capability': 'file_export',
+        'file_name': _build_generated_file_name(normalized_output_format),
+        'file_content': file_content,
+        'output_format': normalized_output_format,
+        'row_count': row_count,
+        'preview_rows': list(rows or [])[:GENERATED_FILE_PREVIEW_ROWS],
+        'preview_lines': _build_preview_lines(assistant_content),
+        'row_source': row_source,
+        'rows_truncated': bool(rows_truncated),
+        '_structured_rows': list(rows or []),
+        'summary': _build_generated_file_summary(
+            normalized_output_format,
+            row_count,
+            row_source,
+            normalized_title,
+            bool(rows_truncated),
+        ),
+    }
+    if passthrough_reason_code:
+        payload['passthrough_reason_code'] = str(passthrough_reason_code or '').strip()[:80]
+    return payload
+
+
+def _build_generated_file_name(output_format: str) -> str:
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return f'generated_output_{timestamp_suffix}.{output_format}'
+
+
+def _build_generated_file_title(output_format: str) -> str:
+    return f'Generated {str(output_format or "file").upper()} export'
+
+
+def _build_generated_file_summary(
+    output_format: str,
+    row_count: int,
+    row_source: str,
+    title: str,
+    rows_truncated: bool = False,
+) -> str:
+    row_detail = f' with {row_count} structured row(s)' if row_count else ''
+    summary = f'Prepared {title}{row_detail} from the {row_source}.'
+    if rows_truncated:
+        # The action capped its own response, so the file is a partial view of the matching data.
+        summary = f'{summary} {GENERATED_FILE_TRUNCATED_ROWS_NOTE}'
+    return summary
+
+
+def _build_preview_lines(assistant_content: str) -> List[str]:
+    normalized_lines = [
+        line.strip()
+        for line in str(assistant_content or '').splitlines()
+        if line.strip()
+    ]
+    return normalized_lines[:3]
+
+
+def _parse_function_result_payload(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+
+    normalized_value = value.strip()
+    if not normalized_value or normalized_value[0] not in '[{':
+        return value
+    try:
+        return json.loads(normalized_value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return value
+
+
+def _extract_function_result_rows(
+    payload: Any,
+    depth: int = 0,
+    is_data_row: bool = False,
+) -> List[Dict[str, Any]]:
+    if depth > 4:
+        return []
+    if isinstance(payload, list):
+        rows = []
+        for item in payload:
+            if isinstance(item, dict):
+                normalized_row = _normalize_function_result_row(item, is_data_row=True)
+                if normalized_row:
+                    rows.append(normalized_row)
+            elif item not in (None, ''):
+                rows.append({'value': _sanitize_function_result_value(item)})
+        return rows
+    if not isinstance(payload, dict):
+        return []
+
+    normalized_keys = {
+        _normalize_function_result_key(key): key
+        for key in payload
+    }
+    for row_key in FUNCTION_RESULT_ROW_KEYS:
+        matching_key = normalized_keys.get(_normalize_function_result_key(row_key))
+        if matching_key is None:
+            continue
+        rows = _extract_function_result_rows(
+            payload.get(matching_key),
+            depth + 1,
+            is_data_row=True,
+        )
+        if rows:
+            return rows
+
+    normalized_row = _normalize_function_result_row(payload, is_data_row=is_data_row)
+    return [normalized_row] if normalized_row else []
+
+
+def _normalize_function_result_row(row: Dict[str, Any], is_data_row: bool) -> Dict[str, Any]:
+    normalized_row = {}
+    for raw_key, raw_value in row.items():
+        key = str(raw_key or '').strip()
+        normalized_key = _normalize_function_result_key(key)
+        if not key or _is_sensitive_function_result_key(key):
+            continue
+        if not is_data_row and normalized_key in FUNCTION_RESULT_CONTROL_KEYS:
+            continue
+
+        value = _sanitize_function_result_value(raw_value)
+        if value in (None, '', [], {}) or value == '***REDACTED***':
+            continue
+        normalized_row[key] = value
+    return normalized_row
+
+
+def _sanitize_function_result_value(value: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return '[truncated]'
+    if isinstance(value, dict):
+        return {
+            str(key): _sanitize_function_result_value(item, depth + 1)
+            for key, item in value.items()
+            if not _is_sensitive_function_result_key(key)
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [
+            _sanitize_function_result_value(item, depth + 1)
+            for item in value
+        ]
+    return value
+
+
+def _normalize_function_result_key(key: Any) -> str:
+    return re.sub(r'[^a-z0-9]', '', str(key or '').casefold())
+
+
+def _is_sensitive_function_result_key(key: Any) -> bool:
+    normalized_key = _normalize_function_result_key(key)
+    if not normalized_key:
+        return False
+    return any(fragment in normalized_key for fragment in FUNCTION_RESULT_SENSITIVE_KEY_FRAGMENTS)
+
+
+def _is_tabular_function_result(function_result: Dict[str, Any]) -> bool:
+    plugin_name = str(function_result.get('plugin_name') or '').strip().casefold()
+    return plugin_name in TABULAR_FUNCTION_RESULT_PLUGIN_NAMES
+
+
+def _get_function_result_label(function_result: Dict[str, Any]) -> str:
+    return (
+        str(function_result.get('function_name') or '').strip()
+        or str(function_result.get('plugin_name') or '').strip()
+        or 'function result'
+    )
+
+
+def _get_function_result_source_column(
+    function_row_groups: Sequence[Tuple[str, Sequence[Dict[str, Any]]]],
+) -> str:
+    existing_columns = {
+        str(column_name).casefold()
+        for _, rows in function_row_groups
+        for row in rows
+        for column_name in row
+    }
+    source_column = 'Source action'
+    suffix = 2
+    while source_column.casefold() in existing_columns:
+        source_column = f'Source action {suffix}'
+        suffix += 1
+    return source_column
+
+
+def _render_docx_file_export(
+    title: str,
+    assistant_content: str,
+    rows: Sequence[Dict[str, Any]],
+    row_source: str,
+) -> bytes:
+    from docx import Document as DocxDocument
+
+    document = DocxDocument()
+    document.add_heading(title, level=1)
+    _append_docx_text(document, assistant_content)
+    if rows:
+        document.add_heading(_build_structured_rows_heading(row_source), level=2)
+        _append_docx_table(document, rows)
+
+    output_buffer = io.BytesIO()
+    document.save(output_buffer)
+    return output_buffer.getvalue()
+
+
+def _append_docx_text(document: Any, assistant_content: str) -> None:
+    normalized_content = str(assistant_content or '').strip()
+    if not normalized_content:
+        return
+    for paragraph_text in re.split(r'\n\s*\n', normalized_content):
+        cleaned_paragraph = paragraph_text.strip()
+        if cleaned_paragraph:
+            document.add_paragraph(cleaned_paragraph)
+
+
+def _append_docx_table(document: Any, rows: Sequence[Dict[str, Any]]) -> None:
+    columns = _collect_structured_row_columns(rows)
+    if not columns:
+        return
+    table = document.add_table(rows=1, cols=len(columns))
+    table.style = 'Table Grid'
+    for index, column_name in enumerate(columns):
+        table.rows[0].cells[index].text = str(column_name)
+    for row in rows:
+        cells = table.add_row().cells
+        for index, column_name in enumerate(columns):
+            cells[index].text = _format_structured_cell(row.get(column_name))
+
+
+def _render_pdf_file_export(
+    title: str,
+    assistant_content: str,
+    rows: Sequence[Dict[str, Any]],
+    row_source: str,
+) -> bytes:
+    import fitz
+
+    html_parts = [f'<h1>{html.escape(title)}</h1>']
+    normalized_content = str(assistant_content or '').strip()
+    if normalized_content:
+        html_parts.append('<h2>Response</h2>')
+        for paragraph_text in re.split(r'\n\s*\n', normalized_content):
+            cleaned_paragraph = paragraph_text.strip()
+            if cleaned_paragraph:
+                html_parts.append(f'<p>{html.escape(cleaned_paragraph).replace(chr(10), "<br/>")}</p>')
+    if rows:
+        html_parts.append(f'<h2>{html.escape(_build_structured_rows_heading(row_source))}</h2>')
+        html_parts.append(_build_structured_rows_html(rows))
+
+    media_box = fitz.paper_rect('letter')
+    content_box = media_box + (36, 36, -36, -36)
+    story = fitz.Story(html='\n'.join(html_parts), user_css=PDF_EXPORT_CSS)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temporary_file:
+            temporary_path = temporary_file.name
+
+        writer = fitz.DocumentWriter(temporary_path)
+        has_more = True
+        while has_more:
+            device = writer.begin_page(media_box)
+            has_more, _ = story.place(content_box)
+            story.draw(device)
+            writer.end_page()
+        writer.close()
+        with open(temporary_path, 'rb') as generated_file:
+            return generated_file.read()
+    finally:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+
+
+def _build_structured_rows_html(rows: Sequence[Dict[str, Any]]) -> str:
+    columns = _collect_structured_row_columns(rows)
+    if not columns:
+        return '<p><i>No structured rows were available.</i></p>'
+    table_parts = ['<table><tr>']
+    table_parts.extend(f'<th>{html.escape(str(column_name))}</th>' for column_name in columns)
+    table_parts.append('</tr>')
+    for row in rows:
+        table_parts.append('<tr>')
+        for column_name in columns:
+            table_parts.append(f'<td>{html.escape(_format_structured_cell(row.get(column_name))).replace(chr(10), "<br/>")}</td>')
+        table_parts.append('</tr>')
+    table_parts.append('</table>')
+    return ''.join(table_parts)
+
+
+def _collect_structured_row_columns(rows: Sequence[Dict[str, Any]]) -> List[str]:
+    columns = []
+    seen_columns = set()
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for raw_column_name in row:
+            column_name = str(raw_column_name or '').strip()
+            if not column_name or column_name.casefold() in seen_columns:
+                continue
+            seen_columns.add(column_name.casefold())
+            columns.append(column_name)
+    return columns
+
+
+def _format_structured_cell(value: Any) -> str:
+    if value is None:
+        return ''
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, default=str, ensure_ascii=False)
+    return str(value)
+
+
+def _build_structured_rows_heading(row_source: str) -> str:
+    if row_source in FUNCTION_RESULT_ROW_SOURCES:
+        return 'Structured function results'
+    return 'Structured response rows'
+
+
+def normalize_generated_output_format(output_format, default='json'):
+    """Normalize generated artifact output formats supported by the export framework."""
+    normalized_format = str(output_format or '').strip().lower().lstrip('.')
+    if normalized_format in SUPPORTED_GENERATED_EXPORT_FORMATS:
+        return normalized_format
+
+    normalized_default = str(default or 'json').strip().lower().lstrip('.')
+    if normalized_default in SUPPORTED_GENERATED_EXPORT_FORMATS:
+        return normalized_default
+    return 'json'
+
+
+def strip_markdown_code_fence(text):
+    """Remove a single surrounding Markdown code fence while preserving content."""
+    normalized_text = str(text or '').strip()
+    if not normalized_text.startswith('```'):
+        return normalized_text
+
+    header_end_index = normalized_text.find('\n')
+    if header_end_index <= 0:
+        return normalized_text
+
+    header_suffix = normalized_text[3:header_end_index].strip()
+    if header_suffix and not all(character.isalnum() or character in {'_', '-'} for character in header_suffix):
+        return normalized_text
+
+    closing_index = normalized_text.rfind('```')
+    if closing_index <= header_end_index:
+        return normalized_text
+
+    trailing_text = normalized_text[closing_index + 3:].strip()
+    if trailing_text:
+        return normalized_text
+
+    return normalized_text[header_end_index + 1:closing_index].strip()
+
+
+def _iter_xml_candidates(text) -> Iterable[str]:
+    normalized_text = strip_markdown_code_fence(text)
+    if not normalized_text:
+        return
+
+    yield normalized_text
+
+    first_xml_index = normalized_text.find('<?xml')
+    if first_xml_index > 0:
+        yield normalized_text[first_xml_index:].strip()
+
+    first_tag_index = normalized_text.find('<')
+    if first_tag_index > 0:
+        yield normalized_text[first_tag_index:].strip()
+
+    for root_match in XML_ROOT_PATTERN.finditer(normalized_text):
+        root_tag = root_match.group('tag')
+        root_start = root_match.start()
+        root_open = root_match.group(0)
+        if root_open.rstrip().endswith('/>'):
+            yield normalized_text[root_start:root_match.end()].strip()
+            continue
+
+        closing_tag = f'</{root_tag}>'
+        root_end = normalized_text.rfind(closing_tag)
+        if root_end <= root_start:
+            continue
+
+        yield normalized_text[root_start:root_end + len(closing_tag)].strip()
+
+
+def normalize_xml_artifact_payload(text):
+    """Return a complete XML document extracted from model output, or an empty string."""
+    seen_candidates = set()
+    for candidate in _iter_xml_candidates(text):
+        if candidate in seen_candidates:
+            continue
+        seen_candidates.add(candidate)
+        try:
+            DefusedElementTree.fromstring(candidate.encode('utf-8'))
+        except (DefusedXmlException, ElementTree.ParseError):
+            continue
+        return candidate
+    return ''
+
+
+def normalize_json_artifact_payload(text):
+    """Return parsed JSON extracted from model output, or None when no JSON is present."""
+    normalized_text = strip_markdown_code_fence(text)
+    if not normalized_text:
+        return None
+
+    decoder = json.JSONDecoder()
+    try:
+        parsed_value, _ = decoder.raw_decode(normalized_text)
+        return parsed_value
+    except (TypeError, ValueError, json.JSONDecodeError):
+        pass
+
+    for start_index, character in enumerate(normalized_text):
+        if character not in '[{':
+            continue
+        try:
+            parsed_value, _ = decoder.raw_decode(normalized_text[start_index:])
+            return parsed_value
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+
+    return None
+
+
+def _sanitize_xml_tag_name(value, fallback_value):
+    normalized_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value or '').strip())
+    normalized_name = normalized_name.strip('._-')
+    if not normalized_name:
+        normalized_name = fallback_value
+    if not re.match(r'^[A-Za-z_]', normalized_name):
+        normalized_name = f'{fallback_value}_{normalized_name}'
+    return normalized_name
+
+
+def _append_xml_value(parent, value, item_name):
+    if isinstance(value, dict):
+        for key, child_value in value.items():
+            child = ElementTree.SubElement(
+                parent,
+                _sanitize_xml_tag_name(key, 'Field'),
+            )
+            _append_xml_value(child, child_value, item_name)
+        return
+
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            child = ElementTree.SubElement(
+                parent,
+                _sanitize_xml_tag_name(item_name, 'Item'),
+            )
+            _append_xml_value(child, item, item_name)
+        return
+
+    if value is None:
+        parent.text = ''
+        return
+
+    if isinstance(value, bool):
+        parent.text = 'true' if value else 'false'
+        return
+
+    parent.text = str(value)
+
+
+def build_xml_from_value(value: Any, root_name='GeneratedOutput', item_name='Item'):
+    """Serialize a Python value into a deterministic XML document."""
+    root = ElementTree.Element(_sanitize_xml_tag_name(root_name, 'GeneratedOutput'))
+    _append_xml_value(root, value, item_name)
+    ElementTree.indent(root, space='  ')
+    xml_body = ElementTree.tostring(root, encoding='unicode', short_empty_elements=True)
+    return f'{XML_DECLARATION}\n{xml_body}'
+
+
+def serialize_generated_xml(value: Any, root_name='GeneratedOutput', item_name='Item'):
+    """Serialize generated content to XML, preserving valid XML model output when present."""
+    if isinstance(value, str):
+        xml_payload = normalize_xml_artifact_payload(value)
+        if xml_payload:
+            return xml_payload
+
+    return build_xml_from_value(value, root_name=root_name, item_name=item_name)
+
+
+def serialize_generated_json(value: Any, *, indent=2):
+    """Serialize generated content to JSON using the export framework defaults."""
+    return json.dumps(value, indent=indent, ensure_ascii=False, default=str)

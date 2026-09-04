@@ -88,6 +88,9 @@ def test_user_ui_settings_cache_contract():
     assert '"sidebarMenuState"' in settings_content, (
         "Expected sidebar menu state to be included in lightweight UI settings"
     )
+    assert '"fontSizePreference"' in settings_content, (
+        "Expected font size preference to be included in lightweight UI settings"
+    )
 
     print("PASS: user UI settings cache contract verified")
 

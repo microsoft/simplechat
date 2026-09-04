@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for API key manual model entry in endpoint modal.
-Version: 0.239.155
-Implemented in: 0.239.155
+Version: 0.250.109
+Implemented in: 0.239.155; updated in 0.250.109
 
 This test ensures the API key flow exposes manual model entry UI,
-per-model test buttons, and management cloud fields for service principal.
+per-model test buttons, management cloud fields for service principal, and
+per-model response length inputs for admin-managed output-token ceilings.
 """
 
 import os
@@ -32,11 +33,15 @@ def test_model_endpoints_api_key_manual_models():
     assert 'id="model-endpoint-add-model-btn"' in template_content, "Missing Add Model button for API key flow."
     assert 'id="model-endpoint-management-cloud"' in template_content, "Missing management cloud selector."
     assert 'id="model-endpoint-custom-authority"' in template_content, "Missing custom authority input."
+    assert 'optional response length' in template_content, "Missing response length guidance."
 
     assert 'addManualModel' in js_content, "Missing manual model add handler."
     assert 'test-model' in js_content, "Missing per-model test action wiring."
     assert 'management_cloud' in js_content, "Missing management cloud payload wiring."
     assert 'const endpointId = endpointIdInput?.value.trim() || "";' in js_content, "Missing endpoint ID request wiring."
+    assert 'dataset.responseLengthFor' in js_content, "Missing response length input data binding."
+    assert 'model.responseLength = responseLength' in js_content, "Missing response length serialization."
+    assert 'Response length must be a positive whole number.' in js_content, "Missing response length validation message."
 
     assert '/api/models/test-model' in backend_content, "Missing backend test-model endpoint."
     assert 'resolve_request_endpoint_payload' in backend_content, "Missing stored-secret request resolution helper."

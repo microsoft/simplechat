@@ -6,7 +6,13 @@ import jwt
 import requests
 
 from config import *
+from config import DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT
 from functions_activity_logging import log_user_login, record_user_login_session_activity
+from functions_terms_of_use import (
+    apply_pending_pre_auth_terms_of_use,
+    get_terms_of_use_config,
+    has_terms_of_use_acceptance,
+)
 from functions_appinsights import log_event
 from functions_authentication import _build_msal_app, _load_cache, _save_cache, clear_requested_oauth_scopes, create_ci_bearer_session, get_graph_authority, get_graph_endpoint, get_requested_oauth_scopes
 from functions_debug import debug_print
@@ -37,23 +43,42 @@ def build_front_door_urls(front_door_url):
 
 
 def _use_app_service_easy_auth_logout():
-    """Return True when the current request is running behind App Service Easy Auth."""
+    """
+    Determine whether logout should route through the App Service Easy Auth endpoint.
+
+    Args:
+        None.
+
+    Returns:
+        bool: True when the current request is being served behind App Service Easy Auth.
+    Raises:
+        None.
+    """
+    if DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT:
+        debug_print("Easy Auth logout disabled by DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT; using local logout.")
+        return False
+
     if not os.getenv('WEBSITE_HOSTNAME'):
         return False
 
+    # Easy Auth injects these headers only on requests it actually intercepts, so they are
+    # the reliable per-request signal that /.auth/logout is being served for this host.
     easy_auth_headers = (
         request.headers.get('X-MS-CLIENT-PRINCIPAL'),
         request.headers.get('X-MS-CLIENT-PRINCIPAL-ID'),
         request.headers.get('X-MS-CLIENT-PRINCIPAL-NAME'),
     )
-    return any(easy_auth_headers) or bool(os.getenv('WEBSITE_AUTH_AAD_ALLOWED_TENANTS'))
+    if not any(easy_auth_headers):
+        debug_print("No App Service Easy Auth principal headers on this request; using local logout.")
+        return False
+
+    return True
 
 
 def _build_app_service_easy_auth_logout_url():
     """Build the Easy Auth logout URL that resets the upstream session before re-entering Flask login."""
-    post_logout_redirect_uri = quote(url_for('login'), safe='')
+    post_logout_redirect_uri = quote(url_for('frontend_authentication.login'), safe='')
     return f"/.auth/logout?post_logout_redirect_uri={post_logout_redirect_uri}"
-
 
 def _decode_teams_assertion_claims(teams_token):
     """Decode claims from a Teams assertion after MSAL has accepted it for OBO."""
@@ -69,7 +94,7 @@ def _decode_teams_assertion_claims(teams_token):
         return claims if isinstance(claims, dict) else {}
     except Exception as e:
         log_event(
-            f"[TeamsSSO] Unable to decode Teams assertion claims: {e}",
+            f"[TEAMS_SSO] Unable to decode Teams assertion claims: {e}",
             level=logging.WARNING,
             debug_only=True,
         )
@@ -89,7 +114,7 @@ def _fetch_graph_me(access_token):
         )
         if response.status_code != 200:
             log_event(
-                "[TeamsSSO] Microsoft Graph /me lookup failed during Teams token exchange.",
+                "[TEAMS_SSO] Microsoft Graph /me lookup failed during Teams token exchange.",
                 extra={'status_code': response.status_code},
                 level=logging.WARNING,
             )
@@ -98,7 +123,7 @@ def _fetch_graph_me(access_token):
         return payload if isinstance(payload, dict) else {}
     except Exception as e:
         log_event(
-            f"[TeamsSSO] Microsoft Graph /me lookup raised during Teams token exchange: {e}",
+            f"[TEAMS_SSO] Microsoft Graph /me lookup raised during Teams token exchange: {e}",
             level=logging.WARNING,
             debug_only=True,
         )
@@ -137,8 +162,8 @@ def _build_teams_session_user(result, teams_token):
     return {key: value for key, value in session_user.items() if value}
 
 
-def register_route_frontend_authentication(app):
-    @app.route('/login')
+def register_route_frontend_authentication(bp):
+    @bp.route('/login')
     @swagger_route(security=get_auth_security())
     def login():
         # Clear potentially stale cache/user info before starting new login
@@ -166,7 +191,11 @@ def register_route_frontend_authentication(app):
         
         # Get settings from database, with environment variable fallback
         settings = get_settings() or {}
-        
+
+        terms_config = get_terms_of_use_config(settings)
+        if terms_config["enabled"] and not has_terms_of_use_acceptance(settings):
+            return redirect(url_for('frontend_terms_of_use.terms_of_use'))
+
         # Only use Front Door redirect URL if Front Door is enabled
         if settings.get('enable_front_door', False):
             front_door_url = settings.get('front_door_url')
@@ -175,9 +204,9 @@ def register_route_frontend_authentication(app):
                 redirect_uri = login_redirect_url
             else:
                 # Fall back to environment variable if Front Door is enabled but no URL is set
-                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+                redirect_uri = LOGIN_REDIRECT_URL or url_for('frontend_authentication.authorized', _external=True, _scheme='https')
         else:
-            redirect_uri = url_for('authorized', _external=True, _scheme='https')
+            redirect_uri = url_for('frontend_authentication.authorized', _external=True, _scheme='https')
         
         debug_print(f"LOGIN_REDIRECT_URL (env): {LOGIN_REDIRECT_URL}")
         debug_print(f"front_door_url (db): {settings.get('front_door_url')}")
@@ -192,12 +221,12 @@ def register_route_frontend_authentication(app):
         #auth_url= auth_url.replace('https://', 'http://')  # Ensure HTTPS for security
         return redirect(auth_url)
 
-    @app.route('/ci-auth/session', methods=['POST'])
+    @bp.route('/ci-auth/session', methods=['POST'])
     @swagger_route(security=get_auth_security())
     def ci_auth_session():
         return create_ci_bearer_session()
 
-    @app.route('/getAToken') # This is your redirect URI path
+    @bp.route('/getAToken') # This is your redirect URI path
     @swagger_route(security=get_auth_security())
     def authorized():
         # Check for errors passed back from Azure AD
@@ -209,8 +238,13 @@ def register_route_frontend_authentication(app):
 
         code = request.args.get('code')
         if not code:
-            print("Authorization code not found in callback.")
-            return "Authorization code not found", 400
+            log_event(
+                "[AUTH_CALLBACK] OAuth callback reached without an authorization code; redirecting to sign-in.",
+                extra={'path': request.path},
+                level=logging.INFO,
+                debug_only=True,
+            )
+            return redirect(url_for('public_app.index'))
 
         # Build MSAL app WITH session cache (will be loaded by _build_msal_app via _load_cache)
         msal_app = _build_msal_app(cache=_load_cache()) # Load existing cache
@@ -226,9 +260,9 @@ def register_route_frontend_authentication(app):
                 redirect_uri = login_redirect_url
             else:
                 # Fall back to environment variable if Front Door is enabled but no URL is set
-                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+                redirect_uri = LOGIN_REDIRECT_URL or url_for('frontend_authentication.authorized', _external=True, _scheme='https')
         else:
-            redirect_uri = url_for('authorized', _external=True, _scheme='https')
+            redirect_uri = url_for('frontend_authentication.authorized', _external=True, _scheme='https')
         
         print(f"Token exchange using redirect_uri: {redirect_uri}")
 
@@ -246,8 +280,8 @@ def register_route_frontend_authentication(app):
 
         # --- Store results ---
         # Store user identity info (claims from ID token)
-        debug_print(f" [claims] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
-        debug_print(f" [claims] User claims: {result.get('id_token_claims', {})}")
+        debug_print(f" [CLAIMS] User {result.get('id_token_claims', {}).get('name', 'Unknown')} logged in.")
+        debug_print(f" [CLAIMS] User claims: {result.get('id_token_claims', {})}")
 
         session["user"] = result.get("id_token_claims")
         session["last_activity_epoch"] = int(time.time())
@@ -265,6 +299,22 @@ def register_route_frontend_authentication(app):
                 record_user_login_session_activity(session)
         except Exception as e:
             debug_print(f"Could not log login activity: {e}")
+
+        try:
+            user_id = session['user'].get('oid') or session['user'].get('sub')
+            if user_id:
+                apply_pending_pre_auth_terms_of_use(
+                    user_id=user_id,
+                    settings=settings,
+                    source="azure_ad_pre_auth",
+                )
+        except Exception as e:
+            log_event(
+                "[TERMS_OF_USE] Failed to apply pending Azure AD pre-auth acceptance.",
+                extra={'error': str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
         
         # Redirect to the originally intended page or home
         # You might want to store the original destination in the session during /login
@@ -287,11 +337,11 @@ def register_route_frontend_authentication(app):
                 print(f"Redirecting to environment HOME_REDIRECT_URL: {HOME_REDIRECT_URL}")
                 return redirect(HOME_REDIRECT_URL)
         
-        debug_print(f"Front Door not enabled or URLs not set, falling back to url_for('index')")
-        return redirect(url_for('index')) # Or another appropriate page
+        debug_print(f"Front Door not enabled or URLs not set, falling back to url_for('public_app.index')")
+        return redirect(url_for('public_app.index')) # Or another appropriate page
 
     # This route is for API calls that need a token, not the web app login flow. This does not kick off a session.
-    @app.route('/getATokenApi') # This is your redirect URI path
+    @bp.route('/getATokenApi') # This is your redirect URI path
     @swagger_route(security=get_auth_security())
     def authorized_api():
         # Check for errors passed back from Azure AD
@@ -318,9 +368,9 @@ def register_route_frontend_authentication(app):
                 home_url, login_redirect_url = build_front_door_urls(front_door_url)
                 redirect_uri = login_redirect_url
             else:
-                redirect_uri = LOGIN_REDIRECT_URL or url_for('authorized', _external=True, _scheme='https')
+                redirect_uri = LOGIN_REDIRECT_URL or url_for('frontend_authentication.authorized', _external=True, _scheme='https')
         else:
-            redirect_uri = url_for('authorized', _external=True, _scheme='https')
+            redirect_uri = url_for('frontend_authentication.authorized', _external=True, _scheme='https')
 
         requested_scopes = get_requested_oauth_scopes(clear_after_read=True)
         result = msal_app.acquire_token_by_authorization_code(
@@ -336,7 +386,7 @@ def register_route_frontend_authentication(app):
 
         return jsonify(result, 200)
 
-    @app.route('/auth/teams/token-exchange', methods=['POST'])
+    @bp.route('/auth/teams/token-exchange', methods=['POST'])
     @swagger_route(security=get_auth_security())
     def teams_token_exchange():
         """Exchange a Teams SSO assertion for a SimpleChat Flask session."""
@@ -365,7 +415,7 @@ def register_route_frontend_authentication(app):
             )
         except Exception as e:
             log_event(
-                f"[TeamsSSO] Teams token exchange raised during OBO flow: {e}",
+                f"[TEAMS_SSO] Teams token exchange raised during OBO flow: {e}",
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
@@ -376,7 +426,7 @@ def register_route_frontend_authentication(app):
 
         if "error" in result:
             log_event(
-                "[TeamsSSO] Teams token exchange failed during OBO flow.",
+                "[TEAMS_SSO] Teams token exchange failed during OBO flow.",
                 extra={
                     'msal_error': result.get('error'),
                     'correlation_id': result.get('correlation_id'),
@@ -391,7 +441,7 @@ def register_route_frontend_authentication(app):
         session_user = _build_teams_session_user(result, teams_token)
         if not session_user.get('oid') or not session_user.get('tid'):
             log_event(
-                "[TeamsSSO] Teams token exchange succeeded but user identity was incomplete.",
+                "[TEAMS_SSO] Teams token exchange succeeded but user identity was incomplete.",
                 extra={
                     'has_oid': bool(session_user.get('oid')),
                     'has_tid': bool(session_user.get('tid')),
@@ -410,7 +460,7 @@ def register_route_frontend_authentication(app):
 
         user_name = session_user.get('name', 'Unknown User')
         log_event(
-            "[TeamsSSO] Teams SSO user authenticated successfully.",
+            "[TEAMS_SSO] Teams SSO user authenticated successfully.",
             extra={'user_id': session_user.get('oid')},
             level=logging.INFO,
         )
@@ -419,7 +469,21 @@ def register_route_frontend_authentication(app):
             log_user_login(session_user.get('oid'), 'teams_sso')
             record_user_login_session_activity(session)
         except Exception as e:
-            debug_print(f"[TeamsSSO] Could not log Teams login activity: {e}")
+            debug_print(f"[TEAMS_SSO] Could not log Teams login activity: {e}")
+
+        try:
+            apply_pending_pre_auth_terms_of_use(
+                user_id=session_user.get('oid'),
+                settings=get_settings() or {},
+                source="teams_sso_pre_auth",
+            )
+        except Exception as e:
+            log_event(
+                "[TERMS_OF_USE] Failed to apply pending Teams pre-auth acceptance.",
+                extra={'error': str(e)},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
 
         return jsonify({
             "success": True,
@@ -430,7 +494,7 @@ def register_route_frontend_authentication(app):
             },
         }), 200
 
-    @app.route('/logout/local')
+    @bp.route('/logout/local')
     @swagger_route(security=get_auth_security())
     def local_logout():
         """
@@ -461,13 +525,13 @@ def register_route_frontend_authentication(app):
             elif HOME_REDIRECT_URL:
                 logout_uri = HOME_REDIRECT_URL
             else:
-                logout_uri = url_for('index')
+                logout_uri = url_for('public_app.index')
         else:
-            logout_uri = url_for('index')
+            logout_uri = url_for('public_app.index')
 
         return redirect(logout_uri)
 
-    @app.route('/logout')
+    @bp.route('/logout')
     @swagger_route(security=get_auth_security())
     def logout():
         user_name = session.get("user", {}).get("name", "User")
@@ -496,9 +560,9 @@ def register_route_frontend_authentication(app):
                 # Fall back to environment variable if Front Door is enabled but no URL is set
                 logout_uri = HOME_REDIRECT_URL
             else:
-                logout_uri = url_for('index', _external=True)
+                logout_uri = url_for('public_app.index', _external=True)
         else:
-            logout_uri = url_for('index', _external=True)
+            logout_uri = url_for('public_app.index', _external=True)
         
         debug_print(f"Front Door enabled: {settings.get('enable_front_door', False)}")
         debug_print(f"Front Door URL: {settings.get('front_door_url')}")

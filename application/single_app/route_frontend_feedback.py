@@ -5,9 +5,9 @@ from functions_authentication import *
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
 
-def register_route_frontend_feedback(app):
+def register_route_frontend_feedback(bp):
 
-    @app.route("/admin/feedback_review")
+    @bp.route("/admin/feedback_review")
     @swagger_route(security=get_auth_security())
     @login_required
     @feedback_admin_required
@@ -19,7 +19,7 @@ def register_route_frontend_feedback(app):
         
         return render_template("admin_feedback_review.html")
     
-    @app.route("/my_feedback")
+    @bp.route("/my_feedback")
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -29,4 +29,4 @@ def register_route_frontend_feedback(app):
         Redirects the user to the consolidated profile feedback tab.
         """
 
-        return redirect(url_for('profile', tab='feedback'))
+        return redirect(url_for('frontend_profile.profile', tab='feedback'))

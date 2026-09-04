@@ -3,26 +3,20 @@
 Azure Billing Plugin for Semantic Kernel
 - Supports user (Entra ID) and service principal authentication
 - Uses Azure Cost Management REST API for billing, budgets, alerts, forecasting
-- Renders graphs server-side as PNG (base64 for web, downloadable)
+- Renders dynamic SimpleChat inline charts for Cost Management data
 - Returns tabular data as CSV for minimal token usage
 - Requires user_impersonation for user auth on 40a69793-8fe6-4db1-9591-dbc5c57b17d8 (Azure Service Management)
 """
 
 import io
-import base64
 import requests
 import csv
-import matplotlib.pyplot as plt
 import logging
 import time
-import random
 import re
-import numpy as np
 import datetime
-import textwrap
 from typing import Dict, Any, List, Optional, Union
 import json
-from collections import defaultdict
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
@@ -30,7 +24,7 @@ from functions_authentication import get_valid_access_token_for_plugins
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from azure.core.credentials import AccessToken, TokenCredential
-from config import cosmos_messages_container, cosmos_conversations_container
+from semantic_kernel_plugins.chart_plugin import ChartPlugin
 
 
 RESOURCE_ID_REGEX = r"^/subscriptions/(?P<subscriptionId>[a-fA-F0-9-]+)/?(?:resourceGroups/(?P<resourceGroupName>[^/]+))?$"
@@ -42,6 +36,13 @@ AGGREGATION_FUNCTIONS = ["Sum"] #, "Average", "Min", "Max", "Count", "None"]
 AGGREGATION_COLUMNS= ["Cost", "CostUSD", "PreTaxCost", "PreTaxCostUSD"]
 DEFAULT_GROUPING_DIMENSIONS = ["None", "BillingPeriod", "ChargeType", "Frequency", "MeterCategory", "MeterId", "MeterSubCategory", "Product", "ResourceGroupName", "ResourceLocation", "ResourceType", "ServiceFamily", "ServiceName", "SubscriptionId", "SubscriptionName", "Tag"]
 SUPPORTED_GRAPH_TYPES = ["pie", "column_stacked", "column_grouped", "line", "area"]
+GRAPH_TYPE_TO_INLINE_CHART_KIND = {
+    "pie": "pie",
+    "column_stacked": "stacked_bar",
+    "column_grouped": "bar",
+    "line": "line",
+    "area": "area",
+}
 AZURE_BILLING_AUTH_FAILURE_MESSAGE = (
     "Azure Billing service principal authentication failed. "
     "Check Application Insights for [AzureBilling] details."
@@ -200,23 +201,6 @@ class AzureBillingPlugin(BasePlugin):
             else:
                 items[new_key] = v
         return items
-
-    def _fig_to_base64_dict(self, fig, filename: str = "chart.png") -> Dict[str, str]:
-        """Convert a matplotlib Figure to a structured base64 dict.
-
-        Returns: {"mime": "image/png", "filename": filename, "base64": <b64str>, "image_url": "data:image/png;base64,<b64>"}
-        """
-        buf = io.BytesIO()
-        fig.savefig(buf, format='png', bbox_inches='tight')
-        fig.clf()
-        buf.seek(0)
-        img_b64 = base64.b64encode(buf.read()).decode('utf-8')
-        return {
-            "mime": "image/png",
-            "filename": filename,
-            "base64": img_b64,
-            "image_url": f"data:image/png;base64,{img_b64}"
-        }
 
     def _parse_csv_to_rows(self, data_csv: Union[str, List[str]]) -> List[Dict[str, Any]]:
         """Parse CSV content (string or list-of-lines) into list[dict].
@@ -512,7 +496,7 @@ class AzureBillingPlugin(BasePlugin):
         return {
             "name": self.metadata_dict.get("name", "azure_billing_plugin"),
             "type": "azure_billing",
-            "description": "Azure Billing plugin for cost, budgets, alerts, forecasting, CSV export, and PNG graphing.",
+            "description": "Azure Billing plugin for cost, budgets, alerts, forecasting, CSV export, and dynamic inline charting.",
             "methods": self._collect_kernel_methods_for_metadata()
         }
 
@@ -535,7 +519,7 @@ class AzureBillingPlugin(BasePlugin):
         hints = self._build_plot_hints(rows, columns)
         return hints
 
-    @kernel_function(description="Plot a chart/graph from provided data. Supports pie, column_stacked, column_grouped, line, and area.",)
+    @kernel_function(description="Build a dynamic SimpleChat chart from provided data. Supports pie, column_stacked, column_grouped, line, and area.",)
     @plugin_function_logger("AzureBillingPlugin")
     def plot_chart(self,
                     conversation_id: str,
@@ -561,281 +545,137 @@ class AzureBillingPlugin(BasePlugin):
                     figsize=figsize
         )
 
-    def _estimate_legend_items(
-        self,
-        graph_type: str,
-        rows: List[Dict[str, Any]],
-        y_keys_list: List[str],
-        stack_col: Optional[str],
-    ) -> int:
-        """Return the number of legend entries expected for a plot."""
-        if graph_type == "pie":
-            return len(rows)
-        if graph_type == "column_stacked":
-            if stack_col:
-                return len({r.get(stack_col) for r in rows if r.get(stack_col) is not None})
-            return len(y_keys_list)
-        return len(y_keys_list)
+    def _coerce_number_for_chart(self, value: Any, field_name: str) -> float:
+        """Normalize chart numeric values while keeping validation errors explicit."""
 
-    def _adjust_figsize(self, base_figsize: List[float], legend_items: int) -> List[float]:
-        """Scale the figsize heuristically based on legend size."""
-        scaled = list(base_figsize)
-        if legend_items > 6:
-            extra_width = min(legend_items * 0.12, 5.0)
-            scaled[0] = base_figsize[0] + extra_width
-        elif legend_items > 3:
-            scaled[1] = base_figsize[1] + 0.8
-        if legend_items > 10:
-            scaled[1] = max(scaled[1], base_figsize[1] + min((legend_items - 10) * 0.2, 3.0))
-        return scaled
+        if value in (None, ""):
+            return 0.0
+        if isinstance(value, bool):
+            raise ValueError(f"{field_name} must be numeric.")
+        if isinstance(value, (int, float)):
+            return float(value)
 
-    def _wrap_title(self, title: str, width: int = 60) -> str:
-        """Return a wrapped title so long strings stay inside the figure."""
-
-        if not title:
-            return ""
         try:
-            return textwrap.fill(title, width=max(20, width))
-        except Exception:
-            return title
+            return float(str(value).strip().replace(",", ""))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field_name} must be numeric.") from exc
 
-    def _pie_autopct_formatter(self, values: List[float]):
-        """Return an autopct formatter that prints absolute value and percentage for top slices only."""
-
-        total = sum(values) or 1.0
-        # Show labels for the most meaningful slices to avoid visual clutter.
-        sorted_indices = sorted(range(len(values)), key=lambda i: values[i], reverse=True)
-        max_labels = 8 if len(values) >= 15 else 12
-        pct_threshold = 2.0 if len(values) >= 12 else 0.5
-        show_indices = set()
-        for idx in sorted_indices[:max_labels]:
-            pct = (values[idx] / total) * 100
-            if pct >= pct_threshold:
-                show_indices.add(idx)
-
-        call_count = {"idx": -1}
-
-        def _format(pct: float) -> str:
-            call_count["idx"] += 1
-            idx = call_count["idx"]
-            if idx not in show_indices:
-                return ""
-            value = values[idx]
-            value_str = f"{value:,.0f}" if abs(value) >= 1000 else f"{value:,.2f}"
-            return f"{value_str}\n({pct:.1f}%)"
-
-        return _format
-
-    def _annotate_column_totals(self, ax, positions: List[float], totals: List[float]) -> None:
-        """Annotate summed column totals above each bar cluster and extend axes if needed."""
-
-        if not totals or not positions:
-            return
-        safe_totals: List[float] = []
-        for value in totals:
-            try:
-                safe_totals.append(float(value))
-            except (TypeError, ValueError):
-                safe_totals.append(0.0)
-        if not safe_totals:
-            return
-        abs_max = max(max(safe_totals), abs(min(safe_totals)), 1.0)
-        offset = max(abs_max * 0.02, 0.5)
-        headroom = max(abs_max * 0.05, offset)
-        label_positions: List[float] = []
-        for x, total in zip(positions, safe_totals):
-            y = total + offset if total >= 0 else total - offset
-            label_positions.append(y)
-            va = 'bottom' if total >= 0 else 'top'
-            ax.text(
-                x,
-                y,
-                f"{total:,.2f}",
-                ha='center',
-                va=va,
-                fontsize=8,
-                fontweight='bold'
-            )
-
-        if label_positions:
-            current_bottom, current_top = ax.get_ylim()
-            max_label = max(label_positions)
-            min_label = min(label_positions)
-            pad = headroom
-            top_needed = max_label + pad
-            bottom_needed = min_label - pad
-            new_bottom = current_bottom
-            new_top = current_top
-            if top_needed > current_top:
-                new_top = top_needed
-            if bottom_needed < current_bottom:
-                new_bottom = bottom_needed
-            if new_bottom != current_bottom or new_top != current_top:
-                ax.set_ylim(new_bottom, new_top)
-
-    def _place_side_legend(
+    def _aggregate_rows_for_series_chart(
         self,
-        ax,
-        handles: Optional[List[Any]] = None,
-        labels: Optional[List[Any]] = None,
-        title: Optional[str] = None,
-        ncol: int = 1,
-    ) -> bool:
-        """Place legend to the right of the axes and reserve horizontal space."""
-        if handles is not None or labels is not None:
-            legend = ax.legend(
-                handles,
-                labels,
-                title=title,
-                loc="center left",
-                bbox_to_anchor=(1.02, 0.5),
-                borderaxespad=0.0,
-                ncol=ncol,
-            )
-        else:
-            legend = ax.legend(
-                title=title,
-                loc="center left",
-                bbox_to_anchor=(1.02, 0.5),
-                borderaxespad=0.0,
-                ncol=ncol,
-            )
-        if legend is not None:
-            ax.figure.subplots_adjust(right=0.78)
-            return True
-        return False
-
-    def _plot_pie_chart(
-        self,
-        ax,
         rows: List[Dict[str, Any]],
         x_key: str,
-        y_key: str,
-        title: str,
-        xlabel: str,
-        ylabel: str,
-    ) -> bool:
-        labels = [r.get(x_key) for r in rows]
-        labels_display = ["Unknown" if label in (None, "") else str(label) for label in labels]
-        values = [float(r.get(y_key) or 0) for r in rows]
-        total_value = sum(values)
-        autopct = self._pie_autopct_formatter(values)
-        wedges, _, autotexts = ax.pie(values, autopct=autopct, startangle=90)
-        for autotext in autotexts:
-            autotext.set_fontsize(8)
-        ax.set_title(self._wrap_title(title or "Cost distribution"))
-        ax.text(0, 0, f"Total\n{total_value:,.2f}", ha='center', va='center', fontsize=10, fontweight='bold')
-        legend_labels = []
-        for label, value in zip(labels_display, values):
-            value_str = f"{value:,.2f}" if abs(value) < 1000 else f"{value:,.0f}"
-            pct = (value / total_value * 100) if total_value else 0
-            legend_labels.append(f"{label} — {value_str} ({pct:.1f}%)")
-        legend_title = f"{x_key} (Total: {total_value:,.2f})"
-        ncol = min(4, max(1, len(labels_display) // 10 + 1))
-        return self._place_side_legend(ax, wedges, legend_labels, title=legend_title, ncol=ncol)
+        series_key: str,
+        value_key: str,
+    ) -> List[Dict[str, Any]]:
+        """Sum duplicate x/series pairs before sending data to the inline chart renderer."""
 
-    def _plot_line_or_area_chart(
+        ordered_keys: List[tuple[str, str]] = []
+        totals: Dict[tuple[str, str], float] = {}
+        for row in rows:
+            label = str(row.get(x_key, "") or "Unknown")
+            series = str(row.get(series_key, "") or "Unknown")
+            aggregate_key = (label, series)
+            if aggregate_key not in totals:
+                ordered_keys.append(aggregate_key)
+                totals[aggregate_key] = 0.0
+            totals[aggregate_key] += self._coerce_number_for_chart(row.get(value_key), value_key)
+
+        return [
+            {
+                x_key: label,
+                series_key: series,
+                value_key: totals[(label, series)],
+            }
+            for label, series in ordered_keys
+        ]
+
+    def _build_inline_chart_data(
         self,
-        ax,
         rows: List[Dict[str, Any]],
-        x_vals: List[Any],
-        y_keys_list: List[str],
         graph_type: str,
         x_key: str,
-        xlabel: str,
-        ylabel: str,
-        title: str,
-    ) -> bool:
-        for yk in y_keys_list:
-            y_vals = [float(r.get(yk) or 0) for r in rows]
-            if graph_type == "line":
-                ax.plot(x_vals, y_vals, marker='o', label=yk)
-            else:
-                ax.fill_between(range(len(x_vals)), y_vals, alpha=0.5, label=yk)
-        ax.set_title(self._wrap_title(title or "Cost trend"))
-        ax.set_xlabel(xlabel or x_key)
-        ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Value"))
-        ax.grid(True, axis='y', alpha=0.3)
-        return self._place_side_legend(ax)
-
-    def _plot_column_grouped_chart(
-        self,
-        ax,
-        rows: List[Dict[str, Any]],
-        x_vals: List[Any],
         y_keys_list: List[str],
+        stack_col: Optional[str],
+    ) -> Dict[str, Any]:
+        """Build the row payload expected by the shared SimpleChat chart action."""
+
+        if graph_type == "pie":
+            return {
+                "rows": rows,
+                "labelField": x_key,
+                "valueField": y_keys_list[0],
+            }
+
+        if stack_col and y_keys_list:
+            value_key = y_keys_list[0]
+            return {
+                "rows": self._aggregate_rows_for_series_chart(rows, x_key, stack_col, value_key),
+                "xField": x_key,
+                "seriesField": stack_col,
+                "valueField": value_key,
+            }
+
+        return {
+            "rows": rows,
+            "xField": x_key,
+            "yFields": y_keys_list,
+        }
+
+    def _build_inline_chart_options(
+        self,
+        graph_type: str,
         x_key: str,
+        y_keys_list: List[str],
         xlabel: str,
         ylabel: str,
-        title: str,
-    ) -> bool:
-        n_groups = len(rows)
-        n_bars = len(y_keys_list)
-        index = np.arange(n_groups)
-        bar_width = 0.8 / max(1, n_bars)
-        group_totals = [0.0 for _ in rows]
-        for i, yk in enumerate(y_keys_list):
-            y_vals = [float(r.get(yk) or 0) for r in rows]
-            # accumulate totals for the annotation step below
-            group_totals = [total + value for total, value in zip(group_totals, y_vals)]
-            ax.bar(index + i * bar_width, y_vals, bar_width, label=yk)
-        ax.set_xticks(index + bar_width * (n_bars - 1) / 2)
-        ax.set_xticklabels([str(x) for x in x_vals], rotation=45, ha='right')
-        ax.set_title(self._wrap_title(title or "Cost comparison"))
-        ax.set_xlabel(xlabel or x_key)
-        ax.set_ylabel(ylabel or ("Values" if len(y_keys_list) > 1 else y_keys_list[0]))
-        centers = (index + bar_width * (n_bars - 1) / 2).tolist()
-        self._annotate_column_totals(ax, centers, group_totals)
-        return self._place_side_legend(ax)
+    ) -> Dict[str, Any]:
+        """Return display options understood by the SimpleChat inline chart renderer."""
 
-    def _plot_column_stacked_chart(
+        return {
+            "beginAtZero": True,
+            "legendPosition": "top",
+            "showDataTable": True,
+            "showLegend": True,
+            "smooth": graph_type in {"line", "area"},
+            "stacked": graph_type == "column_stacked",
+            "xAxisLabel": xlabel or x_key,
+            "yAxisLabel": ylabel or (y_keys_list[0] if len(y_keys_list) == 1 else "Values"),
+        }
+
+    def _build_inline_chart_result(
         self,
-        ax,
+        graph_type: str,
         rows: List[Dict[str, Any]],
         x_key: str,
         y_keys_list: List[str],
         stack_col: Optional[str],
+        title: str,
         xlabel: str,
         ylabel: str,
-        title: str,
-    ) -> bool:
-        x_vals_unique: List[Any] = []
-        seen_x = set()
-        for r in rows:
-            xval = r.get(x_key)
-            if xval not in seen_x:
-                seen_x.add(xval)
-                x_vals_unique.append(xval)
+    ) -> Dict[str, Any]:
+        """Use the shared chart plugin to produce validated simplechart markdown."""
 
-        pivot = defaultdict(lambda: defaultdict(float))
-        if stack_col:
-            for r in rows:
-                xval = r.get(x_key)
-                sval = r.get(stack_col)
-                yval = float(r.get(y_keys_list[0]) or 0)
-                pivot[xval][sval] += yval
-            y_keys_plot = sorted({key for row in pivot.values() for key in row.keys()})
-        else:
-            for r in rows:
-                xval = r.get(x_key)
-                for yk in y_keys_list:
-                    pivot[xval][yk] += float(r.get(yk) or 0)
-            y_keys_plot = y_keys_list
+        chart_kind = GRAPH_TYPE_TO_INLINE_CHART_KIND[graph_type]
+        chart_data = self._build_inline_chart_data(rows, graph_type, x_key, y_keys_list, stack_col)
+        chart_options = self._build_inline_chart_options(graph_type, x_key, y_keys_list, xlabel, ylabel)
+        chart_plugin = ChartPlugin({"chart_capabilities": {chart_kind: True}})
+        chart_result = chart_plugin.create_chart(
+            chart_type=chart_kind,
+            chart_data_json=json.dumps(chart_data, separators=(",", ":")),
+            title=title or "Azure cost chart",
+            x_axis_label=chart_options["xAxisLabel"],
+            y_axis_label=chart_options["yAxisLabel"],
+            options_json=json.dumps(chart_options, separators=(",", ":")),
+        )
 
-        data_matrix = [[pivot[x_val].get(yk, 0.0) for x_val in x_vals_unique] for yk in y_keys_plot]
-        index = np.arange(len(x_vals_unique))
-        bottoms = np.zeros(len(x_vals_unique))
-        for i, yk in enumerate(y_keys_plot):
-            ax.bar(index, data_matrix[i], bottom=bottoms, label=str(yk))
-            bottoms += np.array(data_matrix[i])
-        ax.set_xticks(index)
-        ax.set_xticklabels([str(x) for x in x_vals_unique], rotation=45, ha='right')
-        ax.set_title(self._wrap_title(title or "Cost breakdown"))
-        ax.set_xlabel(xlabel or x_key)
-        ax.set_ylabel(ylabel or (y_keys_list[0] if y_keys_list else "Values"))
-        legend_title = stack_col or "Segments"
-        self._annotate_column_totals(ax, index.tolist(), bottoms.tolist())
-        return self._place_side_legend(ax, title=legend_title)
+        if not chart_result.get("success"):
+            return {
+                "status": "error",
+                "error": chart_result.get("error") or "Failed to build inline chart payload.",
+                "error_type": chart_result.get("error_type", "validation"),
+            }
+
+        return chart_result
 
     def plot_custom_chart(self,
                           conversation_id: str,
@@ -855,27 +695,9 @@ class AzureBillingPlugin(BasePlugin):
         - x_keys: list of keys to use for x axis (required for non-pie charts); first key is primary x-axis, additional keys are used for stacking/grouping
         - y_keys: list of keys to plot on y axis (if None and graph_type is not pie, autodetect numeric columns)
         - graph_type: one of ['pie', 'column_stacked', 'column_grouped', 'line', 'area']
-        - returns structured dict with mime, filename, base64, image_url and metadata
+        - returns a structured dict with chart_payload and chart_markdown for SimpleChat inline rendering
         """
-        try:
-            #print(f"[AzureBillingPlugin] plot_custom_chart called with conversation_id={conversation_id}, graph_type={graph_type},\n x_keys={x_keys},\n y_keys={y_keys},\n title={title},\n xlabel={xlabel},\n ylabel={ylabel},\n figsize={figsize},\n data:{data}")
-            graph_type = graph_type.lower() if isinstance(graph_type, str) else str(graph_type)
-            # Validate figsize: must be a list/tuple of two numbers if provided
-            if figsize is None:
-                figsize = [7.0, 5.0]
-            elif isinstance(figsize, (list, tuple)):
-                if len(figsize) != 2:
-                    return {"status": "error", "error": "figsize must be a list of two numbers: [width, height]"}
-                try:
-                    figsize = [float(figsize[0]), float(figsize[1])]
-                except Exception:
-                    return {"status": "error", "error": "figsize elements must be numeric"}
-            else:
-                return {"status": "error", "error": "figsize must be a list of two numbers or null"}
-
-        except Exception as ex:
-            logging.exception("Unexpected error in plot_custom_chart parameter validation")
-            return {"status": "error", "error": str(ex)}
+        graph_type = graph_type.lower() if isinstance(graph_type, str) else str(graph_type)
         if graph_type not in SUPPORTED_GRAPH_TYPES:
             raise ValueError(f"Unsupported graph_type '{graph_type}'. Supported: {SUPPORTED_GRAPH_TYPES}")
         try:
@@ -932,7 +754,6 @@ class AzureBillingPlugin(BasePlugin):
 
             x_key = x_keys_list[0]
             stack_col = None
-            x_vals = None
         else:
             if not y_keys_list:
                 y_keys_list = ensure_list(recommended_defaults.get("y_keys"))
@@ -957,99 +778,42 @@ class AzureBillingPlugin(BasePlugin):
 
             x_key = x_keys_list[0]
             stack_col = x_keys_list[1] if len(x_keys_list) > 1 else None
-            x_vals = [r.get(x_key) for r in rows]
 
-        fig = None
         try:
-            legend_items = self._estimate_legend_items(graph_type, rows, y_keys_list, stack_col)
-            scaled_figsize = self._adjust_figsize(figsize, legend_items)
+            chart_result = self._build_inline_chart_result(
+                graph_type=graph_type,
+                rows=rows,
+                x_key=x_key,
+                y_keys_list=y_keys_list,
+                stack_col=stack_col,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+            if chart_result.get("status") == "error":
+                return chart_result
 
-            fig, ax = plt.subplots(figsize=tuple(scaled_figsize))
-
-            legend_outside = False
-            if graph_type == "pie":
-                legend_outside = self._plot_pie_chart(
-                    ax,
-                    rows,
-                    x_keys_list[0],
-                    y_keys_list[0],
-                    title,
-                    xlabel,
-                    ylabel,
-                )
-            elif graph_type in ("line", "area"):
-                legend_outside = self._plot_line_or_area_chart(
-                    ax,
-                    rows,
-                    x_vals,
-                    y_keys_list,
-                    graph_type,
-                    x_key,
-                    xlabel,
-                    ylabel,
-                    title,
-                )
-            elif graph_type == "column_grouped":
-                legend_outside = self._plot_column_grouped_chart(
-                    ax,
-                    rows,
-                    x_vals,
-                    y_keys_list,
-                    x_key,
-                    xlabel,
-                    ylabel,
-                    title,
-                )
-            elif graph_type == "column_stacked":
-                legend_outside = self._plot_column_stacked_chart(
-                    ax,
-                    rows,
-                    x_key,
-                    y_keys_list,
-                    stack_col,
-                    xlabel,
-                    ylabel,
-                    title,
-                )
-
-            if legend_outside:
-                plt.tight_layout(rect=[0, 0, 0.78, 1])
-            else:
-                plt.tight_layout()
-            img_b64 = self._fig_to_base64_dict(fig, filename=filename)
-            payload = {
+            return {
                 "status": "ok",
-                "type": "image_url",
-                "image_url": {"url": str(img_b64.get("image_url", ""))},
+                "type": "inline_chart",
+                "chart_type": chart_result.get("chart_type"),
+                "chart_payload": chart_result.get("chart_payload"),
+                "chart_markdown": chart_result.get("chart_markdown"),
+                "summary": chart_result.get("summary", ""),
                 "metadata": {
                     "graph_type": graph_type,
+                    "chart_type": chart_result.get("chart_type"),
+                    "conversation_id": conversation_id,
                     "x_keys": x_keys_list,
                     "y_keys": y_keys_list,
                     "stack_key": stack_col,
-                    "figure_size": scaled_figsize,
-                    "recommendations": hints.get("recommended", {})
+                    "recommendations": hints.get("recommended", {}),
+                    "renderer": "simplechart",
                 }
             }
-
-            if conversation_id:
-                try:
-                    self.upload_cosmos_message(conversation_id, str(img_b64.get("image_url", "")))
-                    payload["image_url"] = f"Stored chart image for conversation {conversation_id}"
-                    payload["requires_message_reload"] = True
-                except Exception:
-                    logging.exception("Failed to upload chart image to Cosmos DB")
-                    payload.setdefault("warnings", []).append("Chart rendered but storing to conversation failed.")
-            else:
-                payload.setdefault("warnings", []).append("Chart rendered but conversation_id was not provided; image not persisted.")
-
-            #time.sleep(5)  # give time for image to upload before returning
-            return payload
         except Exception as ex:
-            logging.exception("Error while generating chart")
-            return {"status": "error", "error": f"Error while generating chart: {str(ex)}"}
-        finally:
-            if fig is not None:
-                plt.close(fig)
+            logging.exception("Error while generating inline chart")
+            return {"status": "error", "error": f"Error while generating inline chart: {str(ex)}"}
 
 
     @plugin_function_logger("AzureBillingPlugin")
@@ -1518,7 +1282,7 @@ class AzureBillingPlugin(BasePlugin):
         Includes required/optional fields, types, valid values, and reflects the latest method signature.
         """
         return {
-            "conversation_id": "<string, required - reuse this when calling plot_chart to persist images>",
+            "conversation_id": "<string, required - reuse this when calling plot_chart for traceability>",
             "subscription_id": "<string, required>",
             "resource_group_name": "<string, optional>",
             "query_type": f"<string, optional, one of {QUERY_TYPE}>",
@@ -1586,12 +1350,12 @@ class AzureBillingPlugin(BasePlugin):
                 "Always supply at least one aggregation entry; the plugin no longer infers defaults when none are provided.",
                 "Include at least one grouping (Dimension + name) so the query can bucket the data.",
                 "Inspect plot_hints['recommended'] for suggested x_keys, y_keys, and chart types.",
-                "Pass rows (or the csv string) plus the chosen keys into plot_chart to render and persist a graph."
+                "Pass rows (or the csv string) plus the chosen keys into plot_chart to return chart_markdown for inline rendering."
             ]
         }
 
     # Returns the expected input data format for plot_custom_chart
-    @kernel_function(description="Get the expected input data format for plot_custom_chart (graphing) as JSON.")
+    @kernel_function(description="Get the expected input data format for plot_custom_chart dynamic inline charting as JSON.")
     @plugin_function_logger("AzureBillingPlugin")
     def get_plot_chart_format(self) -> Dict[str, Any]:
         """
@@ -1607,130 +1371,17 @@ class AzureBillingPlugin(BasePlugin):
             "title": "Cost share by resource type",
             "xlabel": "Resource Type",
             "ylabel": "Cost (USD)",
-            "filename": "chart.png",
-            "figsize": [7.0, 5.0],
+            "filename": "<string, optional and ignored - retained for backward compatibility>",
+            "figsize": "<array, optional and ignored - retained for backward compatibility>",
+            "output": {
+                "type": "inline_chart",
+                "chart_markdown": "```simplechart\\n{...}\\n```",
+                "chart_payload": "<validated SimpleChat Chart.js payload>"
+            },
             "notes": [
                 "Feed the list returned in run_data_query['rows'] directly, or supply the CSV from run_data_query['csv'].",
                 "Pick x_keys/y_keys from run_data_query['plot_hints']['recommended'] to ensure compatible chart input.",
-                "Pie charts require exactly one numeric y_key; stacked/grouped charts accept multiple."
+                "Pie charts require exactly one numeric y_key; stacked/grouped charts accept multiple.",
+                "plot_chart returns chart_markdown for SimpleChat inline rendering; filename and figsize are retained only for backward-compatible callers and are ignored."
             ]
         }
-
-    def upload_cosmos_message(self, 
-            conversation_id: str,
-            content: str) -> Dict[str, Any]:
-        """
-        Upload a message to Azure Cosmos DB.
-        """
-        try:
-            image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"    
-            # Check if image data is too large for a single Cosmos document (2MB limit)
-            # Account for JSON overhead by using 1.5MB as the safe limit for base64 content
-            max_content_size = 1500000  # 1.5MB in bytes
-            
-            if len(content) > max_content_size:
-                debug_print(f"Large image detected ({len(content)} bytes), splitting across multiple documents")
-                
-                # Split the data URL into manageable chunks
-                if content.startswith('data:image/png;base64,'):
-                    # Extract just the base64 part for splitting
-                    data_url_prefix = 'data:image/png;base64,'
-                    base64_content = content[len(data_url_prefix):]
-                    debug_print(f"Extracted base64 content length: {len(base64_content)} bytes")
-                else:
-                    # For regular URLs, store as-is (shouldn't happen with large content)
-                    data_url_prefix = ''
-                    base64_content = content
-                
-                # Calculate chunk size and number of chunks
-                chunk_size = max_content_size - len(data_url_prefix) - 200  # More room for JSON overhead
-                chunks = [base64_content[i:i+chunk_size] for i in range(0, len(base64_content), chunk_size)]
-                total_chunks = len(chunks)
-                
-                debug_print(f"Splitting into {total_chunks} chunks of max {chunk_size} bytes each")
-                for i, chunk in enumerate(chunks):
-                    debug_print(f"Chunk {i} length: {len(chunk)} bytes")
-                
-                # Verify we can reassemble before storing
-                reassembled_test = data_url_prefix + ''.join(chunks)
-                if len(reassembled_test) == len(content):
-                    debug_print(f"✅ Chunking verification passed - can reassemble to original size")
-                else:
-                    debug_print(f"❌ Chunking verification failed - {len(reassembled_test)} vs {len(content)}")
-                
-                
-                # Create main image document with metadata
-                main_image_doc = {
-                    'id': image_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'image',
-                    'content': f"{data_url_prefix}{chunks[0]}",  # First chunk with data URL prefix
-                    'prompt': '',
-                    'created_at': datetime.datetime.utcnow().isoformat(),
-                    'timestamp': datetime.datetime.utcnow().isoformat(),
-                    'model_deployment_name': 'azurebillingplugin',
-                    'metadata': {
-                        'is_chunked': True,
-                        'total_chunks': total_chunks,
-                        'chunk_index': 0,
-                        'original_size': len(content)
-                    }
-                }
-                
-                # Create additional chunk documents
-                chunk_docs = []
-                for i in range(1, total_chunks):
-                    chunk_doc = {
-                        'id': f"{image_message_id}_chunk_{i}",
-                        'conversation_id': conversation_id,
-                        'role': 'image_chunk',
-                        'content': chunks[i],
-                        'parent_message_id': image_message_id,
-                        'created_at': datetime.datetime.utcnow().isoformat(),
-                        'timestamp': datetime.datetime.utcnow().isoformat(),
-                        'metadata': {
-                            'is_chunk': True,
-                            'chunk_index': i,
-                            'total_chunks': total_chunks,
-                            'parent_message_id': image_message_id
-                        }
-                    }
-                    chunk_docs.append(chunk_doc)
-                
-                # Store all documents
-                debug_print(f"Storing main document with content length: {len(main_image_doc['content'])} bytes")
-                cosmos_messages_container.upsert_item(main_image_doc)
-                
-                for i, chunk_doc in enumerate(chunk_docs):
-                    debug_print(f"Storing chunk {i+1} with content length: {len(chunk_doc['content'])} bytes")
-                    cosmos_messages_container.upsert_item(chunk_doc)
-                    
-                debug_print(f"Successfully stored image in {total_chunks} documents")
-                debug_print(f"Main doc content starts with: {main_image_doc['content'][:50]}...")
-                debug_print(f"Main doc content ends with: ...{main_image_doc['content'][-50:]}")
-            else:
-                # Small image - store normally in single document
-                debug_print(f"Small image ({len(content)} bytes), storing in single document")
-                
-                image_doc = {
-                    'id': image_message_id,
-                    'conversation_id': conversation_id,
-                    'role': 'image',
-                    'content': content,
-                    'prompt': "",
-                    'created_at': datetime.datetime.utcnow().isoformat(),
-                    'timestamp': datetime.datetime.utcnow().isoformat(),
-                    'model_deployment_name': "azurebillingplugin",
-                    'metadata': {
-                        'is_chunked': False,
-                        'original_size': len(content)
-                    }
-                }
-                cosmos_messages_container.upsert_item(image_doc)
-            conversation_item = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
-            conversation_item['last_updated'] = datetime.datetime.utcnow().isoformat()
-            cosmos_conversations_container.upsert_item(conversation_item)
-            #time.sleep(5) # sleep to allow the message to propogate and the front end to pick it up when receiving the agent response
-        except Exception as e:
-            print(f"[ABP] Error uploading image message to Cosmos DB: {str(e)}")
-            logging.error(f"[ABP] Error uploading image message to Cosmos DB: {str(e)}")

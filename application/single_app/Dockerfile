@@ -2,12 +2,14 @@
 ARG UID=65532
 ARG GID=65532
 ARG INSTALL_PLAYWRIGHT_CHROMIUM=true
+ARG INSTALL_AUDIO_FFMPEG=true
 
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
 ARG UID
 ARG GID
 ARG INSTALL_PLAYWRIGHT_CHROMIUM
+ARG INSTALL_AUDIO_FFMPEG
 
 # Copy pip.conf into the image for pip configuration
 COPY docker-customization/pip.conf /etc/pip.conf
@@ -36,12 +38,12 @@ RUN set -eux; \
     driver_lib="$(find /opt/microsoft/msodbcsql18/lib64 -name 'libmsodbcsql-*.so*' | sort | tail -n 1)"; \
     test -n "${driver_lib}"; \
     printf '[ODBC Driver 18 for SQL Server]\nDescription=Microsoft ODBC Driver 18 for SQL Server\nDriver=%s\nUsageCount=1\n' "${driver_lib}" > /etc/odbcinst.ini; \
-    mkdir -p /odbc-runtime/usr/lib64; \
+    mkdir -p /odbc-runtime/usr/lib; \
     for lib in /usr/lib64/libodbc* /usr/lib/libodbc* /usr/lib64/libltdl* /usr/lib/libltdl*; do \
-        if [ -e "${lib}" ]; then cp -a "${lib}" /odbc-runtime/usr/lib64/; fi; \
+        if [ -e "${lib}" ]; then cp -a "${lib}" /odbc-runtime/usr/lib/; fi; \
     done; \
-    find /odbc-runtime/usr/lib64 -maxdepth 1 -name 'libodbc*' | grep -q .; \
-    find /odbc-runtime/usr/lib64 -maxdepth 1 -name 'libltdl*' | grep -q .; \
+    find /odbc-runtime/usr/lib -maxdepth 1 -name 'libodbc*' | grep -q .; \
+    find /odbc-runtime/usr/lib -maxdepth 1 -name 'libltdl*' | grep -q .; \
     tdnf clean all
 
 RUN set -eux; \
@@ -127,14 +129,15 @@ RUN set -eux; \
     esac; \
     driver_config_dir="${driver_config_file%/odbcinst.ini}"; \
     test -f "${driver_config_file}"; \
-    mkdir -p /odbc-runtime/usr/lib64 /odbc-runtime/opt "/odbc-runtime${driver_config_dir}" /odbc-runtime/etc; \
+    mkdir -p /odbc-runtime/usr/lib /odbc-runtime/opt "/odbc-runtime${driver_config_dir}" /odbc-runtime/etc; \
     cp -a "${driver_config_file}" "/odbc-runtime${driver_config_dir}/"; \
     if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_file}" /odbc-runtime/etc/; fi; \
     cp -a /opt/microsoft /odbc-runtime/opt/; \
-    cp -a /usr/lib64/libodbc.so* /odbc-runtime/usr/lib64/; \
-    cp -a /usr/lib64/libodbcinst.so* /odbc-runtime/usr/lib64/; \
-    cp -a /usr/lib64/libodbccr.so* /odbc-runtime/usr/lib64/; \
-    cp -a /usr/lib64/libltdl.so* /odbc-runtime/usr/lib64/
+    for lib in /usr/lib64/libodbc.so* /usr/lib/libodbc.so* /usr/lib64/libodbcinst.so* /usr/lib/libodbcinst.so* /usr/lib64/libodbccr.so* /usr/lib/libodbccr.so* /usr/lib64/libltdl.so* /usr/lib/libltdl.so*; do \
+        if [ -e "${lib}" ]; then cp -a "${lib}" /odbc-runtime/usr/lib/; fi; \
+    done; \
+    find /odbc-runtime/usr/lib -maxdepth 1 -name 'libodbc*' | grep -q .; \
+    find /odbc-runtime/usr/lib -maxdepth 1 -name 'libltdl*' | grep -q .
 
 WORKDIR /app
 
@@ -143,14 +146,27 @@ COPY --chown=${UID}:${GID} application/single_app/requirements.txt .
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 RUN set -eux; \
+    mkdir -p /audio-runtime/usr/bin; \
+    case "$(printf '%s' "${INSTALL_AUDIO_FFMPEG}" | tr '[:upper:]' '[:lower:]')" in \
+        true|1|yes|on) \
+            python3 -c "import pathlib, shutil, ffmpeg_binaries as ffmpeg_bin; ffmpeg_bin.init(); target_dir = pathlib.Path('/audio-runtime/usr/bin'); shutil.copy2(ffmpeg_bin.FFMPEG_PATH, target_dir / 'ffmpeg'); shutil.copy2(ffmpeg_bin.FFPROBE_PATH, target_dir / 'ffprobe'); (target_dir / 'ffmpeg').chmod(0o755); (target_dir / 'ffprobe').chmod(0o755)"; \
+            ;; \
+        *) \
+            echo "Skipping FFmpeg runtime package installation because INSTALL_AUDIO_FFMPEG=${INSTALL_AUDIO_FFMPEG}"; \
+            ;; \
+    esac
+
+RUN set -eux; \
     mkdir -p /playwright-runtime; \
     case "$(printf '%s' "${INSTALL_PLAYWRIGHT_CHROMIUM}" | tr '[:upper:]' '[:lower:]')" in \
         true|1|yes|on) \
             python3 -m playwright install chromium; \
             find /ms-playwright -name chrome_sandbox -exec chown root:root {} \; -exec chmod 4755 {} \;; \
-            mkdir -p /playwright-runtime/ms-playwright /playwright-runtime/usr/lib64 /playwright-runtime/usr/share /playwright-runtime/etc; \
+            mkdir -p /playwright-runtime/ms-playwright /playwright-runtime/usr/lib /playwright-runtime/usr/share /playwright-runtime/etc; \
             cp -a /ms-playwright/. /playwright-runtime/ms-playwright/; \
-            cp -a /usr/lib64/*.so* /playwright-runtime/usr/lib64/; \
+            for lib in /usr/lib64/*.so* /usr/lib/*.so*; do \
+                if [ -e "${lib}" ]; then cp -a "${lib}" /playwright-runtime/usr/lib/; fi; \
+            done; \
             if [ -d /usr/share/fonts ]; then cp -a /usr/share/fonts /playwright-runtime/usr/share/; fi; \
             if [ -d /usr/share/fontconfig ]; then cp -a /usr/share/fontconfig /playwright-runtime/usr/share/; fi; \
             if [ -d /etc/fonts ]; then cp -a /etc/fonts /playwright-runtime/etc/; fi; \
@@ -173,6 +189,7 @@ COPY --from=builder /etc/group /etc/group
 COPY --from=builder /usr/lib/python3.12 /usr/lib/python3.12
 COPY --from=builder /odbc-runtime/ /
 COPY --from=builder /playwright-runtime/ /
+COPY --from=builder /audio-runtime/ /
 
 USER ${UID}:${GID}
 
@@ -181,7 +198,7 @@ COPY --from=builder --chown=${UID}:${GID} /sc-temp-files /sc-temp-files
 
 ENV HOME=/home/nonroot \
     LD_LIBRARY_PATH="/usr/lib64:/opt/microsoft/msodbcsql18/lib64" \
-    PATH="/home/nonroot/.local/bin:$PATH" \
+    PATH="/usr/bin:/home/nonroot/.local/bin:$PATH" \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \

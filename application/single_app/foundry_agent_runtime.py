@@ -42,7 +42,13 @@ FOUNDRY_METADATA_VALUE_MAX_LENGTH = 512
 FOUNDRY_INTERNAL_METADATA_KEYS = {
     "active_group_ids",
     "active_public_workspace_ids",
+    "document_context_requested",
+    "document_scope",
+    "group_id",
+    "selection_mode",
+    "selected_document_id",
     "selected_document_ids",
+    "user_id",
 }
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_MAX_CHARS = 6000
 FOUNDRY_FILE_SEARCHABLE_CONTEXT_HEADER = "Attached file searchable summary"
@@ -163,7 +169,7 @@ class AzureAIFoundryChatCompletionAgent:
         metadata = metadata or {}
         history = list(agent_message_history)
         debug_print(
-            f"[FoundryAgent] Invoking agent '{self.name}' with {len(history)} messages"
+            f"[FOUNDRY_AGENT] Invoking agent '{self.name}' with {len(history)} messages"
         )
 
         try:
@@ -178,7 +184,7 @@ class AzureAIFoundryChatCompletionAgent:
             )
         except RuntimeError:
             log_event(
-                "[FoundryAgent] Invocation runtime error",
+                "[FOUNDRY_AGENT] Invocation runtime error",
                 extra={
                     "agent_id": self.id,
                     "agent_name": self.name,
@@ -188,7 +194,7 @@ class AzureAIFoundryChatCompletionAgent:
             raise
         except Exception as exc:  # pragma: no cover - defensive logging
             log_event(
-                "[FoundryAgent] Invocation error",
+                "[FOUNDRY_AGENT] Invocation error",
                 extra={
                     "agent_id": self.id,
                     "agent_name": self.name,
@@ -256,7 +262,7 @@ class AzureAIFoundryNewChatCompletionAgent:
         metadata = metadata or {}
         history = list(agent_message_history)
         debug_print(
-            f"[NewFoundryAgent] Invoking application '{self.name}' with {len(history)} messages"
+            f"[NEW_FOUNDRY_AGENT] Invoking application '{self.name}' with {len(history)} messages"
         )
 
         result = asyncio.run(
@@ -336,7 +342,7 @@ class AzureAIFoundryWorkflowAgent:
         history = list(agent_message_history)
         workflow_name = self._workflow_name()
         debug_print(
-            f"[FoundryWorkflowAgent] Invoking workflow '{workflow_name}' with {len(history)} messages"
+            f"[FOUNDRY_WORKFLOW_AGENT] Invoking workflow '{workflow_name}' with {len(history)} messages"
         )
 
         result = asyncio.run(
@@ -390,6 +396,14 @@ async def execute_foundry_agent(
     max_completion_tokens: Optional[int] = None,
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry agent using Semantic Kernel's AzureAIAgent abstraction."""
+
+    message_history = _filter_foundry_document_context_messages(
+        message_history,
+        include_document_context=_coerce_bool(
+            foundry_settings.get("include_document_context"),
+            True,
+        ),
+    )
 
     agent_id = (foundry_settings.get("agent_id") or "").strip()
     if not agent_id:
@@ -458,7 +472,7 @@ async def execute_foundry_agent(
             model_value = getattr(model_name, "id", None)
 
         log_event(
-            "[FoundryAgent] Invocation complete",
+            "[FOUNDRY_AGENT] Invocation complete",
             extra={
                 "agent_id": agent_id,
                 "endpoint": endpoint,
@@ -490,6 +504,14 @@ async def execute_new_foundry_agent(
     max_completion_tokens: Optional[int] = None,
 ) -> FoundryAgentInvocationResult:
     """Invoke the new Foundry application runtime through its Responses protocol endpoint."""
+
+    message_history = _filter_foundry_document_context_messages(
+        message_history,
+        include_document_context=_coerce_bool(
+            foundry_settings.get("include_document_context"),
+            True,
+        ),
+    )
 
     application_name = _resolve_new_foundry_application_name(foundry_settings)
     endpoint = _resolve_endpoint(foundry_settings, global_settings)
@@ -548,7 +570,7 @@ async def execute_new_foundry_agent(
         )
 
         log_event(
-            "[NewFoundryAgent] Invocation complete",
+            "[NEW_FOUNDRY_AGENT] Invocation complete",
             extra={
                 "application_name": application_name,
                 "endpoint": endpoint,
@@ -572,6 +594,14 @@ async def execute_new_foundry_agent_stream(
     max_completion_tokens: Optional[int] = None,
 ) -> AsyncIterator[FoundryAgentStreamMessage]:
     """Stream a new Foundry application response through the Responses API."""
+
+    message_history = _filter_foundry_document_context_messages(
+        message_history,
+        include_document_context=_coerce_bool(
+            foundry_settings.get("include_document_context"),
+            True,
+        ),
+    )
 
     application_name = _resolve_new_foundry_application_name(foundry_settings)
     endpoint = _resolve_endpoint(foundry_settings, global_settings)
@@ -769,7 +799,7 @@ async def execute_foundry_workflow_agent_stream(
     )
     if responses_api_version != configured_responses_api_version:
         debug_print(
-            f"[FoundryWorkflowAgent] Using OpenAI-compatible workflow REST protocol '{responses_api_version}' for configured value '{configured_responses_api_version}'"
+            f"[FOUNDRY_WORKFLOW_AGENT] Using OpenAI-compatible workflow REST protocol '{responses_api_version}' for configured value '{configured_responses_api_version}'"
         )
     endpoint_candidates = _build_foundry_workflow_endpoint_candidates(
         endpoint,
@@ -818,7 +848,7 @@ async def execute_foundry_workflow_agent_stream(
             )
             payload["conversation"] = foundry_conversation_id
             debug_print(
-                f"[FoundryWorkflowAgent] Invoking workflow '{resolved_workflow_name}' at {url} with Foundry conversation {foundry_conversation_id}"
+                f"[FOUNDRY_WORKFLOW_AGENT] Invoking workflow '{resolved_workflow_name}' at {url} with Foundry conversation {foundry_conversation_id}"
             )
             response = requests.post(
                 url,
@@ -1158,7 +1188,7 @@ def _create_foundry_workflow_conversation(
     headers: Dict[str, str],
 ) -> str:
     debug_print(
-        f"[FoundryWorkflowAgent] Creating Foundry conversation at {conversations_url} with params {params}"
+        f"[FOUNDRY_WORKFLOW_AGENT] Creating Foundry conversation at {conversations_url} with params {params}"
     )
     response = requests.post(
         conversations_url,
@@ -1222,8 +1252,43 @@ def _looks_like_document_context_message(text: str) -> bool:
         "chat-uploaded file",
         "selected document",
         "tabular analysis",
+        "mixed-source evidence handoff",
+        "evidence_envelopes",
+        "[workflow document search context]",
     )
     return any(marker in normalized for marker in markers)
+
+
+def _filter_foundry_document_context_messages(
+    message_history: List[ChatMessageContent],
+    include_document_context: bool = True,
+) -> List[ChatMessageContent]:
+    """Remove document/evidence messages before Foundry transport when opted out."""
+    if include_document_context:
+        return list(message_history or [])
+
+    filtered_messages: List[ChatMessageContent] = []
+    workflow_task_marker = "[WORKFLOW_TASK]"
+    for message in list(message_history or []):
+        text = _extract_message_text(message).strip()
+        if not text:
+            continue
+        if not _looks_like_document_context_message(text):
+            filtered_messages.append(message)
+            continue
+
+        marker_index = text.lower().rfind(workflow_task_marker)
+        if marker_index < 0:
+            continue
+        workflow_task = text[marker_index + len(workflow_task_marker):].strip()
+        if not workflow_task:
+            continue
+        filtered_messages.append(ChatMessageContent(
+            role=getattr(message, "role", "user"),
+            content=workflow_task,
+            metadata=getattr(message, "metadata", {}) or {},
+        ))
+    return filtered_messages
 
 
 def _build_foundry_workflow_input_text(
@@ -1237,7 +1302,13 @@ def _build_foundry_workflow_input_text(
         if not text:
             continue
         if not include_document_context and _looks_like_document_context_message(text):
-            continue
+            workflow_task_marker = "[WORKFLOW_TASK]"
+            workflow_task_index = text.rfind(workflow_task_marker)
+            if workflow_task_index < 0:
+                continue
+            text = text[workflow_task_index + len(workflow_task_marker):].strip()
+            if not text:
+                continue
         role_value = getattr(message, "role", "user")
         role = str(role_value).strip().lower() or "user"
         if role.startswith("authorrole."):
@@ -1253,7 +1324,7 @@ def _build_foundry_workflow_input_text(
 
     packed_text = "\n\n".join(parts).strip()
     if max_context_chars and len(packed_text) > max_context_chars:
-        truncation_notice = "[Earlier SimpleChat context was truncated to fit the workflow context limit.]\n\n"
+        truncation_notice = "[EARLIER_SIMPLE_CHAT_CONTEXT_WAS_TRUNCATED_TO_FIT_THE_WORKFLOW_CONTEXT_LIMIT]\n\n"
         keep_chars = max(1, max_context_chars - len(truncation_notice))
         packed_text = f"{truncation_notice}{packed_text[-keep_chars:]}"
     return packed_text
@@ -1621,7 +1692,7 @@ def _append_foundry_file_input(
         file_bytes = _download_foundry_source_blob(blob_container, blob_path)
     except Exception as exc:
         log_event(
-            "[FoundryWorkflowAgent] Failed to load file input blob",
+            "[FOUNDRY_WORKFLOW_AGENT] Failed to load file input blob",
             extra={
                 "source_type": source_type,
                 "blob_container": blob_container,
@@ -1634,7 +1705,7 @@ def _append_foundry_file_input(
 
     if len(file_bytes) > max_file_bytes:
         log_event(
-            "[FoundryWorkflowAgent] Skipping oversized file input",
+            "[FOUNDRY_WORKFLOW_AGENT] Skipping oversized file input",
             extra={
                 "source_type": source_type,
                 "file_name": file_name,
@@ -1691,7 +1762,7 @@ def _collect_recent_chat_upload_file_inputs(
         )
     except Exception as exc:
         log_event(
-            "[FoundryWorkflowAgent] Failed to query chat upload file inputs",
+            "[FOUNDRY_WORKFLOW_AGENT] Failed to query chat upload file inputs",
             extra={"conversation_id": conversation_id, "error": str(exc)},
             level=logging.WARNING,
         )
@@ -1765,7 +1836,7 @@ def _collect_selected_document_file_inputs(
             )
         except Exception as exc:
             log_event(
-                "[FoundryWorkflowAgent] Failed to resolve selected document file input",
+                "[FOUNDRY_WORKFLOW_AGENT] Failed to resolve selected document file input",
                 extra={"document_id": document_id, "error": str(exc)},
                 level=logging.WARNING,
             )
@@ -1800,6 +1871,8 @@ def _collect_foundry_response_file_inputs(
     foundry_settings: Dict[str, Any],
     metadata: Dict[str, Any],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    if not _coerce_bool(foundry_settings.get("include_document_context"), True):
+        return [], []
     if not _coerce_bool(foundry_settings.get("include_file_inputs"), True):
         return [], []
 

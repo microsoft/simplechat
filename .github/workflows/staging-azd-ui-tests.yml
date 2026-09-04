@@ -48,13 +48,14 @@ jobs:
       SIMPLECHAT_UI_AUTH_RESOURCE: ${{ vars.SIMPLECHAT_UI_AUTH_RESOURCE }}
       PLAYWRIGHT_SERVICE_URL: ${{ vars.PLAYWRIGHT_SERVICE_URL }}
       AZD_ENV_FILE_B64: ${{ secrets.AZD_ENV_FILE_B64 }}
+      AZD_CONFIG_FILE_B64: ${{ secrets.AZD_CONFIG_FILE_B64 }}
       SIMPLECHAT_UI_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_STORAGE_STATE_B64 }}
       SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 }}
       SIMPLECHAT_UI_ARTIFACT_DIR: ui_tests/artifacts
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate required environment values
         shell: bash
@@ -85,14 +86,14 @@ jobs:
           esac
 
       - name: Azure login
-        uses: azure/login@v2
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Install Azure Developer CLI
-        uses: Azure/setup-azd@v2
+        uses: Azure/setup-azd@0b7e3a35ab00f2eee7080c845eb39c3f0ebfa553 # v2.4.0
 
       - name: Authenticate Azure Developer CLI
         shell: bash
@@ -113,6 +114,10 @@ jobs:
 
           if [[ -n "${AZD_ENV_FILE_B64:-}" ]]; then
             printf '%s' "$AZD_ENV_FILE_B64" | base64 -d > ".azure/$AZURE_ENV_NAME/.env"
+          fi
+
+          if [[ -n "${AZD_CONFIG_FILE_B64:-}" ]]; then
+            printf '%s' "$AZD_CONFIG_FILE_B64" | base64 -d > ".azure/$AZURE_ENV_NAME/config.json"
           fi
 
           cat > .azure/config.json <<EOF
@@ -219,12 +224,12 @@ jobs:
           exit 1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
           cache: npm
@@ -280,7 +285,7 @@ jobs:
 
       - name: Upload UI test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: staging-ui-test-artifacts
           path: |

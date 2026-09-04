@@ -18,6 +18,7 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -53,9 +54,14 @@ def _print_header(title: str) -> None:
     print('=' * 80)
 
 
+def _resolve_command(command_name: str) -> str:
+    return shutil.which(command_name) or command_name
+
+
 def _run_command(command: list[str]) -> tuple[int, str, str]:
+    resolved_command = [_resolve_command(command[0]), *command[1:]]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(resolved_command, capture_output=True, text=True, check=False)
     except FileNotFoundError:
         return 127, '', f'Command not found: {command[0]}'
 

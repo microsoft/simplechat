@@ -2,8 +2,8 @@
 # test_per_message_export.py
 """
 Functional tests for the per-message export feature and export route regressions.
-Version: 0.241.146
-Implemented in: 0.241.019
+Version: 0.250.215
+Implemented in: 0.241.019; Updated in: 0.250.215
 
 Covers:
  - Happy path: Word document built successfully from a valid message.
@@ -874,6 +874,8 @@ def test_per_message_export_uses_content_override_contract():
     assert 'def _apply_message_export_content_override(' in route_source
     assert route_source.count('message_content_override = _get_message_export_content_override(data)') >= 3
     assert route_source.count('_apply_message_export_content_override(message, message_content_override)') >= 3
+    assert 'get_message_reference_citation_buckets' in route_source
+    assert 'normalized_citations = _normalize_citations(_collect_raw_citation_buckets(message))' in route_source
 
     assert 'function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {})' in frontend_source
     assert 'requestBody.message_content_override = messageContentOverride;' in frontend_source

@@ -10,6 +10,12 @@ from flask import make_response
 
 from config import *
 from functions_authentication import *
+from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_control_center import (
+    calculate_next_control_center_auto_refresh_run,
+    get_control_center_auto_refresh_schedule,
+    parse_control_center_auto_refresh_datetime,
+)
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
@@ -115,7 +121,7 @@ def get_group_token_totals(group_ids):
 
         return token_totals
     except Exception as aggregate_error:
-        debug_print(f"[ControlCenter] Error aggregating group token totals: {aggregate_error}")
+        debug_print(f"[CONTROL_CENTER] Error aggregating group token totals: {aggregate_error}")
 
     fallback_query = """
         SELECT VALUE SUM(c.usage.total_tokens)
@@ -134,7 +140,7 @@ def get_group_token_totals(group_ids):
             ))
             token_totals[group_id] = _normalize_group_token_total(fallback_rows[0] if fallback_rows else 0)
         except Exception as fallback_error:
-            debug_print(f"[ControlCenter] Error aggregating token total for group {group_id}: {fallback_error}")
+            debug_print(f"[CONTROL_CENTER] Error aggregating token total for group {group_id}: {fallback_error}")
 
     return token_totals
 
@@ -179,7 +185,7 @@ def get_group_name_map(group_ids):
         except Exception as ex:
             group_names[group_id] = ''
             log_event(
-                '[ControlCenter][TokenExport] Failed to resolve group name.',
+                '[CONTROL_CENTER][TokenExport] Failed to resolve group name.',
                 extra={
                     'group_id': group_id,
                     'error_type': type(ex).__name__
@@ -204,7 +210,7 @@ def get_public_workspace_name_map(public_workspace_ids):
         except Exception as ex:
             public_workspace_names[public_workspace_id] = ''
             log_event(
-                '[ControlCenter][TokenExport] Failed to resolve public workspace name.',
+                '[CONTROL_CENTER][TokenExport] Failed to resolve public workspace name.',
                 extra={
                     'public_workspace_id': public_workspace_id,
                     'error_type': type(ex).__name__
@@ -323,7 +329,7 @@ def get_distinct_token_filter_values(query):
         unique_values = sorted({str(value).strip() for value in values if value})
         return [value for value in unique_values if value]
     except Exception as ex:
-        debug_print(f"[Token Filters] Error loading distinct values: {ex}")
+        debug_print(f"[TOKEN_FILTERS] Error loading distinct values: {ex}")
         return []
 
 
@@ -476,7 +482,7 @@ def get_activity_log_user_details(user_id, user_cache):
     except Exception as ex:
         user_cache[user_id] = {'email': '', 'display_name': ''}
         log_event(
-            '[ControlCenter][ActivityLogs] Failed to resolve activity log user details.',
+            '[CONTROL_CENTER][ActivityLogs] Failed to resolve activity log user details.',
             extra={
                 'activity_log_user_id': user_id,
                 'error_type': type(ex).__name__
@@ -2709,10 +2715,10 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
         return {}
 
 
-def register_route_backend_control_center(app):
+def register_route_backend_control_center(bp):
     
     # User Management APIs
-    @app.route('/api/admin/control-center/users', methods=['GET'])
+    @bp.route('/api/admin/control-center/users', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2820,7 +2826,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting users: {e}")
             return jsonify({'error': 'Failed to retrieve users'}), 500
     
-    @app.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
+    @bp.route('/api/admin/control-center/users/<user_id>/access', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2861,7 +2867,7 @@ def register_route_backend_control_center(app):
             if success:
                 # Log admin action
                 admin_user = session.get('user', {})
-                log_event("[ControlCenter] User Access Updated", {
+                log_event("[CONTROL_CENTER] User Access Updated", {
                     "admin_user": admin_user.get('preferred_username', 'unknown'),
                     "target_user_id": user_id,
                     "access_status": status,
@@ -2876,7 +2882,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating user access: {e}")
             return jsonify({'error': 'Failed to update user access'}), 500
     
-    @app.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
+    @bp.route('/api/admin/control-center/users/<user_id>/file-uploads', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2917,7 +2923,7 @@ def register_route_backend_control_center(app):
             if success:
                 # Log admin action
                 admin_user = session.get('user', {})
-                log_event("[ControlCenter] User File Upload Updated", {
+                log_event("[CONTROL_CENTER] User File Upload Updated", {
                     "admin_user": admin_user.get('preferred_username', 'unknown'),
                     "target_user_id": user_id,
                     "file_upload_status": status,
@@ -2932,7 +2938,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating user file uploads: {e}")
             return jsonify({'error': 'Failed to update user file upload permissions'}), 500
     
-    @app.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
+    @bp.route('/api/admin/control-center/users/<user_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -2984,7 +2990,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Delete User Documents Request Created", {
+            log_event("[CONTROL_CENTER] Delete User Documents Request Created", {
                 "admin_user": admin_email,
                 "user_id": user_id,
                 "user_email": user_email,
@@ -3000,13 +3006,13 @@ def register_route_backend_control_center(app):
             
         except Exception as e:
             debug_print(f"Error creating user document deletion request: {e}")
-            log_event("[ControlCenter] Delete User Documents Request Failed", {
+            log_event("[CONTROL_CENTER] Delete User Documents Request Failed", {
                 "error": str(e),
                 "user_id": user_id
             })
             return jsonify({'error': str(e)}), 500
     
-    @app.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
+    @bp.route('/api/admin/control-center/users/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3067,7 +3073,7 @@ def register_route_backend_control_center(app):
             
             # Log admin action
             admin_user = session.get('user', {})
-            log_event("[ControlCenter] Bulk User Action", {
+            log_event("[CONTROL_CENTER] Bulk User Action", {
                 "admin_user": admin_user.get('preferred_username', 'unknown'),
                 "action_type": action_type,
                 "user_count": len(user_ids),
@@ -3092,7 +3098,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
     # Group Management APIs
-    @app.route('/api/admin/control-center/groups', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3205,7 +3211,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting groups: {e}")
             return jsonify({'error': 'Failed to retrieve groups'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3265,6 +3271,7 @@ def register_route_backend_control_center(app):
                 
                 # Update in database
                 cosmos_groups_container.upsert_item(group)
+                bump_chat_bootstrap_global_cache_version(reason="group_status_updated")
                 
                 # Log to activity_logs container for audit trail
                 from functions_activity_logging import log_group_status_change
@@ -3279,7 +3286,7 @@ def register_route_backend_control_center(app):
                 )
                 
                 # Log admin action (legacy logging)
-                log_event("[ControlCenter] Group Status Update", {
+                log_event("[CONTROL_CENTER] Group Status Update", {
                     "admin_user": admin_email,
                     "admin_user_id": admin_user_id,
                     "group_id": group_id,
@@ -3304,7 +3311,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating group status: {e}")
             return jsonify({'error': 'Failed to update group status'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups/<group_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3329,7 +3336,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting group details: {e}")
             return jsonify({'error': 'Failed to retrieve group details'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
+    @bp.route('/api/admin/control-center/groups/<group_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3375,7 +3382,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Delete Group Request Created", {
+            log_event("[CONTROL_CENTER] Delete Group Request Created", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
@@ -3394,7 +3401,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating group deletion request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3438,7 +3445,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Delete Documents Request Created", {
+            log_event("[CONTROL_CENTER] Delete Documents Request Created", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
@@ -3457,7 +3464,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating document deletion request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3491,7 +3498,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting group members: {e}")
             return jsonify({'error': 'Failed to retrieve group members'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/take-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3540,7 +3547,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Take Ownership Request Created", {
+            log_event("[CONTROL_CENTER] Take Ownership Request Created", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
@@ -3559,7 +3566,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating take ownership request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3622,7 +3629,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Transfer Ownership Request Created", {
+            log_event("[CONTROL_CENTER] Transfer Ownership Request Created", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
@@ -3642,7 +3649,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error creating transfer ownership request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3708,6 +3715,7 @@ def register_route_backend_control_center(app):
             
             # Save group
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_member_added")
             
             # Determine the action source (single add vs bulk CSV)
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
@@ -3732,7 +3740,7 @@ def register_route_backend_control_center(app):
             cosmos_activity_logs_container.create_item(body=activity_record)
             
             # Log to Application Insights
-            log_event("[ControlCenter] Admin Add Group Member", {
+            log_event("[CONTROL_CENTER] Admin Add Group Member", {
                 "admin_user": admin_email,
                 "group_id": group_id,
                 "group_name": group.get('name'),
@@ -3749,7 +3757,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error adding group member: {e}")
             return jsonify({'error': 'Failed to add member'}), 500
 
-    @app.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
+    @bp.route('/api/admin/control-center/groups/<group_id>/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -3796,9 +3804,9 @@ def register_route_backend_control_center(app):
             """
             
             # Log the queries for debugging
-            debug_print(f"[Group Activity] Querying for group: {group_id}, days: {days}")
-            debug_print(f"[Group Activity] Query 1: {query1}")
-            debug_print(f"[Group Activity] Query 2: {query2}")
+            debug_print(f"[GROUP_ACTIVITY] Querying for group: {group_id}, days: {days}")
+            debug_print(f"[GROUP_ACTIVITY] Query 1: {query1}")
+            debug_print(f"[GROUP_ACTIVITY] Query 2: {query2}")
             
             parameters = [
                 {"name": "@group_id", "value": group_id}
@@ -3807,7 +3815,7 @@ def register_route_backend_control_center(app):
             if cutoff_date:
                 parameters.append({"name": "@cutoff_date", "value": cutoff_date})
             
-            debug_print(f"[Group Activity] Parameters: {parameters}")
+            debug_print(f"[GROUP_ACTIVITY] Parameters: {parameters}")
             
             # Execute both queries
             activities = []
@@ -3819,10 +3827,10 @@ def register_route_backend_control_center(app):
                     parameters=parameters,
                     enable_cross_partition_query=True
                 ))
-                debug_print(f"[Group Activity] Query 1 returned {len(activities1)} activities")
+                debug_print(f"[GROUP_ACTIVITY] Query 1 returned {len(activities1)} activities")
                 activities.extend(activities1)
             except Exception as e:
-                debug_print(f"[Group Activity] Query 1 failed: {e}")
+                debug_print(f"[GROUP_ACTIVITY] Query 1 failed: {e}")
             
             try:
                 # Query 2: Document activities
@@ -3831,10 +3839,10 @@ def register_route_backend_control_center(app):
                     parameters=parameters,
                     enable_cross_partition_query=True
                 ))
-                debug_print(f"[Group Activity] Query 2 returned {len(activities2)} activities")
+                debug_print(f"[GROUP_ACTIVITY] Query 2 returned {len(activities2)} activities")
                 activities.extend(activities2)
             except Exception as e:
-                debug_print(f"[Group Activity] Query 2 failed: {e}")
+                debug_print(f"[GROUP_ACTIVITY] Query 2 failed: {e}")
             
             # Sort combined results by timestamp descending
             activities.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
@@ -3974,7 +3982,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
 
     # Public Workspaces API
-    @app.route('/api/admin/control-center/public-workspaces', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4079,7 +4087,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting public workspaces for control center: {e}")
             return jsonify({'error': 'Failed to retrieve public workspaces'}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4139,6 +4147,7 @@ def register_route_backend_control_center(app):
                 
                 # Update in database
                 cosmos_public_workspaces_container.upsert_item(workspace)
+                bump_chat_bootstrap_global_cache_version(reason="public_workspace_status_updated")
                 
                 # Log to activity_logs container for audit trail
                 from functions_activity_logging import log_public_workspace_status_change
@@ -4153,7 +4162,7 @@ def register_route_backend_control_center(app):
                 )
                 
                 # Log admin action (legacy logging)
-                log_event("[ControlCenter] Public Workspace Status Update", {
+                log_event("[CONTROL_CENTER] Public Workspace Status Update", {
                     "admin_user": admin_email,
                     "admin_user_id": admin_user_id,
                     "workspace_id": workspace_id,
@@ -4178,7 +4187,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error updating public workspace status: {e}")
             return jsonify({'error': 'Failed to update public workspace status'}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/bulk-action', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4264,7 +4273,7 @@ def register_route_backend_control_center(app):
                         })
                         
                         # Log the action
-                        log_event("[ControlCenter] Bulk Public Workspace Documents Deleted", {
+                        log_event("[CONTROL_CENTER] Bulk Public Workspace Documents Deleted", {
                             "admin_user": admin_email,
                             "admin_user_id": admin_user_id,
                             "workspace_id": workspace_id,
@@ -4297,6 +4306,7 @@ def register_route_backend_control_center(app):
                             })
                             
                             cosmos_public_workspaces_container.upsert_item(workspace)
+                            bump_chat_bootstrap_global_cache_version(reason="public_workspace_bulk_status_updated")
                             
                             # Log activity
                             from functions_activity_logging import log_public_workspace_status_change
@@ -4340,7 +4350,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error performing bulk public workspace action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4365,7 +4375,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve workspace details'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/members', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4459,7 +4469,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve workspace members'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4527,6 +4537,7 @@ def register_route_backend_control_center(app):
             
             # Save workspace
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
             
             # Determine the action source
             source = data.get('source', 'csv')
@@ -4554,7 +4565,7 @@ def register_route_backend_control_center(app):
             cosmos_activity_logs_container.create_item(body=activity_record)
             
             # Log to Application Insights
-            log_event("[ControlCenter] Admin Add Workspace Member", {
+            log_event("[CONTROL_CENTER] Admin Add Workspace Member", {
                 "admin_user": admin_email,
                 "workspace_id": workspace_id,
                 "workspace_name": workspace.get('name'),
@@ -4572,7 +4583,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to add workspace member'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member-single', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/add-member-single', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4636,6 +4647,7 @@ def register_route_backend_control_center(app):
             
             # Save workspace
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
             
             # Log to activity logs
             activity_record = {
@@ -4659,7 +4671,7 @@ def register_route_backend_control_center(app):
             cosmos_activity_logs_container.create_item(body=activity_record)
             
             # Log to Application Insights
-            log_event("[ControlCenter] Admin Add Workspace Member (Single)", {
+            log_event("[CONTROL_CENTER] Admin Add Workspace Member (Single)", {
                 "admin_user": admin_email,
                 "workspace_id": workspace_id,
                 "workspace_name": workspace.get('name'),
@@ -4677,7 +4689,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to add workspace member'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/activity', methods=['GET'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/activity', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4713,8 +4725,8 @@ def register_route_backend_control_center(app):
             """
             
             # Log the query for debugging
-            debug_print(f"[Workspace Activity] Querying for workspace: {workspace_id}, days: {days}")
-            debug_print(f"[Workspace Activity] Query: {query}")
+            debug_print(f"[WORKSPACE_ACTIVITY] Querying for workspace: {workspace_id}, days: {days}")
+            debug_print(f"[WORKSPACE_ACTIVITY] Query: {query}")
             
             parameters = [
                 {"name": "@workspace_id", "value": workspace_id}
@@ -4723,7 +4735,7 @@ def register_route_backend_control_center(app):
             if cutoff_date:
                 parameters.append({"name": "@cutoff_date", "value": cutoff_date})
             
-            debug_print(f"[Workspace Activity] Parameters: {parameters}")
+            debug_print(f"[WORKSPACE_ACTIVITY] Parameters: {parameters}")
             
             # Execute query
             activities = list(cosmos_activity_logs_container.query_items(
@@ -4732,7 +4744,7 @@ def register_route_backend_control_center(app):
                 enable_cross_partition_query=True
             ))
             
-            debug_print(f"[Workspace Activity] Query returned {len(activities)} activities")
+            debug_print(f"[WORKSPACE_ACTIVITY] Query returned {len(activities)} activities")
             
             # Format activities for timeline display
             formatted_activities = []
@@ -4868,7 +4880,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve workspace activity'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/take-ownership', methods=['POST'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/take-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -4927,7 +4939,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Take Workspace Ownership Request Created", {
+            log_event("[CONTROL_CENTER] Take Workspace Ownership Request Created", {
                 "admin_user": admin_email,
                 "workspace_id": workspace_id,
                 "workspace_name": workspace.get('name'),
@@ -4949,7 +4961,7 @@ def register_route_backend_control_center(app):
             traceback.print_exc()
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5050,7 +5062,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Transfer Workspace Ownership Request Created", {
+            log_event("[CONTROL_CENTER] Transfer Workspace Ownership Request Created", {
                 "admin_user": admin_email,
                 "workspace_id": workspace_id,
                 "workspace_name": workspace.get('name'),
@@ -5073,7 +5085,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to create ownership transfer request'}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>/documents', methods=['DELETE'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/documents', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5118,7 +5130,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Delete Public Workspace Documents Request Created", {
+            log_event("[CONTROL_CENTER] Delete Public Workspace Documents Request Created", {
                 "admin_user": admin_email,
                 "workspace_id": workspace_id,
                 "workspace_name": workspace.get('name'),
@@ -5138,7 +5150,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': str(e)}), 500
 
 
-    @app.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
+    @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5186,7 +5198,7 @@ def register_route_backend_control_center(app):
             )
             
             # Log event
-            log_event("[ControlCenter] Delete Public Workspace Request Created", {
+            log_event("[CONTROL_CENTER] Delete Public Workspace Request Created", {
                 "admin_user": admin_email,
                 "workspace_id": workspace_id,
                 "workspace_name": workspace.get('name'),
@@ -5206,7 +5218,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': str(e)}), 500
 
     # Activity Trends API
-    @app.route('/api/admin/control-center/activity-trends', methods=['GET'])
+    @bp.route('/api/admin/control-center/activity-trends', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5259,7 +5271,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to retrieve activity trends'}), 500
 
 
-    @app.route('/api/admin/control-center/token-filters', methods=['GET'])
+    @bp.route('/api/admin/control-center/token-filters', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5352,12 +5364,12 @@ def register_route_backend_control_center(app):
                 }
             })
         except Exception as ex:
-            debug_print(f"[Token Filters] Error loading token filter options: {ex}")
+            debug_print(f"[TOKEN_FILTERS] Error loading token filter options: {ex}")
             return jsonify({'error': 'Failed to retrieve token filter options'}), 500
 
 
 
-    @app.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
+    @bp.route('/api/admin/control-center/activity-trends/export', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5554,7 +5566,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error exporting activity trends: {e}")
             return jsonify({'error': 'Failed to export data'}), 500
 
-    @app.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
+    @bp.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('dashboard')
@@ -5692,7 +5704,7 @@ def register_route_backend_control_center(app):
             cosmos_conversations_container.create_item(conversation_doc)
             
             # Log the activity
-            log_event("[ControlCenter] Activity Trends Chat Created", {
+            log_event("[CONTROL_CENTER] Activity Trends Chat Created", {
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "charts": charts,
@@ -5712,7 +5724,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to create chat conversation'}), 500
     
     # Data Refresh API
-    @app.route('/api/admin/control-center/refresh', methods=['POST'])
+    @bp.route('/api/admin/control-center/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5857,7 +5869,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to refresh data'}), 500
     
     # Get refresh status API
-    @app.route('/api/admin/control-center/refresh-status', methods=['GET'])
+    @bp.route('/api/admin/control-center/refresh-status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')  
@@ -5866,14 +5878,32 @@ def register_route_backend_control_center(app):
         Get the last refresh timestamp for Control Center data.
         """
         try:
-            from functions_settings import get_settings
-            
             settings = get_settings()
             last_refresh = settings.get('control_center_last_refresh')
-            
+            last_refresh_datetime = parse_control_center_auto_refresh_datetime(last_refresh)
+            auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
+            auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
+            auto_refresh_next_run = parse_control_center_auto_refresh_datetime(
+                settings.get('control_center_auto_refresh_next_run')
+            )
+            if auto_refresh_enabled and not auto_refresh_next_run:
+                auto_refresh_next_run = calculate_next_control_center_auto_refresh_run(settings)
+
             return jsonify({
                 'last_refresh': last_refresh,
-                'last_refresh_formatted': None if not last_refresh else datetime.fromisoformat(last_refresh.replace('Z', '+00:00') if 'Z' in last_refresh else last_refresh).strftime('%m/%d/%Y %I:%M %p UTC')
+                'last_refresh_formatted': (
+                    last_refresh_datetime.strftime('%m/%d/%Y %I:%M %p UTC')
+                    if last_refresh_datetime
+                    else None
+                ),
+                'auto_refresh_enabled': auto_refresh_enabled,
+                'auto_refresh_time': auto_refresh_schedule['time'],
+                'auto_refresh_timezone': auto_refresh_schedule['timezone'],
+                'auto_refresh_next_run_utc': (
+                    auto_refresh_next_run.isoformat()
+                    if auto_refresh_next_run
+                    else None
+                ),
             }), 200
             
         except Exception as e:
@@ -5881,7 +5911,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': 'Failed to get refresh status'}), 500
     
     # Activity Log Migration APIs
-    @app.route('/api/admin/control-center/migrate/status', methods=['GET'])
+    @bp.route('/api/admin/control-center/migrate/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -5981,7 +6011,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error getting migration status: {e}")
             return jsonify({'error': 'Failed to get migration status'}), 500
     
-    @app.route('/api/admin/control-center/migrate/all', methods=['POST'])
+    @bp.route('/api/admin/control-center/migrate/all', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6291,7 +6321,7 @@ def register_route_backend_control_center(app):
             traceback.print_exc()
             return jsonify({'error': f'Migration failed: {str(e)}'}), 500
 
-    @app.route('/api/admin/control-center/activity-logs', methods=['GET'])
+    @bp.route('/api/admin/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6309,7 +6339,7 @@ def register_route_backend_control_center(app):
             where_clause, parameters = build_activity_logs_query_context(activity_type_filter, search_term)
 
             log_event(
-                '[ControlCenter][ActivityLogs] Loading activity logs page.',
+                '[CONTROL_CENTER][ActivityLogs] Loading activity logs page.',
                 extra={
                     'page': page,
                     'per_page': per_page,
@@ -6356,7 +6386,7 @@ def register_route_backend_control_center(app):
             total_duration_ms = int((time.perf_counter() - request_started) * 1000)
 
             log_event(
-                '[ControlCenter][ActivityLogs] Activity logs page loaded.',
+                '[CONTROL_CENTER][ActivityLogs] Activity logs page loaded.',
                 extra={
                     'page': page,
                     'per_page': per_page,
@@ -6390,7 +6420,7 @@ def register_route_backend_control_center(app):
 
         except ValueError as ex:
             log_event(
-                '[ControlCenter][ActivityLogs] Invalid activity logs request.',
+                '[CONTROL_CENTER][ActivityLogs] Invalid activity logs request.',
                 extra={
                     'page': request.args.get('page'),
                     'per_page': request.args.get('per_page'),
@@ -6402,7 +6432,7 @@ def register_route_backend_control_center(app):
 
         except Exception as ex:
             log_event(
-                '[ControlCenter][ActivityLogs] Failed to fetch activity logs.',
+                '[CONTROL_CENTER][ActivityLogs] Failed to fetch activity logs.',
                 extra={
                     'page': request.args.get('page'),
                     'per_page': request.args.get('per_page'),
@@ -6416,7 +6446,7 @@ def register_route_backend_control_center(app):
             )
             return jsonify({'error': 'Failed to fetch activity logs'}), 500
 
-    @app.route('/api/admin/control-center/activity-logs/export', methods=['GET'])
+    @bp.route('/api/admin/control-center/activity-logs/export', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6429,7 +6459,7 @@ def register_route_backend_control_center(app):
             where_clause, parameters = build_activity_logs_query_context(activity_type_filter, search_term)
 
             log_event(
-                '[ControlCenter][ActivityLogs] Starting activity log export.',
+                '[CONTROL_CENTER][ActivityLogs] Starting activity log export.',
                 extra={
                     'has_search': bool(search_term),
                     'search_length': len(search_term),
@@ -6480,7 +6510,7 @@ def register_route_backend_control_center(app):
 
             export_duration_ms = int((time.perf_counter() - export_started) * 1000)
             log_event(
-                '[ControlCenter][ActivityLogs] Activity log export completed.',
+                '[CONTROL_CENTER][ActivityLogs] Activity log export completed.',
                 extra={
                     'exported_count': exported_count,
                     'unique_user_count': len(user_cache),
@@ -6496,7 +6526,7 @@ def register_route_backend_control_center(app):
 
         except Exception as ex:
             log_event(
-                '[ControlCenter][ActivityLogs] Failed to export activity logs.',
+                '[CONTROL_CENTER][ActivityLogs] Failed to export activity logs.',
                 extra={
                     'search': request.args.get('search', ''),
                     'activity_type_filter': request.args.get('activity_type_filter', 'all'),
@@ -6512,7 +6542,7 @@ def register_route_backend_control_center(app):
     # APPROVAL WORKFLOW ENDPOINTS
     # ============================================================================
 
-    @app.route('/api/admin/control-center/approvals', methods=['GET'])
+    @bp.route('/api/admin/control-center/approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6603,7 +6633,7 @@ def register_route_backend_control_center(app):
         )
         return approval, user_id, user_roles, user_email, user_name
 
-    @app.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
+    @bp.route('/api/admin/control-center/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6640,7 +6670,7 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
 
-    @app.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
+    @bp.route('/api/admin/control-center/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6695,7 +6725,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error approving request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
+    @bp.route('/api/admin/control-center/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @control_center_required('admin')
@@ -6751,7 +6781,7 @@ def register_route_backend_control_center(app):
             return jsonify({'error': str(e)}), 500
     
     # New standalone approvals API endpoints (accessible to all users with permissions)
-    @app.route('/api/approvals', methods=['GET'])
+    @bp.route('/api/approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_get_approvals():
@@ -6822,7 +6852,7 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approvals', 'details': str(e)}), 500
 
-    @app.route('/api/approvals/<approval_id>', methods=['GET'])
+    @bp.route('/api/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_get_approval_by_id(approval_id):
@@ -6858,7 +6888,7 @@ def register_route_backend_control_center(app):
             debug_print(traceback.format_exc())
             return jsonify({'error': 'Failed to fetch approval', 'details': str(e)}), 500
 
-    @app.route('/api/approvals/<approval_id>/approve', methods=['POST'])
+    @bp.route('/api/approvals/<approval_id>/approve', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_approve_request(approval_id):
@@ -6912,7 +6942,7 @@ def register_route_backend_control_center(app):
             debug_print(f"Error approving request: {e}")
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/approvals/<approval_id>/deny', methods=['POST'])
+    @bp.route('/api/approvals/<approval_id>/deny', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     def api_deny_request(approval_id):
@@ -7147,6 +7177,7 @@ def register_route_backend_control_center(app):
             
             group['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7284,6 +7315,7 @@ def register_route_backend_control_center(app):
             
             workspace['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7369,6 +7401,7 @@ def register_route_backend_control_center(app):
             
             group['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_groups_container.upsert_item(group)
+            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7509,6 +7542,7 @@ def register_route_backend_control_center(app):
             
             workspace['modifiedDate'] = datetime.utcnow().isoformat()
             cosmos_public_workspaces_container.upsert_item(workspace)
+            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
             
             # Log to activity logs
             activity_record = {
@@ -7639,7 +7673,7 @@ def register_route_backend_control_center(app):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
             
-            debug_print(f"[ControlCenter] Group Documents Deleted (Approved) -- group_id: {group_id}, documents_deleted: {deleted_count}")
+            debug_print(f"[CONTROL_CENTER] Group Documents Deleted (Approved) -- group_id: {group_id}, documents_deleted: {deleted_count}")
             
             return {
                 'success': True,
@@ -7717,7 +7751,7 @@ def register_route_backend_control_center(app):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
             
-            debug_print(f"[ControlCenter] Public Workspace Documents Deleted (Approved) -- workspace_id: {workspace_id}, documents_deleted: {deleted_count}")
+            debug_print(f"[CONTROL_CENTER] Public Workspace Documents Deleted (Approved) -- workspace_id: {workspace_id}, documents_deleted: {deleted_count}")
             
             return {
                 'success': True,
@@ -7772,7 +7806,7 @@ def register_route_backend_control_center(app):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
             
-            debug_print(f"[ControlCenter] Public Workspace Deleted (Approved) -- workspace_id: {workspace_id}")
+            debug_print(f"[CONTROL_CENTER] Public Workspace Deleted (Approved) -- workspace_id: {workspace_id}")
             
             return {
                 'success': True,
@@ -7949,7 +7983,7 @@ def register_route_backend_control_center(app):
             cosmos_activity_logs_container.create_item(body=activity_record)
             
             # Log to AppInsights
-            log_event("[ControlCenter] User Documents Deleted (Approved)", {
+            log_event("[CONTROL_CENTER] User Documents Deleted (Approved)", {
                 "executor": executor_email,
                 "user_id": user_id,
                 "user_email": user_email,

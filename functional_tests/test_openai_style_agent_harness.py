@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the OpenAI-style agent harness.
-Version: 0.239.205
-Implemented in: 0.239.205
+Version: 0.250.006
+Implemented in: 0.239.205; updated in 0.250.006
 
 This test ensures the standalone harness reads local me.json and agent.json
 files, routes prompt execution settings through Semantic Kernel correctly, and
@@ -44,11 +44,12 @@ def test_openai_style_agent_harness_wiring() -> None:
     assert_contains(harness_path, 'return None')
     assert_contains(harness_path, 'service.get_prompt_execution_settings_class()')
     assert_contains(harness_path, 'def resolve_openai_style_request_api_version(raw_api_version: str) -> str:')
-    assert_contains(harness_path, 'if normalized_api_version in ("preview", "latest"):')
-    assert_contains(harness_path, 'Ignoring legacy Azure API version for OpenAI-style /openai/v1/ requests')
+    assert_contains(harness_path, 'return ""')
     assert_contains(harness_path, 'request_api_version = resolve_openai_style_request_api_version(api_version)')
     assert_contains(harness_path, 'client_kwargs["default_query"] = {"api-version": request_api_version}')
     assert_not_contains(harness_path, 'if api_version and api_version.lower() != "v1":')
+    assert_not_contains(harness_path, 'Ignoring legacy Azure API version for OpenAI-style /openai/v1/ requests')
+    assert_not_contains(harness_path, 'return configured_api_version')
     assert_contains(harness_path, 'request_model_name = deployment_name')
     assert_contains(harness_path, 'ai_model_id=request_model_name')
     assert_contains(harness_path, 'logging.info("Catalog model id: %s", model_id or "(none)")')

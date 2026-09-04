@@ -2,7 +2,7 @@
 """
 UI test for Admin Settings Cosmos throughput controls.
 
-Version: 0.241.199
+Version: 0.250.055
 Implemented in: 0.241.147
 
 This test ensures the Scale tab exposes Cosmos throughput monitoring and
@@ -21,8 +21,11 @@ Version 0.241.181 adds container table refresh button coverage.
 Version 0.241.183 adds explicit setup guidance and detailed Validate Access diagnostics coverage.
 Version 0.241.184 adds neutral informational copy for normal container-targeted throughput mode.
 Version 0.241.199 adds SimpleChat's 10,000 RU/s scale support ceiling, monitor-only indicators, and container policy modal filtering coverage.
+Version 0.250.045 adds a stable left-nav anchor for the Cosmos metrics table.
+Version 0.250.054 adds regression coverage that Scale-only sections remain inside the Scale tab when DAI debug UI is disabled.
 """
 
+from html.parser import HTMLParser
 import re
 from pathlib import Path
 
@@ -38,6 +41,68 @@ except ModuleNotFoundError:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADMIN_TEMPLATE = REPO_ROOT / "application" / "single_app" / "templates" / "admin_settings.html"
 ADMIN_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / "admin" / "admin_settings.js"
+
+
+class _TabPaneAncestorParser(HTMLParser):
+    """Track tab-pane ancestors for selected elements after template pruning."""
+
+    _void_tags = {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+
+    def __init__(self, target_ids):
+        super().__init__(convert_charrefs=False)
+        self.target_ids = set(target_ids)
+        self.stack = []
+        self.pane_ancestors = {}
+
+    def handle_starttag(self, tag, attrs):
+        attr_map = dict(attrs)
+        element_id = attr_map.get("id")
+        classes = (attr_map.get("class") or "").split()
+
+        if element_id in self.target_ids:
+            pane_ancestors = [
+                item["id"]
+                for item in self.stack
+                if item["tag"] == "div" and "tab-pane" in item["classes"]
+            ]
+            if tag == "div" and "tab-pane" in classes:
+                pane_ancestors.append(element_id)
+            self.pane_ancestors[element_id] = pane_ancestors
+
+        if tag not in self._void_tags:
+            self.stack.append({
+                "tag": tag,
+                "id": element_id,
+                "classes": classes,
+            })
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index]["tag"] == tag:
+                del self.stack[index:]
+                return
+
+
+def _render_template_with_dai_debug_disabled(template):
+    modal_start = template.index('<div class="modal fade" id="documentAccessIndexResetModal"')
+    if_start = template.rfind("{% if enable_dai_debug %}", 0, modal_start)
+    endif = template.index("{% endif %}", modal_start)
+    return template[:if_start] + template[endif + len("{% endif %}"):]
 
 
 @pytest.mark.ui
@@ -76,6 +141,7 @@ def test_admin_cosmos_throughput_controls_render_from_template():
         "cosmos-throughput-scale-down-btn",
         "cosmos-throughput-container-filter",
         "cosmos-throughput-container-filter-count",
+        "cosmos-throughput-metrics-table-section",
         "cosmos-throughput-container-policy-filter",
         "cosmos-throughput-container-policy-filter-count",
         "cosmos-throughput-refresh-table-btn",
@@ -187,6 +253,24 @@ def test_admin_cosmos_throughput_controls_render_from_template():
     finally:
         browser.close()
         playwright_context.stop()
+
+
+def test_scale_only_sections_remain_inside_scale_tab_when_dai_debug_disabled():
+    """Scale-only sections should not bleed into other Admin Settings tabs."""
+    template = ADMIN_TEMPLATE.read_text(encoding="utf-8")
+    rendered_template = _render_template_with_dai_debug_disabled(template)
+    parser = _TabPaneAncestorParser({
+        "cosmos-throughput-section",
+        "front-door-section",
+        "scale",
+        "workspace-identities",
+    })
+    parser.feed(rendered_template)
+
+    assert parser.pane_ancestors["scale"] == ["scale"]
+    assert parser.pane_ancestors["cosmos-throughput-section"] == ["scale"]
+    assert parser.pane_ancestors["front-door-section"] == ["scale"]
+    assert parser.pane_ancestors["workspace-identities"] == ["workspace-identities"]
 
 
 def test_container_metrics_table_uses_clarity_renderer():

@@ -1,5 +1,6 @@
 # app.py
 import builtins
+import bleach
 import logging
 import pickle
 import json
@@ -29,14 +30,19 @@ from semantic_kernel_loader import initialize_semantic_kernel
 from functions_authentication import *
 from functions_content import *
 from functions_documents import *
+from functions_latest_features_nav import should_hide_latest_features_nav
+from admin_settings_nav import ADMIN_NAV, get_landing_tab_id
 from functions_search import *
 from functions_settings import *
+from functions_mcp_server_config import is_mcp_ui_enabled
+from functions_rate_limit import build_rate_limit_error_payload
 from functions_appinsights import *
 from functions_activity_logging import *
 
 import threading
 import time
 from datetime import datetime
+from flask import Blueprint, g, make_response
 from urllib.parse import urlparse
 
 from route_frontend_authentication import *
@@ -54,6 +60,7 @@ from route_frontend_safety import *
 from route_frontend_feedback import *
 from route_frontend_support import *
 from route_frontend_notifications import *
+from route_frontend_terms_of_use import register_route_frontend_terms_of_use
 from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
@@ -90,13 +97,16 @@ from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
 from route_backend_data_management import register_route_backend_data_management
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
+from route_inbound_mcp import register_route_inbound_mcp
 from route_enhanced_citations import register_enhanced_citations_routes
-from plugin_validation_endpoint import plugin_validation_bp
+from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_validation_bp
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
+from functions_terms_of_use import has_terms_of_use_acceptance
+from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
 
@@ -112,6 +122,7 @@ executor = Executor()
 executor.init_app(app)
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
+app.config['IS_DEVELOPMENT'] = IS_DEVELOPMENT
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SESSION_COOKIE_SAMESITE'] = SESSION_COOKIE_SAMESITE
 app.config['SESSION_COOKIE_HTTPONLY'] = SESSION_COOKIE_HTTPONLY
@@ -128,31 +139,42 @@ if SESSION_TYPE == 'filesystem':
 
 Session(app)
 
+
+def register_route_blueprint(name, registrar, auth_guard=None):
+    """Register a route module through a Blueprint and optional auth policy guard."""
+    bp = Blueprint(name, __name__)
+    if auth_guard:
+        bp.before_request(auth_guard())
+    registrar(bp)
+    app.register_blueprint(bp)
+    return bp
+
+
 app.register_blueprint(admin_plugins_bp)
 app.register_blueprint(dynamic_plugins_bp)
 app.register_blueprint(admin_agents_bp)
 app.register_blueprint(bp_agent_templates)
 app.register_blueprint(plugin_validation_bp)
+app.register_blueprint(plugin_validation_admin_bp)
 app.register_blueprint(bp_migration)
 app.register_blueprint(plugin_logging_bp)
 
 # Register OpenAPI routes
-register_openapi_routes(app)
+register_route_blueprint('openapi', register_openapi_routes, user_required_blueprint)
 
 # Register Enhanced Citations routes
-register_enhanced_citations_routes(app)
+register_route_blueprint('enhanced_citations', register_enhanced_citations_routes, user_required_blueprint)
 
 # Register Speech routes
-register_route_backend_speech(app)
+register_route_blueprint('backend_speech', register_route_backend_speech, user_required_blueprint)
 
 # Register TTS routes
-register_route_backend_tts(app)
+register_route_blueprint('backend_tts', register_route_backend_tts, user_required_blueprint)
 
 # Register Swagger documentation routes
 from swagger_wrapper import register_swagger_routes
 register_swagger_routes(app)
 
-from flask import g
 from flask_session import Session
 from redis import Redis
 from functions_settings import get_settings
@@ -199,17 +221,9 @@ def configure_sessions(settings):
                 try:
                     if redis_auth_type == 'managed_identity':
                         log_event("Redis enabled using Managed Identity", level=logging.INFO)
-                        from config import get_redis_cache_infrastructure_endpoint
-                        credential = DefaultAzureCredential()
-                        redis_hostname = redis_url.split('.')[0]
-                        cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
-                        token = credential.get_token(cache_endpoint)
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=token.token,
-                            ssl=True,
+                        redis_client = app_settings_cache.create_redis_managed_identity_client(
+                            redis_url,
+                            settings=settings,
                             socket_connect_timeout=5,
                             socket_timeout=5
                         )
@@ -278,7 +292,7 @@ def start_background_tasks():
             print("Background tasks disabled for this web process.")
             _background_tasks_started = True
             return
-        start_background_task_threads()
+        start_background_task_threads(app=app)
         _background_tasks_started = True
 
 
@@ -308,6 +322,10 @@ def initialize_application(force=False):
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
+        # basicConfig above is a no-op once Azure Monitor owns the root logger,
+        # and that same root handler stops Flask attaching its stderr handler,
+        # so unhandled tracebacks would otherwise never reach the container log.
+        ensure_console_error_logging(app.logger)
         ensure_default_global_agent_exists()
 
         start_background_tasks()
@@ -563,25 +581,38 @@ def inject_settings():
     try:
         custom_pages_nav = get_custom_pages_nav(settings)
     except Exception as e:
-        log_event(f"[CustomPages] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
+        log_event(f"[CUSTOM_PAGES] Error injecting custom page navigation: {e}", level=logging.ERROR, exceptionTraceback=True)
     # Inject per-user settings if logged in
     user_settings = {}
+    latest_features_nav_hidden = IS_DEVELOPMENT
     try:
         user_id = get_current_user_id()
         if user_id:
             from functions_settings import get_user_ui_settings
             user_settings = get_user_ui_settings(user_id) or {}
+            latest_features_nav_hidden = should_hide_latest_features_nav(
+                user_settings,
+                VERSION,
+                is_development=IS_DEVELOPMENT
+            )
     except Exception as e:
         print(f"Error injecting user settings: {e}")
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
+        latest_features_nav_hidden = IS_DEVELOPMENT
     return dict(
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
+        admin_nav=ADMIN_NAV,
+        admin_landing_tab=get_landing_tab_id(),
+        latest_features_current_version=VERSION,
+        latest_features_nav_hidden=latest_features_nav_hidden,
+        latest_features_nav_hidden_by_development=IS_DEVELOPMENT,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
-        idle_warning_minutes=idle_warning_minutes
+        idle_warning_minutes=idle_warning_minutes,
+        mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
 @app.template_filter('to_datetime')
@@ -596,10 +627,10 @@ def format_datetime_filter(value):
 @app.before_request
 def reload_kernel_if_needed():
     if getattr(builtins, "kernel_reload_needed", False):
-        debug_print(f"[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
+        debug_print(f"[SK_LOADER] Hot reload: re-initializing Semantic Kernel and agents due to settings change.")
         """Commneted out because hot reload is not fully supported yet.
         log_event(
-            "[SK Loader] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",
+            "[SK_LOADER] Hot reload: re-initializing Semantic Kernel and agents due to settings change.",
             level=logging.INFO
         )
         initialize_semantic_kernel()
@@ -809,6 +840,74 @@ def _is_idle_timeout_exempt(path):
     return any(path.startswith(prefix) for prefix in IDLE_TIMEOUT_EXEMPT_PREFIXES)
 
 
+TERMS_OF_USE_EXEMPT_PATHS = {
+    '/login',
+    '/logout',
+    '/logout/local',
+    '/getAToken',
+    '/getATokenApi',
+    '/ci-auth/session',
+    '/auth/teams/token-exchange',
+    '/terms-of-use',
+    '/terms-of-use/accept',
+    '/terms-of-use/decline',
+    '/robots933456.txt',
+    '/favicon.ico',
+    '/acceptable_use_policy.html',
+    '/external/healthcheck',
+    '/external/healthcheckz',
+}
+
+TERMS_OF_USE_EXEMPT_PREFIXES = (
+    '/static/',
+    '/health',
+    '/api/health',
+)
+
+
+def _is_terms_of_use_exempt(path):
+    if path in TERMS_OF_USE_EXEMPT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in TERMS_OF_USE_EXEMPT_PREFIXES)
+
+
+@app.before_request
+def enforce_terms_of_use():
+    """Block authenticated app usage until the current terms of use is accepted."""
+    if 'user' not in session:
+        return None
+    if request.method == 'OPTIONS' or _is_terms_of_use_exempt(request.path):
+        return None
+
+    request_settings = get_request_settings()
+    user_id = session.get('user', {}).get('oid') or session.get('user', {}).get('sub')
+    if has_terms_of_use_acceptance(request_settings, user_id=user_id):
+        return None
+
+    terms_url = url_for(
+        'frontend_terms_of_use.terms_of_use',
+        next=normalize_path_with_query(request.path, request.query_string),
+    )
+    is_api_request = (
+        request.accept_mimetypes.accept_json
+        and not request.accept_mimetypes.accept_html
+    ) or request.path.startswith('/api/')
+    if is_api_request:
+        return jsonify({
+            'error': 'terms_of_use_required',
+            'message': 'Terms of Use acceptance is required before using SimpleChat.',
+            'terms_url': terms_url,
+        }), 403
+    return redirect(terms_url)
+
+
+def normalize_path_with_query(path, query_string):
+    query_text = query_string.decode('utf-8', errors='ignore') if isinstance(query_string, bytes) else str(query_string or '')
+    if not query_text:
+        return path
+    return f"{path}?{query_text}"
+
+
 def maybe_log_authenticated_browser_request():
     """Record throttled login activity for authenticated browser page requests."""
     if request.method != 'GET' or request.path.startswith('/api/'):
@@ -909,7 +1008,7 @@ def enforce_idle_session_timeout():
                         'requires_reauth': True
                     }), 401
 
-                return redirect(url_for('local_logout'))
+                return redirect(url_for('frontend_authentication.local_logout'))
         except Exception as e:
             log_event(f"Idle timeout evaluation failed: {e}", level=logging.WARNING)
 
@@ -957,8 +1056,36 @@ def markdown_filter(text):
 
     # Add target="_blank" to all <a> links
     html = re.sub(r'(<a\s+href=["\'](https?://.*?)["\'])', r'\1 target="_blank" rel="noopener noreferrer"', html)
+    allowed_tags = set(bleach.sanitizer.ALLOWED_TAGS).union({
+        'p',
+        'pre',
+        'span',
+        'h1',
+        'h2',
+        'h3',
+        'h4',
+        'h5',
+        'h6',
+        'br',
+        'table',
+        'thead',
+        'tbody',
+        'tr',
+        'th',
+        'td',
+    })
+    allowed_attributes = dict(bleach.sanitizer.ALLOWED_ATTRIBUTES)
+    allowed_attributes['a'] = ['href', 'title', 'target', 'rel']
+    allowed_attributes['*'] = ['class']
+    html = bleach.clean(
+        html,
+        tags=allowed_tags,
+        attributes=allowed_attributes,
+        protocols={'http', 'https', 'mailto'},
+        strip=True,
+    )
 
-    return Markup(html)
+    return Markup(html)  # xss-check: ignore - sanitized with bleach.clean before Markup.
 
 # Add the filter to the Jinja environment
 app.jinja_env.filters['markdown'] = markdown_filter
@@ -968,15 +1095,73 @@ def nl2br_filter(value):
     """Escape HTML then convert newline characters to <br> tags."""
     from markupsafe import escape, Markup
     if not value:
-        return Markup('')
-    return Markup(str(escape(value)).replace('\n', '<br>\n'))
+        return Markup('')  # xss-check: ignore - static empty safe markup.
+    return Markup(str(escape(value)).replace('\n', '<br>\n'))  # xss-check: ignore - value is escaped before adding static br tags.
 
 app.jinja_env.filters['nl2br'] = nl2br_filter
 
+
+# =================== Rate Limiting (429) Responses =====================
+def rate_limited_caller_wants_json():
+    """Return True when a rate limited caller expects JSON over a rendered page."""
+    path = request.path or ''
+    if path.startswith('/api/') or path.startswith('/external/'):
+        return True
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return True
+
+    accept = request.accept_mimetypes
+    return accept.accept_json and not accept.accept_html
+
+
+@app.errorhandler(429)
+def handle_rate_limited_request(error):
+    """Return the admin-configured message whenever a request is rate limited.
+
+    Views that build their own 429 body resolve the message themselves, so this
+    handler covers ``abort(429)`` and any 429 raised from within the stack.
+    """
+    settings = get_settings()
+    retry_after = getattr(error, 'retry_after', None)
+
+    if rate_limited_caller_wants_json():
+        response = jsonify(build_rate_limit_error_payload(settings, retry_after=retry_after))
+    else:
+        message = get_rate_limit_message(settings)
+        try:
+            response = make_response(render_template(
+                'errors/429.html',
+                rate_limit_message_html=markdown_filter(message),
+            ))
+        except Exception as render_error:
+            # The message still has to reach the user even if the shell fails
+            # to render, so fall back to the raw Markdown as plain text.
+            log_event(
+                f"[RATE_LIMIT] Failed to render the 429 page: {render_error}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            response = make_response(message)
+            response.mimetype = 'text/plain'
+
+    response.status_code = 429
+    if retry_after:
+        response.headers['Retry-After'] = str(retry_after)
+
+    return response
+
+
+public_app_bp = Blueprint('public_app', __name__)
+
+
 # =================== Default Routes =====================
-@app.route('/')
+@public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
+        return redirect(url_for('frontend_authentication.login'))
+
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
 
@@ -988,17 +1173,17 @@ def index():
 
     return render_template('index.html', app_settings=public_settings, landing_html=landing_html)
 
-@app.route('/robots933456.txt')
+@public_app_bp.route('/robots933456.txt')
 @swagger_route(security=get_auth_security())
 def robots():
     return send_from_directory('static', 'robots.txt')
 
-@app.route('/favicon.ico')
+@public_app_bp.route('/favicon.ico')
 @swagger_route(security=get_auth_security())
 def favicon():
     return send_from_directory('static', 'favicon.ico')
 
-@app.route('/static/js/<path:filename>')
+@public_app_bp.route('/static/js/<path:filename>')
 @swagger_route(security=get_auth_security())
 def serve_js_modules(filename):
     """Serve JavaScript modules with correct MIME type."""
@@ -1011,12 +1196,16 @@ def serve_js_modules(filename):
     else:
         return send_from_directory('static/js', filename)
 
-@app.route('/acceptable_use_policy.html')
+@public_app_bp.route('/acceptable_use_policy.html')
 @swagger_route(security=get_auth_security())
 def acceptable_use_policy():
     return render_template('acceptable_use_policy.html')
 
-@app.route('/api/session/heartbeat', methods=['POST'])
+session_api_bp = Blueprint('session_api', __name__)
+session_api_bp.before_request(login_required_blueprint())
+
+
+@session_api_bp.route('/api/session/heartbeat', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
 def session_heartbeat():
@@ -1040,8 +1229,14 @@ def session_heartbeat():
         'idle_timeout_minutes': idle_timeout_minutes
     }), 200
 
-@app.route('/api/semantic-kernel/plugins')
+debug_admin_bp = Blueprint('debug_admin', __name__)
+debug_admin_bp.before_request(admin_required_blueprint())
+
+
+@debug_admin_bp.route('/api/semantic-kernel/plugins')
 @swagger_route(security=get_auth_security())
+@login_required
+@admin_required
 def list_semantic_kernel_plugins():
     """Test endpoint: List loaded Semantic Kernel plugins and their functions."""
     global kernel
@@ -1053,143 +1248,154 @@ def list_semantic_kernel_plugins():
     return {"plugins": plugins}
 
 
+app.register_blueprint(public_app_bp)
+app.register_blueprint(session_api_bp)
+app.register_blueprint(debug_admin_bp)
+
+
 # =================== Front End Routes ===================
 # ------------------- User Authentication Routes ---------
-register_route_frontend_authentication(app)
+register_route_blueprint('frontend_authentication', register_route_frontend_authentication)
+
+# ------------------- Terms of Use Routes --
+register_route_blueprint('frontend_terms_of_use', register_route_frontend_terms_of_use)
 
 # ------------------- User Profile Routes ----------------
-register_route_frontend_profile(app)
+register_route_blueprint('frontend_profile', register_route_frontend_profile, login_required_blueprint)
 
 # ------------------- Admin Settings Routes --------------
-register_route_frontend_admin_settings(app)
+register_route_blueprint('frontend_admin_settings', register_route_frontend_admin_settings, admin_required_blueprint)
 
 # ------------------- Control Center Routes --------------
-register_route_frontend_control_center(app)
+register_route_blueprint('frontend_control_center', register_route_frontend_control_center, login_required_blueprint)
 
 # ------------------- Chats Routes -----------------------
-register_route_frontend_chats(app)
+register_route_blueprint('frontend_chats', register_route_frontend_chats, user_required_blueprint)
 
 # ------------------- Agents Catalog Routes --------------
-register_route_frontend_agents(app)
+register_route_blueprint('frontend_agents', register_route_frontend_agents, user_required_blueprint)
 
 # ------------------- Conversations Routes ---------------
-register_route_frontend_conversations(app)
+register_route_blueprint('frontend_conversations', register_route_frontend_conversations, user_required_blueprint)
 
 # ------------------- Documents Routes -------------------
-register_route_frontend_workspace(app)
+register_route_blueprint('frontend_workspace', register_route_frontend_workspace, user_required_blueprint)
 
 # ------------------- Groups Routes ----------------------
-register_route_frontend_groups(app)
+register_route_blueprint('frontend_groups', register_route_frontend_groups, user_required_blueprint)
 
 # ------------------- Group Documents Routes -------------
-register_route_frontend_group_workspaces(app)
-register_route_frontend_public_workspaces(app)
+register_route_blueprint('frontend_group_workspaces', register_route_frontend_group_workspaces, user_required_blueprint)
+register_route_blueprint('frontend_public_workspaces', register_route_frontend_public_workspaces, user_required_blueprint)
 
 # ------------------- Safety Routes ----------------------
-register_route_frontend_safety(app)
+register_route_blueprint('frontend_safety', register_route_frontend_safety, login_required_blueprint)
 
 # ------------------- Feedback Routes -------------------
-register_route_frontend_feedback(app)
+register_route_blueprint('frontend_feedback', register_route_frontend_feedback, login_required_blueprint)
 
 # ------------------- Support Routes --------------------
-register_route_frontend_support(app)
+register_route_blueprint('frontend_support', register_route_frontend_support, user_required_blueprint)
 
 # ------------------- Notifications Routes --------------
-register_route_frontend_notifications(app)
+register_route_blueprint('frontend_notifications', register_route_frontend_notifications, user_required_blueprint)
 
 # ------------------- Custom Pages Routes ---------------
-register_route_custom_pages(app)
+register_route_blueprint('custom_pages', register_route_custom_pages, login_required_blueprint)
 
 # ------------------- API Chat Routes --------------------
-register_route_backend_chats(app)
+register_route_blueprint('backend_chats', register_route_backend_chats, user_required_blueprint)
 
 # ------------------- API Search Routes ------------------
-register_route_backend_search(app)
+register_route_blueprint('backend_search', register_route_backend_search, user_required_blueprint)
 
 # ------------------- API Conversation Routes ------------
-register_route_backend_conversations(app)
+register_route_blueprint('backend_conversations', register_route_backend_conversations, user_required_blueprint)
 
 # ------------------- API Collaboration Routes -----------
-register_route_backend_collaboration(app)
+register_route_blueprint('backend_collaboration', register_route_backend_collaboration, user_required_blueprint)
 
 # ------------------- API MS Graph Pending Action Routes -
-register_route_backend_msgraph_pending_actions(app)
+register_route_blueprint('backend_msgraph_pending_actions', register_route_backend_msgraph_pending_actions, user_required_blueprint)
 
 # ------------------- API Documents Routes ---------------
-register_route_backend_documents(app)
+register_route_blueprint('backend_documents', register_route_backend_documents, user_required_blueprint)
 
 # ------------------- API Groups Routes ------------------
-register_route_backend_groups(app)
+register_route_blueprint('backend_groups', register_route_backend_groups, user_required_blueprint)
 
 # ------------------- API User Routes --------------------
-register_route_backend_users(app)
+register_route_blueprint('backend_users', register_route_backend_users, user_required_blueprint)
 
 # ------------------- API Group Documents Routes ---------
-register_route_backend_group_documents(app)
+register_route_blueprint('backend_group_documents', register_route_backend_group_documents, user_required_blueprint)
 
 # ------------------- API Model Routes -------------------
-register_route_backend_models(app)
+register_route_blueprint('backend_models', register_route_backend_models, user_required_blueprint)
 
 # ------------------- API Workflow Routes ----------------
-register_route_backend_workflows(app)
+register_route_blueprint('backend_workflows', register_route_backend_workflows, user_required_blueprint)
 
 # ------------------- API Safety Logs Routes -------------
-register_route_backend_safety(app)
+register_route_blueprint('backend_safety', register_route_backend_safety, user_required_blueprint)
 
 # ------------------- API Feedback Routes ---------------
-register_route_backend_feedback(app)
+register_route_blueprint('backend_feedback', register_route_backend_feedback, user_required_blueprint)
 
 # ------------------- API Settings Routes ---------------
-register_route_backend_settings(app)
+register_route_blueprint('backend_settings', register_route_backend_settings, login_required_blueprint)
 
 # ------------------- API Data Management Routes ---------
-register_route_backend_data_management(app)
+register_route_blueprint('backend_data_management', register_route_backend_data_management, admin_required_blueprint)
 
 # ------------------- API Prompts Routes ----------------
-register_route_backend_prompts(app)
+register_route_blueprint('backend_prompts', register_route_backend_prompts, user_required_blueprint)
 
 # ------------------- API Group Prompts Routes ----------
-register_route_backend_group_prompts(app)
+register_route_blueprint('backend_group_prompts', register_route_backend_group_prompts, user_required_blueprint)
 
 # ------------------- API Control Center Routes ---------
-register_route_backend_control_center(app)
+register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)
 
 # ------------------- API Notifications Routes ----------
-register_route_backend_notifications(app)
+register_route_blueprint('backend_notifications', register_route_backend_notifications, user_required_blueprint)
 
 # ------------------- API Retention Policy Routes --------
-register_route_backend_retention_policy(app)
+register_route_blueprint('backend_retention_policy', register_route_backend_retention_policy, login_required_blueprint)
 
 # ------------------- API Governance Routes --------------
-register_route_backend_governance(app)
+register_route_blueprint('backend_governance', register_route_backend_governance, admin_required_blueprint)
 
 # ------------------- API Public Workspaces Routes -------
-register_route_backend_public_workspaces(app)
+register_route_blueprint('backend_public_workspaces', register_route_backend_public_workspaces, user_required_blueprint)
 
 # ------------------- API Conversation Export Routes -----
-register_route_backend_conversation_export(app)
+register_route_blueprint('backend_conversation_export', register_route_backend_conversation_export, user_required_blueprint)
 
 # ------------------- API Public Documents Routes --------
-register_route_backend_public_documents(app)
+register_route_blueprint('backend_public_documents', register_route_backend_public_documents, user_required_blueprint)
 
 # ------------------- API Public Prompts Routes ----------
-register_route_backend_public_prompts(app)
+register_route_blueprint('backend_public_prompts', register_route_backend_public_prompts, user_required_blueprint)
 
 # ------------------- API File Sync Routes ---------------
-register_route_backend_file_sync(app)
+register_route_blueprint('backend_file_sync', register_route_backend_file_sync, login_required_blueprint)
 
 # ------------------- API Workspace Identity Routes ------
-register_route_backend_workspace_identities(app)
+register_route_blueprint('backend_workspace_identities', register_route_backend_workspace_identities, login_required_blueprint)
 
 # ------------------- API User Agreement Routes ----------
-register_route_backend_user_agreement(app)
+register_route_blueprint('backend_user_agreement', register_route_backend_user_agreement, user_required_blueprint)
 
 # ------------------- API Thoughts Routes ----------------
-register_route_backend_thoughts(app)
+register_route_blueprint('backend_thoughts', register_route_backend_thoughts, user_required_blueprint)
+
+# ------------------- Inbound MCP Routes -----------------
+register_route_blueprint('inbound_mcp', register_route_inbound_mcp, inbound_mcp_required_blueprint)
 
 # ------------------- External Health Routes ----------
-register_route_external_health(app)
-register_no_auth_health(app)
+register_route_blueprint('external_health', register_route_external_health)
+register_route_blueprint('external_no_auth_health', register_no_auth_health)
 
 if __name__ == '__main__':
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"

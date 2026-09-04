@@ -1,12 +1,12 @@
 # test_voice_assisted_form_inputs.py
 """
 UI test for voice-assisted form input controls.
-Version: 0.241.177
-Implemented in: 0.241.177
+Version: 0.250.028
+Implemented in: 0.241.177; 0.250.028
 
 This test ensures speech-to-text enabled workspaces render voice controls for
-agent authoring, document metadata, and tag name fields without requiring live
-microphone capture or Azure Speech calls.
+agent authoring, workflow authoring, action authoring, document metadata, and
+tag name fields without requiring live microphone capture or Azure Speech calls.
 """
 
 import os
@@ -63,6 +63,18 @@ def test_voice_assisted_workspace_controls():
                 "#doc-keywords",
                 "#new-tag-name",
             ]
+            optional_fields = [
+                "#workflow-name",
+                "#workflow-description",
+                "#workflow-task-brief",
+                "#workflow-task-prompt",
+                "#plugin-display-name",
+                "#plugin-name",
+                "#plugin-description",
+            ]
+            expected_fields.extend(
+                selector for selector in optional_fields if page.locator(selector).count() > 0
+            )
             missing = page.evaluate(
                 """
                 (selectors) => selectors.filter((selector) => {
@@ -79,6 +91,10 @@ def test_voice_assisted_workspace_controls():
 
             expect(page.locator("#agent-draft-instructions-btn")).to_have_count(1)
             expect(page.locator("#agent-instruction-brief")).to_have_count(1)
+            if page.locator("#workflow-task-brief").count() > 0:
+                expect(page.locator("#workflow-draft-instructions-btn")).to_have_count(1)
+                expect(page.locator("#workflow-task-brief")).to_have_count(1)
+                expect(page.locator("label[for='workflow-task-prompt']")).to_have_text("Workflow or Task Instructions")
         finally:
             context.close()
             browser.close()

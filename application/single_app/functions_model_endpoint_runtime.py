@@ -1,17 +1,21 @@
 # functions_model_endpoint_runtime.py
 """Runtime helpers for configured model endpoint clients and Semantic Kernel services."""
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AzureOpenAI
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIChatCompletion
 
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_settings import resolve_model_endpoint_foundry_scope
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     AnthropicSemanticKernelChatCompletion,
+    build_anthropic_chat_client,
+    build_openai_style_chat_client,
     infer_model_endpoint_protocol,
     normalize_openai_style_base_url,
     resolve_openai_style_request_api_version,
@@ -28,6 +32,15 @@ MODEL_CONTEXT_AUTH_FIELDS = (
     'foundry_scope',
     'authority',
 )
+
+
+def _build_azure_chat_completion(default_headers=None, **kwargs):
+    if not default_headers:
+        return AzureChatCompletion(**kwargs)
+    try:
+        return AzureChatCompletion(default_headers=default_headers, **kwargs)
+    except TypeError:
+        return AzureChatCompletion(**kwargs)
 
 
 def sanitize_model_endpoint_auth_for_context(auth_settings):
@@ -86,28 +99,7 @@ def build_model_endpoint_context(
 
 def resolve_foundry_scope_for_endpoint_auth(auth_settings, endpoint=None):
     """Resolve the correct scope for Foundry-backed inference authentication."""
-    auth_settings = auth_settings or {}
-    custom_scope = str(auth_settings.get('foundry_scope') or '').strip()
-    if custom_scope:
-        return custom_scope
-
-    management_cloud = str(auth_settings.get('management_cloud') or 'public').lower()
-    if management_cloud in ('government', 'usgovernment', 'usgov'):
-        return 'https://ai.azure.us/.default'
-    if management_cloud == 'china':
-        return 'https://ai.azure.cn/.default'
-    if management_cloud == 'germany':
-        return 'https://ai.azure.de/.default'
-
-    endpoint_value = str(endpoint or '').lower()
-    if 'azure.us' in endpoint_value:
-        return 'https://ai.azure.us/.default'
-    if 'azure.cn' in endpoint_value:
-        return 'https://ai.azure.cn/.default'
-    if 'azure.de' in endpoint_value:
-        return 'https://ai.azure.de/.default'
-
-    return 'https://ai.azure.com/.default'
+    return resolve_model_endpoint_foundry_scope(auth_settings, endpoint=endpoint)
 
 
 def resolve_credential_for_model_endpoint_auth(auth_settings):
@@ -124,6 +116,83 @@ def resolve_credential_for_model_endpoint_auth(auth_settings):
 
     managed_identity_client_id = auth_settings.get('managed_identity_client_id') or None
     return DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
+
+
+def build_model_endpoint_sync_chat_client(
+    auth_settings,
+    provider,
+    endpoint,
+    api_version,
+    deployment_name='',
+    *,
+    settings=None,
+    endpoint_config=None,
+    identity_context=None,
+):
+    """Create a protocol-aware synchronous chat client for a configured model endpoint."""
+    auth_settings = auth_settings or {}
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
+    )
+    normalized_provider = str(provider or 'aoai').strip().lower()
+    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
+    auth_type = str(auth_settings.get('type') or 'managed_identity').strip().lower()
+
+    if auth_type in ('api_key', 'key'):
+        api_key = auth_settings.get('api_key')
+        if not api_key:
+            raise ValueError('Selected model endpoint is missing an API key.')
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+            return build_anthropic_chat_client(
+                endpoint=endpoint,
+                api_key=api_key,
+                extra_headers=extra_headers,
+            ), runtime_protocol
+        if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+            return build_openai_style_chat_client(
+                api_key,
+                endpoint,
+                api_version,
+                default_headers=extra_headers,
+            ), runtime_protocol
+        return AzureOpenAI(
+            api_version=api_version,
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            default_headers=extra_headers or None,
+        ), runtime_protocol
+
+    credential = resolve_credential_for_model_endpoint_auth(auth_settings)
+    scope = cognitive_services_scope
+    if normalized_provider in ('aifoundry', 'new_foundry', 'anthropic', 'claude') or runtime_protocol != MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI:
+        scope = resolve_foundry_scope_for_endpoint_auth(auth_settings, endpoint=endpoint)
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+        token = credential.get_token(scope).token
+        return build_anthropic_chat_client(
+            endpoint=endpoint,
+            bearer_token=token,
+            extra_headers=extra_headers,
+        ), runtime_protocol
+
+    if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        token = credential.get_token(scope).token
+        return build_openai_style_chat_client(
+            token,
+            endpoint,
+            api_version,
+            default_headers=extra_headers,
+        ), runtime_protocol
+
+    token_provider = get_bearer_token_provider(credential, scope)
+    return AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+        default_headers=extra_headers or None,
+    ), runtime_protocol
 
 
 def _append_model_endpoint_candidate(endpoints, scope, endpoint):
@@ -264,6 +333,11 @@ def build_semantic_kernel_chat_service_for_model(
     if provider and endpoint and deployment_name:
         runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
         auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
+        extra_headers = build_model_endpoint_identity_headers(
+            settings,
+            endpoint_config=resolved_model_endpoint,
+            identity_context=model_context,
+        )
         if auth_type in ('api_key', 'key'):
             api_key = auth_settings.get('api_key')
             if not api_key:
@@ -274,6 +348,7 @@ def build_semantic_kernel_chat_service_for_model(
                     deployment_name=deployment_name,
                     endpoint=endpoint,
                     api_key=api_key,
+                    extra_headers=extra_headers,
                 ), runtime_protocol
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
                 request_api_version = resolve_openai_style_request_api_version(api_version)
@@ -281,6 +356,8 @@ def build_semantic_kernel_chat_service_for_model(
                     'api_key': api_key,
                     'base_url': normalize_openai_style_base_url(endpoint),
                 }
+                if extra_headers:
+                    client_kwargs['default_headers'] = extra_headers
                 if request_api_version:
                     client_kwargs['default_query'] = {'api-version': request_api_version}
                 return OpenAIChatCompletion(
@@ -288,12 +365,13 @@ def build_semantic_kernel_chat_service_for_model(
                     ai_model_id=deployment_name,
                     async_client=AsyncOpenAI(**client_kwargs),
                 ), runtime_protocol
-            return AzureChatCompletion(
+            return _build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=deployment_name,
                 endpoint=endpoint,
                 api_key=api_key,
                 api_version=api_version,
+                default_headers=extra_headers,
             ), runtime_protocol
 
         credential = resolve_credential_for_model_endpoint_auth(auth_settings)
@@ -308,6 +386,7 @@ def build_semantic_kernel_chat_service_for_model(
                 deployment_name=deployment_name,
                 endpoint=endpoint,
                 bearer_token=token,
+                extra_headers=extra_headers,
             ), runtime_protocol
 
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
@@ -317,6 +396,8 @@ def build_semantic_kernel_chat_service_for_model(
                 'api_key': token,
                 'base_url': normalize_openai_style_base_url(endpoint),
             }
+            if extra_headers:
+                client_kwargs['default_headers'] = extra_headers
             if request_api_version:
                 client_kwargs['default_query'] = {'api-version': request_api_version}
             return OpenAIChatCompletion(
@@ -327,56 +408,63 @@ def build_semantic_kernel_chat_service_for_model(
 
         token_provider = get_bearer_token_provider(credential, scope)
         try:
-            return AzureChatCompletion(
+            return _build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=deployment_name,
                 endpoint=endpoint,
                 api_version=api_version,
                 azure_ad_token_provider=token_provider,
+                default_headers=extra_headers,
             ), runtime_protocol
         except TypeError:
-            return AzureChatCompletion(
+            return _build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=deployment_name,
                 endpoint=endpoint,
                 api_version=api_version,
                 ad_token_provider=token_provider,
+                default_headers=extra_headers,
             ), runtime_protocol
 
+    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=model_context)
     enable_gpt_apim = settings.get('enable_gpt_apim', False)
     if enable_gpt_apim:
-        return AzureChatCompletion(
+        return _build_azure_chat_completion(
             service_id=service_id,
             deployment_name=gpt_model,
             endpoint=settings.get('azure_apim_gpt_endpoint'),
             api_key=settings.get('azure_apim_gpt_subscription_key'),
             api_version=settings.get('azure_apim_gpt_api_version'),
+            default_headers=extra_headers,
         ), MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
 
     auth_type = settings.get('azure_openai_gpt_authentication_type')
     if auth_type == 'managed_identity':
         token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
         try:
-            return AzureChatCompletion(
+            return _build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=gpt_model,
                 endpoint=settings.get('azure_openai_gpt_endpoint'),
                 api_version=settings.get('azure_openai_gpt_api_version'),
                 azure_ad_token_provider=token_provider,
+                default_headers=extra_headers,
             ), MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
         except TypeError:
-            return AzureChatCompletion(
+            return _build_azure_chat_completion(
                 service_id=service_id,
                 deployment_name=gpt_model,
                 endpoint=settings.get('azure_openai_gpt_endpoint'),
                 api_version=settings.get('azure_openai_gpt_api_version'),
                 ad_token_provider=token_provider,
+                default_headers=extra_headers,
             ), MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
 
-    return AzureChatCompletion(
+    return _build_azure_chat_completion(
         service_id=service_id,
         deployment_name=gpt_model,
         endpoint=settings.get('azure_openai_gpt_endpoint'),
         api_key=settings.get('azure_openai_gpt_key'),
         api_version=settings.get('azure_openai_gpt_api_version'),
+        default_headers=extra_headers,
     ), MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI

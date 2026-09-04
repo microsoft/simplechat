@@ -1,5 +1,6 @@
 # route_backend_public_documents.py
 
+import logging
 from datetime import datetime, timezone
 
 from config import *
@@ -8,6 +9,17 @@ from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from functions_appinsights import log_event
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SCOPE_PUBLIC,
+    build_document_access_scope_key,
+    is_document_access_shadow_validation_enabled,
+    query_document_access_index_documents,
+    query_document_access_index_legacy_count,
+    query_document_access_index_tag_counts,
+    query_items_with_cosmos_diagnostics,
+    validate_document_access_index_shadow,
+)
 from functions_file_sync import (
     FILE_SYNC_SCOPE_PUBLIC,
     apply_synced_document_delete_action,
@@ -65,12 +77,12 @@ def _require_active_public_workspace_response(user_id, allowed_roles=PUBLIC_WORK
 
     return active_ws, ws_doc, role, None
 
-def register_route_backend_public_documents(app):
+def register_route_backend_public_documents(bp):
     """
     Provides backend routes for public-workspace–scoped document management
     """
 
-    @app.route('/api/public_documents/upload', methods=['POST'])
+    @bp.route('/api/public_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -158,7 +170,7 @@ def register_route_backend_public_documents(app):
             'errors': errors
         }), status
 
-    @app.route('/api/public_documents', methods=['GET'])
+    @bp.route('/api/public_documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -205,6 +217,7 @@ def register_route_backend_public_documents(app):
         conds = ['c.public_workspace_id = @ws']
         params = [{'name':'@ws','value':active_ws}]
         param_count = 0
+        shadow_tags_filter = []
         if search:
             conds.append('(CONTAINS(LOWER(c.file_name), LOWER(@search)) OR CONTAINS(LOWER(c.title), LOWER(@search)))')
             params.append({'name':'@search','value':search})
@@ -241,6 +254,7 @@ def register_route_backend_public_documents(app):
             from functions_documents import sanitize_tags_for_filter
             tags_list = sanitize_tags_for_filter(tags_filter)
             if tags_list:
+                shadow_tags_filter = tags_list
                 for idx, tag in enumerate(tags_list):
                     param_name = f"@tag_{param_count}_{idx}"
                     conds.append(f"ARRAY_CONTAINS(c.tags, {param_name})")
@@ -248,27 +262,110 @@ def register_route_backend_public_documents(app):
                 param_count += len(tags_list)
 
         where = ' AND '.join(conds)
+        shadow_filters = {
+            'search': search,
+            'classification': classification_filter,
+            'classification_none_matches_literal': True,
+            'author': author_filter,
+            'keywords': keywords_filter,
+            'abstract': abstract_filter,
+            'tags': shadow_tags_filter,
+            'array_match_mode': 'contains',
+        }
+        used_document_access_index = False
 
         data_q = f'SELECT * FROM c WHERE {where}'
-        matching_docs = list(cosmos_public_documents_container.query_items(
-            query=data_q, parameters=params, enable_cross_partition_query=True
-        ))
-        current_docs = sort_documents(
-            select_current_documents(matching_docs),
-            sort_by=sort_by,
-            sort_order=sort_order,
-        )
-        total_count = len(current_docs)
-        docs = current_docs[offset:offset + page_size]
+        try:
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                public_workspace_id=active_ws,
+                filters=shadow_filters,
+            )
+            if index_read_result.get('success'):
+                used_document_access_index = True
+                current_docs = sort_documents(
+                    index_read_result.get('documents', []),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_public_documents_container,
+                            diagnostics_label='source_documents',
+                            query=data_q,
+                            parameters=params,
+                            enable_cross_partition_query=True,
+                        )
+                        source_current_docs = sort_documents(
+                            select_current_documents(matching_docs),
+                            sort_by=sort_by,
+                            sort_order=sort_order,
+                        )
+                        validate_document_access_index_shadow(
+                            source_current_docs,
+                            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                            user_id=user_id,
+                            public_workspace_id=active_ws,
+                            filters=shadow_filters,
+                            source_query_metrics=source_query_metrics,
+                            context='api_list_public_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_public_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=data_q,
+                    parameters=params,
+                    enable_cross_partition_query=True,
+                )
+                current_docs = sort_documents(
+                    select_current_documents(matching_docs),
+                    sort_by=sort_by,
+                    sort_order=sort_order,
+                )
+                validate_document_access_index_shadow(
+                    current_docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                    user_id=user_id,
+                    public_workspace_id=active_ws,
+                    filters=shadow_filters,
+                    source_query_metrics=source_query_metrics,
+                    context='api_list_public_documents',
+                )
+            total_count = len(current_docs)
+            docs = current_docs[offset:offset + page_size]
+        except Exception as e:
+            log_event(
+                '[PUBLIC_DOCUMENTS] Error fetching public documents.',
+                extra={'public_workspace_id': active_ws, 'error': str(e)},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': f'Error fetching documents: {str(e)}'}), 500
 
         # legacy
-        legacy_q = 'SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @ws AND NOT IS_DEFINED(c.percentage_complete)'
-        legacy = list(cosmos_public_documents_container.query_items(
-            query=legacy_q,
-            parameters=[{'name':'@ws','value':active_ws}],
-            enable_cross_partition_query=True
-        ))
-        legacy_count = legacy[0] if legacy else 0
+        if used_document_access_index:
+            legacy_count_result = query_document_access_index_legacy_count(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                public_workspace_id=active_ws,
+            )
+            legacy_count = legacy_count_result.get('legacy_count', 0) if legacy_count_result.get('success') else 0
+        else:
+            legacy_q = 'SELECT VALUE COUNT(1) FROM c WHERE c.public_workspace_id = @ws AND NOT IS_DEFINED(c.percentage_complete)'
+            legacy = list(cosmos_public_documents_container.query_items(
+                query=legacy_q,
+                parameters=[{'name':'@ws','value':active_ws}],
+                enable_cross_partition_query=True
+            ))
+            legacy_count = legacy[0] if legacy else 0
 
         file_downloads_enabled = is_public_workspace_file_download_enabled(get_settings(), ws_doc)
         return jsonify({
@@ -280,7 +377,7 @@ def register_route_backend_public_documents(app):
             'needs_legacy_update': legacy_count > 0
         }), 200
 
-    @app.route('/api/public_workspace_documents', methods=['GET'])
+    @bp.route('/api/public_workspace_documents', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -320,21 +417,71 @@ def register_route_backend_public_documents(app):
         workspace_conditions = " OR ".join([f"c.public_workspace_id = @ws_{i}" for i in range(len(workspace_ids))])
         query = f'SELECT * FROM c WHERE {workspace_conditions} ORDER BY c._ts DESC'
         params = [{'name': f'@ws_{i}', 'value': workspace_id} for i, workspace_id in enumerate(workspace_ids)]
-        
-        docs = list(cosmos_public_documents_container.query_items(
-            query=query,
-            parameters=params,
-            enable_cross_partition_query=True
-        ))
+        try:
+            index_read_result = query_document_access_index_documents(
+                source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                public_workspace_ids=workspace_ids,
+            )
+            if index_read_result.get('success'):
+                docs = sort_documents(index_read_result.get('documents', []))
+                if is_document_access_shadow_validation_enabled():
+                    try:
+                        source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                            cosmos_public_documents_container,
+                            diagnostics_label='source_documents',
+                            query=query,
+                            parameters=params,
+                            enable_cross_partition_query=True,
+                        )
+                        validate_document_access_index_shadow(
+                            sort_documents(select_current_documents(source_docs)),
+                            source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                            user_id=user_id,
+                            public_workspace_ids=workspace_ids,
+                            source_query_metrics=source_query_metrics,
+                            context='api_list_public_workspace_documents',
+                        )
+                    except Exception as shadow_error:
+                        log_event(
+                            '[DOCUMENT_ACCESS_INDEX] Shadow validation source query failed after DAI read succeeded.',
+                            extra={'source_scope': DOCUMENT_ACCESS_SCOPE_PUBLIC, 'error': str(shadow_error)},
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+            else:
+                source_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
+                    cosmos_public_documents_container,
+                    diagnostics_label='source_documents',
+                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    query=query,
+                    parameters=params,
+                    enable_cross_partition_query=True,
+                )
+                docs = sort_documents(select_current_documents(source_docs))
+                validate_document_access_index_shadow(
+                    docs,
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PUBLIC,
+                    user_id=user_id,
+                    public_workspace_ids=workspace_ids,
+                    source_query_metrics=source_query_metrics,
+                    context='api_list_public_workspace_documents',
+                )
+        except Exception as e:
+            log_event(
+                '[PUBLIC_DOCUMENTS] Error fetching public workspace chat documents.',
+                extra={'workspace_count': len(workspace_ids), 'error': str(e)},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': f'Error fetching documents: {str(e)}'}), 500
 
-        docs = sort_documents(select_current_documents(docs))[:page_size]
+        docs = docs[:page_size]
 
         return jsonify({
             'documents': docs,
             'workspace_name': 'All Public Workspaces'
         }), 200
 
-    @app.route('/api/public_documents/<doc_id>', methods=['GET'])
+    @bp.route('/api/public_documents/<doc_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -349,7 +496,7 @@ def register_route_backend_public_documents(app):
             return error_response
         return get_document(user_id=user_id, document_id=doc_id, public_workspace_id=active_ws)
 
-    @app.route('/api/public_workspace_documents/<document_id>/versions', methods=['GET'])
+    @bp.route('/api/public_workspace_documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -411,7 +558,7 @@ def register_route_backend_public_documents(app):
             return None, None, (jsonify({'error': 'Document not found or access denied'}), 404)
         return active_ws, document_record, None
 
-    @app.route('/api/public_documents/<doc_id>/download', methods=['GET'])
+    @bp.route('/api/public_documents/<doc_id>/download', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -431,13 +578,13 @@ def register_route_backend_public_documents(app):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed public document download',
+                '[DOCUMENT_DOWNLOAD] Failed public document download',
                 {'document_id': doc_id, 'public_workspace_id': active_ws, 'error': str(exc)},
                 debug_only=True,
             )
             return jsonify({'error': 'Unable to download document'}), 500
 
-    @app.route('/api/public_documents/download', methods=['POST'])
+    @bp.route('/api/public_documents/download', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -489,13 +636,13 @@ def register_route_backend_public_documents(app):
             return jsonify({'error': str(exc)}), 404
         except Exception as exc:
             log_event(
-                '[DocumentDownload] Failed public document ZIP download',
+                '[DOCUMENT_DOWNLOAD] Failed public document ZIP download',
                 {'public_workspace_id': active_ws, 'document_count': len(documents), 'error': str(exc)},
                 debug_only=True,
             )
             return jsonify({'error': 'Unable to download selected documents'}), 500
 
-    @app.route('/api/public_documents/<doc_id>', methods=['PATCH'])
+    @bp.route('/api/public_documents/<doc_id>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -565,7 +712,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/public_documents/<doc_id>', methods=['DELETE'])
+    @bp.route('/api/public_documents/<doc_id>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -619,7 +766,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error':str(e)}), 500
 
-    @app.route('/api/public_documents/<doc_id>/approve-generated-artifact', methods=['POST'])
+    @bp.route('/api/public_documents/<doc_id>/approve-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -727,7 +874,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error approving generated artifact: {str(e)}'}), 500
 
-    @app.route('/api/public_documents/<doc_id>/deny-generated-artifact', methods=['POST'])
+    @bp.route('/api/public_documents/<doc_id>/deny-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -800,7 +947,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error denying generated artifact: {str(e)}'}), 500
 
-    @app.route('/api/public_documents/<doc_id>/cancel-generated-artifact', methods=['POST'])
+    @bp.route('/api/public_documents/<doc_id>/cancel-generated-artifact', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -852,7 +999,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': f'Error canceling generated artifact: {str(e)}'}), 500
 
-    @app.route('/api/public_documents/<doc_id>/extract_metadata', methods=['POST'])
+    @bp.route('/api/public_documents/<doc_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -872,7 +1019,82 @@ def register_route_backend_public_documents(app):
         executor.submit(process_metadata_extraction_background, document_id=doc_id, user_id=user_id, public_workspace_id=active_ws)
         return jsonify({'message':'Extraction queued'}), 200
 
-    @app.route('/api/public_documents/reprocess_extraction', methods=['POST'])
+    @bp.route('/api/public_documents/extract_metadata', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_public_workspaces')
+    def api_extract_metadata_public_documents_batch():
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        settings = get_settings()
+        if not settings.get('enable_extract_meta_data'):
+            return jsonify({'error': 'Metadata extraction not enabled'}), 403
+
+        active_ws, ws_doc, _role, error_response = _require_active_public_workspace_response(
+            user_id,
+            PUBLIC_WORKSPACE_MANAGER_ROLES,
+        )
+        if error_response:
+            return error_response
+
+        allowed, reason = check_public_workspace_status_allows_operation(ws_doc, 'upload')
+        if not allowed:
+            return jsonify({'error': reason}), 403
+
+        payload = request.get_json(silent=True) or {}
+        document_ids = payload.get('document_ids')
+        if not isinstance(document_ids, list):
+            doc_id = payload.get('document_id')
+            document_ids = [doc_id] if doc_id else []
+        document_ids = list(dict.fromkeys(
+            str(document_id).strip()
+            for document_id in document_ids
+            if str(document_id or '').strip()
+        ))
+        if not document_ids:
+            return jsonify({'error': 'At least one document ID is required.'}), 400
+
+        queued = []
+        errors = []
+        for document_id in document_ids:
+            try:
+                document_item = get_document_metadata(
+                    document_id=document_id,
+                    user_id=user_id,
+                    public_workspace_id=active_ws,
+                )
+                if not document_item:
+                    errors.append({'document_id': document_id, 'error': 'Document not found.'})
+                    continue
+                if document_item.get('public_workspace_id') != active_ws:
+                    errors.append({'document_id': document_id, 'error': 'Only documents in the active public workspace can have metadata extracted.'})
+                    continue
+
+                current_app.extensions['executor'].submit_stored(
+                    f"{document_id}_public_metadata",
+                    process_metadata_extraction_background,
+                    document_id=document_id,
+                    user_id=user_id,
+                    public_workspace_id=active_ws
+                )
+                queued.append({'document_id': document_id})
+            except Exception as e:
+                errors.append({'document_id': document_id, 'error': str(e)})
+
+        if queued:
+            invalidate_public_workspace_search_cache(active_ws)
+
+        status_code = 202 if queued and not errors else (207 if queued else 400)
+        return jsonify({
+            'message': f'Queued {len(queued)} document(s) for metadata extraction.',
+            'queued': queued,
+            'errors': errors,
+        }), status_code
+
+    @bp.route('/api/public_documents/reprocess_extraction', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -903,6 +1125,8 @@ def register_route_backend_public_documents(app):
         if raw_mode not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
             return jsonify({'error': 'Extraction mode must be Standard or Enhanced.'}), 400
         target_mode = normalize_document_intelligence_manual_extraction_mode(raw_mode)
+        if target_mode == 'layout' and not is_enhanced_extraction_enabled(get_settings()):
+            return jsonify({'error': 'Enhanced extraction is disabled. Enable it in Admin Settings first.'}), 400
 
         document_ids = payload.get('document_ids')
         if not isinstance(document_ids, list):
@@ -960,7 +1184,7 @@ def register_route_backend_public_documents(app):
             'errors': errors,
         }), status_code
 
-    @app.route('/api/public_documents/upgrade_legacy', methods=['POST'])
+    @bp.route('/api/public_documents/upgrade_legacy', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -979,7 +1203,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error':str(e)}), 500
 
-    @app.route('/api/public_workspace_documents/tags', methods=['GET'])
+    @bp.route('/api/public_workspace_documents/tags', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1005,11 +1229,24 @@ def register_route_backend_public_documents(app):
         visible_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id))
         validated_ids = [wid for wid in workspace_ids if wid in visible_ids]
 
-        from functions_documents import get_workspace_tags
+        from functions_documents import build_workspace_tags_from_counts, get_workspace_tags
+
+        index_tag_result = query_document_access_index_tag_counts(
+            DOCUMENT_ACCESS_SCOPE_PUBLIC,
+            public_workspace_ids=validated_ids,
+        ) if validated_ids else {'success': False}
 
         all_tags = {}
         for wid in validated_ids:
-            tags = get_workspace_tags(user_id, public_workspace_id=wid)
+            if index_tag_result.get('success'):
+                scope_key = build_document_access_scope_key(DOCUMENT_ACCESS_SCOPE_PUBLIC, wid)
+                tags = build_workspace_tags_from_counts(
+                    index_tag_result.get('tag_counts_by_scope_key', {}).get(scope_key, {}),
+                    user_id,
+                    public_workspace_id=wid,
+                )
+            else:
+                tags = get_workspace_tags(user_id, public_workspace_id=wid)
             for tag in tags:
                 if tag['name'] in all_tags:
                     all_tags[tag['name']]['count'] += tag['count']
@@ -1019,7 +1256,7 @@ def register_route_backend_public_documents(app):
         merged = sorted(all_tags.values(), key=lambda t: t['name'])
         return jsonify({'tags': merged}), 200
 
-    @app.route('/api/public_workspace_documents/tags', methods=['POST'])
+    @bp.route('/api/public_workspace_documents/tags', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1090,7 +1327,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/public_workspace_documents/bulk-tag', methods=['POST'])
+    @bp.route('/api/public_workspace_documents/bulk-tag', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1214,7 +1451,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/public_workspace_documents/tags/<tag_name>', methods=['PATCH'])
+    @bp.route('/api/public_workspace_documents/tags/<tag_name>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
@@ -1338,7 +1575,7 @@ def register_route_backend_public_documents(app):
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
-    @app.route('/api/public_workspace_documents/tags/<tag_name>', methods=['DELETE'])
+    @bp.route('/api/public_workspace_documents/tags/<tag_name>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
