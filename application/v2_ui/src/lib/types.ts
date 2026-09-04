@@ -960,6 +960,11 @@ export interface ChatStreamRequest {
     active_group_ids?: string[];
     active_public_workspace_id?: string | null;
     active_public_workspace_ids?: string[];
+    /**
+     * The saved prompt behind this message, read by `route_backend_chats` into the message's
+     * `prompt_selection` metadata and by `resolve_seeds` when orchestration is planning.
+     */
+    prompt_info?: Json;
     [key: string]: unknown;
 }
 

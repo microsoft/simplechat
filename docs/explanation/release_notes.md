@@ -2,6 +2,31 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.090)**
+
+#### New Features
+
+*   **A Saved Prompt Is Now Attached To Your Message, Not Pasted Into It**
+    *   Picking a prompt in the V2 interface used to paste its text into the message box, where it stopped being a prompt: nothing marked where the standing instructions ended and your own question began, taking it back off meant finding and deleting the right paragraphs, and fixing a variable meant editing prose in the middle of what you were writing.
+    *   **The prompt now sits in a card above the message box**, collapsed to its name, its workspace, and how many variables still need a value. The box below stays yours to type in.
+    *   **Expand it** to fill in variables and read the prompt exactly as it will be sent. **Edit** adjusts the wording for this one message and marks the card *Edited*, with a **Reset** that restores the saved text — the saved prompt is never touched, so a one-off tweak does not change it for everyone else. **Remove** takes it off without disturbing anything you have typed.
+    *   **The prompt is sent first and your message follows it**, which is the order the two are actually written in. A prompt that needs no further input can be sent on its own, so Send now works with an attached prompt and an empty box.
+    *   **Variables are resolved when you send, not when you pick.** `{{composer}}` — "what you have already typed" — used to resolve to nothing, because picking the prompt is the first thing you do. It now means the message you wrote underneath the card. A prompt that positions your text this way is not also sent it a second time.
+    *   **Sent messages show the prompt as a collapsed row** above your own words, expanding to the full text, so a reply can be understood by someone who did not pick the prompt. Copying and exporting still yield the whole message, and older messages render exactly as they did.
+    *   The separate fill-in dialog is gone, folded into the card. Its safety rules came with it: auto-filled values stay badged and clearable, values from the conversation are still only ever offered as chips you click, and nothing is pre-filled at all in a shared conversation.
+    *   (Ref: `components/chat/AttachedPromptCard.tsx`, `lib/usePromptVariableValues.ts`, `lib/promptRequest.ts`, `lib/messagePrompt.ts`, [Prompt Composer Card](features/PROMPT_COMPOSER_CARD.md))
+
+*   **Orchestration Plans Now Read The Prompt You Chose**
+    *   The planner was told a selected prompt's *name* and nothing else. "Quarterly review" says nothing about whether the work involves reading documents, searching the web, or comparing two things, which is exactly what a plan has to decide. It is now given the prompt's wording, capped so a long saved prompt cannot crowd out the rest of the planner's context.
+    *   A selected prompt also now counts as you having pointed at something, alongside a chosen document or agent, so a request carrying one is no longer triaged as a remark to answer off the cuff.
+    *   (Ref: `functions_orchestration_context.py` `_selected_prompt`, `functions_orchestration_planner.py` `triage_request`, `functions_orchestration_schema.py` `build_plan_inputs`)
+
+#### Bug Fixes
+
+*   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
+    *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
+    *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+
 ### **(v0.261.089)**
 
 #### New Features

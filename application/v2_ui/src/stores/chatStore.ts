@@ -69,6 +69,7 @@ import {
     resolveSendTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
+import { promptSelectionMetadata } from '../lib/promptRequest';
 import type { RunStreamEvent } from '../lib/orchestration';
 import {
     applySelection,
@@ -109,6 +110,7 @@ import type {
     CollaborationMessage,
     Conversation,
     ConversationMetadata,
+    Json,
     ThoughtEntry,
 } from '../lib/types';
 import { isCollaborative } from '../lib/types';
@@ -176,6 +178,14 @@ export interface ComposerOptions {
     modelDeployment?: string;
     agentSelection?: string;
     promptId?: string;
+    /**
+     * The saved prompt behind this message, resolved and ready to send.
+     *
+     * Built by the composer at send time rather than looked up from the catalog here, because
+     * the text that reaches the server has to be the text that was actually used: variables
+     * filled in, and any wording edited for this one turn included.
+     */
+    promptInfo?: Json | null;
     reasoningEffort?: string;
     documentSearch: boolean;
     webSearch: boolean;
@@ -2234,6 +2244,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             role: 'user',
             content: trimmed,
             timestamp: new Date().toISOString(),
+            // Carried locally so the bubble can draw the prompt as a collapsed block straight
+            // away. Without it the message would render as one blob until the server echo
+            // arrived and then silently rearrange itself.
+            ...(options.promptInfo
+                ? {
+                      metadata: {
+                          prompt_selection: promptSelectionMetadata(options.promptInfo),
+                      },
+                  }
+                : {}),
         };
 
         // A shared message that is not addressed to the AI produces no stream, so the
@@ -2343,6 +2363,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         if (contextTagNames.length > 0) {
             requestBody.tags = contextTagNames;
+        }
+        // The ordinary chat path used to send nothing about the prompt, so a saved prompt used
+        // outside orchestration left no record it had been involved: no metadata to draw the
+        // sent message with, and nothing for the server to attribute the wording to.
+        if (options.promptInfo) {
+            requestBody.prompt_info = options.promptInfo;
         }
         // Only when both kinds are present. With one kind the mode has no effect, and an
         // unnecessary field in the request is one more thing to account for later.
