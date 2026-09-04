@@ -26,11 +26,15 @@ export type AdminFieldType =
     | 'entry_list'
     | 'id_list'
     | 'group_picker'
+    | 'status'
     | 'component';
 
 export interface AdminFieldOption {
     value: string;
     label: string;
+    /** Options for capabilities that are declared but not yet released. */
+    disabled?: boolean;
+    description?: string;
 }
 
 /**
@@ -49,11 +53,77 @@ export interface AdminFieldOption {
 export interface AdminFieldCondition {
     key?: string;
     flag?: string;
-    equals: boolean | string;
+    equals?: boolean | string;
+    not_equals?: boolean | string;
 }
 
-/** One condition, or a chain of them that must all hold. */
-export type AdminFieldDependency = AdminFieldCondition | AdminFieldCondition[];
+/**
+ * One condition, a chain of them that must all hold, or a composition.
+ *
+ * The array form is the shorthand the Security, Workspaces and Chat sections
+ * declare and means the same as `all_of`. `any_of` exists because the Speech
+ * resource block is revealed by any of three independent capability toggles.
+ */
+export type AdminFieldDependency =
+    | AdminFieldCondition
+    | AdminFieldCondition[]
+    | { any_of: AdminFieldDependency[] }
+    | { all_of: AdminFieldDependency[] };
+
+/**
+ * A prerequisite owned by another section.
+ *
+ * `block` disables the dependent controls until it is satisfied; `warn` leaves them
+ * usable, for prerequisites the backend accepts as intent and reconciles later. Mirrors
+ * the `data-requires` contract in `admin_settings_dependencies.js`.
+ */
+export interface AdminFieldRequirement {
+    key: string;
+    label: string;
+    mode?: 'block' | 'warn';
+    description?: string;
+    /** Section id to link to, so the prerequisite can be configured in full. */
+    target_section?: string;
+}
+
+/**
+ * The cluster a field belongs to within its section.
+ *
+ * A bare string is accepted as shorthand for a labelled group with no variant, which is
+ * the form the Security, Workspaces and Agents sections declare.
+ */
+export interface AdminFieldGroup {
+    id: string;
+    label?: string;
+    variant?: 'connection' | 'behavior' | 'limits' | 'access' | 'advanced';
+    help?: string;
+}
+
+/** Normalise either declared group shape into the object form. */
+export function readFieldGroup(
+    group: string | AdminFieldGroup | undefined,
+): AdminFieldGroup | undefined {
+    if (!group) {
+        return undefined;
+    }
+    return typeof group === 'string' ? { id: group, label: group } : group;
+}
+
+/** A model a `model-picker` field can offer. */
+export interface AdminModelCatalogEntry {
+    deployment: string;
+    label: string;
+    endpoint: string;
+    endpoint_id?: string | null;
+    model_name: string;
+    supports_vision: boolean;
+    /**
+     * Where the vision answer came from: `declared` when an administrator set it,
+     * `catalog` when the shipped capability data says so, and `inferred` when it was
+     * guessed from the model's name. The last is the one worth reviewing.
+     */
+    vision_source: 'declared' | 'catalog' | 'inferred';
+}
 
 /**
  * A confirmation an administrator must give before a capability may be switched on.
@@ -92,7 +162,7 @@ export interface AdminField {
     /** String list fields only: per-item character cap. */
     max_item_length?: number;
     /** Optional sub-heading grouping consecutive fields inside one section. */
-    group?: string;
+    group?: string | AdminFieldGroup;
     /** `id_list` and `group_picker`: the admin search endpoint that finds records. */
     search_endpoint?: string;
     /** `id_list` only: query parameter the endpoint reads the search term from. */
@@ -139,8 +209,54 @@ export interface AdminField {
      */
     notice?: string;
     notice_level?: 'info' | 'warning';
-    /** One condition, or a chain that must all hold. */
-    depends_on?: AdminFieldCondition | AdminFieldCondition[];
+    /** One condition, a chain that must all hold, or an any_of/all_of composition. */
+    depends_on?: AdminFieldDependency;
+    /** A prerequisite owned by another section. */
+    requires?: AdminFieldRequirement;
+    /** `status` fields only: which server-computed readout to show. */
+    status_source?: string;
+    /**
+     * `connection-test` components only: which test the shared dispatcher should run,
+     * and how to build its payload from current values.
+     *
+     * Keys are dotted paths into the request body, so one flat declaration produces the
+     * nested `{direct: {...}}` / `{apim: {...}}` shape the test handlers expect. An entry
+     * with a `when` is only sent while that condition holds, which is what lets a single
+     * declaration cover both sides of an APIM-or-direct choice.
+     */
+    test_payload?: Record<
+        string,
+        { key?: string; value?: unknown; when?: AdminFieldDependency }
+    >;
+    /** `model-picker` components only: restrict the list to models that read images. */
+    requires_vision?: boolean;
+    /**
+     * `resource-id-builder` components only: how to assemble the value.
+     *
+     * `builder_template` holds `{placeholder}` markers, and `builder_sources` maps each
+     * placeholder to the settings key holding its value.
+     */
+    builder_template?: string;
+    builder_sources?: Record<string, string>;
+    /** Lifts a field into the section header. See `FIELD_ROLES`. */
+    role?: 'capability';
+    /** Marks a field that must hold a value before its section counts as configured. */
+    required?: boolean;
+    /**
+     * Where the value is stored, as dotted paths, when that is not its own key.
+     *
+     * Distinct from `settings_path`: this form carries dotted strings and may name
+     * several destinations, because the URL Access domain lists are mirrored into two
+     * keys. `settings_path` names one destination as a list of segments.
+     */
+    paths?: string[];
+    /**
+     * Divisor between the stored unit and the edited one.
+     *
+     * File Sync's per-run limit is held in bytes and entered in GB; showing the byte
+     * count in a field labelled GB would read as an absurd value.
+     */
+    scale?: number;
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
@@ -194,6 +310,16 @@ export interface AdminSettingsResponse {
      * the settings document, so it cannot be read from `settings`.
      */
     runtime_flags?: Record<string, boolean>;
+    /**
+     * Server-computed readouts a `status` field renders, keyed by `status_source`.
+     *
+     * These are not settings: whether the browser runtime can render JavaScript, whether
+     * audio transcoding is available. The tone is carried alongside the text because
+     * inferring it from the wording would be guesswork.
+     */
+    status_readouts?: Record<string, { ok: boolean; message: string }>;
+    /** Deployed models a `model-picker` field can offer. */
+    model_catalog?: AdminModelCatalogEntry[];
     /**
      * `enable_*` keys the fallback scan must not draw.
      *
@@ -266,10 +392,96 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
     if (Object.prototype.hasOwnProperty.call(draft, field.key)) {
         return draft[field.key];
     }
-    const stored = field.settings_path
-        ? readNestedValue(settings, field.settings_path)
-        : settings[field.key];
+
+    // Two descriptors name a nested home: `settings_path` as segments, `paths` as
+    // dotted strings. The draft is always keyed flat, because that is what the PATCH
+    // sends and what the server unpacks; only the stored read follows the path.
+    let stored: unknown;
+    if (field.settings_path) {
+        stored = readNestedValue(settings, field.settings_path);
+    } else if (field.paths?.length) {
+        stored = readNestedSetting(settings, field.paths[0]);
+    } else {
+        stored = settings[field.key];
+    }
+
+    if (stored !== undefined && stored !== null && field.scale) {
+        // Stored in one unit, edited in another. File Sync's per-run limit is held
+        // in bytes and entered in GB, and showing the byte count in a field labelled
+        // GB would read as an absurd value.
+        const scaled = Number(stored) / field.scale;
+        return Number.isFinite(scaled) ? scaled : field.default;
+    }
+
     return stored === undefined || stored === null ? field.default : stored;
+}
+
+/** Walk a dotted path into the settings document, or undefined if it is not there. */
+export function readNestedSetting(settings: Json, path: string): unknown {
+    return readNestedValue(settings, String(path || '').split('.'));
+}
+
+/** Entries of a `string_list`, tolerating the newline-joined shape V1 stores. */
+export function parseStringList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value.filter((item): item is string => typeof item === 'string');
+    }
+    return asString(value)
+        .split(/[\n,;]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+}
+
+/** Fields in declared order, clustered by group, with ungrouped fields kept first. */
+export interface RenderedFieldGroup {
+    id: string;
+    label?: string;
+    variant?: AdminFieldGroup['variant'];
+    help?: string;
+    /**
+     * Whether the group asks to start closed.
+     *
+     * Only the first field of a group decides this, so a group cannot end up
+     * half-collapsed depending on which field is read. It is what keeps the
+     * always-on built-in actions out of the way.
+     */
+    collapsed?: boolean;
+    fields: AdminField[];
+}
+
+/**
+ * Cluster a section's fields into their declared groups.
+ *
+ * Declared order is preserved both between groups and within them, because a section
+ * reads top to bottom and the schema is where that order is decided. Fields with no
+ * group form an implicit leading group, which is what keeps a section's capability
+ * toggle above the detail it governs.
+ */
+export function groupFields(fields: AdminField[]): RenderedFieldGroup[] {
+    const groups: RenderedFieldGroup[] = [];
+    const byId = new Map<string, RenderedFieldGroup>();
+
+    for (const field of fields) {
+        // A group may be declared as a bare label or as an object with a variant.
+        const declared = readFieldGroup(field.group);
+        const id = declared?.id ?? '';
+        let group = byId.get(id);
+        if (!group) {
+            group = {
+                id,
+                label: declared?.label,
+                variant: declared?.variant,
+                help: declared?.help,
+                collapsed: Boolean(field.collapsed),
+                fields: [],
+            };
+            byId.set(id, group);
+            groups.push(group);
+        }
+        group.fields.push(field);
+    }
+
+    return groups;
 }
 
 export function asString(value: unknown, fallback = ''): string {
@@ -299,12 +511,37 @@ export function asStringArray(value: unknown): string[] {
 }
 
 /** Every `depends_on` condition a field declares, whether one or a chain. */
+/**
+ * Every leaf condition a field declares, flattened.
+ *
+ * A dependency may be one condition, a chain, or an `any_of`/`all_of` composition.
+ * Callers that only need to know *which keys* a field watches -- rather than whether
+ * it is currently visible -- read them through here.
+ */
 export function fieldDependencies(field: AdminField): AdminFieldCondition[] {
-    const dependency = field.depends_on;
-    if (!dependency) {
-        return [];
-    }
-    return Array.isArray(dependency) ? dependency : [dependency];
+    const out: AdminFieldCondition[] = [];
+
+    const walk = (dependency: AdminFieldDependency | undefined): void => {
+        if (!dependency) {
+            return;
+        }
+        if (Array.isArray(dependency)) {
+            dependency.forEach(walk);
+            return;
+        }
+        if ('any_of' in dependency) {
+            dependency.any_of.forEach(walk);
+            return;
+        }
+        if ('all_of' in dependency) {
+            dependency.all_of.forEach(walk);
+            return;
+        }
+        out.push(dependency);
+    };
+
+    walk(field.depends_on);
+    return out;
 }
 
 /** Index every declared field by the settings key it edits. */
@@ -348,12 +585,17 @@ function readDependencyValue(
 }
 
 /**
- * Whether every one of a field's `depends_on` conditions is currently satisfied.
+ * Whether a field's `depends_on` is currently satisfied.
  *
  * Each condition is judged against the unsaved draft first, so a field appears
  * or disappears as soon as its gate is flipped rather than only after a save.
  * A condition naming a `flag` is answered from the server's runtime flags, which
  * an administrator cannot change from this page at all.
+ *
+ * Mirrors `evaluate_dependency` in `admin_settings_fields.py`; the two run the same
+ * rules because the server enforces `min_selected` against the same conditions the
+ * browser uses to decide what to draw. A disagreement would reject a save for a
+ * control the administrator could not see.
  */
 export function isFieldVisible(
     field: AdminField,
@@ -362,18 +604,99 @@ export function isFieldVisible(
     fieldsByKey?: Map<string, AdminField>,
     runtimeFlags?: Record<string, boolean>,
 ): boolean {
-    return fieldDependencies(field).every((dependency) => {
-        if (dependency.flag) {
-            return Boolean(runtimeFlags?.[dependency.flag]) === dependency.equals;
-        }
-        if (!dependency.key) {
-            return true;
-        }
-        const current = readDependencyValue(dependency.key, settings, draft, fieldsByKey);
-        return typeof dependency.equals === 'string'
-            ? asString(current) === dependency.equals
-            : asBoolean(current) === dependency.equals;
-    });
+    return evaluateDependency(field.depends_on, (key) =>
+        readDependencyValue(key, settings, draft, fieldsByKey),
+    runtimeFlags);
+}
+
+/**
+ * Whether a dependency tree holds, given a way to read a settings key.
+ *
+ * Exposed separately from `isFieldVisible` because the connection tests and the
+ * section-status logic evaluate conditions without a field in hand.
+ */
+export function evaluateDependency(
+    dependency: AdminFieldDependency | undefined,
+    read: (key: string) => unknown,
+    runtimeFlags?: Record<string, boolean>,
+): boolean {
+    if (!dependency) {
+        return true;
+    }
+
+    if (Array.isArray(dependency)) {
+        // Every condition has to hold. This is the shorthand most sections
+        // declare, and is equivalent to `all_of`.
+        return dependency.every((condition) =>
+            evaluateDependency(condition, read, runtimeFlags),
+        );
+    }
+
+    if ('any_of' in dependency) {
+        return dependency.any_of.some((nested) =>
+            evaluateDependency(nested, read, runtimeFlags),
+        );
+    }
+
+    if ('all_of' in dependency) {
+        return dependency.all_of.every((nested) =>
+            evaluateDependency(nested, read, runtimeFlags),
+        );
+    }
+
+    if (dependency.flag) {
+        // Resolved by the server, not by another field: a capability gated
+        // outside the settings document has no key to read.
+        return Boolean(runtimeFlags?.[dependency.flag]) === dependency.equals;
+    }
+
+    if (!dependency.key) {
+        return true;
+    }
+
+    const current = read(dependency.key);
+
+    if (dependency.not_equals !== undefined) {
+        return !dependencyValueMatches(current, dependency.not_equals);
+    }
+
+    return dependencyValueMatches(current, dependency.equals ?? true);
+}
+
+/**
+ * Compare a stored value against a declared one.
+ *
+ * A boolean comparison goes through `asBoolean` because the server-rendered form stores
+ * checkbox state as the string `"on"`, and a settings document written by that form has
+ * to read the same way here.
+ */
+function dependencyValueMatches(current: unknown, expected: boolean | string): boolean {
+    if (typeof expected === 'boolean') {
+        return asBoolean(current) === expected;
+    }
+    return asString(current).trim() === String(expected);
+}
+
+/**
+ * Whether a field's cross-section prerequisite is satisfied.
+ *
+ * Unlike `depends_on`, an unmet requirement does not hide the field. Hiding it would
+ * leave an administrator hunting for a control that exists; showing it with the reason
+ * attached is what lets them go and fix the cause.
+ */
+export function isRequirementSatisfied(
+    field: AdminField,
+    settings: Json,
+    draft: Json,
+): boolean {
+    const requirement = field.requires;
+    if (!requirement) {
+        return true;
+    }
+    const current = Object.prototype.hasOwnProperty.call(draft, requirement.key)
+        ? draft[requirement.key]
+        : settings[requirement.key];
+    return asBoolean(current);
 }
 
 /**
@@ -497,24 +820,26 @@ export function buildSectionBlocks(fields: AdminField[]): SectionBlock[] {
     const groups = new Map<string, Extract<SectionBlock, { kind: 'group' }>>();
 
     for (const field of fields) {
-        if (!field.group) {
+        // A group may be declared as a bare label or as an object with a variant.
+        const declared = readFieldGroup(field.group);
+        if (!declared) {
             blocks.push({ kind: 'field', field });
             continue;
         }
-        const existing = groups.get(field.group);
+        const existing = groups.get(declared.id);
         if (existing) {
             existing.fields.push(field);
             continue;
         }
         const group: Extract<SectionBlock, { kind: 'group' }> = {
             kind: 'group',
-            name: field.group,
+            name: declared.label ?? declared.id,
             // Only the first field of a group decides how it opens, so a group
             // cannot end up half-collapsed depending on which field is read.
             collapsed: Boolean(field.collapsed),
             fields: [field],
         };
-        groups.set(field.group, group);
+        groups.set(declared.id, group);
         blocks.push(group);
     }
 

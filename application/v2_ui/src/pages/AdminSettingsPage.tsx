@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { ChevronRight, Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -49,11 +49,14 @@ import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
+import { ModelPicker } from '../components/admin/ModelPicker';
+import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
+import { SettingsSection } from '../components/admin/SettingsSection';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -64,9 +67,7 @@ import {
     asNumber,
     asString,
     buildFieldIndex,
-    buildSectionBlocks,
     collectAppRoleEntries,
-    evaluateSectionStatus,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
@@ -78,7 +79,6 @@ import {
     type AdminSettingsResponse,
     type BrandingAssets,
     type BrandingUploadResponse,
-    type SectionStatus,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
 import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
@@ -109,27 +109,6 @@ interface RenderedSection {
 
 /** Synthetic field definitions used to read a sibling's current value for a preview. */
 const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: '' });
-
-/** How each section status reads, and how strongly it is drawn. */
-const STATUS_PRESENTATION: Record<SectionStatus, { label: string; className: string }> = {
-    off: { label: 'Off', className: 'bg-surface-2 text-text-3' },
-    unconfigured: { label: 'Needs configuration', className: 'bg-warn-soft text-warn' },
-    on: { label: 'On', className: 'bg-ok-soft text-ok' },
-};
-
-function SectionStatusPill({ status }: { status: SectionStatus }) {
-    const presentation = STATUS_PRESENTATION[status];
-    return (
-        <span
-            className={clsx(
-                'shrink-0 rounded-full px-2 py-0.5 text-[11px] leading-none font-medium',
-                presentation.className,
-            )}
-        >
-            {presentation.label}
-        </span>
-    );
-}
 
 /**
  * Associate each undeclared `enable_*` setting with a section.
@@ -621,13 +600,6 @@ export function AdminSettingsPage() {
     const readSibling = (key: string, fallback = '') =>
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
-    /** Read another field's raw current value, preferring an unsaved edit. */
-    const readRaw = useCallback(
-        (key: string): unknown =>
-            Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
-        [draft, settings],
-    );
-
     /**
      * Move the page to a section, from a cross-reference elsewhere on it.
      *
@@ -658,8 +630,11 @@ export function AdminSettingsPage() {
             return null;
         }
 
-        const key = field.key ?? field.component ?? field.label;
-        const value = readFieldValue(field, settings, draft);
+        const key = field.key ?? field.component ?? field.status_source ?? field.label;
+        const value =
+            field.type === 'status'
+                ? data?.status_readouts?.[field.status_source ?? '']
+                : readFieldValue(field, settings, draft);
         const error = field.key ? fieldErrors[field.key] : undefined;
         const warning = field.key ? fieldWarnings[field.key] : undefined;
 
@@ -754,12 +729,48 @@ export function AdminSettingsPage() {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'connection-test':
+                    return (
+                        <ConnectionTest
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                        />
+                    );
                 case 'agent-orchestration':
                     return <OrchestrationCard key={key} help={field.help} />;
                 case 'inbound-mcp-disabled-notice':
                     return <InboundMcpNotice key={key} />;
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
+                case 'model-picker':
+                    return (
+                        <ModelPicker
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            warning={warning}
+                            disabled={saving}
+                            models={data?.model_catalog ?? []}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'resource-id-builder':
+                    return (
+                        <ResourceIdBuilder
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            warning={warning}
+                            disabled={saving}
+                            readSibling={readSibling}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
                 case 'chat-mode-notice': {
                     // The saved value decides which route is live; the draft value only
                     // says what a pending save would change it to, so the notice is given
@@ -876,8 +887,6 @@ export function AdminSettingsPage() {
                             )}
                         />
                     );
-                case 'connection-test':
-                    return <ConnectionTest key={key} field={field} read={readRaw} />;
                 case 'key-vault-secret-reminders':
                     return (
                         <KeyVaultReminders key={key} label={field.label} help={field.help} />
@@ -937,41 +946,6 @@ export function AdminSettingsPage() {
         }
 
         return <div key={key}>{control}</div>;
-    };
-
-    /**
-     * Render a section's fields, wrapping any declared group in a disclosure.
-     *
-     * A collapsed group is opened while a search is running, because a match hidden
-     * behind a closed disclosure looks exactly like no match at all.
-     */
-    const renderBlocks = (fields: AdminField[]) => {
-        const searching = query.trim().length > 0;
-
-        return buildSectionBlocks(fields).map((block) => {
-            if (block.kind === 'field') {
-                return renderField(block.field);
-            }
-            return (
-                <details
-                    key={`group-${block.name}`}
-                    open={searching || !block.collapsed}
-                    className="group py-2"
-                >
-                    <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold tracking-wide text-text-2 uppercase [&::-webkit-details-marker]:hidden">
-                        <ChevronRight
-                            size={13}
-                            aria-hidden="true"
-                            className="shrink-0 transition-transform group-open:rotate-90"
-                        />
-                        {block.name}
-                    </summary>
-                    <div className="mt-1 divide-y divide-edge border-l border-edge pl-3">
-                        {block.fields.map(renderField)}
-                    </div>
-                </details>
-            );
-        });
     };
 
     if (!isAdmin) {
@@ -1090,66 +1064,53 @@ export function AdminSettingsPage() {
                                 </p>
                             )}
 
-                            {visibleSections.map((section) => {
-                                const status = evaluateSectionStatus(
-                                    sectionStatus[section.sectionId],
-                                    settings,
-                                    draft,
-                                );
-
-                                return (
-                                    <GlassPanel
-                                        key={section.sectionId}
-                                        id={`admin-section-${section.sectionId}`}
-                                        edge
-                                        className="scroll-mt-4 p-4"
-                                    >
-                                        <div className="mb-1 flex items-start justify-between gap-3">
-                                            <div className="min-w-0">
-                                                <h2 className="text-sm font-semibold text-text-1">
-                                                    {section.label}
-                                                </h2>
-                                                <p className="text-xs text-text-3">
-                                                    {section.groupLabel}
-                                                    {section.tabLabel
-                                                        ? ` · ${section.tabLabel}`
-                                                        : ''}
-                                                </p>
-                                            </div>
-                                            {status ? <SectionStatusPill status={status} /> : null}
-                                        </div>
-
+                            {visibleSections.map((section) => (
+                                <SettingsSection
+                                    key={section.sectionId}
+                                    sectionId={section.sectionId}
+                                    label={section.label}
+                                    groupLabel={section.groupLabel}
+                                    tabLabel={section.tabLabel}
+                                    fields={section.fields}
+                                    settings={settings}
+                                    draft={draft}
+                                    // Sections that describe a status rule use it;
+                                    // the rest have their status derived from which
+                                    // of their required fields are filled.
+                                    statusRule={sectionStatus[section.sectionId]}
+                                    renderField={renderField}
+                                    renderCapability={renderField}
+                                    // While a search is filtering, a match inside a
+                                    // collapsed group has to be shown or the card would
+                                    // appear empty.
+                                    forceExpanded={Boolean(query.trim())}
+                                >
+                                    {section.capabilities.length ? (
                                         <div className="divide-y divide-edge">
-                                            {renderBlocks(section.fields)}
+                                            {section.capabilities.map((row) => (
+                                                <div key={row.key} className="py-1">
+                                                    <Toggle
+                                                        label={row.label}
+                                                        description={row.key}
+                                                        checked={asBoolean(
+                                                            Object.prototype.hasOwnProperty.call(
+                                                                draft,
+                                                                row.key,
+                                                            )
+                                                                ? draft[row.key]
+                                                                : settings[row.key],
+                                                        )}
+                                                        disabled={saving}
+                                                        onChange={(next) =>
+                                                            setValue(row.key, next)
+                                                        }
+                                                    />
+                                                </div>
+                                            ))}
                                         </div>
-
-                                        {section.capabilities.length > 0 && (
-                                            <div className="divide-y divide-edge">
-                                                {section.capabilities.map((row) => (
-                                                    <div key={row.key} className="py-1">
-                                                        <Toggle
-                                                            label={row.label}
-                                                            description={row.key}
-                                                            checked={asBoolean(
-                                                                Object.prototype.hasOwnProperty.call(
-                                                                    draft,
-                                                                    row.key,
-                                                                )
-                                                                    ? draft[row.key]
-                                                                    : settings[row.key],
-                                                            )}
-                                                            disabled={saving}
-                                                            onChange={(next) =>
-                                                                setValue(row.key, next)
-                                                            }
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </GlassPanel>
-                                );
-                            })}
+                                    ) : null}
+                                </SettingsSection>
+                            ))}
 
                             {!loading && activeGroupUsesFallback && (
                                 <p className="pb-6 text-center text-xs text-text-3">

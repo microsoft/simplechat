@@ -177,12 +177,16 @@ nobody reads trains users to stop giving them.
 ### Desktop Conversation Notifications {#desktop-notifications-section}
 
 Long answers encourage users to switch tabs while they wait, and then forget to
-come back. A desktop notification when a response finishes closes that gap.
+come back. Two settings here close that gap, and both are opt-in per user, so
+enabling either offers the capability rather than imposing it.
 
-Notifications require browser permission, only fire when the SimpleChat tab is
-hidden or unfocused, and stop entirely once the tab is closed. Users can turn
-them off in their profile, so enabling this offers the capability rather than
-imposing it.
+A desktop notification requires browser permission, only fires when the
+SimpleChat tab is hidden or unfocused, and stops entirely once the tab is closed.
+Users can turn it off in their profile.
+
+The completion sound is a short bundled audio cue the browser plays locally. No
+Azure Speech resource is involved, which is why it sits here rather than with the
+voice settings under Knowledge.
 
 #### Settings
 
@@ -190,6 +194,7 @@ imposing it.
 | --- | --- | --- | --- |
 | Enable User Feedback (Thumbs Up/Down) | Shows thumbs up/down feedback controls on AI responses so users can submit response-level feedback for review. | On | `enable_user_feedback`; capability toggle |
 | Enable Desktop Conversation Notifications | Allows browser desktop notifications for conversation events when the user grants browser permission. | Off | `enable_desktop_notifications`; capability toggle |
+| AI response completion sounds | Lets users opt in to a short bundled sound when a response finishes while they are looking elsewhere. Played locally by the browser; no Azure Speech resource is involved. | Off | `enable_chat_completion_audio_cues`; capability toggle |
 | Require FeedbackAdmin App Role | Requires the `FeedbackAdmin` app role before users can use this capability or view. | Off | `require_member_of_feedback_admin` |
 
 ## Citations {#citation}

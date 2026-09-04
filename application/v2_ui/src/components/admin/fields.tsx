@@ -10,7 +10,7 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, Check, Info, KeyRound, Lock, RotateCcw } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Info, KeyRound, Lock, RotateCcw } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import {
     asBoolean,
@@ -538,13 +538,17 @@ function CheckboxSetControl({
             <div className="grid gap-1.5 sm:grid-cols-2">
                 {options.map((option) => {
                     const id = `admin-field-${field.key}-${option.value}`;
+                    // An option can be declared but not yet released. Showing it
+                    // disabled says the capability is coming; omitting it would look
+                    // like the option had been removed.
+                    const optionDisabled = disabled || option.disabled;
                     return (
                         <label
                             key={option.value}
                             htmlFor={id}
                             className={clsx(
-                                'flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm',
-                                disabled
+                                'flex items-start gap-2 rounded-lg border border-edge px-3 py-2 text-sm',
+                                optionDisabled
                                     ? 'cursor-not-allowed opacity-60'
                                     : 'cursor-pointer hover:bg-surface-2',
                                 selected.includes(option.value)
@@ -555,17 +559,62 @@ function CheckboxSetControl({
                             <input
                                 id={id}
                                 type="checkbox"
-                                className="accent-[var(--accent)]"
+                                className="mt-0.5 accent-[var(--accent)]"
                                 checked={selected.includes(option.value)}
-                                disabled={disabled}
+                                disabled={optionDisabled}
                                 onChange={(event) => toggle(option.value, event.target.checked)}
                             />
-                            {option.label}
+                            <span>
+                                {option.label}
+                                {option.description ? (
+                                    <span className="block text-xs text-text-3">
+                                        {option.description}
+                                    </span>
+                                ) : null}
+                            </span>
                         </label>
                     );
                 })}
             </div>
         </FieldShell>
+    );
+}
+
+/**
+ * A server-computed readout.
+ *
+ * Some of what an administrator needs here is not a setting: whether the FFmpeg audio
+ * runtime is present, which Video Indexer endpoint the cloud selection resolves to,
+ * whether the Playwright runtime can render JavaScript. V1 renders these as loose markup
+ * inside the panes. Declaring them makes them searchable and keeps the reason a control
+ * is unavailable next to the control itself.
+ */
+function StatusControl({ field, value }: FieldControlProps) {
+    const tone = statusTone(value);
+    const text = readStatusMessage(value);
+
+    return (
+        <div className="py-3">
+            <div className="mb-1.5 text-sm font-medium text-text-1">{field.label}</div>
+            <div
+                className={clsx(
+                    'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+                    tone === 'ok' && 'border-ok/40 bg-ok/5 text-text-2',
+                    tone === 'warn' && 'border-warn/40 bg-warn/5 text-warn',
+                    tone === 'unknown' && 'border-edge bg-surface-1 text-text-3',
+                )}
+            >
+                {tone === 'ok' ? (
+                    <CheckCircle2 size={13} className="mt-0.5 shrink-0" />
+                ) : (
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                )}
+                <span>{text || 'Not checked yet.'}</span>
+            </div>
+            {field.help ? (
+                <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
+            ) : null}
+        </div>
     );
 }
 
@@ -607,11 +656,36 @@ function MirrorControl({ field, value }: FieldControlProps) {
 }
 
 /**
+ * Read the tone of a status value.
+ *
+ * The server sends `{ok, message}`, carrying the tone rather than leaving it to be
+ * inferred from the wording. A bare string is still accepted, because a readout added
+ * later should not have to be normalised before it can be shown.
+ */
+function statusTone(value: unknown): 'ok' | 'warn' | 'unknown' {
+    if (value && typeof value === 'object' && 'ok' in value) {
+        return (value as { ok?: unknown }).ok ? 'ok' : 'warn';
+    }
+    return asString(value) ? 'ok' : 'unknown';
+}
+
+function readStatusMessage(value: unknown): string {
+    if (value && typeof value === 'object' && 'message' in value) {
+        return asString((value as { message?: unknown }).message);
+    }
+    return asString(value);
+}
+
+/**
  * Render one declared field.
  *
- * `image`, `link_list`, `secret` and `component` fields are handled by the page, which
- * owns the upload endpoint, the bespoke widgets, and the stored value a secret needs to
- * distinguish "not configured" from "configured but hidden".
+ * `image`, `link_list`, `id_list` and `component` fields are handled by the page, which
+ * owns the upload endpoint, the search endpoints and the bespoke widgets, so they are
+ * not reached here.
+ *
+ * The page also intercepts `secret` ahead of this, because telling "not configured" from
+ * "configured but hidden" needs the stored value and not just the draft one. The branch
+ * below is the fallback for anywhere else that renders a field directly.
  */
 export function SettingField(props: FieldControlProps) {
     if (props.field.readonly) {
@@ -639,6 +713,8 @@ export function SettingField(props: FieldControlProps) {
             return <StringListControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
+        case 'status':
+            return <StatusControl {...props} />;
         default:
             return null;
     }

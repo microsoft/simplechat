@@ -30,12 +30,16 @@ from admin_settings_fields import (
     LOGO_SCALE_DEFAULT_PERCENT,
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
+    SECRET_REDACTED_VALUE,
     get_admin_section_status,
     get_admin_settings_fields,
     get_secret_field_keys,
+    get_secret_storage_paths,
     get_suppressed_capability_keys,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
+    read_nested_setting,
+    write_nested_setting,
 )
 from admin_settings_nav import ADMIN_NAV
 from functions_mcp_server_config import is_mcp_ui_enabled
@@ -95,6 +99,7 @@ from functions_settings import (
     normalize_default_model_selection,
     normalize_model_endpoints,
     redact_admin_settings_secrets_for_api,
+    redact_admin_settings_secrets_for_form,
     resolve_admin_settings_secret_value,
     resolve_default_model_selection,
     resolve_metadata_extraction_model_selection,
@@ -108,6 +113,7 @@ from functions_keyvault import (
     keyvault_model_endpoint_save_helper,
 )
 from functions_source_review import (
+    get_source_review_runtime_capabilities,
     is_source_review_enabled_for_user,
     is_url_access_enabled_for_user,
 )
@@ -118,8 +124,13 @@ from route_frontend_chats import (
     _build_initial_chat_model_selection,
     _is_chat_agent_allowed_by_governance,
 )
+# Shared with the server-rendered admin page so both interfaces run the same
+# connection tests rather than maintaining two lists of what can be tested.
+from route_backend_settings import run_admin_settings_connection_test
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
+from functions_model_capabilities import resolve_model_vision_support
+from functions_documents import get_audio_runtime_capabilities
 from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
 
@@ -892,6 +903,160 @@ def _seed_connections_on_first_enable(updates, current_settings):
 
 
 def register_route_backend_v2_admin(bp):
+    def _build_model_catalog(settings):
+        """Return the models an administrator can pick, with resolved capabilities.
+
+        A picker that offered every model would let an administrator choose one that
+        cannot read images for Multi-Modal Vision Analysis, which fails at upload time
+        rather than at configuration time. Resolving here keeps the decision on the
+        server, where ``functions_model_capabilities`` is the single implementation, so
+        the browser does not need a second copy of the rules.
+
+        ``vision_source`` says whether the answer is known or guessed, which is what
+        lets the picker mark an inferred model rather than presenting a guess as fact.
+        """
+        catalog = []
+        seen = set()
+
+        for endpoint in settings.get("model_endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_label = endpoint.get("name") or endpoint.get("id") or ""
+
+            for model in endpoint.get("models") or []:
+                if not isinstance(model, dict) or not model.get("enabled", True):
+                    continue
+
+                deployment = str(
+                    model.get("deploymentName") or model.get("deployment") or ""
+                ).strip()
+                if not deployment or deployment in seen:
+                    continue
+                seen.add(deployment)
+
+                supports_vision, vision_source = resolve_model_vision_support(model)
+                catalog.append(
+                    {
+                        "deployment": deployment,
+                        "label": model.get("displayName")
+                        or model.get("modelName")
+                        or deployment,
+                        "endpoint": endpoint_label,
+                        "endpoint_id": endpoint.get("id"),
+                        "model_name": model.get("modelName") or "",
+                        "supports_vision": supports_vision,
+                        "vision_source": vision_source,
+                    }
+                )
+
+        catalog.sort(key=lambda entry: entry["label"].lower())
+        return catalog
+
+    def _build_status_readouts():
+        """Return the server-computed readouts declared `status` fields render.
+
+        Some of what an administrator needs is not a setting: whether the Playwright
+        runtime can render JavaScript, which endpoint a cloud selection resolves to,
+        whether audio transcoding is available. The server-rendered panes pass these
+        into the template as loose context and print them as stray markup. Naming them
+        here lets the schema declare a readout, which keeps the reason a control is
+        unavailable next to the control and makes it findable by search.
+
+        Each entry is ``{ok, message}``: the renderer needs the tone as well as the
+        text, and inferring it from wording would be guesswork.
+        """
+        readouts = {}
+
+        try:
+            capabilities = get_source_review_runtime_capabilities()
+            readouts["source_review_js_runtime"] = {
+                "ok": bool(capabilities.get("js_rendering_available")),
+                "message": capabilities.get("message")
+                or "Runtime support has not been checked yet.",
+            }
+            if capabilities.get("sandbox_disabled"):
+                readouts["source_review_js_runtime"]["message"] += (
+                    " The Chromium sandbox is disabled by environment configuration."
+                )
+        except Exception as exc:
+            # A probe that launches a browser can fail for reasons that have nothing
+            # to do with the settings page, and it must not take the page down.
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Source review runtime probe failed: {exc}",
+                level=logging.WARNING,
+            )
+            readouts["source_review_js_runtime"] = {
+                "ok": False,
+                "message": "Runtime support could not be checked.",
+            }
+
+        try:
+            audio = get_audio_runtime_capabilities()
+            broad = bool(audio.get("broad_transcoding_available"))
+            supported = ", ".join(audio.get("supported_extensions") or []) or "none"
+            message = audio.get("message") or "Audio runtime support has not been checked."
+            readouts["audio_runtime"] = {
+                "ok": broad,
+                "message": f"{message} Accepted uploads: {supported}.",
+            }
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Audio runtime probe failed: {exc}",
+                level=logging.WARNING,
+            )
+            readouts["audio_runtime"] = {
+                "ok": False,
+                "message": "Audio runtime support could not be checked.",
+            }
+
+        return readouts
+
+    def _build_endpoint_readouts(settings):
+        """Readouts derived from the settings document rather than from the host."""
+        endpoint = str(settings.get("video_indexer_endpoint") or "").strip()
+        return {
+            "video_indexer_endpoint": {
+                "ok": bool(endpoint),
+                "message": endpoint or "No endpoint resolved yet.",
+            }
+        }
+
+    def _redact_admin_settings_for_v2(settings):
+        """Replace stored credentials with the redaction placeholder.
+
+        Three lists feed this, and all three are needed:
+
+        ``redact_admin_settings_secrets_for_api`` covers what the server-rendered form
+        protects plus the keys only this endpoint returns, because it hands back the
+        whole settings document rather than the subset a template draws.
+
+        ``get_secret_storage_paths`` adds anything the V2 schema declares as a secret,
+        so declaring a new credential field protects it without a second edit here. It
+        reports storage paths rather than field keys, because a credential is not always
+        stored under the name of its control -- the Web Search client secret lives inside
+        ``web_search_agent``, and redacting the field key would leave the real value in
+        place under its actual path.
+
+        Model endpoint credentials are reached by none of the above, because they sit
+        inside a list rather than at a fixed key. ``sanitize_model_endpoints_for_frontend``
+        strips those, and it runs here rather than at the call site so the PATCH echo is
+        covered by the same guarantee as the GET.
+        """
+        redacted = redact_admin_settings_secrets_for_api(settings)
+        for path in get_secret_storage_paths():
+            if "." in path:
+                if read_nested_setting(redacted, path):
+                    write_nested_setting(redacted, path, SECRET_REDACTED_VALUE)
+            elif redacted.get(path):
+                redacted[path] = SECRET_REDACTED_VALUE
+        # Only when it is present: the PATCH echo carries just the submitted keys, and
+        # adding one the caller never sent would write it into the page's stored copy.
+        if "model_endpoints" in redacted:
+            redacted["model_endpoints"] = sanitize_model_endpoints_for_frontend(
+                redacted.get("model_endpoints")
+            )
+        return redacted
+
     @bp.route("/api/v2/admin/settings", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -908,9 +1073,13 @@ def register_route_backend_v2_admin(bp):
         secret is replaced with a placeholder, matching what the server-rendered form
         does, so a stored key never reaches the browser merely because someone opened the
         page. The list used here is wider than the form's, because this endpoint returns
-        the whole settings document rather than the subset a template draws. The PATCH
-        below swaps the placeholder back for the stored value, so an untouched secret
-        survives a save.
+        the whole settings document rather than the subset a template draws, and it also
+        covers credentials the schema declares at a nested path rather than under a
+        top-level key of their own.
+
+        Submitting a placeholder back means "unchanged". The normalizer drops it, and the
+        PATCH below resolves anything that reaches it against the stored document, so an
+        untouched secret survives a save either way.
 
         Model endpoint credentials sit inside the ``model_endpoints`` list rather than at
         a fixed key, so no key-based list reaches them. They are stripped separately by
@@ -925,19 +1094,20 @@ def register_route_backend_v2_admin(bp):
         """
         try:
             settings = get_settings()
-            safe_settings = redact_admin_settings_secrets_for_api(settings)
-            safe_settings["model_endpoints"] = sanitize_model_endpoints_for_frontend(
-                settings.get("model_endpoints")
-            )
             return (
                 jsonify(
                     {
-                        "settings": safe_settings,
+                        "settings": _redact_admin_settings_for_v2(settings),
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "section_status": get_admin_section_status(),
                         "app_role_requirements": get_app_role_requirements(),
                         "branding_assets": _build_branding_assets(settings),
+                        "status_readouts": {
+                            **_build_status_readouts(),
+                            **_build_endpoint_readouts(settings),
+                        },
+                        "model_catalog": _build_model_catalog(settings),
                         # Navigation sections may be conditional on a runtime flag
                         # rather than a stored setting. Inbound MCP is gated by an
                         # App Service application setting, so its value cannot be
@@ -1008,7 +1178,20 @@ def register_route_backend_v2_admin(bp):
                 )
 
             if not normalized:
-                return jsonify({"error": "No settings supplied"}), 400
+                # Every supplied key normalized away. In practice that means the payload
+                # held nothing but untouched credentials, which is a no-op rather than a
+                # mistake, so it succeeds with an empty result instead of a 400.
+                return (
+                    jsonify(
+                        {
+                            "success": True,
+                            "updated_keys": [],
+                            "settings": {},
+                            "warnings": warnings,
+                        }
+                    ),
+                    200,
+                )
 
             secret_keys = set(get_admin_settings_api_secret_fields()) | get_secret_field_keys()
             for key in secret_keys & set(normalized):
@@ -1033,23 +1216,19 @@ def register_route_backend_v2_admin(bp):
             _refresh_branding_static_files()
 
             # The response reflects the draft back into the page's stored state, so a
-            # resolved secret has to be re-redacted on the way out. Echoing it would
-            # hand back the value the redaction on GET exists to withhold.
-            echoed = {
-                key: (
-                    ADMIN_SETTINGS_SECRET_REDACTED_VALUE
-                    if key in secret_keys and value
-                    else value
-                )
-                for key, value in normalized.items()
-            }
-
+            # resolved secret has to be re-redacted on the way out, which
+            # _redact_admin_settings_for_v2 does below.
             return (
                 jsonify(
                     {
                         "success": True,
                         "updated_keys": sorted(normalized.keys()),
-                        "settings": echoed,
+                        # The browser merges this into its copy of the document, so a
+                        # credential that was just set has to come back redacted rather
+                        # than echoing the value straight out again. This follows nested
+                        # storage paths too, which a flat key check over `normalized`
+                        # would miss for the Foundry client secret.
+                        "settings": _redact_admin_settings_for_v2(normalized),
                         "warnings": warnings,
                     }
                 ),
@@ -1062,6 +1241,83 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to update settings"}), 500
+
+    @bp.route("/api/v2/admin/settings/test-connection", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_test_connection():
+        """Run one connection test against the values currently on screen.
+
+        Endpoints and credentials are worth nothing if they are wrong, and the only
+        way to find out is to try them. The server-rendered page has always offered
+        this; without it here, configuring a connection in the V2 surface would mean
+        saving blind and waiting for a user to hit the failure.
+
+        Testing before saving is the point, so the payload carries the draft values
+        rather than the stored ones. The one thing the browser cannot supply is a
+        credential it was never sent: a stored secret arrives as the redaction
+        placeholder and is resolved server-side by the shared dispatcher.
+
+        The dispatcher is shared with ``/api/admin/settings/test_connection`` so both
+        interfaces support exactly the same set of tests.
+        """
+        payload = request.get_json(silent=True) or {}
+
+        test_type = str(payload.get("test_type") or "").strip()
+        if not test_type:
+            return jsonify({"error": "No test_type supplied"}), 400
+
+        _prepare_v2_test_payload(payload, test_type)
+
+        log_event(
+            f"[V2_ADMIN_SETTINGS] Running '{test_type}' connection test",
+            level=logging.INFO,
+        )
+        return run_admin_settings_connection_test(payload)
+
+    def _prepare_v2_test_payload(payload, test_type):
+        """Fill in what the V2 picker knows but the schema cannot express.
+
+        A ``test_payload`` maps settings keys to request fields, which covers a
+        connection assembled from settings. The vision test is different: it needs the
+        endpoint that hosts the chosen model, and that is a property of the selection
+        rather than a setting of its own.
+
+        Resolving it here rather than sending it from the browser also keeps the
+        endpoint's credentials out of the request. The handler looks the endpoint up in
+        the stored settings from the id alone.
+        """
+        if test_type != "multimodal_vision":
+            return
+
+        if isinstance(payload.get("multi_endpoint"), dict):
+            return
+
+        deployment = str(payload.get("vision_model") or "").strip()
+        if not deployment:
+            return
+
+        settings = get_settings()
+        for endpoint in settings.get("model_endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            for model in endpoint.get("models") or []:
+                if not isinstance(model, dict):
+                    continue
+                candidate = str(
+                    model.get("deploymentName") or model.get("deployment") or ""
+                ).strip()
+                if candidate != deployment:
+                    continue
+
+                payload["multi_endpoint"] = {
+                    "endpoint_id": endpoint.get("id"),
+                    "model_id": model.get("id"),
+                    "provider": endpoint.get("provider"),
+                    "deployment_name": candidate,
+                }
+                return
 
     @bp.route("/api/v2/admin/settings/branding-image", methods=["POST"])
     @swagger_route(security=get_auth_security())

@@ -118,7 +118,43 @@ The Azure AI Search section belongs to the Search Index tab. Use it with the adj
 
 ### Document Intelligence {#document-intelligence-section}
 
-The Document Intelligence section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Document Intelligence reads PDFs and images. Nothing else in this tab produces searchable
+text without it, so the tab leads with the connection: endpoint, authentication and a
+connection test, either directly or through API Management. Only the path in use is shown.
+
+Extraction behaviour follows. Standard uses Document Intelligence Read and is the fastest
+and cheapest path for plain text. Enhanced captures tables, page structure, forms and
+checkbox states, at roughly six times the cost per thousand pages. Auto inspects the
+opening pages of a PDF and picks: if it finds tables, selection marks or figures the whole
+document uses Enhanced, otherwise it finishes with Standard. Images always use Enhanced
+under Auto.
+
+Formula extraction is a separately billed Document Intelligence add-on that captures
+equations as LaTeX instead of approximate OCR text. It applies to the Layout model only,
+so it has no effect while extraction is set to Standard.
+
+### Content Understanding {#content-understanding-section}
+
+Azure AI Content Understanding is what backs Enhanced extraction where it is available. It
+returns tables, page structure, checkbox states and generated descriptions of figures and
+charts. Leave the endpoint blank and Enhanced falls back to Document Intelligence Layout,
+which still captures tables, structure, forms and checkbox states but not figure
+descriptions.
+
+Content Understanding is not offered in every Azure cloud. Where it is unavailable the tab
+says so and Enhanced uses the Layout fallback with nothing further to configure.
+
+### Images Inside Office Files {#office-embedded-image-section}
+
+Neither extraction engine describes figures embedded in Word and PowerPoint files, so a
+chart pasted into a slide deck is invisible to search. With this on, embedded images are
+extracted from the file, analysed with whichever engine backs the selected extraction mode,
+and indexed as their own citable chunks. It works with Standard extraction as well as
+Enhanced.
+
+The two limits control cost. The minimum size skips icons, bullets and spacers, and the
+per-document maximum caps how many images one file can charge for. Duplicate images within
+a document are analysed once.
 
 ### Chunk Sizes {#chunk-size-section}
 
@@ -168,6 +204,14 @@ Sends page images to a vision-capable model so the text inside diagrams, screens
 scanned pages becomes searchable alongside the extracted text. Only vision-capable
 deployments are offered for selection, because a text-only model silently returns nothing
 useful here.
+
+Which deployments count as vision-capable is resolved in three steps, most authoritative
+first: an explicit choice recorded on the model under [AI Models](ai-models.md), then the
+application's built-in model capability data, then the model's name. A model resolved by
+name alone is marked as inferred, because a name is a guess -- a self-hosted deployment may
+read images without saying so, and some text-only chat variants are named like models that
+do. If a model you expect is missing from the list, set its image support explicitly on the
+endpoint that hosts it.
 
 This is the most expensive extraction path in the group. Reach for it when the material is
 genuinely visual; for text documents that happen to contain a chart, Document Intelligence
@@ -228,11 +272,36 @@ already captures the surrounding structure.
 
 ### AI Video Intelligence {#video-intelligence-section}
 
-The AI Video Intelligence section belongs to the Audio & Video tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Uploaded video is processed by Azure Video Indexer, which extracts spoken content, speakers,
+faces and brands into metadata that is then searchable and citable like any other document.
+
+The endpoint comes first because the account details are read against it: use
+`https://api.videoindexer.ai` for Azure Public and `https://api.videoindexer.ai.azure.us`
+for Azure Government, and another value only for a non-standard deployment. The account id,
+name, location, resource group and subscription follow, and the indexing timeout bounds how
+long one file may take.
 
 ### AI Voice Conversations {#ai-voice-chat-section}
 
-The AI Voice Conversations section belongs to the Audio & Video tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Three capabilities share one Azure Speech resource, which is why the resource is configured
+first and the capabilities follow:
+
+- **Audio file upload and transcription** transcribes and indexes uploaded recordings, so
+  meetings, interviews and lectures become searchable.
+- **Voice input** lets users record up to 90 seconds in the chat box instead of typing.
+- **Voice responses** adds a speaker button to each message that reads the response aloud.
+
+Configure the Speech resource once and turn on whichever of the three you need. Key
+authentication needs only the key; managed identity needs the resource id, which can be
+built from the subscription, resource group and resource name rather than typed by hand.
+
+How many audio formats can be accepted depends on whether FFmpeg is present in the
+deployment. The tab reports what the current runtime supports; without FFmpeg, only formats
+that transcribe directly are accepted.
+
+The completion chime is not here. It plays a local browser sound and needs no Speech
+resource, so it lives with the other notification settings under
+[Chat › Feedback & Alerts](chat.md#desktop-notifications-section).
 
 #### Settings
 
@@ -249,7 +318,6 @@ The AI Voice Conversations section belongs to the Audio & Video tab. Use it with
 | Account ID * | Found in the Video Indexer account Overview page in Azure Portal | Empty | `video_indexer_account_id` |
 | ARM API Version | Default for : | Not specified in defaults | `video_indexer_arm_api_version` |
 | Timeout (seconds) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 600 | `video_index_timeout` |
-| Enable AI Response Completion Audio Cues | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_chat_completion_audio_cues`; capability toggle |
 | Enable Audio File Upload & Processing | Allows users to upload audio files for transcription through the configured Speech service. | Off | `enable_audio_file_support`; capability toggle |
 | Enable Voice Input (Speech-to-Text) | Shows voice input controls in chat and sends captured speech to the configured Speech service. | Off | `enable_speech_to_text_input`; capability toggle |
 | Enable Voice Responses (Text-to-Speech) | Allows voice responses from chat output through the configured Speech service. | Off | `enable_text_to_speech`; capability toggle |

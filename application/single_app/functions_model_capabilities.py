@@ -32,6 +32,11 @@ MODEL_IDENTIFIER_FIELDS = (
 )
 
 CATALOG_RELATIVE_PATH = ("static", "json", "model_capabilities.json")
+CATALOG_FILENAME = os.path.join(*CATALOG_RELATIVE_PATH)
+VISION_OVERRIDE_FIELDS = ("supportsVision", "supports_vision")
+VISION_SOURCE_DECLARED = "declared"
+VISION_SOURCE_CATALOG = "catalog"
+VISION_SOURCE_INFERRED = "inferred"
 
 CAPABILITY_PROCESSES_IMAGES = "processesImages"
 CAPABILITY_TOOL_CALLING = "toolCalling"
@@ -76,7 +81,7 @@ def _normalize_model_identifier(value):
 
 def get_model_capability_catalog_path():
     """Return the absolute path of the shipped model capability catalog."""
-    return os.path.join(os.path.dirname(__file__), *CATALOG_RELATIVE_PATH)
+    return os.path.join(os.path.dirname(__file__), CATALOG_FILENAME)
 
 
 def reset_model_capability_catalog_cache():
@@ -86,11 +91,11 @@ def reset_model_capability_catalog_cache():
         _CATALOG_CACHE = None
 
 
-def load_model_capability_catalog():
+def _load_model_capability_catalog_document(force_refresh=False):
     """Return the parsed catalog, caching it after the first successful read."""
     global _CATALOG_CACHE
     with _CATALOG_LOCK:
-        if _CATALOG_CACHE is not None:
+        if _CATALOG_CACHE is not None and not force_refresh:
             return _CATALOG_CACHE
         try:
             with open(get_model_capability_catalog_path(), "r", encoding="utf-8") as catalog_file:
@@ -103,9 +108,24 @@ def load_model_capability_catalog():
         return _CATALOG_CACHE
 
 
+def load_model_capability_catalog(force_refresh=False):
+    """Return the identifier-indexed capability view used by the V2 model editors."""
+    document = _load_model_capability_catalog_document(force_refresh)
+    catalog = {}
+    for record in document.get("models") or []:
+        if not isinstance(record, Mapping):
+            continue
+        capabilities = record.get("capabilities")
+        if not isinstance(capabilities, Mapping):
+            continue
+        for identifier in _iter_catalog_record_identifiers(record):
+            catalog[identifier] = dict(capabilities)
+    return catalog
+
+
 def get_model_capability_catalog_records():
     """Return every model record defined by the catalog."""
-    catalog = load_model_capability_catalog()
+    catalog = _load_model_capability_catalog_document()
     return [record for record in catalog.get("models") or [] if isinstance(record, dict)]
 
 
@@ -203,11 +223,20 @@ def _read_declared_capabilities(source):
         return {}
     capabilities = _get_record_field(source, "capabilities")
     if not isinstance(capabilities, Mapping):
-        return {}
+        capabilities = {}
     declared = {}
     for capability_name, capability_value in capabilities.items():
         if isinstance(capability_value, bool):
             declared[str(capability_name)] = capability_value
+    if CAPABILITY_PROCESSES_IMAGES not in declared:
+        for field_name in VISION_OVERRIDE_FIELDS:
+            value = _get_record_field(source, field_name)
+            if isinstance(value, bool):
+                declared[CAPABILITY_PROCESSES_IMAGES] = value
+                break
+            if isinstance(value, str) and value.strip():
+                declared[CAPABILITY_PROCESSES_IMAGES] = value.strip().lower() in ("true", "on", "yes", "1")
+                break
     return declared
 
 
@@ -560,9 +589,9 @@ def is_vision_capable_model_name(*model_names):
     return False
 
 
-def is_vision_capable_model(model, endpoint=None):
-    """Return whether a model record or identifier names a supported vision model."""
-    return bool(
+def resolve_model_vision_support(model, endpoint=None):
+    """Return the shared vision decision and its source for model-editor controls."""
+    supports_vision = bool(
         resolve_model_capability(
             CAPABILITY_PROCESSES_IMAGES,
             model,
@@ -570,6 +599,23 @@ def is_vision_capable_model(model, endpoint=None):
             default=False,
         )
     )
+    for source in (model, endpoint):
+        if CAPABILITY_PROCESSES_IMAGES in _read_declared_capabilities(source):
+            return supports_vision, VISION_SOURCE_DECLARED
+    record = find_model_catalog_record(model)
+    if record is not None:
+        capabilities = record.get("capabilities")
+        if isinstance(capabilities, Mapping) and isinstance(
+            capabilities.get(CAPABILITY_PROCESSES_IMAGES), bool
+        ):
+            return supports_vision, VISION_SOURCE_CATALOG
+    return supports_vision, VISION_SOURCE_INFERRED
+
+
+def is_vision_capable_model(model, endpoint=None):
+    """Return whether a model record or identifier can accept image input."""
+    supports_vision, _source = resolve_model_vision_support(model, endpoint)
+    return supports_vision
 
 
 def is_reasoning_model(model, endpoint=None):

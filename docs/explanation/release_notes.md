@@ -167,6 +167,25 @@ part of the Chat group feature work.
 
 #### New Features
 
+*   **The Knowledge Settings Are Configurable In The New Admin Interface**
+    *   Knowledge is the largest group in Admin Settings — five tabs and roughly 150 settings covering web search, URL access, deep research, the search index, document extraction, audio and video, and file sync. In the new admin interface it existed only as a couple of dozen bare switches labelled from their internal key names. Every endpoint, key, limit, domain list, model choice and connection test in the group was simply absent, and the page said so with a link back to the classic one.
+    *   All five tabs are now fully configurable there, and each section is laid out to be worked through rather than scanned: **connect, verify, then tune.**
+    *   **Every section leads with its own switch and a status.** A section reports whether it is off, needs configuration, is waiting on something elsewhere, or is ready — so a long page can be skimmed for what still needs attention instead of opened section by section.
+    *   **Detail arrives when it is needed.** Settings cluster into groups that stay collapsed, and the one that needs attention next opens on its own. Searching still reaches everything, including settings inside a collapsed group.
+    *   **Connections can be tested before they are saved**, against the values currently on screen. Both admin interfaces now offer exactly the same set of tests.
+    *   **Prerequisites are stated where they are felt.** File Sync needs Redis Cache, which is configured in a different group; the section now says so, explains the consequence, and links to it, rather than leaving an administrator to turn File Sync on and watch nothing happen.
+    *   (Ref: `admin_settings_fields.py`, `SettingsSection.tsx`, `ConnectionTest.tsx`, `/api/v2/admin/settings/test-connection`)
+
+*   **Image Support Is Read From Real Model Capability Data**
+    *   Whether a model could be used for Multi-Modal Vision Analysis was decided by matching its name against a pattern. That admitted text-only chat variants, said nothing at all about a self-hosted or internally named deployment, and could not be corrected because the rule was in the code.
+    *   Each model on an endpoint now has a **Reads images** setting under **AI Models**, arriving pre-filled from capability data the application already ships. The field says where its answer came from — set here, from the built-in data, or inferred from the name — so the one worth reviewing is obvious.
+    *   The vision model picker offers only models that report image support, and marks one whose support was inferred rather than known.
+    *   (Ref: `functions_model_capabilities.py`, `static/json/model_capabilities.json`, `/api/models/vision-capability`, [AI Models](../admin/ai-models.md))
+
+*   **File Sync Workspace Assignments Can Now Be Edited**
+    *   File Sync could be restricted to named groups or public workspaces, but the screens for choosing them were never finished, so the lists could not be set from either admin interface. They are now searchable pickers, shown only while the restriction that uses them is turned on.
+    *   (Ref: `file_sync_allowed_group_ids`, `file_sync_allowed_public_workspace_ids`, `AssignmentPicker.tsx`)
+
 *   **Agent Settings Are Now Actually Present In The New Admin Interface**
     *   The new Admin Settings surface built its Agents tab by scanning the settings document for on/off switches and guessing where each one belonged. Agents are configured with far more than switches, so the result was close to empty: the Agents Configuration section rendered nothing at all, **Enable Agents** was filed under "Other capabilities" because nothing in its name matched the section, and not one of Workspace Mode, the workspace permissions, or the eleven Agents page settings appeared anywhere.
     *   The Agents tab is now described properly and renders every one of those settings, split into four sections instead of a single crowded card: **Agent Runtime**, **Workspace Agent Permissions**, **Agents Page**, and **Agent Template Approvals**.
@@ -193,6 +212,15 @@ part of the Chat group feature work.
 
 #### Bug Fixes
 
+*   **Admin Credentials Are No Longer Sent To The Browser In Plain Text**
+    *   The classic admin page has always replaced stored keys, connection strings and client secrets with a placeholder before rendering. The settings endpoint behind the new admin interface returned the settings document untouched, so every stored credential was delivered to the browser and visible to anyone who could open the page.
+    *   Credentials are now redacted on the way out and on the way back, and submitting an untouched placeholder is recognised as "no change" rather than being written — so saving an unrelated toggle can no longer overwrite a credential.
+    *   (Ref: `/api/v2/admin/settings`, `admin_settings_fields.py`, `redact_admin_settings_secrets_for_form`)
+
+*   **Two Document Extraction Sections Were Unreachable**
+    *   The **Content Understanding** and **Images Inside Office Files** cards existed but were missing from the settings navigation, so neither admin interface could link to them and neither was documented. Both are now navigable sections in both interfaces.
+    *   (Ref: `admin_settings_nav.py`, [Knowledge settings](../admin/knowledge.md#content-understanding-section))
+
 *   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
     *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
     *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
@@ -217,6 +245,18 @@ part of the Chat group feature work.
     *   (Ref: [Admin Settings Registry Merge Fixes](fixes/ADMIN_SETTINGS_REGISTRY_MERGE_FIXES.md))
 
 #### User Interface Enhancements
+
+*   **Document Intelligence Is No Longer Inside Out**
+    *   The section opened with a feature toggle and put the endpoint and key that make the feature work at the very bottom, after every option that depends on them. In the new interface the connection comes first, and the settings that need it follow and say so when it is missing.
+    *   (Ref: `document-intelligence-section`)
+
+*   **The Shared Speech Resource Is Explained Before It Is Needed**
+    *   Audio uploads, voice input and voice responses are three separate capabilities that use one Azure Speech resource, and that was explained in a note beneath them. The resource is now configured first, and the long resource ID needed for managed identity can be built from the fields above it instead of typed by hand.
+    *   (Ref: `ai-voice-chat-section`, `ResourceIdBuilder.tsx`)
+
+*   **The Response Completion Sound Moved To Feedback & Alerts**
+    *   It played a local browser sound and required no Azure Speech resource, yet it was the first control in the AI Voice Conversations section. It now sits with the other notification settings under Chat.
+    *   (Ref: `enable_chat_completion_audio_cues`, [Chat settings](../admin/chat.md#desktop-notifications-section))
 
 *   **Agent Orchestration No Longer Shows A Choice That Does Not Exist**
     *   Agent Orchestration offered an Orchestration Type dropdown and a Max Rounds Per Agent field, but the application ships a single orchestration mode; the multi-agent modes are not built into this release. The dropdown therefore had exactly one option and Max Rounds could never be reached.
@@ -363,14 +403,6 @@ part of the Chat group feature work.
 
 #### New Features
 
-*   **The Default Chat Model Can Be Chosen In The New Admin Interface**
-    *   The Chat section of AI Models had nothing in it but a single switch. The default model — the one chat uses when nobody has picked anything, such as on a brand new conversation — could only be set on the classic admin page, even though the connections it selects from had just moved.
-    *   **Only models that can actually serve are offered.** The list is built from enabled models on enabled connections, because a reference to anything else is cleared the moment connections are next saved. Offering a disabled model would have let an administrator choose a value that quietly reverted, with nothing to explain why.
-    *   **A choice that no longer resolves is refused rather than accepted.** Naming a connection that has been deleted, or a model that has been switched off, now comes back with a message saying so. Previously the two failure modes — storing a dangling reference, and silently emptying it — both ended up looking identical: the field simply read as having no default.
-    *   **The saved default is shown for what it currently means.** If the connection or model it named has since gone, the interface says that rather than presenting an empty field as though nothing had ever been set. Opening the page does not rewrite the stored value, so the evidence of what went missing survives.
-    *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
-    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
-
 *   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
     *   A generated chart used to be final. If the model picked a pie where a bar was wanted, put a scale on the axis that flattened the whole story, left the axes unnamed, or got a single number wrong, the only remedy was to ask again — which left a second near-duplicate chart sitting below the first with nothing to say which one was current.
     *   Every chart now has an **Edit** button. The editor opens beside a live preview with six tabs: **Data**, **Design**, **Axes**, **Source**, **Ask AI** and **History**.
@@ -392,24 +424,13 @@ part of the Chat group feature work.
     *   **Turning off "Allow additional tenant IDs" no longer discards the tenants you listed.** It stops admitting them, and turning it back on restores them.
     *   (Ref: `admin_settings_fields.py`, `functions_mcp_server_config.py`, `EntryListEditor.tsx`, `adminEntries.ts`)
 
-#### User Interface Enhancements
-
-*   **Chat Now Says Which Endpoint Is Actually Serving It**
-    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
-    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
-    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
-    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
-    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
-    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
-
-*   **The Inbound MCP Tab Explains Why It Is Empty**
-    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
-    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
-    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
-
-*   **Inbound MCP Documentation Describes The Access Model**
-    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
-    *   (Ref: `docs/admin/agents-actions.md`)
+*   **The Default Chat Model Can Be Chosen In The New Admin Interface**
+    *   The Chat section of AI Models had nothing in it but a single switch. The default model — the one chat uses when nobody has picked anything, such as on a brand new conversation — could only be set on the classic admin page, even though the connections it selects from had just moved.
+    *   **Only models that can actually serve are offered.** The list is built from enabled models on enabled connections, because a reference to anything else is cleared the moment connections are next saved. Offering a disabled model would have let an administrator choose a value that quietly reverted, with nothing to explain why.
+    *   **A choice that no longer resolves is refused rather than accepted.** Naming a connection that has been deleted, or a model that has been switched off, now comes back with a message saying so. Previously the two failure modes — storing a dangling reference, and silently emptying it — both ended up looking identical: the field simply read as having no default.
+    *   **The saved default is shown for what it currently means.** If the connection or model it named has since gone, the interface says that rather than presenting an empty field as though nothing had ever been set. Opening the page does not rewrite the stored value, so the evidence of what went missing survives.
+    *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
 
 #### Bug Fixes
 
@@ -422,32 +443,26 @@ part of the Chat group feature work.
     *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
     *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
 
+#### User Interface Enhancements
+
+*   **The Inbound MCP Tab Explains Why It Is Empty**
+    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
+    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
+    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
+
+*   **Inbound MCP Documentation Describes The Access Model**
+    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+*   **Chat Now Says Which Endpoint Is Actually Serving It**
+    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
+    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
+    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
+    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
+    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
+    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
+
 ### **(v0.261.060)**
-
-#### Bug Fixes
-
-*   **Turning Connections Off Said It Worked, And Did Not**
-    *   Enabling connections for chat is one-way — the stored flag is coerced to "already on, or newly requested", so once it is true it stays true. The classic page reflects that by hiding the checkbox after it is enabled. The new admin interface showed an ordinary switch, so turning it off reported a successful save, moved the switch, and changed nothing; chat carried on routing through connections and only a page reload revealed it. The attempt is now refused with an explanation.
-    *   **Enabling connections from the new interface also used to strand a deployment.** The classic page carries the existing single chat endpoint over as the first connection when the flag is first switched on. The new interface skipped that step, so a deployment that enabled connections there was left with an empty model catalog — and, because the flag cannot be turned back off, no way to recover. Both paths now migrate through the same code.
-    *   (Ref: `admin_settings_fields.py`, `build_migrated_model_endpoints_from_legacy`, `_seed_connections_on_first_enable`)
-
-*   **Deleting A Connection Could Break Document Metadata Extraction**
-    *   Metadata extraction can be pointed at a specific model, stored as a reference to a connection and a model within it. Deleting or disabling that connection left the reference naming something that no longer existed, and unlike the chat default — which quietly falls back — extraction raises instead, and its caller only writes the failure to the processing log. Metadata extraction would therefore fail for every subsequently ingested document with nothing visible to say why. That reference is now re-checked whenever connections change, exactly as the chat default already was.
-    *   (Ref: `resolve_metadata_extraction_model_selection`, `_persist_global_model_endpoints`)
-
-*   **A Failed Settings Write Reported Success After The Secrets Were Already Gone**
-    *   Saving a connection removes superseded secrets from Key Vault before writing the settings document. The settings write reports failure by returning a value rather than raising, and that value was not checked — so if the write failed, the interface said the change had been saved while the connection was left referencing a secret that had already been deleted. A failed write is now reported as an error.
-    *   (Ref: `_persist_global_model_endpoints`, `update_settings`)
-
-*   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
-    *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
-    *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
-    *   (Ref: `enable_tabular_processing_plugin`, `is_tabular_processing_enabled`, `admin_settings_fields.py`)
-
-*   **Fact Memory Is Listed With The Actions It Affects Without Moving Its Control**
-    *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
-    *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
-    *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
 
 #### New Features
 
@@ -491,20 +506,57 @@ part of the Chat group feature work.
     *   The Workspaces admin page described its sections with a repeated sentence that said only which tab they belonged to. It now explains what each workspace type means for who can read a document, how the three group-creation controls stack, and why downloads default to off, with troubleshooting for the cases where a setting appears to have no effect.
     *   (Ref: `docs/admin/workspaces.md`, `docs/admin/knowledge.md`, `docs/admin/security.md`)
 
+#### Bug Fixes
+
+*   **Turning Connections Off Said It Worked, And Did Not**
+    *   Enabling connections for chat is one-way — the stored flag is coerced to "already on, or newly requested", so once it is true it stays true. The classic page reflects that by hiding the checkbox after it is enabled. The new admin interface showed an ordinary switch, so turning it off reported a successful save, moved the switch, and changed nothing; chat carried on routing through connections and only a page reload revealed it. The attempt is now refused with an explanation.
+    *   **Enabling connections from the new interface also used to strand a deployment.** The classic page carries the existing single chat endpoint over as the first connection when the flag is first switched on. The new interface skipped that step, so a deployment that enabled connections there was left with an empty model catalog — and, because the flag cannot be turned back off, no way to recover. Both paths now migrate through the same code.
+    *   (Ref: `admin_settings_fields.py`, `build_migrated_model_endpoints_from_legacy`, `_seed_connections_on_first_enable`)
+
+*   **Deleting A Connection Could Break Document Metadata Extraction**
+    *   Metadata extraction can be pointed at a specific model, stored as a reference to a connection and a model within it. Deleting or disabling that connection left the reference naming something that no longer existed, and unlike the chat default — which quietly falls back — extraction raises instead, and its caller only writes the failure to the processing log. Metadata extraction would therefore fail for every subsequently ingested document with nothing visible to say why. That reference is now re-checked whenever connections change, exactly as the chat default already was.
+    *   (Ref: `resolve_metadata_extraction_model_selection`, `_persist_global_model_endpoints`)
+
+*   **A Failed Settings Write Reported Success After The Secrets Were Already Gone**
+    *   Saving a connection removes superseded secrets from Key Vault before writing the settings document. The settings write reports failure by returning a value rather than raising, and that value was not checked — so if the write failed, the interface said the change had been saved while the connection was left referencing a secret that had already been deleted. A failed write is now reported as an error.
+    *   (Ref: `_persist_global_model_endpoints`, `update_settings`)
+
+*   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
+    *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
+    *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
+    *   (Ref: `enable_tabular_processing_plugin`, `is_tabular_processing_enabled`, `admin_settings_fields.py`)
+
+*   **Fact Memory Is Listed With The Actions It Affects Without Moving Its Control**
+    *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
+    *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
+    *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
+
 ### **(v0.261.059)**
 
 #### New Features
 
-*   **Model Connections Can Be Managed In The New Admin Interface**
-    *   The AI Models group in the new interface previously showed nothing but a few switches. That was structural rather than cosmetic: no section in the group had a described field schema, so the page fell back to scanning the settings document for `enable_*` booleans — and endpoints, keys, API versions, authentication and model selection are none of those. All of it was invisible.
-    *   **Model endpoints are now presented as connections.** A connection is one Azure OpenAI or Azure AI Foundry resource: where it is, how SimpleChat authenticates to it, and which of its deployed models may be used. The wording and the editing model changed; what is stored did not, so a connection configured in either interface is the same record.
-    *   **Adding a connection now actually saves it.** In the classic interface, adding or editing a model endpoint changed an in-memory list that was serialized into a hidden form field, so nothing was stored until the whole admin settings page was submitted — and a half-filled endpoint looked identical to a saved one. Each connection is now its own resource with its own Save, and the editor says which state it is in.
-    *   **The editor only shows the fields the connection actually uses.** Provider and authentication method together decide what is relevant, derived in one place rather than from several listeners toggling visibility independently. Choosing an API key, for example, hides the subscription and resource group, because an API key cannot reach Azure Resource Manager and those fields would serve no purpose.
-    *   **Validation names the field that is wrong**, next to the control, instead of raising a message that described the problem but not its location.
-    *   **Discovery and testing are part of editing.** *Test connection* checks the credentials resolve, *Discover models* lists the resource's deployments, and each model can be tested individually. Discovered models arrive switched off, because finding a deployment is not the same as choosing to publish it, and re-running discovery does not duplicate a model or overwrite a display name edited by hand.
-    *   **Stored secrets survive an edit.** Keys and client secrets are never returned to the browser; a field whose secret is already stored shows that it exists and stays empty, and leaving it empty keeps the stored value. Deleting a connection removes the secrets it owned from Key Vault.
-    *   Deleting or disabling a connection no longer leaves the default model pointing at something that no longer resolves — chat would otherwise fall back to a different model with no indication that it had. The rule that decides this is now shared with the classic form, so the two interfaces cannot disagree about it.
-    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/model-endpoints`, `modelConnections.ts`, `ModelConnectionsManager.tsx`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+*   **The Whole Security Group Now Works In The New Admin Interface**
+    *   The new Admin Settings surface renders from a description of each setting. Security had no description, so it fell back to scanning for on/off switches — which meant it could draw switches and nothing else. The Key Vault name, the Content Safety endpoint and key, the idle timeout values, the Front Door URL and the access denied message were all unreachable, and three sections — Permissions, Access Denied Message and Key Vault — rendered as nothing at all, because a section with no switches and nothing described is skipped entirely.
+    *   All six Security tabs are now described in full: **Access & Roles**, **Secrets**, **Content Safety**, **Session**, **Network** and **Rate Limiting**. Every field the classic page submits has a control, and a test keeps the two from drifting apart again.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, `test_v2_admin_security_parity.py`, [Security settings](../admin/security.md))
+
+*   **App Role Requirements Reads As A Policy, Not A List Of Switches**
+    *   Role requirements are decided on the tab that owns each feature, which keeps each decision in context but scatters the access policy across seven tabs. The old roster gathered the switches but said nothing about them: a row was a label and a toggle, with no indication of which Entra role to assign or what changed when you flipped it.
+    *   Each row now names the exact app role value to assign — copyable, so it does not get retyped wrong into Entra — and states both halves of the decision: what enforcing it restricts, and who keeps access when it is left off. A count at the top reads the posture at a glance, and the list can be filtered.
+    *   **A requirement that is doing nothing now says so.** Enforcing a role for a feature that is switched off looks like protection and is not, so those rows are marked.
+    *   **One requirement was missing entirely.** The old roster was built by scanning the page for checkboxes named `require_member_of_*`, so `file_sync_personal_require_app_role` never appeared in it. The catalog is built from a declared registry instead, and a test fails if a new role requirement is not registered.
+    *   (Ref: `admin_app_roles.py`, `AppRoleRequirements.tsx`, `test_v2_admin_app_role_registry.py`)
+
+*   **Sections Say Whether They Are Actually Working**
+    *   "Enabled" and "working" are not the same thing for an integration. Content Safety can be switched on with no endpoint, and Key Vault with no vault name, and in both cases the feature silently does nothing — which you would only discover by opening the section and reading every field.
+    *   Section headers now carry **Off**, **Needs configuration** or **On**, so the security posture can be read without opening anything. Content Safety is judged against whichever endpoint its routing choice actually uses.
+
+*   **Key Vault Expiration Reminders And The Tracked Secret Inventory**
+    *   Key Vault secret names written by SimpleChat are content hashes, so an expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. The reminder settings and the inventory that maps that name back to its owner, source action and field are now available in the new interface, including the on-demand sweep.
+
+*   **Test Buttons And Front Door Redirect URIs**
+    *   Content Safety and Key Vault both have inline connection tests again, run against what is currently on screen rather than what was last saved, so a mistake is caught before Save. A broken Content Safety connection blocks chat rather than failing quietly, which makes testing first worth the click.
+    *   The Front Door section derives and shows the two redirect URIs that must be registered on the Entra app registration, each copyable. An unregistered URI is the usual cause of sign-in completing at Microsoft and then failing on the way back.
 
 *   **The Whole Workspaces Group Is Now Editable In The New Interface**
     *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.
@@ -537,29 +589,6 @@ part of the Chat group feature work.
     *   Exported and emailed charts, and the classic interface, all show the current version with every setting applied — so a conversation looks the same wherever it is read.
     *   (Ref: `chartEdits.ts`, `ChartEditor.tsx`, `ChartDataGrid.tsx`, `ChartCanvas.tsx`, `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `functions_chart_export.py`, `chat-block-revisions.js`, [V2 Inline Chart Editing](features/V2_INLINE_CHART_EDITING.md))
 
-*   **The Whole Security Group Now Works In The New Admin Interface**
-    *   The new Admin Settings surface renders from a description of each setting. Security had no description, so it fell back to scanning for on/off switches — which meant it could draw switches and nothing else. The Key Vault name, the Content Safety endpoint and key, the idle timeout values, the Front Door URL and the access denied message were all unreachable, and three sections — Permissions, Access Denied Message and Key Vault — rendered as nothing at all, because a section with no switches and nothing described is skipped entirely.
-    *   All six Security tabs are now described in full: **Access & Roles**, **Secrets**, **Content Safety**, **Session**, **Network** and **Rate Limiting**. Every field the classic page submits has a control, and a test keeps the two from drifting apart again.
-    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, `test_v2_admin_security_parity.py`, [Security settings](../admin/security.md))
-
-*   **App Role Requirements Reads As A Policy, Not A List Of Switches**
-    *   Role requirements are decided on the tab that owns each feature, which keeps each decision in context but scatters the access policy across seven tabs. The old roster gathered the switches but said nothing about them: a row was a label and a toggle, with no indication of which Entra role to assign or what changed when you flipped it.
-    *   Each row now names the exact app role value to assign — copyable, so it does not get retyped wrong into Entra — and states both halves of the decision: what enforcing it restricts, and who keeps access when it is left off. A count at the top reads the posture at a glance, and the list can be filtered.
-    *   **A requirement that is doing nothing now says so.** Enforcing a role for a feature that is switched off looks like protection and is not, so those rows are marked.
-    *   **One requirement was missing entirely.** The old roster was built by scanning the page for checkboxes named `require_member_of_*`, so `file_sync_personal_require_app_role` never appeared in it. The catalog is built from a declared registry instead, and a test fails if a new role requirement is not registered.
-    *   (Ref: `admin_app_roles.py`, `AppRoleRequirements.tsx`, `test_v2_admin_app_role_registry.py`)
-
-*   **Sections Say Whether They Are Actually Working**
-    *   "Enabled" and "working" are not the same thing for an integration. Content Safety can be switched on with no endpoint, and Key Vault with no vault name, and in both cases the feature silently does nothing — which you would only discover by opening the section and reading every field.
-    *   Section headers now carry **Off**, **Needs configuration** or **On**, so the security posture can be read without opening anything. Content Safety is judged against whichever endpoint its routing choice actually uses.
-
-*   **Key Vault Expiration Reminders And The Tracked Secret Inventory**
-    *   Key Vault secret names written by SimpleChat are content hashes, so an expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. The reminder settings and the inventory that maps that name back to its owner, source action and field are now available in the new interface, including the on-demand sweep.
-
-*   **Test Buttons And Front Door Redirect URIs**
-    *   Content Safety and Key Vault both have inline connection tests again, run against what is currently on screen rather than what was last saved, so a mistake is caught before Save. A broken Content Safety connection blocks chat rather than failing quietly, which makes testing first worth the click.
-    *   The Front Door section derives and shows the two redirect URIs that must be registered on the Entra app registration, each copyable. An unregistered URI is the usual cause of sign-in completing at Microsoft and then failing on the way back.
-
 *   **Chat Settings Are Fully Editable In The New Admin Interface**
     *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
     *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
@@ -572,6 +601,17 @@ part of the Chat group feature work.
     *   All three are now editable in both the classic and the new admin interface, under Conversation History.
     *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](../../admin/chat/))
 
+*   **Model Connections Can Be Managed In The New Admin Interface**
+    *   The AI Models group in the new interface previously showed nothing but a few switches. That was structural rather than cosmetic: no section in the group had a described field schema, so the page fell back to scanning the settings document for `enable_*` booleans — and endpoints, keys, API versions, authentication and model selection are none of those. All of it was invisible.
+    *   **Model endpoints are now presented as connections.** A connection is one Azure OpenAI or Azure AI Foundry resource: where it is, how SimpleChat authenticates to it, and which of its deployed models may be used. The wording and the editing model changed; what is stored did not, so a connection configured in either interface is the same record.
+    *   **Adding a connection now actually saves it.** In the classic interface, adding or editing a model endpoint changed an in-memory list that was serialized into a hidden form field, so nothing was stored until the whole admin settings page was submitted — and a half-filled endpoint looked identical to a saved one. Each connection is now its own resource with its own Save, and the editor says which state it is in.
+    *   **The editor only shows the fields the connection actually uses.** Provider and authentication method together decide what is relevant, derived in one place rather than from several listeners toggling visibility independently. Choosing an API key, for example, hides the subscription and resource group, because an API key cannot reach Azure Resource Manager and those fields would serve no purpose.
+    *   **Validation names the field that is wrong**, next to the control, instead of raising a message that described the problem but not its location.
+    *   **Discovery and testing are part of editing.** *Test connection* checks the credentials resolve, *Discover models* lists the resource's deployments, and each model can be tested individually. Discovered models arrive switched off, because finding a deployment is not the same as choosing to publish it, and re-running discovery does not duplicate a model or overwrite a display name edited by hand.
+    *   **Stored secrets survive an edit.** Keys and client secrets are never returned to the browser; a field whose secret is already stored shows that it exists and stays empty, and leaving it empty keeps the stored value. Deleting a connection removes the secrets it owned from Key Vault.
+    *   Deleting or disabling a connection no longer leaves the default model pointing at something that no longer resolves — chat would otherwise fall back to a different model with no indication that it had. The rule that decides this is now shared with the classic form, so the two interfaces cannot disagree about it.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/model-endpoints`, `modelConnections.ts`, `ModelConnectionsManager.tsx`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+
 *   **Agent Settings Are Now Actually Present In The New Admin Interface**
     *   The new Admin Settings surface built its Agents tab by scanning the settings document for on/off switches and guessing where each one belonged. Agents are configured with far more than switches, so the result was close to empty: the Agents Configuration section rendered nothing at all, **Enable Agents** was filed under "Other capabilities" because nothing in its name matched the section, and not one of Workspace Mode, the workspace permissions, or the eleven Agents page settings appeared anywhere.
     *   The Agents tab is now described properly and renders every one of those settings, split into four sections instead of a single crowded card: **Agent Runtime**, **Workspace Agent Permissions**, **Agents Page**, and **Agent Template Approvals**.
@@ -582,11 +622,70 @@ part of the Chat group feature work.
     *   Rarely-changed settings are grouped and collapsed rather than laid out flat, and a search opens any collapsed group so a match is never hidden behind it.
     *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `adminAgents.ts`, `PromotedAgentsEditor.tsx`, `AdminSettingsPage.tsx`)
 
+#### Bug Fixes
+
+*   **Secrets Are No Longer Sent To The Browser By The New Admin Interface**
+    *   The classic admin page replaces stored credentials with a placeholder before rendering, and restores them on save. The new interface's settings endpoint returned the settings document as-is, so opening Admin Settings put every stored key into the page payload — including the Content Safety key, the APIM subscription key, and the Azure Storage account key used to sign document SAS URLs, which no admin template renders as a secret at all.
+    *   Secrets are now redacted, against a wider list than the classic form uses, because this endpoint returns the whole settings document rather than the subset a form draws. A credential field reports whether a value is stored and offers **Replace**; the stored value is never sent, so it cannot be read back out of the browser. Saving without touching a secret leaves it intact, and the connection tests resolve the placeholder on the server.
+    *   **Replace does not stage a deletion.** It only opens the field for entry — leaving it blank keeps what is stored, and a secret is removed only by clearing a value you typed.
+    *   (Ref: `route_backend_v2.py`, `redact_admin_settings_secrets_for_api`, `resolve_admin_settings_secret_value`, `test_v2_admin_settings_secret_redaction.py`)
+
+*   **The Content Safety Connection Test Now Tests The Path Actually In Use**
+    *   The new interface sent the authentication mode under the wrong name, so the endpoint never saw it and always took the key path. On a deployment authenticating with a managed identity, the test reported a failure for a working configuration — or, if a stale key happened to be stored, quietly validated a path that is not the one in use.
+    *   (Ref: `ConnectionTest.tsx`, `_test_safety_connection`)
+
+*   **"Startup App Maintenance" No Longer Appears Under Security**
+    *   `enable_app_maintenance` and `enable_startup_app_maintenance` were showing up in **Security > App Role Requirements**, beside Entra role switches they have nothing to do with. The fallback scan files an undescribed setting by matching word stems, and both matched "app" in `app-role-requirements-section`.
+    *   They are Cosmos maintenance switches — the recurring job that checks index policies, reconciles the document access index and clears stale caches — and now live under **Scale > Cosmos > Cosmos Maintenance** with labels and help text that say what they do. Neither had a control on the classic page at all.
+    *   `enable_key_vault_secret_storage` was likewise being filed under Backup & Recovery by matching "storage", and `enable_key_vault_secret_expiration_reminders` matched nothing and fell into "Other capabilities". Both are now in the Key Vault section where they belong.
+    *   (Ref: `admin_settings_fields.py`, `test_v2_admin_capability_placement.py`)
+
+*   **The Idle Warning Can No Longer Be Set After The Sign-Out It Warns About**
+    *   The classic page silently lowers a warning time that exceeds the sign-out time. The new interface's save now does the same and says so, instead of storing a warning that could never appear.
+
+*   **Workflow Settings Are Reachable In The New Admin Interface**
+    *   The **Workflow** group in the new admin interface was empty. Selecting it showed no controls at all — not a missing toggle here or there, but the whole group. Enabling workflows meant going back to the classic admin page.
+    *   The cause was one thing, not seven. The new admin interface draws a section either from a description of its controls, or by scanning for settings whose names begin with `enable_`. Workflow had no description, and not one of its settings is named that way — they are `allow_user_workflows`, `allow_group_workflows`, `workflow_max_tasks` and so on — so the scan found nothing and the section was dropped for being empty.
+    *   All seven settings are now present: **Enable Personal Workflows**, **Require WorkflowUser App Role**, **Enable Group Workflows**, **Require Group Assignment to Use Workflow**, **Assigned Groups**, **Workflow Agent Action Limit** and **Workflow Task Limit**.
+    *   **Sub-settings stay out of the way until they apply.** The `WorkflowUser` role requirement appears once personal workflows are on, and the group allow list appears once group assignment is required. The two run limits are always shown, because they bound personal and group runs alike.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, [V2 Admin Workflow Settings Parity](fixes/V2_ADMIN_WORKFLOW_SETTINGS_PARITY_FIX.md))
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+*   **A Reserved Identity Header Name Is Now Refused Rather Than Silently Dropped**
+    *   The new admin interface accepted any identity header name. A name that collides with a header the model call already sets — `authorization` or `api-key`, for instance — was normalized away to nothing on read, which turned the header off without saying so. Such a name is now rejected at save time with an explanation.
+    *   (Ref: `admin_settings_fields.py`, `normalize_model_endpoint_identity_header_name`)
+
 #### User Interface Enhancements
 
-*   **AI Models Reads As Connections And Roles**
-    *   The AI Models group conflated two different things: a place models live, and the job a model does. The Model Endpoints tab is now **Connections**, and the Chat Model section is now **Chat**, separating the resource being connected to from the purpose it serves.
-    *   (Ref: `admin_settings_nav.py`, `docs/admin/ai-models.md`)
+*   **Long Settings Sections Are Broken Into Labelled Parts**
+    *   Key Vault has eleven controls and a table; as one flat list, its connection settings and its expiration reminder settings read as a single undifferentiated decision. Sections can now declare sub-headings, so Key Vault reads as **Vault connection**, **Expiration reminders** and **Tracked secrets**, and Content Safety as **Connection** and **When a message is blocked**.
+
+*   **Standing Warnings Sit Next To The Control They Apply To**
+    *   Consequences that no label can hold — enabling Key Vault is effectively one-way — are now shown as callouts beside the switch rather than hidden behind a tooltip or left unsaid.
 
 *   **Maximum File Size Moved To Knowledge**
     *   The upload ceiling applies to chat attachments as well as workspace documents, and it is checked before extraction runs, so Workspaces only ever described half of what it does. It now sits in **Knowledge > Document Extraction** beside Chunk Sizes, and its description says plainly that it covers both upload paths.
@@ -608,12 +707,6 @@ part of the Chat group feature work.
     *   The list saves with the toggle that gates it, so requiring assignment and choosing the groups is one save rather than two.
     *   (Ref: `GroupAssignmentField.tsx`, `/api/v2/admin/groups`)
 
-*   **Long Settings Sections Are Broken Into Labelled Parts**
-    *   Key Vault has eleven controls and a table; as one flat list, its connection settings and its expiration reminder settings read as a single undifferentiated decision. Sections can now declare sub-headings, so Key Vault reads as **Vault connection**, **Expiration reminders** and **Tracked secrets**, and Content Safety as **Connection** and **When a message is blocked**.
-
-*   **Standing Warnings Sit Next To The Control They Apply To**
-    *   Consequences that no label can hold — enabling Key Vault is effectively one-way — are now shown as callouts beside the switch rather than hidden behind a tooltip or left unsaid.
-
 *   **Settings From Other Areas No Longer Appear Under Chat**
     *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
     *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
@@ -624,6 +717,10 @@ part of the Chat group feature work.
     *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
     *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
 
+*   **AI Models Reads As Connections And Roles**
+    *   The AI Models group conflated two different things: a place models live, and the job a model does. The Model Endpoints tab is now **Connections**, and the Chat Model section is now **Chat**, separating the resource being connected to from the purpose it serves.
+    *   (Ref: `admin_settings_nav.py`, `docs/admin/ai-models.md`)
+
 *   **Agent Orchestration No Longer Shows A Choice That Does Not Exist**
     *   Agent Orchestration offered an Orchestration Type dropdown and a Max Rounds Per Agent field, but the application ships a single orchestration mode; the multi-agent modes are not built into this release. The dropdown therefore had exactly one option and Max Rounds could never be reached.
     *   The new interface asks the server which modes exist and shows the card only when there is a genuine choice. It will reappear on its own if multi-agent orchestration ships, without another change here.
@@ -632,63 +729,6 @@ part of the Chat group feature work.
 *   **Agents & Actions Documentation Describes Behaviour Instead Of Restating Labels**
     *   The Agents entries in the Agents & Actions administration page mostly read "Defines behavior for the related admin workflow", which told an administrator nothing. They now describe what each setting does, what it depends on, and why you would change it — including that the Agents catalog page is unavailable while agents are off, and why promoting an agent exists at all.
     *   (Ref: `docs/admin/agents-actions.md`)
-
-#### Bug Fixes
-
-*   **A Reserved Identity Header Name Is Now Refused Rather Than Silently Dropped**
-    *   The new admin interface accepted any identity header name. A name that collides with a header the model call already sets — `authorization` or `api-key`, for instance — was normalized away to nothing on read, which turned the header off without saying so. Such a name is now rejected at save time with an explanation.
-    *   (Ref: `admin_settings_fields.py`, `normalize_model_endpoint_identity_header_name`)
-
-*   **Workflow Settings Are Reachable In The New Admin Interface**
-    *   The **Workflow** group in the new admin interface was empty. Selecting it showed no controls at all — not a missing toggle here or there, but the whole group. Enabling workflows meant going back to the classic admin page.
-    *   The cause was one thing, not seven. The new admin interface draws a section either from a description of its controls, or by scanning for settings whose names begin with `enable_`. Workflow had no description, and not one of its settings is named that way — they are `allow_user_workflows`, `allow_group_workflows`, `workflow_max_tasks` and so on — so the scan found nothing and the section was dropped for being empty.
-    *   All seven settings are now present: **Enable Personal Workflows**, **Require WorkflowUser App Role**, **Enable Group Workflows**, **Require Group Assignment to Use Workflow**, **Assigned Groups**, **Workflow Agent Action Limit** and **Workflow Task Limit**.
-    *   **Sub-settings stay out of the way until they apply.** The `WorkflowUser` role requirement appears once personal workflows are on, and the group allow list appears once group assignment is required. The two run limits are always shown, because they bound personal and group runs alike.
-    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, [V2 Admin Workflow Settings Parity](fixes/V2_ADMIN_WORKFLOW_SETTINGS_PARITY_FIX.md))
-
-*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
-    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
-    *   All three now take effect in the new interface, the classic interface and exported images alike.
-    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
-
-*   **Horizontal Bar Charts Scaled The Wrong Axis**
-    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
-    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
-
-*   **Secrets Are No Longer Sent To The Browser By The New Admin Interface**
-    *   The classic admin page replaces stored credentials with a placeholder before rendering, and restores them on save. The new interface's settings endpoint returned the settings document as-is, so opening Admin Settings put every stored key into the page payload — including the Content Safety key, the APIM subscription key, and the Azure Storage account key used to sign document SAS URLs, which no admin template renders as a secret at all.
-    *   Secrets are now redacted, against a wider list than the classic form uses, because this endpoint returns the whole settings document rather than the subset a form draws. A credential field reports whether a value is stored and offers **Replace**; the stored value is never sent, so it cannot be read back out of the browser. Saving without touching a secret leaves it intact, and the connection tests resolve the placeholder on the server.
-    *   **Replace does not stage a deletion.** It only opens the field for entry — leaving it blank keeps what is stored, and a secret is removed only by clearing a value you typed.
-    *   (Ref: `route_backend_v2.py`, `redact_admin_settings_secrets_for_api`, `resolve_admin_settings_secret_value`, `test_v2_admin_settings_secret_redaction.py`)
-
-*   **The Content Safety Connection Test Now Tests The Path Actually In Use**
-    *   The new interface sent the authentication mode under the wrong name, so the endpoint never saw it and always took the key path. On a deployment authenticating with a managed identity, the test reported a failure for a working configuration — or, if a stale key happened to be stored, quietly validated a path that is not the one in use.
-    *   (Ref: `ConnectionTest.tsx`, `_test_safety_connection`)
-
-*   **"Startup App Maintenance" No Longer Appears Under Security**
-    *   `enable_app_maintenance` and `enable_startup_app_maintenance` were showing up in **Security > App Role Requirements**, beside Entra role switches they have nothing to do with. The fallback scan files an undescribed setting by matching word stems, and both matched "app" in `app-role-requirements-section`.
-    *   They are Cosmos maintenance switches — the recurring job that checks index policies, reconciles the document access index and clears stale caches — and now live under **Scale > Cosmos > Cosmos Maintenance** with labels and help text that say what they do. Neither had a control on the classic page at all.
-    *   `enable_key_vault_secret_storage` was likewise being filed under Backup & Recovery by matching "storage", and `enable_key_vault_secret_expiration_reminders` matched nothing and fell into "Other capabilities". Both are now in the Key Vault section where they belong.
-    *   (Ref: `admin_settings_fields.py`, `test_v2_admin_capability_placement.py`)
-
-*   **The Idle Warning Can No Longer Be Set After The Sign-Out It Warns About**
-    *   The classic page silently lowers a warning time that exceeds the sign-out time. The new interface's save now does the same and says so, instead of storing a warning that could never appear.
-
-*   **Admin Saves No Longer Reset The History Summarization Settings**
-    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
-    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
-    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
-
-*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
-    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
-    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
-    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
-
-*   **Stored Credentials Are No Longer Sent To The Admin Browser**
-    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
-    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
-    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
-    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
 
 #### Documentation
 
