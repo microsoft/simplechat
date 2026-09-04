@@ -107,6 +107,94 @@ def search_all_groups(search_query, limit=10):
     ))
     return results[:max(1, min(int(limit or 10), 50))]
 
+GROUP_DIRECTORY_MAX_LIMIT = 200
+GROUP_DIRECTORY_DEFAULT_LIMIT = 50
+
+GROUP_DIRECTORY_TYPE_FILTER = "(c.type = 'group' OR NOT IS_DEFINED(c.type))"
+
+
+def _to_group_directory_row(group_doc):
+    """Project a group document down to the fields an assignment picker needs."""
+    return {
+        "id": str(group_doc.get("id") or ""),
+        "name": group_doc.get("name") or "",
+        "description": group_doc.get("description") or "",
+        "member_count": len(group_doc.get("users") or []),
+    }
+
+
+def find_groups_by_ids(group_ids):
+    """Return directory rows for specific group ids, skipping ids that no longer exist.
+
+    Used to label an assignment an administrator has already saved. Ids that
+    resolve to nothing are simply absent from the result, which lets the caller
+    tell a live assignment apart from one pointing at a deleted group.
+    """
+    wanted_ids = [str(group_id or "").strip() for group_id in (group_ids or [])]
+    wanted_ids = [group_id for group_id in wanted_ids if group_id]
+    if not wanted_ids:
+        return []
+
+    query = f"""
+        SELECT c.id, c.name, c.description, c.users
+        FROM c
+        WHERE {GROUP_DIRECTORY_TYPE_FILTER} AND ARRAY_CONTAINS(@ids, c.id)
+    """
+    results = list(cosmos_groups_container.query_items(
+        query=query,
+        parameters=[{"name": "@ids", "value": wanted_ids}],
+        enable_cross_partition_query=True
+    ))
+
+    rows_by_id = {row["id"]: row for row in (_to_group_directory_row(doc) for doc in results)}
+    # Preserve the order the caller asked in, so a saved assignment keeps the
+    # order an administrator built it in rather than Cosmos's storage order.
+    return [rows_by_id[group_id] for group_id in wanted_ids if group_id in rows_by_id]
+
+
+def list_groups_for_admin_directory(search_query="", limit=GROUP_DIRECTORY_DEFAULT_LIMIT):
+    """Return ``(rows, truncated)`` for an administrator's group assignment picker.
+
+    An empty search browses the directory. The query asks for one row more than
+    ``limit`` so a truncated result can be reported instead of silently hiding
+    groups, which matters because an administrator who cannot see a group has no
+    way to tell whether it is missing or merely beyond the cap.
+    """
+    normalized_query = str(search_query or "").strip().lower()
+    capped_limit = max(1, min(int(limit or GROUP_DIRECTORY_DEFAULT_LIMIT), GROUP_DIRECTORY_MAX_LIMIT))
+
+    filters = [GROUP_DIRECTORY_TYPE_FILTER]
+    parameters = []
+    if normalized_query:
+        filters.append(
+            "(CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))"
+            " OR LOWER(c.id) = @search)"
+        )
+        parameters.append({"name": "@search", "value": normalized_query})
+
+    # No ORDER BY: Cosmos drops documents that lack the sorted property, which
+    # would hide legacy groups saved without a name. The page is sorted below.
+    query = f"""
+        SELECT c.id, c.name, c.description, c.users
+        FROM c
+        WHERE {' AND '.join(filters)}
+        OFFSET 0 LIMIT @limit
+    """
+    parameters.append({"name": "@limit", "value": capped_limit + 1})
+
+    results = list(cosmos_groups_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True
+    ))
+
+    truncated = len(results) > capped_limit
+    rows = [_to_group_directory_row(doc) for doc in results[:capped_limit]]
+    rows.sort(key=lambda row: (row["name"].lower(), row["id"]))
+    return rows, truncated
+
+
 def get_user_groups(user_id):
     """
     Fetch all groups for which this user is a member.

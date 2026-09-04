@@ -33,10 +33,14 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
+import { AppRoleRoster } from '../components/admin/AppRoleRoster';
+import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
+import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
@@ -52,6 +56,7 @@ import {
     asString,
     buildFieldIndex,
     buildSectionBlocks,
+    collectAppRoleEntries,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
@@ -375,6 +380,29 @@ export function AdminSettingsPage() {
     const settingCount = declaredKeys.size + capabilityRows.length;
 
     /**
+     * App role requirements, for the roster that mirrors them into Security.
+     *
+     * Built from the navigation and the schema together so each entry can say which tab
+     * really owns it, and so the order matches the rest of the page.
+     */
+    const appRoleEntries = useMemo(
+        () => (data ? collectAppRoleEntries(data.admin_nav, schema) : []),
+        [data, schema],
+    );
+
+    const appRoleValues = useMemo(() => {
+        const values: Record<string, boolean> = {};
+        for (const entry of appRoleEntries) {
+            values[entry.key] = asBoolean(
+                Object.prototype.hasOwnProperty.call(draft, entry.key)
+                    ? draft[entry.key]
+                    : settings[entry.key],
+            );
+        }
+        return values;
+    }, [appRoleEntries, draft, settings]);
+
+    /**
      * Keys that gate a save rather than being stored.
      *
      * They ride along in the draft so they reach the PATCH, but they are not changes an
@@ -573,6 +601,32 @@ export function AdminSettingsPage() {
             );
         }
 
+        if (field.type === 'id_list') {
+            return (
+                <AssignmentPicker
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'group_picker') {
+            return (
+                <GroupAssignmentField
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
         if (field.type === 'component') {
             switch (field.component) {
                 case 'custom-pages-table':
@@ -581,6 +635,8 @@ export function AdminSettingsPage() {
                     return <OrchestrationCard key={key} help={field.help} />;
                 case 'inbound-mcp-disabled-notice':
                     return <InboundMcpNotice key={key} />;
+                case 'global-identities-list':
+                    return <GlobalIdentitiesList key={key} help={field.help} />;
                 case 'promoted-popular-agents':
                     return (
                         <PromotedAgentsEditor
@@ -590,6 +646,17 @@ export function AdminSettingsPage() {
                             error={error}
                             disabled={saving}
                             onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'app-role-requirements-roster':
+                    return (
+                        <AppRoleRoster
+                            key={key}
+                            entries={appRoleEntries}
+                            values={appRoleValues}
+                            help={field.help}
+                            disabled={saving}
+                            onChange={setValue}
                         />
                     );
                 case 'classification-banner-preview':
