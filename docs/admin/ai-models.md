@@ -34,7 +34,7 @@ Model endpoints are production dependencies for every generated answer, embeddin
 
 A connection is one Azure OpenAI or Azure AI Foundry resource: where it is, how SimpleChat authenticates to it, and which of its deployed models may be used. Several connections can serve models at once, so a deployment in one subscription and a Foundry project in another can both appear in the chat model picker.
 
-Connections are consulted only when **Use connections for chat** is on. With it off, chat runs on the single classic endpoint configured under Chat Model instead, and anything listed here is ignored.
+Connections are consulted only when **Use connections for chat** is on. With it off, chat runs on the single classic endpoint configured under Chat instead, and anything listed here is ignored.
 
 Each connection is stored on its own. Adding, editing or deleting one takes effect when you save that connection, rather than when the surrounding settings page is saved.
 
@@ -64,17 +64,31 @@ Individual connections can override the global choice, which is useful when only
 | Send an identity header with model requests | Adds a header identifying the signed-in user to every model request. | Off | `model_endpoint_identity_header_enabled` |
 | Header name | Rejected if it collides with a header the model call already sets, such as `authorization`. | x-simplechat-identity-key | `model_endpoint_identity_header_name` |
 | Identity sent in the header | Object id is stable across a rename; UPN is readable in gateway logs. Tenant variants qualify the value for a multi-tenant gateway. | Object id and tenant id | `model_endpoint_identity_header_value_type` |
-| Default model for fallbacks | The model used when no other choice applies. Cleared automatically if the connection or model it names is deleted or disabled. | Not specified in defaults | `default_model_selection` |
 
 ### Chat {#gpt-config}
 
-The classic single-endpoint chat configuration. It is what chat uses when **Use connections for chat** is off, and it remains available as a fallback route.
+SimpleChat has two ways to reach a chat model and only one of them is in force at a time. When **Use connections for chat** is on, chat draws from the connections above. When it is off, chat runs on a single classic endpoint — one Azure OpenAI resource, or API Management in front of one — whose address, credentials, API version and deployment are configured on the server-rendered admin page rather than here.
+
+That distinction is worth stating because the two are easy to confuse: connections can be fully configured and still be unused, with nothing failing to signal it. This section names the route that is actually live, and links to the classic page when that route is the classic one.
+
+Turning connections on is not reversible from the admin interface. The setting is stored as "already on or newly on", so an attempt to switch back is refused rather than silently discarded. The switch also carries the classic endpoint over as the first connection, so the change does not begin with an empty model list. Treat it as a migration.
+
+#### Default model
+
+The default model is the one chat uses when nothing else has chosen — a conversation started before the user has picked anything, or work that begins outside the chat window. It is stored as a reference to a connection and one of that connection's models, not as a copy of the model, so it outlives what it names: deleting a connection, disabling one, or switching off a single model all leave it pointing at nothing.
+
+Rather than let that reference decay into a silent fallback to some other model, SimpleChat clears it whenever the thing it names stops being available, and says so. Only models that are enabled on an enabled connection can be chosen, for the same reason — anything else would be cleared again on the next save.
+
+The default applies to connections only. With chat on the classic single endpoint there is nothing for it to select from, and a choice made in that state is refused rather than stored.
 
 #### Settings
 
+The classic single endpoint is configured on the server-rendered admin page. Its values are listed here because they are what chat uses while **Use connections for chat** is off, and because API Management applies to GPT requests that use the classic endpoint whichever mode chat is in.
+
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Use APIM instead of direct to Azure OpenAI endpoint | Sends chat requests through API Management rather than straight to the Azure OpenAI resource. | Off | `enable_gpt_apim`; capability toggle |
+| Default model | The model chat uses when nothing else has chosen one. Cleared automatically if the connection or model it names is deleted or disabled. | Not specified in defaults | `default_model_selection`; connections mode only |
+| Send requests through API Management | Routes GPT requests that use the classic endpoint through API Management rather than straight to the Azure OpenAI resource, so a deployment can apply its own governance and monitoring to them. | Off | `enable_gpt_apim`; needs the three APIM values below |
 | Azure OpenAI Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_gpt_endpoint` |
 | Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_gpt_authentication_type` |
 | Subscription ID | Addresses the resource when listing its deployments. | Empty | `azure_openai_gpt_subscription_id` |
@@ -135,20 +149,23 @@ The Image Generation section belongs to the Image Generation tab. Use it with th
 
 1. **Publish models from a new resource.** Add a connection, choose its provider and authentication, run **Test connection**, then **Discover models** and turn on the ones people may use. Save the connection. Outcome to verify: the enabled models appear in the chat model picker.
 2. **Rotate a stored key.** Edit the connection, type the new key over the empty field, and save. Outcome to verify: **Test connection** succeeds with the replacement.
-3. **Retire a connection.** Disable it first and confirm chat still works, then delete it. Outcome to verify: its models stop being offered, and a default model that named it is cleared.
-4. **Configure embeddings.** Set endpoint, authentication, API version, and deployment, then index a small document. Outcome to verify: Indexing succeeds with the configured embedding route.
-5. **Enable image generation.** Enable the capability, set endpoint values, and generate a low-risk test image. Outcome to verify: The image tool returns output from the configured deployment.
+3. **Choose the model chat starts from.** With connections in force, pick a default under Chat. Outcome to verify: a new conversation opens on that model without anyone selecting it.
+4. **Retire a connection.** Disable it first and confirm chat still works, then delete it. Outcome to verify: its models stop being offered, and a default model that named it is cleared.
+5. **Configure embeddings.** Set endpoint, authentication, API version, and deployment, then index a small document. Outcome to verify: Indexing succeeds with the configured embedding route.
+6. **Enable image generation.** Enable the capability, set endpoint values, and generate a low-risk test image. Outcome to verify: The image tool returns output from the configured deployment.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| A connection's models never appear in chat | **Use connections for chat** is off, so chat is running on the classic single endpoint. | Turn it on, or configure the classic endpoint under Chat instead. |
+| A connection's models never appear in chat | **Use connections for chat** is off, so chat is running on the classic single endpoint. | Turn it on, or configure the classic endpoint instead. Chat says which route is live. |
 | **Use connections for chat** will not turn off | Enabling connections is one-way, because chats, agents and workflows may already reference a model published from one. | Disable the individual connections instead, or point chat at the model you want by making it the default. |
 | **Discover models** is unavailable | The connection authenticates with an API key, which reaches inference but not Azure Resource Manager. | Switch to managed identity or a service principal, or add the deployment names by hand. |
 | Discovery returns nothing for an Azure OpenAI connection | The subscription id or resource group does not match the resource. | Correct them, then run **Test connection** before discovering again. |
 | Models are listed but nobody can choose them | Discovered models arrive switched off. | Turn on each model that should be available, then save the connection. |
 | The default model reverted to none | The connection or model it named was deleted or disabled, so the reference no longer resolved. | Choose a default that points at an enabled model on an enabled connection. |
+| The default model list is empty | Either chat is on the classic single endpoint, or no connection currently has an enabled model on an enabled connection. | Turn on **Use connections for chat**, then enable at least one model. |
+| A default model choice is refused | Chat is on the classic single endpoint, so the choice would be cleared on the next save rather than taking effect. | Turn on **Use connections for chat** first. |
 | Embeddings fail during indexing | Endpoint, deployment, API version, or authentication does not match the Azure resource. | Validate the embedding route with a small document before bulk indexing. |
 
 ## Related

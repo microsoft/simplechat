@@ -91,6 +91,7 @@ from functions_settings import (
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
     merge_model_endpoint_payload,
+    normalize_default_model_selection,
     normalize_model_endpoints,
     redact_admin_settings_secrets_for_api,
     resolve_admin_settings_secret_value,
@@ -1309,3 +1310,132 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to load groups"}), 500
+
+    # ---------------------------------------------------------------------
+    # Default chat model
+    # ---------------------------------------------------------------------
+    #
+    # ``default_model_selection`` is a reference -- an endpoint id plus a model id --
+    # rather than a scalar, so it cannot travel through the settings PATCH: values there
+    # are coerced by type, and a reference has to be checked against what is actually
+    # configured before it means anything. It gets its own pair of routes instead, and
+    # the schema declares it as a ``component`` so the PATCH refuses it outright rather
+    # than storing an unchecked dict.
+
+    @bp.route("/api/v2/admin/default-model", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_default_model():
+        """Return the default chat model, resolved against the connections that exist.
+
+        The answer is what the selection currently means, not what is stored, because the
+        two diverge as soon as the connection or model it names is deleted or disabled.
+        ``reason`` carries that difference so the administrator is told why the field
+        looks empty instead of assuming it was never set.
+
+        The stored value is deliberately left alone: a read should not write.
+        """
+        try:
+            settings = get_settings()
+            multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
+            selection, reason = resolve_default_model_selection(
+                settings.get("default_model_selection"),
+                _load_global_model_endpoints(settings),
+                multi_endpoint_enabled=multi_endpoint_enabled,
+            )
+            return (
+                jsonify(
+                    {
+                        "selection": selection,
+                        "multi_endpoint_enabled": multi_endpoint_enabled,
+                        "reason": reason,
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_DEFAULT_MODEL] Failed to read the default model: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load the default model"}), 500
+
+    @bp.route("/api/v2/admin/default-model", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_set_default_model():
+        """Store the default chat model, or clear it.
+
+        A selection that does not resolve is rejected rather than quietly stored or
+        quietly emptied. Both of those failure modes look identical to an administrator --
+        the field reads as "no default" afterwards -- and neither says which connection or
+        model went missing, which is the thing worth knowing.
+        """
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Default model payload must be an object."}), 400
+
+        candidate = payload.get("selection")
+        if not isinstance(candidate, dict):
+            return jsonify({"error": "Supply the selection as an object."}), 400
+
+        try:
+            settings = get_settings()
+            multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
+            requested = normalize_default_model_selection(candidate)
+            clearing = not requested["endpoint_id"] and not requested["model_id"]
+
+            if not clearing and not multi_endpoint_enabled:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                "Chat is running on the classic single endpoint, so a "
+                                "default chosen from the connections would not be used. "
+                                "Turn on \"Use connections for chat\" first."
+                            )
+                        }
+                    ),
+                    400,
+                )
+
+            resolved, reason = resolve_default_model_selection(
+                requested,
+                _load_global_model_endpoints(settings),
+                multi_endpoint_enabled=multi_endpoint_enabled,
+            )
+
+            if not clearing and not resolved["endpoint_id"]:
+                # ``reason`` is empty when only one half of the reference was supplied,
+                # which is a different mistake and deserves its own wording.
+                return (
+                    jsonify(
+                        {
+                            "error": reason
+                            or "Choose a connection and one of its enabled models."
+                        }
+                    ),
+                    400,
+                )
+
+            # ``update_settings`` catches its own exceptions and answers False, so an
+            # unchecked call would report a save that never reached storage.
+            if not update_settings({"default_model_selection": resolved}):
+                return jsonify({"error": "Failed to store the default model"}), 500
+
+            log_event(
+                "[V2_ADMIN_DEFAULT_MODEL] Default model set to "
+                f"{resolved['endpoint_id'] or 'none'}/{resolved['model_id'] or 'none'}",
+                level=logging.INFO,
+            )
+            return jsonify({"selection": resolved}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_DEFAULT_MODEL] Failed to store the default model: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to store the default model"}), 500
