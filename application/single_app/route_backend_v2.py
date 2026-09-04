@@ -24,12 +24,15 @@ import uuid
 
 from flask import current_app, jsonify, request, session
 
+from admin_app_roles import get_app_role_requirements
 from admin_settings_fields import (
     LANDING_PAGE_ALIGNMENTS,
     LOGO_SCALE_DEFAULT_PERCENT,
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
+    get_admin_section_status,
     get_admin_settings_fields,
+    get_secret_field_keys,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
 )
@@ -62,15 +65,25 @@ from functions_authentication import (
 )
 from functions_conversation_contents import is_conversation_contents_drawer_enabled
 from functions_custom_pages import get_custom_pages_nav
-from functions_group import find_group_by_id, get_user_groups
+from functions_group import (
+    GROUP_DIRECTORY_DEFAULT_LIMIT,
+    GROUP_DIRECTORY_MAX_LIMIT,
+    find_group_by_id,
+    find_groups_by_ids,
+    get_user_groups,
+    list_groups_for_admin_directory,
+)
+from functions_group_assignment_ids import normalize_group_workflow_allowed_group_ids
 from functions_image_edit import resolve_image_edit_capability
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_user_visible_public_workspace_ids_from_settings,
 )
 from functions_settings import (
+    ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
     WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
     build_migrated_model_endpoints_from_legacy,
+    get_admin_settings_api_secret_fields,
     get_settings,
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
@@ -78,6 +91,8 @@ from functions_settings import (
     merge_model_endpoint_payload,
     normalize_default_model_selection,
     normalize_model_endpoints,
+    redact_admin_settings_secrets_for_api,
+    resolve_admin_settings_secret_value,
     resolve_default_model_selection,
     resolve_metadata_extraction_model_selection,
     sanitize_settings_for_user,
@@ -770,11 +785,20 @@ def register_route_backend_v2_admin(bp):
     @login_required
     @admin_required
     def v2_admin_get_settings():
-        """Return the raw settings document, the admin navigation and the field schema.
+        """Return the settings document, the admin navigation and the field schema.
 
-        Admin settings are not sanitized. Sanitization removes keys, secrets and endpoint
-        configuration, which are exactly the values an administrator is here to manage.
-        Access is restricted to the Admin role by the blueprint guard and the decorator.
+        Admin settings are not passed through ``sanitize_settings_for_user``: that
+        removes endpoint and integration configuration, which is exactly what an
+        administrator is here to manage. Access is restricted to the Admin role by the
+        blueprint guard and the decorator.
+
+        Secrets are a separate question from sanitization and *are* withheld. Every known
+        secret is replaced with a placeholder, matching what the server-rendered form
+        does, so a stored key never reaches the browser merely because someone opened the
+        page. The list used here is wider than the form's, because this endpoint returns
+        the whole settings document rather than the subset a template draws. The PATCH
+        below swaps the placeholder back for the stored value, so an untouched secret
+        survives a save.
 
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
@@ -785,9 +809,11 @@ def register_route_backend_v2_admin(bp):
             return (
                 jsonify(
                     {
-                        "settings": settings,
+                        "settings": redact_admin_settings_secrets_for_api(settings),
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
+                        "section_status": get_admin_section_status(),
+                        "app_role_requirements": get_app_role_requirements(),
                         "branding_assets": _build_branding_assets(settings),
                         "version": VERSION,
                     }
@@ -815,6 +841,14 @@ def register_route_backend_v2_admin(bp):
         Values are normalized against the field schema first, which is what keeps the two
         admin interfaces agreeing on what a valid value is. The update is applied only if
         every supplied key validates, so a save never lands half-applied.
+
+        Secrets need one step beyond normalization. The browser was handed a placeholder
+        rather than the stored value, so a save that did not touch a secret sends the
+        placeholder straight back; storing it verbatim would overwrite a working
+        credential with the literal string. Every key redacted on the way out is
+        therefore resolved against the current document on the way in, exactly as the
+        server-rendered form does -- not just the ones the schema declares, so a redacted
+        key reaching the payload some other way cannot land as the placeholder either.
         """
         payload = request.get_json(silent=True) or {}
         updates = payload.get("settings")
@@ -847,6 +881,14 @@ def register_route_backend_v2_admin(bp):
             if not normalized:
                 return jsonify({"error": "No settings supplied"}), 400
 
+            secret_keys = set(get_admin_settings_api_secret_fields()) | get_secret_field_keys()
+            for key in secret_keys & set(normalized):
+                normalized[key] = resolve_admin_settings_secret_value(
+                    key, normalized[key], current_settings
+                )
+
+            # After the secret pass, so the derived endpoints this adds -- whose own
+            # secrets are already stored through Key Vault -- are not run through it.
             _seed_connections_on_first_enable(normalized, current_settings)
 
             update_settings(normalized)
@@ -861,12 +903,24 @@ def register_route_backend_v2_admin(bp):
             # a branding change has to refresh them.
             _refresh_branding_static_files()
 
+            # The response reflects the draft back into the page's stored state, so a
+            # resolved secret has to be re-redacted on the way out. Echoing it would
+            # hand back the value the redaction on GET exists to withhold.
+            echoed = {
+                key: (
+                    ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+                    if key in secret_keys and value
+                    else value
+                )
+                for key, value in normalized.items()
+            }
+
             return (
                 jsonify(
                     {
                         "success": True,
                         "updated_keys": sorted(normalized.keys()),
-                        "settings": normalized,
+                        "settings": echoed,
                         "warnings": warnings,
                     }
                 ),
@@ -1167,6 +1221,76 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to delete the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/groups", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_list_groups():
+        """Return group directory rows for an administrator's assignment picker.
+
+        Settings such as ``group_workflow_allowed_group_ids`` store group ids. An
+        id is not something an administrator can recognise, so the picker needs to
+        resolve one to a name, and needs to search the directory to add another.
+
+        This exists rather than reusing ``/api/groups/discover`` because that
+        endpoint answers a different question: it is a member-facing directory,
+        gated on the User role and on group workspaces being enabled, it returns
+        every group in one unbounded response, and it cannot resolve a specific
+        set of ids. An administrator managing an assignment may hold neither the
+        User role nor a membership in the groups being assigned.
+
+        ``ids`` resolves an existing assignment; ids that no longer exist are
+        absent from the response, which is how the caller detects a stale entry.
+        Otherwise ``search`` matches on name, description or id.
+        """
+        raw_ids = str(request.args.get("ids") or "").strip()
+        if raw_ids:
+            requested_ids = normalize_group_workflow_allowed_group_ids(raw_ids)
+            if not requested_ids:
+                return jsonify({"groups": [], "truncated": False}), 200
+            if len(requested_ids) > GROUP_DIRECTORY_MAX_LIMIT:
+                return (
+                    jsonify(
+                        {
+                            "error": "Too many group ids requested. Limit is "
+                            f"{GROUP_DIRECTORY_MAX_LIMIT}."
+                        }
+                    ),
+                    400,
+                )
+
+            try:
+                return (
+                    jsonify({"groups": find_groups_by_ids(requested_ids), "truncated": False}),
+                    200,
+                )
+            except Exception as exc:
+                log_event(
+                    f"[V2_ADMIN_GROUPS] Failed to resolve {len(requested_ids)} group id(s): {exc}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return jsonify({"error": "Failed to load groups"}), 500
+
+        try:
+            limit = int(request.args.get("limit") or GROUP_DIRECTORY_DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            limit = GROUP_DIRECTORY_DEFAULT_LIMIT
+
+        try:
+            groups, truncated = list_groups_for_admin_directory(
+                search_query=request.args.get("search", ""),
+                limit=limit,
+            )
+            return jsonify({"groups": groups, "truncated": truncated}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_GROUPS] Failed to list groups: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load groups"}), 500
 
     # ---------------------------------------------------------------------
     # Default chat model
