@@ -58,6 +58,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "textarea": ("default",),
     "secret": ("default",),
     "switch": ("default",),
+    "password": ("default",),
     "link_list": ("item_fields", "default"),
     "entry_list": ("default", "value_label"),
     # An id_list resolves names through a search endpoint, so the renderer cannot
@@ -84,6 +85,7 @@ EXPECTED_DEFAULT_TYPES = {
     "color": str,
     "range": int,
     "number": int,
+    "password": str,
     "checkbox_set": list,
     "link_list": list,
     "entry_list": list,
@@ -250,6 +252,11 @@ def test_dependencies_reference_real_fields():
     print("\nTesting visibility dependencies...")
 
     declared = fields_module.get_declared_setting_keys()
+    by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
     problems = []
     checked = 0
 
