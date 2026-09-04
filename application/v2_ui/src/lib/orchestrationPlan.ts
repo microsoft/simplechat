@@ -21,6 +21,8 @@ import type {
     OrchestrationApproval,
     OrchestrationIntent,
     OrchestrationPlan,
+    OrchestrationPlanDocument,
+    OrchestrationPlanInputs,
     OrchestrationStep,
     OrchestrationValidation,
     PlanComplexity,
@@ -195,9 +197,9 @@ function normalizeValidation(raw: unknown): OrchestrationValidation {
  *
  * Null rather than a throw, because a plan can arrive from an untrusted place -- a persisted
  * blob, a stream frame the server truncated -- and a caller adopting one wants to test the
- * result, not guard a try/catch. `inputs` and `outputs` pass through as-is: their shape is not
- * fixed by the schema module, so re-coercing them would risk discarding a structure the planner
- * work being built in parallel does commit to.
+ * result, not guard a try/catch. `outputs` passes through as-is: its shape is not fixed by the
+ * schema module, so re-coercing it would risk discarding a structure the executor work being
+ * built in parallel does commit to.
  */
 export function normalizePlan(raw: unknown): OrchestrationPlan | null {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -221,12 +223,48 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
                 : 1,
         intent: normalizeIntent(source.intent),
         assumptions: asStringList(source.assumptions),
-        inputs: source.inputs !== undefined ? asRecord(source.inputs) : undefined,
+        inputs: source.inputs !== undefined ? normalizeInputs(source.inputs) : undefined,
         steps,
         outputs: Array.isArray(source.outputs) ? (source.outputs as Json[]) : undefined,
         approval: normalizeApproval(source.approval),
         validation: normalizeValidation(source.validation),
         status: oneOf(source.status, PLAN_STATUSES, 'awaiting_approval'),
+    };
+}
+
+/**
+ * What the plan will act on.
+ *
+ * A document with no id is dropped rather than kept with an empty one: it could not be shown,
+ * removed or acted on, so carrying it would only put a blank row on the approval card.
+ */
+function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
+    const source = asRecord(raw);
+    const rawDocuments: unknown[] = Array.isArray(source.documents) ? source.documents : [];
+
+    const documents: OrchestrationPlanDocument[] = [];
+    for (const entry of rawDocuments) {
+        const record = asRecord(entry);
+        const documentId = asString(record.document_id);
+        if (!documentId) {
+            continue;
+        }
+        documents.push({
+            document_id: documentId,
+            // The server already falls back to the id when it cannot name a document, but a
+            // truncated frame could still arrive without one, and a blank chip is worse than
+            // an ugly one.
+            display_name: asString(record.display_name) || documentId,
+            selected_by_user: asBoolean(record.selected_by_user, false),
+        });
+    }
+
+    return {
+        documents,
+        web: asBoolean(source.web, false),
+        agent: source.agent !== undefined ? asRecord(source.agent) : undefined,
+        model: source.model !== undefined ? asRecord(source.model) : undefined,
+        prompt: source.prompt !== undefined ? asRecord(source.prompt) : undefined,
     };
 }
 

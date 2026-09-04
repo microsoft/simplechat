@@ -295,6 +295,12 @@ def _citations_from_search_results(results):
             'page_number': result.get('page_number'),
             'chunk_sequence': result.get('chunk_sequence'),
             'score': result.get('score'),
+            # Which workspace the hit came from. The search index selects these per scope
+            # and they were being dropped here, which left a found document with no home:
+            # the composer groups its context chips by workspace, so a document the run
+            # discovered could not be offered back to the user without one.
+            'group_id': result.get('group_id'),
+            'public_workspace_id': result.get('public_workspace_id'),
         })
     return citations
 
@@ -320,6 +326,10 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
             doc_scope=_text(arguments.get('doc_scope')) or _ctx(context, 'doc_scope', 'all'),
             active_group_ids=_ctx(context, 'active_group_ids', None) or None,
             active_public_workspace_id=_ctx(context, 'active_public_workspace_id', None),
+            # The tags the user picked, applied to every search in the run. A step is free
+            # to choose its own query, but not to widen the shelf the user narrowed to.
+            tags_filter=_ctx(context, 'tags', None) or None,
+            document_filter_mode=_ctx(context, 'document_filter_mode', 'intersection'),
         )
     except Exception as exc:
         log_event(
