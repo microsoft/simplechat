@@ -1832,6 +1832,10 @@ def register_route_backend_collaboration(bp):
             except BlockRevisionError as exc:
                 return jsonify({'error': str(exc)}), 400
 
+            # What the block is called in anything the reader sees, so an error about a chart
+            # does not tell them their diagram is broken.
+            block_noun = 'chart' if block_kind == 'simplechart' else 'diagram'
+
             message_doc = _load_collaboration_block_revision_message(
                 current_user['user_id'], conversation_id, message_id
             )
@@ -1839,7 +1843,7 @@ def register_route_backend_collaboration(bp):
             entry = read_block_entry(message_doc, block_kind, block_index, source_hash)
             current_source = current_block_source(entry, fallback=original_source)
             if not current_source:
-                return jsonify({'error': 'The diagram source is required'}), 400
+                return jsonify({'error': f'The {block_noun} source is required'}), 400
 
             try:
                 result = request_block_edit(
@@ -1850,6 +1854,7 @@ def register_route_backend_collaboration(bp):
                     originating_request=_find_collaboration_originating_request(
                         conversation_id, message_doc
                     ),
+                    block_kind=block_kind,
                 )
             except BlockAssistError as exc:
                 log_event(
@@ -1886,7 +1891,7 @@ def register_route_backend_collaboration(bp):
                     'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
                 }), 409
             except BlockRevisionError as exc:
-                return jsonify({'error': f'The model returned an unusable diagram: {exc}'}), 502
+                return jsonify({'error': f'The model returned an unusable {block_noun}: {exc}'}), 502
 
             revisions = _save_collaboration_block_revisions(
                 conversation_id, message_id, message_doc, current_user['user_id']
