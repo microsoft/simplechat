@@ -64,7 +64,21 @@ RELOCATED_CAPABILITIES = {
     "enable_support_latest_features": ("support-menu-section", "support-menu"),
     "enable_support_menu": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
-    "enable_text_plugin": ("actions-config", "actions"),
+    # Agents & Actions. Before these were declared, enable_semantic_kernel matched
+    # no section at all and was filed under "Other capabilities", and the plugin
+    # toggles were scattered: enable_text_plugin matched "text" in
+    # home-page-text-section, and the rest matched nothing.
+    "enable_semantic_kernel": ("agents-config", "agents"),
+    "enable_agent_template_gallery": ("agent-toggles-card", "agents"),
+    "enable_time_plugin": ("core-plugin-toggles", "actions"),
+    "enable_http_plugin": ("core-plugin-toggles", "actions"),
+    "enable_wait_plugin": ("core-plugin-toggles", "actions"),
+    "enable_math_plugin": ("core-plugin-toggles", "actions"),
+    "enable_text_plugin": ("core-plugin-toggles", "actions"),
+    "enable_default_embedding_model_plugin": ("core-plugin-toggles", "actions"),
+    # Declared under Chat, where it is edited. The Actions surface carries a
+    # read-only mirror of it, which must not claim the key.
+    "enable_fact_memory_plugin": ("fact-memory-section", "chat-experience"),
 }
 
 # The rules the ported heuristic depends on. If the renderer stops doing any of
@@ -212,8 +226,15 @@ def test_relocated_capabilities_are_declared_where_they_belong():
     declared_sections = {}
     for section_id, field in fields_module.iter_fields():
         key = field.get("key")
-        if key:
-            declared_sections[key] = (section_id, field)
+        if not key:
+            continue
+        # A key may also be declared as a read-only mirror in another section.
+        # The writable declaration is the one that owns the setting, so a mirror
+        # never displaces it here.
+        existing = declared_sections.get(key)
+        if existing and existing[1].get("readonly") is not True and field.get("readonly"):
+            continue
+        declared_sections[key] = (section_id, field)
 
     problems = []
     for key, (expected_section, _pane) in RELOCATED_CAPABILITIES.items():

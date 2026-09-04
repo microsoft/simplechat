@@ -49,14 +49,27 @@ DECLARED_PANES = {
         "agents-page-customization-card",
         "agent-template-approvals-section",
     ),
+    "actions": (
+        "document-action-capabilities-card",
+        "plugin-feature-toggles",
+        "core-plugin-toggles",
+        "actions-config",
+    ),
 }
 
 # Tabs still served by the fallback scan, with the phase that declares them. The
 # test asserts this is exactly the remainder, so declaring one of them fails here
 # until it is moved into DECLARED_PANES with its sections.
 PANES_PENDING_DECLARATION = {
-    "actions": "Phase 2 -- document action capabilities and built-in actions",
     "inbound-mcp": "Phase 3 -- inbound MCP runtime, throttles and allowlists",
+}
+
+# Declared sections that hold no settings, because what belongs in them is a
+# table rather than a field. The V2 surface skips a section with nothing in it,
+# so this is not a broken heading; the entry records why and is checked for
+# staleness once the section is filled.
+SECTIONS_AWAITING_A_COMPONENT = {
+    "actions-config": "Phase 5 -- the global actions table",
 }
 
 FIELD_NAME_RE = re.compile(r'\sname="([^"]+)"')
@@ -177,7 +190,7 @@ def test_declared_agent_sections_are_not_empty():
         section_id
         for section_ids in DECLARED_PANES.values()
         for section_id in section_ids
-        if not schema.get(section_id)
+        if not schema.get(section_id) and section_id not in SECTIONS_AWAITING_A_COMPONENT
     ]
 
     assert not empty, (
@@ -185,8 +198,19 @@ def test_declared_agent_sections_are_not_empty():
         "them:\n  " + "\n  ".join(empty)
     )
 
+    stale = sorted(
+        section_id
+        for section_id in SECTIONS_AWAITING_A_COMPONENT
+        if schema.get(section_id)
+    )
+    assert not stale, (
+        "These sections now have fields, so their entry in "
+        "SECTIONS_AWAITING_A_COMPONENT is stale and should be removed:\n  "
+        + "\n  ".join(stale)
+    )
+
     declared = sum(
-        len(schema[section_id])
+        len(schema.get(section_id, ()))
         for section_ids in DECLARED_PANES.values()
         for section_id in section_ids
     )

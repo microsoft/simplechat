@@ -169,25 +169,55 @@ def test_select_defaults_are_offered_as_options():
     return True
 
 
-def test_setting_keys_are_unique():
-    """The same key in two sections would render two controls fighting over one value."""
-    print("\nTesting settings key uniqueness...")
+def test_setting_keys_have_one_owner():
+    """Two editable controls on one value would fight over it.
 
-    seen = {}
+    A key may appear more than once, but only as one writable declaration plus
+    read-only mirrors. Fact memory is edited under Chat and mirrored under
+    Actions, because it decides whether agents get a memory action; a second
+    editable control would let one surface silently overwrite the other.
+    """
+    print("\nTesting settings key ownership...")
+
+    writable = {}
+    mirrors = 0
     duplicates = []
+
     for section_id, field in fields_module.iter_fields():
         key = field.get("key")
         if not key:
             continue
-        if key in seen:
-            duplicates.append(f"{key}: {seen[key]} and {section_id}")
-        seen[key] = section_id
+        if field.get("readonly"):
+            mirrors += 1
+            if not field.get("managed_by"):
+                duplicates.append(
+                    f"{key}: read-only in {section_id} without naming its owner"
+                )
+            continue
+        if key in writable:
+            duplicates.append(f"{key}: editable in both {writable[key]} and {section_id}")
+        writable[key] = section_id
 
     assert not duplicates, (
-        "These keys are declared in more than one section:\n  " + "\n  ".join(duplicates)
+        "These keys do not have exactly one owner:\n  " + "\n  ".join(duplicates)
     )
 
-    print(f"  All {len(seen)} declared key(s) are unique.")
+    orphaned = sorted(
+        {
+            field["key"]
+            for _section_id, field in fields_module.iter_fields()
+            if field.get("readonly") and field.get("key") and field["key"] not in writable
+            # A derived key has no editable declaration anywhere, because the
+            # application recomputes it. Those are named in the mirror's help.
+            and field["key"] not in {"enable_tabular_processing_plugin"}
+        }
+    )
+    assert not orphaned, (
+        "These keys are only ever mirrored, so nothing can set them:\n  "
+        + "\n  ".join(orphaned)
+    )
+
+    print(f"  {len(writable)} owned key(s) and {mirrors} read-only mirror(s).")
     return True
 
 
@@ -320,7 +350,7 @@ if __name__ == "__main__":
         test_fields_carry_required_properties,
         test_defaults_match_their_field_type,
         test_select_defaults_are_offered_as_options,
-        test_setting_keys_are_unique,
+        test_setting_keys_have_one_owner,
         test_dependencies_reference_real_fields,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,

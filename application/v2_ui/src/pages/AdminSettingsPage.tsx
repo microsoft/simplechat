@@ -48,6 +48,7 @@ import {
     asBoolean,
     asNumber,
     asString,
+    buildFieldIndex,
     buildSectionBlocks,
     extractFieldErrors,
     fieldSearchText,
@@ -259,6 +260,10 @@ export function AdminSettingsPage() {
         return keys;
     }, [schema]);
 
+    // A gate may live inside a nested settings object, so resolving a dependency
+    // needs the schema rather than the key alone.
+    const fieldsByKey = useMemo(() => buildFieldIndex(schema), [schema]);
+
     const capabilityRows = useMemo(
         () => (data ? buildCapabilityIndex(data.admin_nav, data.settings, declaredKeys) : []),
         [data, declaredKeys],
@@ -292,7 +297,7 @@ export function AdminSettingsPage() {
                     // Mode is on, and Inbound MCP only while its App Service setting
                     // is present. The server-rendered page already honours this; V2
                     // used to draw the section regardless.
-                    if (!isSectionVisible(section.condition, settings, draft, runtimeFlags)) {
+                    if (!isSectionVisible(section.condition, settings, draft, runtimeFlags, fieldsByKey)) {
                         continue;
                     }
 
@@ -300,7 +305,7 @@ export function AdminSettingsPage() {
                     // than at render time, so a section left with nothing to show
                     // disappears instead of leaving an empty titled panel behind.
                     const fields = (schema[section.id] ?? []).filter((field) =>
-                        isFieldVisible(field, settings, draft),
+                        isFieldVisible(field, settings, draft, fieldsByKey),
                     );
 
                     if (!fields.length && !capabilities.length) {
@@ -333,7 +338,7 @@ export function AdminSettingsPage() {
         }
 
         return rendered;
-    }, [data, schema, capabilityRows, settings, draft, runtimeFlags]);
+    }, [data, schema, capabilityRows, settings, draft, runtimeFlags, fieldsByKey]);
 
     const visibleSections = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -513,7 +518,7 @@ export function AdminSettingsPage() {
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft)) {
+        if (!isFieldVisible(field, settings, draft, fieldsByKey)) {
             return null;
         }
 

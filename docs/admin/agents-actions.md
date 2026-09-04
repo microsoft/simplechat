@@ -136,47 +136,87 @@ than here.
 
 ### Document Actions {#document-action-capabilities-card}
 
-The Document Action Capabilities section belongs to the Actions tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+**Analyze** and **Document Comparison** appear in the **Action** menu in chat and
+in workflows. They are not searches. Analyze reads every selected document in
+full, so an answer covers all of them rather than only the passages a search
+returned; Comparison reads one baseline document against the others, which is
+what answers questions about what changed between versions.
+
+Because each document is read in full, the limits are the control that matters.
+They bound how long a single message can take and how much it costs. Chat and
+workflow are limited separately: a chat message has someone waiting on it, while
+a workflow run does not and can be allowed a much larger batch.
+
+These six values are stored as one object, `document_action_capabilities`, rather
+than as separate settings.
+
+#### Settings
+
+| Setting | What it does | Default | Range | Notes |
+| --- | --- | --- | --- | --- |
+| Enable Analyze | Offers Analyze in the Action menu. | On | — | `document_action_capabilities.analyze.enabled` |
+| Analyze: Chat Document Limit | Most documents one chat message may analyze. | 3 | 2–300 | `analyze.chat_max_documents` |
+| Analyze: Workflow Document Limit | The same limit for a workflow run. | 10 | 2–1000 | `analyze.workflow_max_documents` |
+| Enable Document Comparison | Offers Document Comparison in the Action menu. | On | — | `document_action_capabilities.comparison.enabled` |
+| Comparison: Chat Document Limit | Most documents one chat message may compare, including the baseline. | 3 | 2–300 | `comparison.chat_max_documents` |
+| Comparison: Workflow Document Limit | The same limit for a workflow run. | 10 | 2–1000 | `comparison.workflow_max_documents` |
+
+Values outside the range are clamped on save rather than rejected.
 
 ### Workspace Action Permissions {#plugin-feature-toggles}
 
-Shown only in Workspace Mode. Whether people may build their own actions, which
-is a larger grant than building their own agents: an action carries an endpoint
-and its credentials.
+Shown only in Workspace Mode.
 
-### Built-in Actions {#core-plugin-toggles}
-
-The small set of general-purpose actions that ship with the runtime.
-
-### Global Actions {#actions-config}
-
-The actions published to everyone, and the workspace action permissions that sit
-alongside them.
+Letting someone build an action is a wider grant than letting them build an
+agent. An action carries an endpoint and the credentials to reach it, so once
+these are on, the traffic an agent can generate is no longer limited to the
+destinations you configured. Pair them with an action governance policy when only
+some people should have that.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Analyze | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `document_action_analyze_enabled` |
-| Document Action Analyze Chat Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_analyze_chat_max_documents_range` |
-| Chat max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_analyze_chat_max_documents` |
-| Document Action Analyze Workflow Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_analyze_workflow_max_documents_range` |
-| Workflow max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_analyze_workflow_max_documents` |
-| Enable Document Comparison | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `document_action_comparison_enabled` |
-| Document Action Comparison Chat Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_comparison_chat_max_documents_range` |
-| Chat max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_comparison_chat_max_documents` |
-| Document Action Comparison Workflow Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_comparison_workflow_max_documents_range` |
-| Workflow max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_comparison_workflow_max_documents` |
-| Allow Personal Actions | Permits personal actions when the related workspace or agent feature is enabled. | Off | `allow_user_plugins` |
-| Allow Group Actions | Permits group actions when the related workspace or agent feature is enabled. | Off | `allow_group_plugins` |
-| Enable Time Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_time_plugin`; capability toggle |
-| Enable HTTP Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_http_plugin`; capability toggle |
-| Enable Wait Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_wait_plugin`; capability toggle |
-| Enable Math Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_math_plugin`; capability toggle |
-| Enable Text Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_text_plugin`; capability toggle |
-| Enable Default Embedding Model Action | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_default_embedding_model_plugin`; capability toggle |
-| Fact Memory Action | Lets agents store, update, and remove durable facts and instructions for the current user or group. Fact memory is a chat capability, so its availability follows the Chat setting rather than being edited here. | On | `enable_fact_memory_plugin`; configured in [Chat settings]({{ '/admin/chat/#fact-memory-section' | relative_url }}) |
-| Tabular Processing Action | Makes the tabular-processing action available to agents for CSV and XLSX analysis when Enhanced Citations is enabled; the setting is normalized from Enhanced Citations rather than edited directly in the UI. | Off | `enable_tabular_processing_plugin`; effective value follows `enable_enhanced_citations` |
+| Allow Personal Actions | Lets people create actions in their own workspace. | Off | `allow_user_plugins` |
+| Allow Group Actions | The same for a group's shared actions. | Off | `allow_group_plugins`; group workspaces must also be enabled |
+
+### Built-in Actions {#core-plugin-toggles}
+
+The small set of general-purpose actions that ship with the runtime. They are on
+by default and are rarely changed, so they are collapsed.
+
+The one worth a decision is **HTTP**: it is the only built-in action that reaches
+outside the deployment. Turn it off where agents should only be able to use the
+connectors you configured.
+
+Each is loaded independently, so turning one off removes that capability and
+affects nothing else.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Time | Lets an agent read the current date and time and calculate with them, instead of answering date questions from training data. | On | `enable_time_plugin` |
+| HTTP | Lets an agent fetch a URL directly. The only built-in action that leaves the deployment. | On | `enable_http_plugin` |
+| Wait | Lets an agent pause, which workflows use to space out repeated calls. | On | `enable_wait_plugin` |
+| Math | Lets an agent calculate rather than predict an answer. | On | `enable_math_plugin` |
+| Text | Lets an agent format, trim and reshape text deterministically. | On | `enable_text_plugin` |
+| Default Embedding Model | Exposes the embedding model for similarity work outside the normal document search path. Document search already embeds without it. | Off | `enable_default_embedding_model_plugin` |
+
+#### Managed elsewhere
+
+Two actions are listed here because they change what an agent can do, but neither
+is set from this page.
+
+| Action | Where it comes from | Notes |
+| --- | --- | --- |
+| Fact Memory | [Chat › Chat Experience › Fact Memory]({{ '/admin/chat/#fact-memory-section' | relative_url }}) | `enable_fact_memory_plugin`; a chat capability that also gives agents a memory action |
+| Tabular Processing | [Chat › Citations › Enhanced]({{ '/admin/chat/#enhanced-citations-section' | relative_url }}) | `enable_tabular_processing_plugin`; recomputed from `enable_enhanced_citations` on every settings read, so it cannot be set independently |
+
+### Global Actions {#actions-config}
+
+The actions published to everyone. Authoring them stays in the classic admin
+interface for now.
 
 ## Inbound MCP {#inbound-mcp}
 

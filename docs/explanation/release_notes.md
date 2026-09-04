@@ -2,6 +2,28 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.060)**
+
+#### New Features
+
+*   **Action Settings Are Now Present In The New Admin Interface**
+    *   The Actions tab in the new Admin Settings surface showed a single toggle. The Analyze and Document Comparison limits were invisible because they are stored as one nested object rather than as separate settings, and the built-in action toggles had been scattered by the same guesswork that emptied the Agents tab — **Enable Text Action** had ended up under Appearance › Branding because its name contains "text".
+    *   The Actions tab now renders as four sections: **Document Actions**, **Workspace Action Permissions**, **Built-in Actions**, and **Global Actions**.
+    *   **Document action limits are editable again**, with the ranges the application actually enforces (2–300 for chat, 2–1000 for a workflow run) and the workflow limit separated from the chat one. Saving one limit no longer risks the other five, and out-of-range values are clamped by the same code the classic interface uses.
+    *   **Built-in actions are collapsed rather than laid out flat.** They default on and are rarely changed, so they no longer take up the tab; the documentation now says which one is worth a decision — HTTP, the only built-in action that reaches outside the deployment.
+
+#### Bug Fixes
+
+*   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
+    *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
+    *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
+    *   (Ref: `enable_tabular_processing_plugin`, `is_tabular_processing_enabled`, `admin_settings_fields.py`)
+
+*   **Fact Memory Is Listed With The Actions It Affects Without Moving Its Control**
+    *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
+    *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
+    *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
+
 ### **(v0.261.059)**
 
 #### New Features

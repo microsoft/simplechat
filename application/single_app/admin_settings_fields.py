@@ -38,6 +38,7 @@ from shared word stems, and declaring a field is the only way to stop it guessin
 wrong.
 """
 
+import copy
 import re
 from urllib.parse import urlparse
 
@@ -97,6 +98,18 @@ USER_AGREEMENT_WORD_LIMIT = 200
 
 CLASSIFICATION_BANNER_DEFAULT_COLOR = "#ffc107"
 CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
+
+# Document action limits, mirrored from DOCUMENT_ACTION_LIMIT_BOUNDS and
+# DEFAULT_DOCUMENT_ACTION_CAPABILITIES in functions_document_actions.py. That
+# module cannot be imported here -- it reaches config.py, which builds a Cosmos
+# client at import time -- so the values are restated and pinned by
+# test_v2_admin_actions_parity.py rather than left to drift.
+DOCUMENT_ACTION_CHAT_MIN_LIMIT = 2
+DOCUMENT_ACTION_CHAT_MAX_LIMIT = 300
+DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT = 3
+DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT = 2
+DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT = 1000
+DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT = 10
 
 # Schemes permitted for administrator-configured navigation links. These render
 # into an anchor href, so allowing arbitrary schemes would let a saved link
@@ -916,14 +929,244 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "agent_templates_allow_user_submission", "equals": True},
         },
     ],
-    "actions-config": [
+    # --- Actions ----------------------------------------------------------
+    #
+    # Analyze and Comparison are stored as one nested object rather than as six
+    # top-level keys, so each field names the path it writes and the container is
+    # reassembled on save. Both limits are bounded by
+    # DOCUMENT_ACTION_LIMIT_BOUNDS, which the container normalizer enforces.
+    "document-action-capabilities-card": [
+        {
+            "key": "document_action_analyze_enabled",
+            "settings_path": ["document_action_capabilities", "analyze", "enabled"],
+            "type": "switch",
+            "label": "Enable Analyze",
+            "help": (
+                "Offers Analyze in the Action menu in chat and workflows. It reads "
+                "the selected documents in full rather than searching them, so an "
+                "answer covers every one instead of the passages a search returned."
+            ),
+            "default": True,
+            "group": "Analyze",
+        },
+        {
+            "key": "document_action_analyze_chat_max_documents",
+            "settings_path": ["document_action_capabilities", "analyze", "chat_max_documents"],
+            "type": "number",
+            "label": "Analyze: Chat Document Limit",
+            "help": (
+                "Most documents one chat message may analyze. Each one is read in "
+                "full, so this bounds how long a single message can take and how "
+                "much it costs."
+            ),
+            "default": DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_CHAT_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_CHAT_MAX_LIMIT,
+            "group": "Analyze",
+            "depends_on": {"key": "document_action_analyze_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_analyze_workflow_max_documents",
+            "settings_path": [
+                "document_action_capabilities",
+                "analyze",
+                "workflow_max_documents",
+            ],
+            "type": "number",
+            "label": "Analyze: Workflow Document Limit",
+            "help": (
+                "The same limit for a workflow run, which is not waiting on someone "
+                "watching a chat and so can be allowed a far larger batch."
+            ),
+            "default": DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT,
+            "group": "Analyze",
+            "depends_on": {"key": "document_action_analyze_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_comparison_enabled",
+            "settings_path": ["document_action_capabilities", "comparison", "enabled"],
+            "type": "switch",
+            "label": "Enable Document Comparison",
+            "help": (
+                "Offers Document Comparison in the Action menu. It reads one "
+                "baseline document against the others selected, which is what "
+                "answers questions about what changed between versions."
+            ),
+            "default": True,
+            "group": "Comparison",
+        },
+        {
+            "key": "document_action_comparison_chat_max_documents",
+            "settings_path": [
+                "document_action_capabilities",
+                "comparison",
+                "chat_max_documents",
+            ],
+            "type": "number",
+            "label": "Comparison: Chat Document Limit",
+            "help": "Most documents one chat message may compare, including the baseline.",
+            "default": DOCUMENT_ACTION_CHAT_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_CHAT_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_CHAT_MAX_LIMIT,
+            "group": "Comparison",
+            "depends_on": {"key": "document_action_comparison_enabled", "equals": True},
+        },
+        {
+            "key": "document_action_comparison_workflow_max_documents",
+            "settings_path": [
+                "document_action_capabilities",
+                "comparison",
+                "workflow_max_documents",
+            ],
+            "type": "number",
+            "label": "Comparison: Workflow Document Limit",
+            "help": "The same limit for a workflow run.",
+            "default": DOCUMENT_ACTION_WORKFLOW_DEFAULT_LIMIT,
+            "min": DOCUMENT_ACTION_WORKFLOW_MIN_LIMIT,
+            "max": DOCUMENT_ACTION_WORKFLOW_MAX_LIMIT,
+            "group": "Comparison",
+            "depends_on": {"key": "document_action_comparison_enabled", "equals": True},
+        },
+    ],
+    # Rendered by V1 only while Workspace Mode is on, matching agent-toggles-card.
+    "plugin-feature-toggles": [
+        {
+            "key": "allow_user_plugins",
+            "type": "switch",
+            "label": "Allow Personal Actions",
+            "help": (
+                "People can create actions in their own workspace. This is a wider "
+                "grant than a personal agent: an action carries an endpoint and the "
+                "credentials to reach it, so the traffic an agent generates is no "
+                "longer limited to destinations you configured."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_plugins",
+            "type": "switch",
+            "label": "Allow Group Actions",
+            "help": (
+                "The same for a group's shared actions. Group workspaces must also "
+                "be enabled under Workspaces."
+            ),
+            "default": False,
+        },
+    ],
+    "core-plugin-toggles": [
+        {
+            "key": "enable_time_plugin",
+            "type": "switch",
+            "label": "Time",
+            "help": (
+                "Lets an agent read the current date and time and calculate with "
+                "them. Without it a model answers date questions from its training "
+                "data, which is always out of date."
+            ),
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_http_plugin",
+            "type": "switch",
+            "label": "HTTP",
+            "help": (
+                "Lets an agent fetch a URL directly. This is the one built-in action "
+                "that reaches outside the deployment, so turn it off where agents "
+                "should only use the connectors you configured."
+            ),
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_wait_plugin",
+            "type": "switch",
+            "label": "Wait",
+            "help": "Lets an agent pause, which workflows use to space out repeated calls.",
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_math_plugin",
+            "type": "switch",
+            "label": "Math",
+            "help": (
+                "Lets an agent calculate rather than predict an answer, which is why "
+                "arithmetic in a reply can be relied on."
+            ),
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
         {
             "key": "enable_text_plugin",
             "type": "switch",
-            "label": "Enable Text Action",
+            "label": "Text",
+            "help": "Lets an agent format, trim and reshape text deterministically.",
+            "default": True,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_default_embedding_model_plugin",
+            "type": "switch",
+            "label": "Default Embedding Model",
             "help": (
-                "Agents can perform text processing operations such as formatting, "
-                "validation and manipulation of strings and text content."
+                "Exposes the embedding model to agents for similarity work outside "
+                "the normal document search path. Off by default; document search "
+                "already embeds without it."
+            ),
+            "default": False,
+            "group": "Built-in actions",
+            "collapsed": True,
+        },
+        {
+            "key": "enable_fact_memory_plugin",
+            "type": "switch",
+            "label": "Fact Memory",
+            "help": (
+                "Lets an agent store, update and remove durable facts and "
+                "instructions for the current user or group."
+            ),
+            "default": True,
+            "readonly": True,
+            "managed_by": "Chat \u203a Chat Experience \u203a Fact Memory",
+            "group": "Managed elsewhere",
+        },
+        {
+            "key": "enable_tabular_processing_plugin",
+            "type": "switch",
+            "label": "Tabular Processing",
+            "help": (
+                "Lets an agent analyse a CSV or XLSX file as a whole dataset rather "
+                "than as retrieved passages. The application recomputes this from "
+                "Enhanced Citations on every settings read, so it cannot be set "
+                "independently."
+            ),
+            "default": False,
+            "readonly": True,
+            "managed_by": "Chat \u203a Citations \u203a Enhanced",
+            "group": "Managed elsewhere",
+        },
+    ],
+    # Declared so the Actions surface keeps the editable Fact Memory control where
+    # it belongs. Without it the mirror above would claim the key and remove the
+    # real toggle from Chat.
+    "fact-memory-section": [
+        {
+            "key": "enable_fact_memory_plugin",
+            "type": "switch",
+            "label": "Enable Fact Memory",
+            "help": (
+                "Saved memories are recalled during chat, and can be created or "
+                "removed when a user asks. Instruction memories apply to every "
+                "prompt; fact memories are recalled only when relevant. This is a "
+                "chat capability and does not require agents."
             ),
             "default": True,
         },
@@ -987,11 +1230,23 @@ def iter_fields():
 
 
 def get_field_definition(key):
-    """Return the field definition for a settings key, or None."""
+    """Return the field definition for a settings key, or None.
+
+    A key may be declared twice: once where it is edited, and once as a read-only
+    mirror in a section that only needs to report its state. Fact memory is
+    edited under Chat but affects which actions an agent has, so it appears in
+    both. The writable declaration is the one that governs saving, so it wins
+    regardless of declaration order.
+    """
+    mirror = None
     for _section_id, field in iter_fields():
-        if field.get("key") == key:
-            return field
-    return None
+        if field.get("key") != key:
+            continue
+        if field.get("readonly"):
+            mirror = mirror or field
+            continue
+        return field
+    return mirror
 
 
 def get_declared_setting_keys():
@@ -1155,6 +1410,63 @@ def _normalize_promoted_popular_agents(value):
     return normalize_agents_page_promoted_popular_agents(value)
 
 
+def _normalize_document_action_capabilities(value):
+    """Normalize the assembled document action capabilities container.
+
+    Lazily imported for the same reason as above.
+    """
+    from functions_document_actions import normalize_document_action_capabilities
+
+    return normalize_document_action_capabilities({"document_action_capabilities": value})
+
+
+# Containers assembled from several ``settings_path`` fields, and the function
+# that already owns validating the whole object. Bounds live there, so a limit
+# typed into either admin surface is clamped the same way.
+_CONTAINER_NORMALIZERS = {
+    "document_action_capabilities": _normalize_document_action_capabilities,
+}
+
+
+def _apply_nested_paths(normalized, current_settings):
+    """Fold ``settings_path`` values into the container key they belong to.
+
+    A few settings are stored as one nested object rather than as top-level
+    keys. ``document_action_capabilities`` holds six values across two action
+    types, and nothing reads a flattened form of them, so writing the flat keys
+    through would save a setting the application never looks at.
+
+    The container is rebuilt from the stored object so that saving one limit does
+    not discard the other five, then handed to the function that owns it.
+    """
+    containers = {}
+
+    for key in list(normalized):
+        field = get_field_definition(key)
+        path = (field or {}).get("settings_path")
+        if not path:
+            continue
+
+        value = normalized.pop(key)
+        root = path[0]
+        if root not in containers:
+            stored = current_settings.get(root)
+            containers[root] = copy.deepcopy(stored) if isinstance(stored, dict) else {}
+
+        node = containers[root]
+        for segment in path[1:-1]:
+            child = node.get(segment)
+            if not isinstance(child, dict):
+                child = {}
+                node[segment] = child
+            node = child
+        node[path[-1]] = value
+
+    for root, value in containers.items():
+        container_normalizer = _CONTAINER_NORMALIZERS.get(root)
+        normalized[root] = container_normalizer(value) if container_normalizer else value
+
+
 # Keys whose normalization already exists elsewhere. Reusing those functions is
 # what stops the two admin surfaces from disagreeing about, for example, which
 # frequency aliases are accepted or how a terms message is trimmed.
@@ -1188,6 +1500,16 @@ def _normalize_field_value(key, value, field):
 
     if field_type in NON_PATCHABLE_TYPES:
         return None, f"{key} cannot be changed through this endpoint.", None
+
+    if field.get("readonly"):
+        # A mirror reports a value that something else owns. Accepting a write
+        # here would let the Actions surface set a Chat capability, or set a key
+        # the application recomputes on every read.
+        owner = field.get("managed_by")
+        return None, (
+            f"{key} is managed by {owner}." if owner
+            else f"{key} cannot be changed through this endpoint."
+        ), None
 
     if field_type == "switch":
         return _coerce_bool(value), None, None
@@ -1336,6 +1658,11 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # "At least one" style constraints can only be judged once the whole payload
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
+
+    # Folded last so the checks above still see the flat keys they were written
+    # against, and so a rejected save never assembles a container.
+    if not errors:
+        _apply_nested_paths(normalized, current)
 
     return normalized, errors, warnings
 
