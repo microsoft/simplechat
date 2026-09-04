@@ -33,6 +33,7 @@ from admin_settings_fields import (
     get_admin_section_status,
     get_admin_settings_fields,
     get_secret_field_keys,
+    get_suppressed_capability_keys,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
 )
@@ -800,21 +801,33 @@ def register_route_backend_v2_admin(bp):
         below swaps the placeholder back for the stored value, so an untouched secret
         survives a save.
 
+        Model endpoint credentials sit inside the ``model_endpoints`` list rather than at
+        a fixed key, so no key-based list reaches them. They are stripped separately by
+        ``sanitize_model_endpoints_for_frontend``, which is what the server-rendered page
+        passes to its template.
+
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
-        not been described yet keep working.
+        not been described yet keep working. ``suppressed_capabilities`` names the keys
+        that scan must skip because they are derived or are staged rollout flags with no
+        administrator control.
         """
         try:
             settings = get_settings()
+            safe_settings = redact_admin_settings_secrets_for_api(settings)
+            safe_settings["model_endpoints"] = sanitize_model_endpoints_for_frontend(
+                settings.get("model_endpoints")
+            )
             return (
                 jsonify(
                     {
-                        "settings": redact_admin_settings_secrets_for_api(settings),
+                        "settings": safe_settings,
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "section_status": get_admin_section_status(),
                         "app_role_requirements": get_app_role_requirements(),
                         "branding_assets": _build_branding_assets(settings),
+                        "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
                     }
                 ),
