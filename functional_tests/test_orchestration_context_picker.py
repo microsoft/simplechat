@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the document context picker reaching orchestration.
-Version: 0.261.090
-Implemented in: 0.261.090
+Version: 0.261.091
+Implemented in: 0.261.091
 
 The composer's context picker lets a user name documents, tags and whole workspaces before
 asking. Orchestration read the document ids and ignored everything else: a tag chip worked
@@ -32,10 +32,31 @@ ADAPTERS = 'functions_orchestration_adapters.py'
 CONTEXT = 'functions_orchestration_context.py'
 SEARCH = 'functions_search.py'
 
+# A deployment with everything on, so a validation test fails on the thing it is testing
+# rather than on a gate.
+_PERMISSIVE = {
+    'enable_chat_orchestration': True,
+    'enable_user_workspace': True,
+    'enable_group_workspaces': True,
+    'enable_web_search': True,
+}
+_CAPABILITIES = [
+    'document_search',
+    'document_analyze',
+    'document_compare',
+    'tabular_analyze',
+    'web_search',
+    'respond',
+]
+
+
+def _read(module):
+    with open(os.path.join(APP_ROOT, module), encoding='utf-8') as handle:
+        return handle.read()
+
 
 def _tree(module):
-    with open(os.path.join(APP_ROOT, module), encoding='utf-8') as handle:
-        return ast.parse(handle.read())
+    return ast.parse(_read(module))
 
 
 def _function(tree, name):
@@ -49,7 +70,7 @@ def test_picked_tags_reach_the_plan():
     """A tag chip must narrow a plan the way it narrows a chat message."""
     print("Testing that picked tags reach the seeds...")
     try:
-        assert_app_version_at_least('0.261.090')
+        assert_app_version_at_least('0.261.091')
 
         with stubbed_app_imports():
             from functions_orchestration_context import resolve_seeds
@@ -319,6 +340,203 @@ def test_found_documents_carry_their_workspace():
         return False
 
 
+def test_a_step_can_read_what_an_earlier_step_found():
+    """A plan can say "search, then analyse what you found"."""
+    print("Testing the cross-step document reference...")
+    try:
+        with stubbed_app_imports():
+            from functions_orchestration_schema import validate_plan
+
+            plan = validate_plan({
+                'intent': {'summary': 'Analyse the relevant contracts'},
+                'steps': [
+                    {
+                        'step_id': 'find',
+                        'capability_id': 'document_search',
+                        'arguments': {'query': 'contracts'},
+                    },
+                    {
+                        'step_id': 'read',
+                        'capability_id': 'document_analyze',
+                        'arguments': {
+                            'analysis_prompt': 'Summarise the payment terms.',
+                            'documents_from_step': 'find',
+                        },
+                    },
+                    {'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}},
+                ],
+            }, settings=_PERMISSIVE, available_capability_ids=_CAPABILITIES)
+
+            validation = plan['validation']
+            assert validation['ok'], f"a valid reference was rejected: {validation['errors']}"
+
+            by_id = {s['step_id']: s for s in plan['steps']}
+            assert 'read' in by_id, 'the analysing step was dropped'
+            assert by_id['read']['arguments']['documents_from_step'] == 'find'
+
+            # The reference must imply the dependency. Without it the topological pass is
+            # free to run the analysis first, and it would resolve to nothing.
+            assert 'find' in by_id['read']['depends_on'], (
+                f"the reference did not create a dependency: {by_id['read']['depends_on']}. "
+                f"The executor would be free to analyse before searching."
+            )
+
+            order = [s['step_id'] for s in plan['steps']]
+            assert order.index('find') < order.index('read'), (
+                f"the referenced step must run first: {order}"
+            )
+
+        print("  ok  a step can read what an earlier step found")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_a_bad_document_reference_is_caught():
+    """A reference that could never resolve must not reach an adapter."""
+    print("Testing bad document references...")
+    try:
+        with stubbed_app_imports():
+            from functions_orchestration_schema import validate_plan
+
+            def analyse(reference, extra=None):
+                arguments = {
+                    'analysis_prompt': 'Summarise.',
+                    'documents_from_step': reference,
+                }
+                arguments.update(extra or {})
+                return validate_plan({
+                    'intent': {'summary': 'x'},
+                    'steps': [
+                        {'step_id': 'search', 'capability_id': 'web_search',
+                         'arguments': {'query': 'x'}},
+                        {'step_id': 'read', 'capability_id': 'document_analyze',
+                         'arguments': arguments},
+                        {'step_id': 'answer', 'capability_id': 'respond', 'arguments': {}},
+                    ],
+                }, settings=_PERMISSIVE, available_capability_ids=_CAPABILITIES)
+
+            # A web search produces notes, not documents. Reading documents from it would
+            # resolve to nothing every single time.
+            plan = analyse('search')
+            assert 'read' not in {s['step_id'] for s in plan['steps']}, (
+                'a step reading documents from a web search should not have survived'
+            )
+
+            # Unless it has documents of its own, in which case the reference is dropped and
+            # the step still means something.
+            plan = analyse('search', {'document_ids': ['doc1']})
+            by_id = {s['step_id']: s for s in plan['steps']}
+            assert 'read' in by_id, 'a step with its own documents should survive'
+            assert 'documents_from_step' not in by_id['read']['arguments'], (
+                'the unusable reference should have been removed'
+            )
+            assert by_id['read']['arguments']['document_ids'] == ['doc1']
+            assert plan['validation']['repairs'], 'dropping a reference should be reported'
+
+            # A step naming itself could never resolve.
+            plan = analyse('read')
+            assert 'read' not in {s['step_id'] for s in plan['steps']}
+
+            # A step that is not in the plan at all.
+            plan = analyse('nonexistent')
+            assert 'read' not in {s['step_id'] for s in plan['steps']}
+
+        print("  ok  unusable references are repaired or dropped")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_a_reference_cannot_dodge_the_document_ceiling():
+    """The administrator's limit must apply to documents that arrive at run time."""
+    print("Testing the document ceiling on a reference...")
+    try:
+        source = _read(ADAPTERS)
+        resolver = _function(ast.parse(source), '_resolve_step_document_ids')
+        assert resolver is not None, '_resolve_step_document_ids must exist'
+
+        body = ast.dump(resolver)
+        # The validator trims what a plan *names*. It cannot trim what a search has not run
+        # yet, so without this the reference is a way around a configured maximum.
+        assert 'get_capability_document_limit' in body, (
+            "_resolve_step_document_ids does not apply the administrator's document "
+            "ceiling. The validator caps the documents a plan names, but documents "
+            "arriving through documents_from_step never pass through it."
+        )
+
+        # And the caller must actually tell it which capability's limit applies.
+        analyze = _function(ast.parse(source), 'run_document_analyze')
+        called = False
+        for node in ast.walk(analyze):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == '_resolve_step_document_ids'
+            ):
+                passed = {kw.arg for kw in node.keywords}
+                assert {'settings', 'capability_id'} <= passed, (
+                    f"run_document_analyze resolves documents without {sorted({'settings', 'capability_id'} - passed)}, "
+                    f"so no ceiling can be applied"
+                )
+                called = True
+        assert called, 'run_document_analyze must resolve its documents through the helper'
+
+        print("  ok  a run-time document still respects the configured ceiling")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def test_the_executor_records_what_each_step_found():
+    """A reference resolves from per-step documents, so they must be recorded per step."""
+    print("Testing per-step document recording...")
+    try:
+        with stubbed_app_imports():
+            from functions_orchestration_executor import RunContext
+
+            context = RunContext(run_id='r1', plan_id='p1', conversation_id='c1', user_id='u1')
+            assert hasattr(context, 'step_documents'), (
+                'RunContext must record which documents each step found, or a reference '
+                'has nothing to resolve against'
+            )
+
+            context.merge_step_result({
+                'evidence': [
+                    {'document_id': 'doc1', 'source_kind': 'narrative'},
+                    {'document_id': 'doc2', 'source_kind': 'narrative'},
+                ],
+            }, step_id='find')
+
+            assert context.step_documents['find'] == ['doc1', 'doc2'], (
+                f"per-step documents were not recorded: {context.step_documents}"
+            )
+            # And the run-level list still works, since the ledger reads it.
+            assert context.documents_touched == ['doc1', 'doc2']
+
+            # A step that found nothing records an empty list rather than nothing at all,
+            # so a reference to it resolves to "none" rather than to "unknown".
+            context.merge_step_result({'evidence': []}, step_id='empty')
+            assert context.step_documents['empty'] == []
+
+        print("  ok  each step's documents are recorded against its id")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == "__main__":
     tests = [
         test_picked_tags_reach_the_plan,
@@ -328,6 +546,10 @@ if __name__ == "__main__":
         test_the_name_reaches_the_approval_card,
         test_a_supplied_label_cannot_widen_access,
         test_found_documents_carry_their_workspace,
+        test_a_step_can_read_what_an_earlier_step_found,
+        test_a_bad_document_reference_is_caught,
+        test_a_reference_cannot_dodge_the_document_ceiling,
+        test_the_executor_records_what_each_step_found,
     ]
     results = []
     for test in tests:

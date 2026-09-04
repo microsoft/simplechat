@@ -66,7 +66,12 @@ const phaseLabels: Record<OrchestrationPhase, string> = {
 
 /** A step argument key/value the run will use, minus the document fields shown as chips. */
 function readableArguments(step: OrchestrationStep): Array<[string, string]> {
-    const hidden = new Set<string>([...DOCUMENT_ARRAY_FIELDS, 'left_document_id']);
+    const hidden = new Set<string>([
+        ...DOCUMENT_ARRAY_FIELDS,
+        'left_document_id',
+        // Shown as its own chip, naming the step rather than repeating its id.
+        'documents_from_step',
+    ]);
     const entries: Array<[string, string]> = [];
     const args = step.arguments as Json;
     for (const [key, value] of Object.entries(args)) {
@@ -150,6 +155,12 @@ export function OrchestrationRunView({
 
     const capabilities = useBootstrapStore((state) => state.data?.orchestration?.capabilities);
 
+    /** Step titles by id, so a reference to another step can name it rather than show its id. */
+    const stepTitles = useMemo(
+        () => new Map(orderedSteps.map((step) => [step.step_id, step.title])),
+        [orderedSteps],
+    );
+
     // Steps grouped under their phase, in run order, so the list reads as "gather, then answer"
     // rather than as a flat sequence. A step's phase is resolved from the capability menu when the
     // plan does not carry one itself, so an older or persisted plan still groups correctly; a step
@@ -219,6 +230,13 @@ export function OrchestrationRunView({
         const removable = new Set(stepRemovableDocumentIds(step));
         const documents = stepDocumentIds(step);
         const args = readableArguments(step);
+        // A step can defer its documents to whatever an earlier step finds, so it may have
+        // none of its own to show.
+        const documentsFromStep = String(
+            (step.arguments as Record<string, unknown>).documents_from_step ?? '',
+        ).trim();
+        const documentsFromStepLabel =
+            stepTitles.get(documentsFromStep) ?? 'the earlier step';
 
         return (
             <li
@@ -364,6 +382,16 @@ export function OrchestrationRunView({
                                     );
                                 })}
                             </ul>
+                        ) : null}
+
+                        {documentsFromStep ? (
+                            // A step reading whatever an earlier one finds has no documents
+                            // to list yet. Saying so is more honest than showing nothing,
+                            // which reads as "this step touches no documents at all".
+                            <p className="mt-2 inline-flex items-center gap-1 rounded-full border border-dashed border-edge-strong px-2 py-0.5 text-[11px] text-text-3">
+                                <FileText size={10} className="shrink-0" />
+                                Whatever {documentsFromStepLabel} finds
+                            </p>
                         ) : null}
 
                         <div className="mt-2">
