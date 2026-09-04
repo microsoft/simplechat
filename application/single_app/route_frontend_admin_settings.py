@@ -1740,53 +1740,15 @@ def register_route_frontend_admin_settings(bp):
                 flash(f"Error processing default model selection: {e}. Changes not saved.", 'danger')
                 parsed_default_model_selection = settings.get('default_model_selection', {})
 
-            normalized_default_model_selection = {
-                'endpoint_id': str(parsed_default_model_selection.get('endpoint_id') or '').strip(),
-                'model_id': str(parsed_default_model_selection.get('model_id') or '').strip(),
-                'provider': str(parsed_default_model_selection.get('provider') or '').strip().lower()
-            }
-
-            if not enable_multi_model_endpoints:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
-            elif normalized_default_model_selection['endpoint_id'] and normalized_default_model_selection['model_id']:
-                endpoint_cfg = next(
-                    (e for e in parsed_model_endpoints if e.get('id') == normalized_default_model_selection['endpoint_id']),
-                    None
+            normalized_default_model_selection, default_selection_warning = (
+                resolve_default_model_selection(
+                    parsed_default_model_selection,
+                    parsed_model_endpoints,
+                    multi_endpoint_enabled=enable_multi_model_endpoints,
                 )
-                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
-                    flash('Default model endpoint is not available. Please select a valid endpoint.', 'warning')
-                    normalized_default_model_selection = {
-                        'endpoint_id': '',
-                        'model_id': '',
-                        'provider': ''
-                    }
-                else:
-                    models = endpoint_cfg.get('models', []) or []
-                    model_cfg = next(
-                        (m for m in models if m.get('id') == normalized_default_model_selection['model_id']),
-                        None
-                    )
-                    if not model_cfg or not model_cfg.get('enabled', True):
-                        flash('Default model is not available. Please select a valid model.', 'warning')
-                        normalized_default_model_selection = {
-                            'endpoint_id': '',
-                            'model_id': '',
-                            'provider': ''
-                        }
-                    else:
-                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
-                        if endpoint_provider:
-                            normalized_default_model_selection['provider'] = endpoint_provider
-            else:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
+            )
+            if default_selection_warning:
+                flash(default_selection_warning, 'warning')
 
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}

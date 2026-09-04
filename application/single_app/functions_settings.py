@@ -2846,6 +2846,78 @@ def sanitize_model_endpoints_for_frontend(endpoints):
 
     return sanitized
 
+
+EMPTY_DEFAULT_MODEL_SELECTION = {"endpoint_id": "", "model_id": "", "provider": ""}
+
+
+def normalize_default_model_selection(selection):
+    """Return a default model selection dict with the three expected string fields."""
+    source = selection if isinstance(selection, dict) else {}
+    return {
+        "endpoint_id": str(source.get("endpoint_id") or "").strip(),
+        "model_id": str(source.get("model_id") or "").strip(),
+        "provider": str(source.get("provider") or "").strip().lower(),
+    }
+
+
+def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Return a default model selection that still points at an enabled model.
+
+    The stored default is a loose reference -- an endpoint id plus a model id -- so it
+    outlives the thing it names. Deleting an endpoint, disabling one, or turning off a
+    single model all leave a selection that resolves to nothing, and chat would then fall
+    back to a different model with no indication that it had.
+
+    Returns ``(selection, reason)``. ``reason`` is ``None`` when the selection survived,
+    otherwise a short explanation of why it was cleared, which callers with somewhere to
+    put it surface to the administrator.
+    """
+    normalized = normalize_default_model_selection(selection)
+
+    if not multi_endpoint_enabled:
+        # A stored selection would silently come back into force if multi-endpoint mode
+        # were re-enabled later, naming an endpoint nobody has looked at since.
+        return dict(EMPTY_DEFAULT_MODEL_SELECTION), None
+
+    if not normalized["endpoint_id"] or not normalized["model_id"]:
+        return dict(EMPTY_DEFAULT_MODEL_SELECTION), None
+
+    endpoint_list = endpoints if isinstance(endpoints, list) else []
+    endpoint_cfg = next(
+        (
+            endpoint
+            for endpoint in endpoint_list
+            if isinstance(endpoint, dict) and endpoint.get("id") == normalized["endpoint_id"]
+        ),
+        None,
+    )
+    if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            "Default model endpoint is not available. Please select a valid endpoint.",
+        )
+
+    models = endpoint_cfg.get("models", []) or []
+    model_cfg = next(
+        (
+            model
+            for model in models
+            if isinstance(model, dict) and model.get("id") == normalized["model_id"]
+        ),
+        None,
+    )
+    if not model_cfg or not model_cfg.get("enabled", True):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            "Default model is not available. Please select a valid model.",
+        )
+
+    endpoint_provider = str(endpoint_cfg.get("provider") or "").strip().lower()
+    if endpoint_provider:
+        normalized["provider"] = endpoint_provider
+    return normalized, None
+
+
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])
     encrypted_key = cipher_suite.encrypt(key.encode())
