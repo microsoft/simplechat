@@ -246,8 +246,13 @@ def test_admin_connection_test_does_not_expose_credential_errors():
     assert not re.search(r"jsonify\([^)]*str\((?:client_error|validation_error)\)", construction_block), (
         "Client construction errors must not be returned to the browser."
     )
-    assert "sanitize_log_message(" in construction_block, (
-        "Exception detail must be sanitized before it reaches the logger."
+    # The exception message can carry resolved credential material, so only the type is
+    # interpolated; the traceback carries the detail to Application Insights.
+    assert "type(client_error).__name__" in construction_block, (
+        "Only the exception type should be interpolated into the log message."
+    )
+    assert "exceptionTraceback=True" in construction_block, (
+        "The traceback should still reach Application Insights for diagnosis."
     )
     assert "[REDIS_TEST]" in construction_block, (
         "Credential errors must be logged for diagnosis instead of returned."

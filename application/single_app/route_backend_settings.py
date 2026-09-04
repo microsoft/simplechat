@@ -17,7 +17,7 @@ from functions_activity_logging import (
     log_admin_release_notifications_registration,
     log_user_support_feedback_email_submission,
 )
-from functions_appinsights import log_event, sanitize_log_message
+from functions_appinsights import log_event
 from functions_cosmos_throughput import (
     calculate_manual_to_autoscale_target,
     calculate_manual_scale_target,
@@ -1681,21 +1681,25 @@ def _test_redis_connection(payload):
     except ValueError as validation_error:
         # The factory raises ValueError for missing host, key, or Key Vault secret name. The
         # route already returns a specific 400 for each of those above, so anything reaching
-        # here is unexpected; report it generically rather than echoing the exception.
+        # here is unexpected. Log the exception type and let the traceback carry the detail
+        # rather than interpolating a message that resolved credentials may have touched.
         log_event(
-            f"[REDIS_TEST] Redis settings validation failed: {sanitize_log_message(validation_error)}",
-            level="error",
+            f"[REDIS_TEST] Redis settings validation failed ({type(validation_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
         )
         return jsonify({
             'error': 'Redis settings are incomplete. Check the host name, service, port, and credential fields.'
         }), 400
     except Exception as client_error:
-        # Client construction resolves credentials, so the error can carry Key Vault secret
-        # names, vault URIs, or token details. Log them sanitized and keep the response generic.
+        # Client construction resolves credentials, so the message can carry Key Vault secret
+        # names, vault URIs, or token details. Record the type plus the traceback and keep
+        # both the log message and the response free of the resolved secret material.
         log_event(
             f"[REDIS_TEST] Redis client construction failed for auth type "
-            f"'{redis_auth_type}': {sanitize_log_message(client_error)}",
-            level="error",
+            f"'{redis_auth_type}' ({type(client_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
         )
         return jsonify({
             'error': 'Failed to build the Redis connection. Check Application Insights using "[REDIS_TEST]" for details.'
