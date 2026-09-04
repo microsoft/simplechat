@@ -98,6 +98,7 @@ from route_frontend_chats import (
 from route_backend_settings import run_admin_settings_connection_test
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
+from functions_model_capabilities import resolve_model_vision_support
 from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
 
@@ -616,6 +617,55 @@ def register_route_backend_v2(bp):
 
 
 def register_route_backend_v2_admin(bp):
+    def _build_model_catalog(settings):
+        """Return the models an administrator can pick, with resolved capabilities.
+
+        A picker that offered every model would let an administrator choose one that
+        cannot read images for Multi-Modal Vision Analysis, which fails at upload time
+        rather than at configuration time. Resolving here keeps the decision on the
+        server, where ``functions_model_capabilities`` is the single implementation, so
+        the browser does not need a second copy of the rules.
+
+        ``vision_source`` says whether the answer is known or guessed, which is what
+        lets the picker mark an inferred model rather than presenting a guess as fact.
+        """
+        catalog = []
+        seen = set()
+
+        for endpoint in settings.get("model_endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            endpoint_label = endpoint.get("name") or endpoint.get("id") or ""
+
+            for model in endpoint.get("models") or []:
+                if not isinstance(model, dict) or not model.get("enabled", True):
+                    continue
+
+                deployment = str(
+                    model.get("deploymentName") or model.get("deployment") or ""
+                ).strip()
+                if not deployment or deployment in seen:
+                    continue
+                seen.add(deployment)
+
+                supports_vision, vision_source = resolve_model_vision_support(model)
+                catalog.append(
+                    {
+                        "deployment": deployment,
+                        "label": model.get("displayName")
+                        or model.get("modelName")
+                        or deployment,
+                        "endpoint": endpoint_label,
+                        "endpoint_id": endpoint.get("id"),
+                        "model_name": model.get("modelName") or "",
+                        "supports_vision": supports_vision,
+                        "vision_source": vision_source,
+                    }
+                )
+
+        catalog.sort(key=lambda entry: entry["label"].lower())
+        return catalog
+
     def _build_status_readouts():
         """Return the server-computed readouts declared `status` fields render.
 
@@ -711,6 +761,7 @@ def register_route_backend_v2_admin(bp):
                         "field_schema": get_admin_settings_fields(),
                         "branding_assets": _build_branding_assets(settings),
                         "status_readouts": _build_status_readouts(),
+                        "model_catalog": _build_model_catalog(settings),
                         "version": VERSION,
                     }
                 ),
@@ -842,11 +893,56 @@ def register_route_backend_v2_admin(bp):
         if not test_type:
             return jsonify({"error": "No test_type supplied"}), 400
 
+        _prepare_v2_test_payload(payload, test_type)
+
         log_event(
             f"[V2_ADMIN_SETTINGS] Running '{test_type}' connection test",
             level=logging.INFO,
         )
         return run_admin_settings_connection_test(payload)
+
+    def _prepare_v2_test_payload(payload, test_type):
+        """Fill in what the V2 picker knows but the schema cannot express.
+
+        A ``test_payload`` maps settings keys to request fields, which covers a
+        connection assembled from settings. The vision test is different: it needs the
+        endpoint that hosts the chosen model, and that is a property of the selection
+        rather than a setting of its own.
+
+        Resolving it here rather than sending it from the browser also keeps the
+        endpoint's credentials out of the request. The handler looks the endpoint up in
+        the stored settings from the id alone.
+        """
+        if test_type != "multimodal_vision":
+            return
+
+        if isinstance(payload.get("multi_endpoint"), dict):
+            return
+
+        deployment = str(payload.get("vision_model") or "").strip()
+        if not deployment:
+            return
+
+        settings = get_settings()
+        for endpoint in settings.get("model_endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            for model in endpoint.get("models") or []:
+                if not isinstance(model, dict):
+                    continue
+                candidate = str(
+                    model.get("deploymentName") or model.get("deployment") or ""
+                ).strip()
+                if candidate != deployment:
+                    continue
+
+                payload["multi_endpoint"] = {
+                    "endpoint_id": endpoint.get("id"),
+                    "model_id": model.get("id"),
+                    "provider": endpoint.get("provider"),
+                    "deployment_name": candidate,
+                }
+                return
 
     @bp.route("/api/v2/admin/settings/branding-image", methods=["POST"])
     @swagger_route(security=get_auth_security())

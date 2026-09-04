@@ -38,6 +38,7 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { ModelPicker } from '../components/admin/ModelPicker';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingsSection } from '../components/admin/SettingsSection';
 import { SettingField } from '../components/admin/fields';
@@ -563,6 +564,19 @@ export function AdminSettingsPage() {
                             settings={settings}
                             draft={draft}
                             disabled={saving}
+                        />
+                    );
+                case 'model-picker':
+                    return (
+                        <ModelPicker
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            warning={warning}
+                            disabled={saving}
+                            models={data?.model_catalog ?? []}
+                            onChange={(next) => field.key && setValue(field.key, next)}
                         />
                     );
                 case 'classification-banner-preview':
