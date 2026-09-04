@@ -21,7 +21,6 @@ This page includes the latest release notes inline. Older release sections are s
 | Version | Page |
 | --- | --- |
 | v0.261.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.010 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.009 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.007 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.006 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -130,16 +129,6 @@ This page includes the latest release notes inline. Older release sections are s
     *   Treats fail-on-match, fail-closed scanner errors, and truncated scans as enforced upload DLP paths when deciding whether content may be indexed or retained for enhanced citations.
     *   Sanitizes selected upload metadata before prompts, Search payloads, Cosmos updates, and logs while preserving counts-only DLP telemetry summaries.
     *   (Ref: upload DLP redaction, scanner failure handling, enhanced-citation safety)
-
-### **(v0.261.010)**
-
-#### New Features
-
-*   **Custom Model Endpoint Provider**
-    *   Added manually configured Custom endpoints for OpenAI API, Azure OpenAI API, and Anthropic chat models across global, personal, and group scopes.
-    *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
-    *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
-    *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
 
 ### **(v0.261.009)**
 
