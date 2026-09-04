@@ -40,8 +40,10 @@ SETTINGS_FILE = APP_DIR / "functions_settings.py"
 
 SECTION_ID = "gpt-config"
 
-# Declared alongside the two components rather than left to the V2 fallback scan. See
-# test_the_apim_toggle_is_declared_rather_than_guessed for why that matters.
+# Suppressed rather than declared: the switch was removed from the V2 section once
+# connections began carrying their own APIM configuration. See
+# test_the_apim_toggle_is_suppressed_rather_than_guessed for why removing it is not
+# enough on its own.
 APIM_TOGGLE_KEY = "enable_gpt_apim"
 
 EXPECTED_ROUTES = {
@@ -279,66 +281,64 @@ def test_the_chat_section_declares_its_components():
     return True
 
 
-def test_the_apim_toggle_is_declared_rather_than_guessed():
-    """Left undeclared, this lands in the Chat card as an unlabelled switch.
+def test_the_apim_toggle_is_suppressed_rather_than_guessed():
+    """Removing the field is not enough: the fallback scan would put it straight back.
 
     ``buildCapabilityIndex`` files an undeclared ``enable_*`` key under the section
     whose id shares the most word stems. ``enable_gpt_apim`` splits to ``{gpt, apim}``
     and ``gpt-config`` to ``{gpt, config}``, so it scores and wins -- and renders as
     "Gpt apim" with no help text, directly beneath a notice that speaks
-    authoritatively about which endpoint chat is using.
+    authoritatively about which endpoint chat is using. Deleting the field alone would
+    therefore trade a labelled switch for an anonymous one in the same place.
 
-    That is a trap rather than an inconvenience: the APIM endpoint, deployment and
-    subscription key it depends on are only settable on the classic admin page, so
-    the switch reaches for configuration the surrounding surface does not offer.
-    Declaring it is what both names it and takes it out of the guess.
+    Suppression is what actually removes it. The setting itself still exists and is
+    still read for the classic single endpoint; it is edited on the server-rendered
+    pane, and a connection carries its own APIM configuration, so there is nothing for
+    this section to offer.
     """
-    print("\nTesting the APIM toggle declaration...")
+    print("\nTesting the APIM toggle suppression...")
 
     declared_sections = {
-        field["key"]: (section_id, field)
+        field["key"]: section_id
         for section_id, field in fields_module.iter_fields()
         if field.get("key")
     }
 
-    entry = declared_sections.get(APIM_TOGGLE_KEY)
-    assert entry is not None, (
-        f"{APIM_TOGGLE_KEY} is not declared, so the V2 admin surface guesses a home for "
-        f"it. Declare it in the {SECTION_ID!r} section."
+    assert APIM_TOGGLE_KEY not in declared_sections, (
+        f"{APIM_TOGGLE_KEY} is declared under "
+        f"{declared_sections[APIM_TOGGLE_KEY]!r}, but connections carry their own APIM "
+        "configuration and the setting is edited on the server-rendered pane. Remove "
+        "the field and suppress the key instead."
+    )
+    assert APIM_TOGGLE_KEY not in fields_module.get_declared_setting_keys(), (
+        f"{APIM_TOGGLE_KEY} is still reported as declared."
     )
 
-    section_id, field = entry
-    assert section_id == SECTION_ID, (
-        f"{APIM_TOGGLE_KEY} is declared under {section_id!r}, expected {SECTION_ID!r}."
+    # This is the property the renderer actually reads. Without it the fallback scan
+    # draws the switch the field removal was meant to take away.
+    assert APIM_TOGGLE_KEY in fields_module.get_suppressed_capability_keys(), (
+        f"{APIM_TOGGLE_KEY} is neither declared nor suppressed, so the fallback scan "
+        f"guesses it into {SECTION_ID!r} as an unlabelled switch."
     )
-    assert field.get("type") == "switch", (
-        f"{APIM_TOGGLE_KEY} is declared as {field.get('type')!r}, expected 'switch'."
-    )
-    assert field.get("help"), (
-        f"{APIM_TOGGLE_KEY} is declared without help text, which leaves it as anonymous "
-        "as the fallback scan rendered it."
-    )
-
-    # This is the property the renderer actually reads: `!declaredKeys.has(key)` is what
-    # suppresses the guess.
-    assert APIM_TOGGLE_KEY in fields_module.get_declared_setting_keys(), (
-        f"{APIM_TOGGLE_KEY} is not reported as declared, so the fallback scan would "
-        "still place it."
+    assert fields_module.SUPPRESSED_CAPABILITY_KEYS[APIM_TOGGLE_KEY].strip(), (
+        f"{APIM_TOGGLE_KEY} is suppressed without a stated reason, which is the one "
+        "thing that list requires of an entry."
     )
 
-    print(f"  {APIM_TOGGLE_KEY} is declared in {SECTION_ID} with help text.")
+    print(f"  {APIM_TOGGLE_KEY} is suppressed with a stated reason.")
     return True
 
 
-def test_the_apim_toggle_exists_in_its_server_rendered_pane():
-    """A declared field with no V1 counterpart would write a setting nothing reads."""
+def test_the_apim_toggle_is_still_editable_on_its_server_rendered_pane():
+    """The setting is still read; losing its only remaining control would strand it."""
     print("\nTesting the APIM toggle against the server-rendered pane...")
 
     pane = APP_DIR / "templates" / "admin" / "_panes" / "model-endpoints.html"
     assert pane.is_file(), f"Missing the server-rendered pane: {pane}"
     assert f'name="{APIM_TOGGLE_KEY}"' in pane.read_text(encoding="utf-8"), (
-        f"{APIM_TOGGLE_KEY} has no field in {pane.name}, so the two admin interfaces "
-        "would not be editing the same setting."
+        f"{APIM_TOGGLE_KEY} has no field in {pane.name}. Now that V2 does not offer it, "
+        "this pane is the only place it can be changed, while the classic endpoint path "
+        "still reads it."
     )
 
     print(f"  {APIM_TOGGLE_KEY} exists in {pane.name}.")
@@ -554,8 +554,8 @@ if __name__ == "__main__":
     tests = [
         test_the_key_is_declared_so_the_settings_patch_refuses_it,
         test_the_chat_section_declares_its_components,
-        test_the_apim_toggle_is_declared_rather_than_guessed,
-        test_the_apim_toggle_exists_in_its_server_rendered_pane,
+        test_the_apim_toggle_is_suppressed_rather_than_guessed,
+        test_the_apim_toggle_is_still_editable_on_its_server_rendered_pane,
         test_routes_exist_and_are_admin_gated,
         test_the_read_route_does_not_write,
         test_the_write_route_stores_only_the_resolved_value,
