@@ -31,7 +31,7 @@ def test_workflow_instruction_drafting_contract():
     action_modal_content = read_text("application/single_app/templates/_plugin_modal.html")
 
     assert_app_version_at_least("0.250.028")
-    assert "@app.route('/api/workflows/draft-instructions', methods=['POST'])" in route_content, (
+    assert "@bp.route('/api/workflows/draft-instructions', methods=['POST'])" in route_content, (
         "Expected a shared workflow instruction drafting endpoint."
     )
     assert "@swagger_route(security=get_auth_security())" in route_content, (

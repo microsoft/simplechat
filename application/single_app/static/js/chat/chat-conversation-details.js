@@ -41,14 +41,17 @@ function getConversationMetadataDomItem(conversationId) {
     || document.querySelector(`.sidebar-conversation-item[data-conversation-id="${escapedConversationId}"]`);
 }
 
-export async function fetchConversationMetadata(conversationId) {
+export async function fetchConversationMetadata(conversationId, options = {}) {
   const normalizedConversationId = String(conversationId || '').trim();
   if (!normalizedConversationId) {
     throw new Error('Conversation ID is required');
   }
 
   const conversationItem = getConversationMetadataDomItem(normalizedConversationId);
-  const isCollaborativeConversation = conversationItem?.dataset?.conversationKind === 'collaborative';
+  const isCollaborativeConversation = (
+    options.conversationKind === 'collaborative'
+    || conversationItem?.dataset?.conversationKind === 'collaborative'
+  );
 
   if (isCollaborativeConversation && window.chatCollaboration?.fetchConversationMetadata) {
     return window.chatCollaboration.fetchConversationMetadata(normalizedConversationId);
@@ -66,6 +69,57 @@ export async function fetchConversationMetadata(conversationId) {
 export function getConversationDocumentTags(metadata = {}) {
   const tags = Array.isArray(metadata.tags) ? metadata.tags : [];
   return tags.filter(tag => tag?.category === 'document');
+}
+
+export function hasConversationUsedDocumentTracking(metadata = {}) {
+  return Number(metadata.used_documents_tracking_version || 0) >= 1;
+}
+
+export function getConversationExactUsedDocuments(metadata = {}) {
+  if (!hasConversationUsedDocumentTracking(metadata)) {
+    return [];
+  }
+  return Array.isArray(metadata.used_documents) ? metadata.used_documents : [];
+}
+
+export function getConversationLegacyUsedDocuments(metadata = {}) {
+  if (!hasConversationUsedDocumentTracking(metadata)) {
+    return getConversationDocumentTags(metadata);
+  }
+  return Array.isArray(metadata.legacy_used_documents)
+    ? metadata.legacy_used_documents
+    : [];
+}
+
+function mergeConversationDocumentCollections(...collections) {
+  const documentsById = new Map();
+  collections.forEach(collection => {
+    if (!Array.isArray(collection)) {
+      return;
+    }
+    collection.forEach(doc => {
+      const documentId = String(doc?.document_id || '').trim();
+      if (!documentId) {
+        return;
+      }
+      const existingDocument = documentsById.get(documentId) || {};
+      documentsById.set(documentId, {
+        ...existingDocument,
+        ...doc,
+      });
+    });
+  });
+  return Array.from(documentsById.values());
+}
+
+export function getConversationUsedDocuments(metadata = {}) {
+  if (!hasConversationUsedDocumentTracking(metadata)) {
+    return getConversationDocumentTags(metadata);
+  }
+  return mergeConversationDocumentCollections(
+    getConversationLegacyUsedDocuments(metadata),
+    getConversationExactUsedDocuments(metadata),
+  );
 }
 
 export function hideConversationDetails() {
@@ -355,6 +409,14 @@ function renderConversationMetadata(metadata, conversationId) {
   }
 
   const documentTags = getConversationDocumentTags(metadata);
+  const exactUsedDocumentIds = new Set(
+    getConversationExactUsedDocuments(metadata)
+      .map(doc => String(doc?.document_id || '').trim())
+      .filter(Boolean)
+  );
+  const documentUsageNote = hasConversationUsedDocumentTracking(metadata)
+    ? 'All returned source documents are listed. Cited marks documents referenced by active responses.'
+    : 'All associated source documents are listed. Exact citation use was not tracked for this historical conversation.';
 
   // Documents Section
   if (documentTags.length > 0) {
@@ -362,10 +424,11 @@ function renderConversationMetadata(metadata, conversationId) {
       <div class="col-md-6">
         <div class="card h-100">
           <div class="card-header bg-secondary text-white">
-            <h6 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Documents</h6>
+            <h6 class="mb-0"><i class="bi bi-file-earmark-text me-2"></i>Source documents</h6>
           </div>
           <div class="card-body">
-            ${renderDocumentsSection(documentTags)}
+            <p class="small text-muted">${documentUsageNote}</p>
+            ${renderDocumentsSection(documentTags, exactUsedDocumentIds)}
           </div>
         </div>
       </div>
@@ -748,7 +811,7 @@ function renderModelsAndAgentsSection(models, agents) {
 /**
  * Render documents section
  */
-function renderDocumentsSection(documents) {
+function renderDocumentsSection(documents, citedDocumentIds = new Set()) {
   let html = '';
   
   documents.forEach(doc => {
@@ -761,6 +824,10 @@ function renderDocumentsSection(documents) {
     const safeDocumentTitle = escapeHtml(documentTitle);
     const safeScopeName = escapeHtml(scopeName);
     const safeScopeType = escapeHtml(doc.scope?.type || 'Unknown');
+    const isCited = citedDocumentIds.has(String(doc.document_id || '').trim());
+    const citedBadgeHtml = isCited
+      ? '<span class="badge bg-success conversation-document-cited-badge" title="Explicitly cited in an active response"><i class="bi bi-check2-circle me-1"></i>Cited</span>'
+      : '';
     
     // Format document classification with custom colors
     const allCategories = window.classification_categories || [];
@@ -778,7 +845,10 @@ function renderDocumentsSection(documents) {
       <div class="mb-3 p-2 border rounded">
         <div class="d-flex justify-content-between align-items-start mb-2">
           <div class="fw-semibold text-truncate me-2" title="${safeDocumentTitle}">${safeDocumentTitle}</div>
-          ${classificationHtml}
+          <div class="d-flex flex-wrap justify-content-end gap-1">
+            ${citedBadgeHtml}
+            ${classificationHtml}
+          </div>
         </div>
         <div class="small text-muted mb-1">
           <i class="bi bi-file-earmark me-1"></i>

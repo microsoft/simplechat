@@ -40,6 +40,7 @@ from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import SearchField, SearchFieldDataType, SearchIndex
 from azure.storage.blob import BlobBlock, BlobServiceClient, ContentSettings
 from cryptography.fernet import Fernet, InvalidToken
+from flask import has_request_context
 
 import config as app_config
 from config import (
@@ -196,6 +197,12 @@ DATA_MANAGEMENT_HISTORY_INDEX_MAINTENANCE_MESSAGE = (
 DATA_MANAGEMENT_HISTORY_UNAVAILABLE_MESSAGE = (
     "Data Management history could not be loaded. Please try again later or review application logs."
 )
+DATA_MANAGEMENT_HISTORY_BUSY_MESSAGE = (
+    "Data Management history is temporarily busy because Cosmos DB throttled the request. "
+    "Wait a moment and refresh this page."
+)
+DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS = 3
+DATA_MANAGEMENT_HISTORY_QUERY_MAX_RETRY_DELAY_SECONDS = 4.0
 DATA_MANAGEMENT_DEFAULT_RECOVERY_JOB_LIMIT = 25
 DATA_MANAGEMENT_RECOVERY_QUEUE_DELAY_SECONDS = 60
 DATA_MANAGEMENT_RECOVERY_RESUBMIT_DELAY_SECONDS = 120
@@ -210,6 +217,8 @@ DATA_MANAGEMENT_MIGRATION_BATCH_SIZE = 500
 DATA_MANAGEMENT_MIGRATION_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE = 100
 DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES = 50
+DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS = 10
+DATA_MANAGEMENT_BACKUP_CHECKPOINT_INTERVAL_SECONDS = 15
 DATA_MANAGEMENT_BACKUP_MAX_RECENT_CHECKPOINTS = 20
 DATA_MANAGEMENT_BACKUP_DEFAULT_PARALLEL_OPERATIONS = 4
 DATA_MANAGEMENT_BACKUP_MAX_PARALLEL_OPERATIONS = 16
@@ -375,12 +384,19 @@ class DataManagementHistoryUnavailableError(RuntimeError):
         reason="history_provider_unavailable",
         status_code=503,
         maintenance_required=False,
+        provider_status_code=None,
+        provider_message="",
+        retryable=False,
     ):
         super().__init__(safe_message)
         self.safe_message = safe_message
         self.reason = reason
         self.status_code = status_code
         self.maintenance_required = bool(maintenance_required)
+        # Provider detail is for operator logs only and never reaches the browser.
+        self.provider_status_code = provider_status_code
+        self.provider_message = provider_message
+        self.retryable = bool(retryable)
 
 
 class DataManagementMigrationLeaseLostError(RuntimeError):
@@ -9072,26 +9088,78 @@ def _get_data_management_provider_status_code(exc):
     return status_code
 
 
+def _get_data_management_provider_message(exc):
+    """Return provider error text for operator logs, never for the browser."""
+    return _safe_text(exc)[:1000]
+
+
 def _is_data_management_history_index_error(exc):
     if _get_data_management_provider_status_code(exc) != 400:
         return False
     error_text = _safe_text(exc).lower()
+    if "composite index" in error_text or "compositeindexes" in error_text:
+        return True
+    if "order by" not in error_text:
+        return False
     return (
-        "composite index" in error_text
-        or "compositeindexes" in error_text
-        or ("order by" in error_text and "index" in error_text)
+        "index" in error_text
+        or "does not have a corresponding" in error_text
+        or "not served" in error_text
     )
 
 
+def _is_data_management_history_throttle_error(exc):
+    if _get_data_management_provider_status_code(exc) in {429, 503}:
+        return True
+    error_text = _safe_text(exc).lower()
+    return "request rate is large" in error_text or "too many requests" in error_text
+
+
+def _is_data_management_history_transient_error(exc):
+    if isinstance(exc, (ServiceRequestError, ServiceResponseError)):
+        return True
+    status_code = _get_data_management_provider_status_code(exc)
+    return status_code in {408, 449} or (status_code is not None and 500 <= status_code <= 599)
+
+
 def _raise_data_management_history_unavailable(exc):
+    provider_status_code = _get_data_management_provider_status_code(exc)
+    provider_message = _get_data_management_provider_message(exc)
     if _is_data_management_history_index_error(exc):
         raise DataManagementHistoryUnavailableError(
             safe_message=DATA_MANAGEMENT_HISTORY_INDEX_MAINTENANCE_MESSAGE,
             reason="missing_history_index",
             status_code=503,
             maintenance_required=True,
+            provider_status_code=provider_status_code,
+            provider_message=provider_message,
         ) from exc
-    raise DataManagementHistoryUnavailableError() from exc
+    if _is_data_management_history_throttle_error(exc):
+        raise DataManagementHistoryUnavailableError(
+            safe_message=DATA_MANAGEMENT_HISTORY_BUSY_MESSAGE,
+            reason="history_provider_throttled",
+            status_code=503,
+            provider_status_code=provider_status_code,
+            provider_message=provider_message,
+            retryable=True,
+        ) from exc
+    raise DataManagementHistoryUnavailableError(
+        provider_status_code=provider_status_code,
+        provider_message=provider_message,
+        retryable=_is_data_management_history_transient_error(exc),
+    ) from exc
+
+
+def _get_data_management_history_retry_delay(exc, attempt):
+    retry_after = _get_backup_retry_after_seconds(exc) or 0.0
+    backoff = min(
+        DATA_MANAGEMENT_HISTORY_QUERY_MAX_RETRY_DELAY_SECONDS,
+        float(2 ** max(0, attempt - 1)) * 0.25,
+    )
+    return min(
+        DATA_MANAGEMENT_HISTORY_QUERY_MAX_RETRY_DELAY_SECONDS,
+        max(backoff, retry_after) + random.uniform(0.0, 0.1),
+    )
 
 
 def _query_data_management_history_items(query, parameters, max_item_count=None):
@@ -9102,10 +9170,30 @@ def _query_data_management_history_items(query, parameters, max_item_count=None)
     }
     if max_item_count is not None:
         query_kwargs["max_item_count"] = max_item_count
-    try:
-        return list(cosmos_data_management_jobs_container.query_items(**query_kwargs))
-    except (CosmosHttpResponseError, ServiceRequestError, ServiceResponseError) as exc:
-        _raise_data_management_history_unavailable(exc)
+    for attempt in range(1, DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS + 1):
+        try:
+            return list(cosmos_data_management_jobs_container.query_items(**query_kwargs))
+        except (CosmosHttpResponseError, ServiceRequestError, ServiceResponseError) as exc:
+            is_last_attempt = attempt >= DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS
+            should_retry = (
+                _is_data_management_history_throttle_error(exc)
+                or _is_data_management_history_transient_error(exc)
+            )
+            if is_last_attempt or not should_retry:
+                _raise_data_management_history_unavailable(exc)
+            retry_delay = _get_data_management_history_retry_delay(exc, attempt)
+            log_event(
+                "[DATA_MANAGEMENT] Retrying Data Management history query.",
+                {
+                    "attempt": attempt,
+                    "status_code": _get_data_management_provider_status_code(exc),
+                    "retry_delay_seconds": round(retry_delay, 3),
+                    "error": _get_data_management_provider_message(exc),
+                },
+                level=logging.WARNING,
+            )
+            time.sleep(retry_delay)
+
 
 
 def _query_data_management_history_page(
@@ -10450,6 +10538,22 @@ def get_data_management_backup_inventory(limit=100):
     ]
 
 
+def _count_data_management_backups(extra_clauses=None, extra_parameters=None):
+    """Count backups with a VALUE aggregate; the Python client cannot serve GROUP BY here."""
+    clauses = ["c.type = @type", "c.operation = @operation"]
+    parameters = [
+        {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
+        {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
+    ]
+    clauses.extend(extra_clauses or [])
+    parameters.extend(extra_parameters or [])
+    rows = _query_data_management_history_items(
+        query=f"SELECT VALUE COUNT(1) FROM c WHERE {' AND '.join(clauses)}",
+        parameters=parameters,
+    )
+    return _safe_int(rows[0], default=0, minimum=0) if rows else 0
+
+
 def _get_data_management_backup_global_summary():
     summary = {
         "full": 0,
@@ -10461,39 +10565,42 @@ def _get_data_management_backup_global_summary():
         "latest_full": None,
         "latest_partial": None,
     }
-    aggregate_query = (
-        "SELECT c.backup_type, c.status, COUNT(1) AS count FROM c "
-        "WHERE c.type = @type AND c.operation = @operation "
-        "GROUP BY c.backup_type, c.status"
-    )
     parameters = [
         {"name": "@type", "value": DATA_MANAGEMENT_JOB_TYPE},
         {"name": "@operation", "value": DATA_MANAGEMENT_OPERATION_BACKUP},
     ]
-    aggregate_rows = _query_data_management_history_items(
-        query=aggregate_query,
-        parameters=parameters,
+    available_clause = "(c.status = @completed OR c.status = @completed_with_warnings)"
+    available_parameters = [
+        {"name": "@completed", "value": DATA_MANAGEMENT_STATUS_COMPLETED},
+        {
+            "name": "@completed_with_warnings",
+            "value": DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
+        },
+    ]
+
+    summary["total"] = _count_data_management_backups()
+    summary["available"] = _count_data_management_backups(
+        [available_clause],
+        available_parameters,
     )
-    for row in aggregate_rows:
-        if not isinstance(row, dict):
-            continue
-        count = _safe_int(row.get("count"), default=0, minimum=0)
-        status = row.get("status")
-        backup_type = row.get("backup_type")
-        summary["total"] += count
-        if status in {
-            DATA_MANAGEMENT_STATUS_COMPLETED,
-            DATA_MANAGEMENT_STATUS_COMPLETED_WITH_WARNINGS,
-        }:
-            summary["available"] += count
-            if backup_type == DATA_MANAGEMENT_BACKUP_FULL:
-                summary["full"] += count
-            elif backup_type == DATA_MANAGEMENT_BACKUP_PARTIAL:
-                summary["partial"] += count
-        elif status == DATA_MANAGEMENT_STATUS_RUNNING:
-            summary["running"] += count
-        elif status == DATA_MANAGEMENT_STATUS_FAILED:
-            summary["failed"] += count
+    summary["running"] = _count_data_management_backups(
+        ["c.status = @running"],
+        [{"name": "@running", "value": DATA_MANAGEMENT_STATUS_RUNNING}],
+    )
+    summary["failed"] = _count_data_management_backups(
+        ["c.status = @failed"],
+        [{"name": "@failed", "value": DATA_MANAGEMENT_STATUS_FAILED}],
+    )
+    for backup_type, summary_field in (
+        (DATA_MANAGEMENT_BACKUP_FULL, "full"),
+        (DATA_MANAGEMENT_BACKUP_PARTIAL, "partial"),
+    ):
+        summary[summary_field] = _count_data_management_backups(
+            [available_clause, "c.backup_type = @backup_type"],
+            available_parameters + [
+                {"name": "@backup_type", "value": backup_type},
+            ],
+        )
 
     for backup_type, summary_field in (
         (DATA_MANAGEMENT_BACKUP_FULL, "latest_full"),
@@ -13095,6 +13202,7 @@ def _set_job_progress(
     total_steps,
     current_step=None,
     status=DATA_MANAGEMENT_STATUS_RUNNING,
+    step_status=None,
     allow_cancel_requested=False,
 ):
     total_steps = max(1, total_steps)
@@ -13123,11 +13231,25 @@ def _set_job_progress(
         saved_job.get("id"),
         current_step or "progress",
         saved_job,
-        status=status,
+        # A finished step stays "completed" even while the job itself keeps running.
+        status=step_status or status,
         message=message,
         details={"progress": saved_job.get("progress") if isinstance(saved_job.get("progress"), dict) else {}},
     )
     return saved_job
+
+
+def _complete_job_step(job, message, completed_steps, total_steps, current_step, **kwargs):
+    """Advance job progress and stamp the finished step as completed."""
+    return _set_job_progress(
+        job,
+        message,
+        completed_steps,
+        total_steps,
+        current_step=current_step,
+        step_status=DATA_MANAGEMENT_STATUS_COMPLETED,
+        **kwargs,
+    )
 
 
 def _get_backup_fernet(settings, key_reference=None):
@@ -13389,6 +13511,14 @@ def _get_backup_blob_property(properties, field_name, default=None):
     if isinstance(properties, dict):
         return properties.get(field_name, default)
     return getattr(properties, field_name, default)
+
+
+def _normalize_backup_etag(value):
+    """Strip transport quoting so list_blobs and get_blob_properties ETags compare equal."""
+    normalized = _safe_text(value).strip()
+    if normalized[:2].upper() == "W/":
+        normalized = normalized[2:].strip()
+    return normalized.strip('"')
 
 
 def _build_backup_blob_source_item(source_container_name, blob_name, properties):
@@ -13656,6 +13786,7 @@ def _transfer_backup_source_blob(
         maximum=DATA_MANAGEMENT_BACKUP_MAX_RETRY_COUNT,
     )
     source_etag = _safe_text(source_item.get("source_etag"))
+    normalized_source_etag = _normalize_backup_etag(source_etag)
     total_chunks = max(
         1,
         (source_size + effective_chunk_size - 1) // effective_chunk_size,
@@ -13798,10 +13929,10 @@ def _transfer_backup_source_blob(
                     "Backup artifact length did not match the committed transfer."
                 )
             current_source_properties = source_blob_client.get_blob_properties()
-            current_source_etag = _safe_text(
+            current_source_etag = _normalize_backup_etag(
                 _get_backup_blob_property(current_source_properties, "etag")
             )
-            if source_etag and current_source_etag != source_etag:
+            if normalized_source_etag and current_source_etag != normalized_source_etag:
                 raise RuntimeError("Source blob changed while it was being backed up.")
             succeeded_metadata = _build_backup_blob_target_metadata(
                 backup_job,
@@ -14407,6 +14538,29 @@ def _append_backup_state_summary(state, field_name, summary):
     del values[:-DATA_MANAGEMENT_BACKUP_MAX_PUBLIC_ITEM_SUMMARIES]
 
 
+def _record_backup_failure_reason(reason_counts, failure_summary):
+    """Tally distinct failure reasons so per-item faults log as one bounded rollup."""
+    if not isinstance(reason_counts, dict):
+        return
+    reason = _safe_text(failure_summary)[:200] or "Unspecified backup failure."
+    if reason in reason_counts:
+        reason_counts[reason] += 1
+    elif len(reason_counts) < DATA_MANAGEMENT_BACKUP_MAX_LOGGED_FAILURE_REASONS:
+        reason_counts[reason] = 1
+    else:
+        reason_counts["Other backup failures."] = (
+            reason_counts.get("Other backup failures.", 0) + 1
+        )
+
+
+def _summarize_backup_failure_reasons(reason_counts):
+    """Render the most frequent failure reasons as a single log-safe string."""
+    if not isinstance(reason_counts, dict) or not reason_counts:
+        return ""
+    ordered = sorted(reason_counts.items(), key=lambda entry: (-entry[1], entry[0]))
+    return "; ".join(f"{count}x {reason}" for reason, count in ordered)
+
+
 def _build_backup_checkpoint_id(job, resource_name, batch_number):
     return (
         f"{_safe_text(job.get('id'))}:"
@@ -14829,102 +14983,101 @@ def _iter_backup_cosmos_source_items(
             "source_version": source_version,
         }
 
-    continuation_token = None
-    while True:
+    def finalize_page(normalized_page):
+        normalized_page.sort(
+            key=lambda item: (item["source_identity"], item["source_version"]),
+        )
+        report_telemetry({"source_page_count": 1})
+        return normalized_page
+
+    def normalize_page(raw_page):
+        return finalize_page([
+            item for item in (normalize_item(raw_item) for raw_item in raw_page)
+            if item is not None
+        ])
+
+    def assert_not_canceled():
         if cancel_event is not None and cancel_event.is_set():
             raise DataManagementBackupCanceledError(
                 "Cosmos source export stopped after backup cancellation or lease loss."
             )
-        page_completed = False
-        for attempt in range(1, retry_count + 1):
-            try:
-                source_iterable = container.query_items(
-                    query=query,
-                    parameters=parameters,
-                    enable_cross_partition_query=True,
-                    max_item_count=DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE,
-                    populate_query_metrics=True,
-                    response_hook=response_hook,
-                )
-                if hasattr(source_iterable, "by_page"):
-                    page_iterator = source_iterable.by_page(
-                        continuation_token=continuation_token,
-                    )
-                    try:
-                        source_page = list(next(page_iterator))
-                    except StopIteration:
-                        return
-                    normalized_page = [
-                        item for item in (normalize_item(raw_item) for raw_item in source_page)
-                        if item is not None
-                    ]
-                    normalized_page.sort(
-                        key=lambda item: (item["source_identity"], item["source_version"]),
-                    )
-                    report_telemetry({"source_page_count": 1})
-                    for source_item in normalized_page:
-                        yield source_item
-                    continuation_token = getattr(page_iterator, "continuation_token", None)
-                    page_completed = True
-                    break
 
-                # Lightweight test doubles may not expose Cosmos paging. Keep their
-                # staging bounded even though production uses continuation pages.
-                buffered_items = []
-                for raw_item in source_iterable:
-                    normalized_item = normalize_item(raw_item)
-                    if normalized_item is None:
-                        continue
-                    buffered_items.append(normalized_item)
-                    if len(buffered_items) < DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
-                        continue
-                    buffered_items.sort(
-                        key=lambda item: (item["source_identity"], item["source_version"]),
-                    )
-                    report_telemetry({"source_page_count": 1})
-                    for source_item in buffered_items:
-                        yield source_item
-                    buffered_items = []
-                if buffered_items:
-                    buffered_items.sort(
-                        key=lambda item: (item["source_identity"], item["source_version"]),
-                    )
-                    report_telemetry({"source_page_count": 1})
-                    for source_item in buffered_items:
-                        yield source_item
-                return
-            except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
-                raise
-            except Exception as exc:
-                if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
-                    log_event(
-                        "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
-                        {
-                            "container": container_name,
-                            "status_code": _get_backup_exception_status_code(exc),
-                            "error": str(exc),
-                        },
-                        level=logging.WARNING,
-                    )
+    def wait_before_page_retry(exc, attempt):
+        if not _is_retryable_backup_cosmos_error(exc) or attempt >= retry_count:
+            log_event(
+                "[DATA_MANAGEMENT] Cosmos backup source page read failed.",
+                {
+                    "container": container_name,
+                    "status_code": _get_backup_exception_status_code(exc),
+                    "attempt": attempt,
+                    "error": str(exc),
+                },
+                level=logging.WARNING,
+            )
+            raise exc
+        status_code = _get_backup_exception_status_code(exc)
+        retry_delay = _get_backup_retry_delay(exc, attempt)
+        report_telemetry({
+            "source_retry_attempt_count": 1,
+            "source_throttle_count": 1 if status_code in {429, 449} else 0,
+            "last_retry_delay_seconds": round(retry_delay, 3),
+        })
+        if cancel_event is not None:
+            if cancel_event.wait(retry_delay):
+                raise DataManagementBackupCanceledError(
+                    "Cosmos source export stopped during retry backoff."
+                ) from exc
+        else:
+            time.sleep(retry_delay)
+
+    assert_not_canceled()
+    source_iterable = container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True,
+        max_item_count=DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE,
+        populate_query_metrics=True,
+        response_hook=response_hook,
+    )
+
+    if hasattr(source_iterable, "by_page"):
+        # Cross-partition results are merged client side, so the surfaced continuation
+        # token cannot be replayed against a rebuilt query. Drain a single pager.
+        page_iterator = source_iterable.by_page()
+        while True:
+            assert_not_canceled()
+            raw_page = None
+            for attempt in range(1, retry_count + 1):
+                try:
+                    raw_page = list(next(page_iterator))
+                    break
+                except StopIteration:
+                    return
+                except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
                     raise
-                status_code = _get_backup_exception_status_code(exc)
-                retry_delay = _get_backup_retry_delay(exc, attempt)
-                report_telemetry({
-                    "source_retry_attempt_count": 1,
-                    "source_throttle_count": 1 if status_code in {429, 449} else 0,
-                    "last_retry_delay_seconds": round(retry_delay, 3),
-                })
-                if cancel_event is not None:
-                    if cancel_event.wait(retry_delay):
-                        raise DataManagementBackupCanceledError(
-                            "Cosmos source export stopped during retry backoff."
-                        )
-                else:
-                    time.sleep(retry_delay)
-        if not page_completed:
-            return
-        if not continuation_token:
-            return
+                except Exception as exc:
+                    wait_before_page_retry(exc, attempt)
+            if raw_page is None:
+                return
+            for source_item in normalize_page(raw_page):
+                yield source_item
+
+    # Lightweight test doubles may not expose Cosmos paging. Keep their staging
+    # bounded even though production drains continuation pages.
+    buffered_items = []
+    for raw_item in source_iterable:
+        normalized_item = normalize_item(raw_item)
+        if normalized_item is None:
+            continue
+        buffered_items.append(normalized_item)
+        if len(buffered_items) < DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE:
+            continue
+        for source_item in finalize_page(buffered_items):
+            yield source_item
+        buffered_items = []
+    if buffered_items:
+        for source_item in finalize_page(buffered_items):
+            yield source_item
 
 
 def _escape_backup_search_filter_value(value):
@@ -16628,6 +16781,7 @@ def _execute_backup_source_blob_resource(
     retry_count = _get_backup_blob_retry_count(settings, backup_plan)
     clean_transfer_count = 0
     current_files = set()
+    failure_reason_counts = {}
     started_at = time.perf_counter()
     cancel_event = Event()
     append_manifest, flush_manifest, manifest_buffer = _create_backup_manifest_writer(
@@ -16635,10 +16789,12 @@ def _execute_backup_source_blob_resource(
         resource_name,
     )
     pending_latest_state_updates = []
+    last_persist_at = time.monotonic()
 
     def persist(message):
-        nonlocal state, previous_checkpoint
+        nonlocal state, previous_checkpoint, last_persist_at
         _assert_backup_job_lease(job)
+        last_persist_at = time.monotonic()
         if manifest_buffer:
             flush_manifest()
         elapsed_seconds = max(0.001, time.perf_counter() - started_at)
@@ -16678,6 +16834,16 @@ def _execute_backup_source_blob_resource(
             resource_name,
             pending_latest_state_updates,
         )
+
+    def maybe_persist(message):
+        """Checkpoint on batch or interval so each transfer is not its own Cosmos write."""
+        if (
+            len(manifest_buffer) >= DATA_MANAGEMENT_BACKUP_MANIFEST_BATCH_SIZE or
+            time.monotonic() - last_persist_at >= DATA_MANAGEMENT_BACKUP_CHECKPOINT_INTERVAL_SECONDS
+        ):
+            persist(message)
+        else:
+            _assert_backup_job_lease(job)
 
     def record_skipped(source_item, latest_state):
         nonlocal skipped_count
@@ -16845,6 +17011,20 @@ def _execute_backup_source_blob_resource(
                 ) or
                 "Source blob transfer failed."
             )
+            _record_backup_failure_reason(failure_reason_counts, failure_summary)
+            if failed_count == 1:
+                log_event(
+                    "[DATA_MANAGEMENT] Source blob backup item failed.",
+                    {
+                        "job_id": job.get("id"),
+                        "resource": resource_name,
+                        "container": source_container_name,
+                        "failure_summary": failure_summary,
+                        "retry_attempt_count": transfer_result.get("retry_attempt_count"),
+                        "throttle_count": transfer_result.get("throttle_count"),
+                    },
+                    level=logging.WARNING,
+                )
             _append_backup_state_summary(state, "failed_items", {
                 "service": "source_blobs",
                 "resource_name": resource_name,
@@ -16879,7 +17059,7 @@ def _execute_backup_source_blob_resource(
             artifact_path,
         )
         batch_number += 1
-        persist(f"Checkpointed source blob backup for {source_container_name}")
+        maybe_persist(f"Checkpointed source blob backup for {source_container_name}")
 
     try:
         source_iterator = iter(source_container_client.list_blobs())
@@ -16949,11 +17129,38 @@ def _execute_backup_source_blob_resource(
             _sanitize_data_management_backup_text(str(exc)) or
             "Source blob enumeration failed."
         )
+        _record_backup_failure_reason(failure_reason_counts, failure_summary)
+        log_event(
+            "[DATA_MANAGEMENT] Source blob backup enumeration failed.",
+            {
+                "job_id": job.get("id"),
+                "resource": resource_name,
+                "container": source_container_name,
+                "failure_summary": failure_summary,
+            },
+            level=logging.WARNING,
+        )
         _append_backup_state_summary(state, "failed_items", {
             "service": "source_blobs",
             "resource_name": resource_name,
             "failure_summary": failure_summary,
         })
+
+    if failed_count:
+        log_event(
+            "[DATA_MANAGEMENT] Source blob backup completed with failures.",
+            {
+                "job_id": job.get("id"),
+                "resource": resource_name,
+                "container": source_container_name,
+                "failed_count": failed_count,
+                "copied_count": copied_count,
+                "skipped_count": skipped_count,
+                "source_read_count": source_read_count,
+                "failure_reasons": _summarize_backup_failure_reasons(failure_reason_counts),
+            },
+            level=logging.WARNING,
+        )
 
     if manifest_buffer or pending_latest_state_updates:
         persist(f"Finalized source blob checkpoints for {source_container_name}")
@@ -17781,7 +17988,7 @@ def execute_restore_job(job, settings):
         container_client,
         fernet,
     ))
-    _set_job_progress(job, "Cosmos restore step completed", 1, total_steps, current_step="cosmos")
+    _complete_job_step(job, "Cosmos restore step completed", 1, total_steps, "cosmos")
 
     artifacts.extend(_execute_restore_search_resources(
         job,
@@ -17791,7 +17998,7 @@ def execute_restore_job(job, settings):
         container_client,
         fernet,
     ))
-    _set_job_progress(job, "AI Search restore step completed", 2, total_steps, current_step="ai_search")
+    _complete_job_step(job, "AI Search restore step completed", 2, total_steps, "ai_search")
 
     artifacts.extend(_execute_restore_source_blob_resources(
         job,
@@ -17801,7 +18008,7 @@ def execute_restore_job(job, settings):
         container_client,
         fernet,
     ))
-    _set_job_progress(job, "Source blob restore step completed", 3, total_steps, current_step="source_blobs")
+    _complete_job_step(job, "Source blob restore step completed", 3, total_steps, "source_blobs")
 
     warnings = list(restore_state.get("warnings") or [])
     failed_resource_names = [
@@ -17950,7 +18157,7 @@ def execute_backup_job(job, settings):
             warning,
             "Skipped disabled Cosmos backup scope",
         )
-    _set_job_progress(job, "Cosmos DB export step completed", 1, total_steps, current_step="cosmos")
+    _complete_job_step(job, "Cosmos DB export step completed", 1, total_steps, "cosmos")
 
     if backup_plan.get("include_ai_search"):
         artifacts.extend(_execute_backup_search_resources(
@@ -17972,7 +18179,7 @@ def execute_backup_job(job, settings):
             warning,
             "Skipped disabled AI Search backup scope",
         )
-    _set_job_progress(job, "AI Search export step completed", 2, total_steps, current_step="ai_search")
+    _complete_job_step(job, "AI Search export step completed", 2, total_steps, "ai_search")
 
     if backup_plan.get("include_source_blobs"):
         source_blob_service_client = _get_source_blob_service_client()
@@ -18041,7 +18248,7 @@ def execute_backup_job(job, settings):
             warning,
             "Skipped disabled source blob backup scope",
         )
-    _set_job_progress(job, "Source blob export step completed", 3, total_steps, current_step="source_blobs")
+    _complete_job_step(job, "Source blob export step completed", 3, total_steps, "source_blobs")
 
     _assert_backup_job_lease(job)
     artifacts = _backup_state_resource_artifacts(backup_state)
@@ -18232,13 +18439,13 @@ def execute_migration_job(job, settings):
             allow_cancel_requested=True,
         )
         raise
-    _set_job_progress(job, "Validated migration selection plan", 1, total_steps, current_step="plan")
+    _complete_job_step(job, "Validated migration selection plan", 1, total_steps, "plan")
     migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
     _record_data_management_job_event(
         job.get("id"),
         "migration-plan",
         job,
-        status=DATA_MANAGEMENT_STATUS_RUNNING,
+        status=DATA_MANAGEMENT_STATUS_COMPLETED,
         message="Migration selection plan validated",
         details={
             "migration_plan": plan_summary,
@@ -18360,7 +18567,7 @@ def execute_migration_job(job, settings):
                 "Pinned server-owned migration inventory preview",
             )
 
-        _set_job_progress(job, "Migration inventory completed", 2, total_steps, current_step="inventory")
+        _complete_job_step(job, "Migration inventory completed", 2, total_steps, "inventory")
         _set_job_progress(job, "Validating migration destinations", 2, total_steps, current_step="preflight")
         migration_state = _run_data_management_migration_preflight(
             job,
@@ -18368,13 +18575,13 @@ def execute_migration_job(job, settings):
             settings,
             migration_plan,
         )
-        _set_job_progress(job, "Destination migration preflight completed", 3, total_steps, current_step="preflight")
+        _complete_job_step(job, "Destination migration preflight completed", 3, total_steps, "preflight")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         _record_data_management_job_event(
             job.get("id"),
             "migration-preflight",
             job,
-            status=DATA_MANAGEMENT_STATUS_RUNNING,
+            status=DATA_MANAGEMENT_STATUS_COMPLETED,
             message="Verified source and destination migration access",
             details=migration_state.get("preflight") if isinstance(migration_state.get("preflight"), dict) else {},
         )
@@ -18386,7 +18593,7 @@ def execute_migration_job(job, settings):
             settings,
             migration_plan,
         )
-        _set_job_progress(job, "Destination Cosmos capacity prepared", 4, total_steps, current_step="capacity")
+        _complete_job_step(job, "Destination Cosmos capacity prepared", 4, total_steps, "capacity")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         _set_job_progress(job, "Migrating Cosmos records", 4, total_steps, current_step="cosmos")
@@ -18409,11 +18616,11 @@ def execute_migration_job(job, settings):
                 job.get("id"),
                 f"migration-cosmos-{target_type}",
                 job,
-                status=DATA_MANAGEMENT_STATUS_RUNNING,
+                status=DATA_MANAGEMENT_STATUS_COMPLETED,
                 message=f"Migrated {target_type.replace('_', ' ')} Cosmos records",
                 details={"target_type": target_type, "artifacts": copied},
             )
-        _set_job_progress(job, "Cosmos migration completed", 5, total_steps, current_step="cosmos")
+        _complete_job_step(job, "Cosmos migration completed", 5, total_steps, "cosmos")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         search_artifacts = []
@@ -18458,7 +18665,7 @@ def execute_migration_job(job, settings):
                     )
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         artifacts.extend(search_artifacts)
-        _set_job_progress(job, "AI Search migration completed", 6, total_steps, current_step="ai_search")
+        _complete_job_step(job, "AI Search migration completed", 6, total_steps, "ai_search")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         _set_job_progress(job, "Migrating source document blobs", 6, total_steps, current_step="source_blobs")
@@ -18471,7 +18678,7 @@ def execute_migration_job(job, settings):
         )
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         artifacts.extend(source_blob_artifacts)
-        _set_job_progress(job, "Source blob migration completed", 7, total_steps, current_step="source_blobs")
+        _complete_job_step(job, "Source blob migration completed", 7, total_steps, "source_blobs")
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
 
         _set_job_progress(job, "Reconciling source and destination", 7, total_steps, current_step="reconciliation")
@@ -18487,12 +18694,12 @@ def execute_migration_job(job, settings):
         )
         migration_state = job.get("migration_state") if isinstance(job.get("migration_state"), dict) else migration_state
         artifacts.append(reconciliation_artifact)
-        _set_job_progress(job, "Migration reconciliation completed", 8, total_steps, current_step="reconciliation")
+        _complete_job_step(job, "Migration reconciliation completed", 8, total_steps, "reconciliation")
         _record_data_management_job_event(
             job.get("id"),
             "migration-reconciliation",
             job,
-            status=DATA_MANAGEMENT_STATUS_RUNNING,
+            status=DATA_MANAGEMENT_STATUS_COMPLETED,
             message="Reconciled migration source and destination identities",
             details=reconciliation_artifact,
         )
@@ -18570,7 +18777,7 @@ def execute_migration_job(job, settings):
         settings,
         "Migration execution completed",
     )
-    _set_job_progress(job, "Migration execution completed", 10, total_steps, current_step="complete")
+    _complete_job_step(job, "Migration execution completed", 10, total_steps, "complete")
 
     artifact_summaries = summarize_backup_artifacts(artifacts)
     artifact_totals = _backup_artifact_totals(artifact_summaries)
@@ -18892,14 +19099,14 @@ def process_data_management_job(job_id):
 
 def submit_data_management_job(app, job_id):
     executor = app.extensions.get("executor") if app else None
-    if executor and hasattr(executor, "submit_stored"):
+    if executor and has_request_context() and hasattr(executor, "submit_stored"):
         executor.submit_stored(
             f"data_management_{job_id}",
             process_data_management_job,
             job_id=job_id,
         )
         return True
-    if executor and hasattr(executor, "submit"):
+    if executor and has_request_context() and hasattr(executor, "submit"):
         executor.submit(process_data_management_job, job_id)
         return True
     worker_thread = Thread(

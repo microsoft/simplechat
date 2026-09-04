@@ -1,0 +1,1141 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'cosmos' %} show active{% endif %}" id="cosmos" role="tabpanel" aria-labelledby="cosmos-tab">
+                <div class="card p-3 mb-3" id="document-access-index-section" data-testid="document-access-index-section">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-diagram-3 me-2"></i>Cosmos Document Access Index
+                            </h5>
+                            <p class="text-muted mb-0">
+                                Monitor the document access projection used to remove expensive cross-partition document access queries.
+                            </p>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2" role="group" aria-label="Document access index actions">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="document-access-index-refresh-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Status
+                            </button>
+                            {% if settings.enable_dai_debug %}
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="document-access-index-run-batch-btn">
+                                <i class="bi bi-play-circle me-1" aria-hidden="true"></i>Run One Backfill Batch
+                            </button>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="document-access-index-reset-btn" data-bs-toggle="modal" data-bs-target="#documentAccessIndexResetModal">
+                                <i class="bi bi-arrow-counterclockwise me-1" aria-hidden="true"></i>Reset Checkpoint
+                            </button>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info small mb-3">
+                        <i class="bi bi-info-circle me-2" aria-hidden="true"></i>
+                        Document access projection maintenance is automatic. The background scheduler repairs fail-open projection records first, then runs bounded backfill batches repeatedly while work remains. Production read metrics below show DAI-served reads, Redis cache hits, source fallbacks, RU, and latency without requiring shadow validation.
+                        {% if settings.enable_dai_debug %}Debug controls and shadow validation diagnostics are visible because <code>enable_dai_debug</code> is enabled in app settings.{% endif %}
+                    </div>
+
+                    <div id="document-access-index-message" class="alert alert-info d-none" role="status" aria-live="polite"></div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Container</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-container-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Write-through</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-write-through-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Read Path</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-read-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Redis List Cache</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-cache-status">Not loaded</span>
+                            </div>
+                        </div>
+                        {% if settings.enable_dai_debug %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Shadow Validation</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-shadow-status">Not loaded</span>
+                            </div>
+                        </div>
+                        {% endif %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Auto Maintenance</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-maintenance-mode">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Next Maintenance Action</div>
+                                <div class="fw-semibold" id="document-access-index-maintenance-next-action">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">More Work Pending</div>
+                                <div class="fw-semibold" id="document-access-index-maintenance-more-work">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Active Loop Interval</div>
+                                <div class="fw-semibold" id="document-access-index-maintenance-active-interval">Not loaded</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {% if settings.enable_dai_debug %}
+                    <div class="border rounded p-3 mb-3" data-testid="document-access-index-debug-controls">
+                        <h6 class="mb-3">Automatic Maintenance and Diagnostics</h6>
+                        <div class="row g-3 align-items-start">
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_write_through"
+                                        name="enable_document_access_index_write_through"
+                                        checked
+                                        disabled
+                                        aria-describedby="document-access-index-write-through-help"
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_write_through">
+                                        Write-through projection
+                                    </label>
+                                </div>
+                                <div class="form-text" id="document-access-index-write-through-help">Always on. New and changed documents synchronize into the access index and fail open to repair records if projection updates fail.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_startup_document_access_index_backfill"
+                                        name="enable_startup_document_access_index_backfill"
+                                        checked
+                                        disabled
+                                        aria-describedby="document-access-index-backfill-help"
+                                    >
+                                    <label class="form-check-label" for="enable_startup_document_access_index_backfill">
+                                        Automatic repair/backfill
+                                    </label>
+                                </div>
+                                <div class="form-text" id="document-access-index-backfill-help">Always on. Maintenance keeps running bounded repair and backfill batches until DAI is healthy.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_shadow_validation"
+                                        name="enable_document_access_index_shadow_validation"
+                                        {% if settings.enable_document_access_index_shadow_validation %}checked{% endif %}
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_shadow_validation">
+                                        Enable shadow validation
+                                    </label>
+                                </div>
+                                <div class="form-text">Compares source list results to projection rows and logs mismatches without changing reads.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="document_access_index_backfill_batch_size" class="form-label">Backfill Batch Size</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_access_index_backfill_batch_size"
+                                    name="document_access_index_backfill_batch_size"
+                                    min="1"
+                                    max="1000"
+                                    value="{{ settings.document_access_index_backfill_batch_size or 200 }}"
+                                >
+                                <div class="form-text">Documents processed per manual or scheduled batch.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="document_access_index_repair_batch_size" class="form-label">Repair Batch Size</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_access_index_repair_batch_size"
+                                    name="document_access_index_repair_batch_size"
+                                    min="1"
+                                    max="500"
+                                    value="{{ settings.document_access_index_repair_batch_size or 100 }}"
+                                >
+                                <div class="form-text">Fail-open repair records reconciled before each backfill batch.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-3 mb-3" data-testid="document-access-index-debug-read-controls">
+                        <h6 class="mb-3">Default Read Path</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        id="enable_document_access_index_reads"
+                                        name="enable_document_access_index_reads"
+                                        checked
+                                        disabled
+                                        aria-describedby="document-access-index-reads-help"
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_reads">
+                                        Document access index reads
+                                        <span class="badge text-bg-success ms-1">Wave 5B default</span>
+                                    </label>
+                                </div>
+                                <div class="form-text" id="document-access-index-reads-help">Always on. DAI-backed document and tag list reads are the normal path; source-container fallback remains automatic when backfill is not ready, repairs are pending, or a DAI query fails.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <div class="form-check form-switch">
+                                    <input
+                                        class="form-check-input"
+                                        type="checkbox"
+                                        role="switch"
+                                        id="enable_document_access_index_cache"
+                                        name="enable_document_access_index_cache"
+                                        {% if settings.enable_document_access_index_cache %}checked{% endif %}
+                                        aria-describedby="document-access-index-cache-help"
+                                    >
+                                    <label class="form-check-label" for="enable_document_access_index_cache">
+                                        Redis document list cache
+                                        <span class="badge text-bg-info ms-1">Wave 6</span>
+                                    </label>
+                                </div>
+                                <div class="form-text" id="document-access-index-cache-help">Uses Redis read-through caching for DAI document, tag, and legacy-count reads. If Redis is unavailable, reads bypass cache and use DAI directly.</div>
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="document_access_index_cache_ttl_seconds" class="form-label">Cache TTL Seconds</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_access_index_cache_ttl_seconds"
+                                    name="document_access_index_cache_ttl_seconds"
+                                    min="60"
+                                    max="900"
+                                    value="{{ settings.document_access_index_cache_ttl_seconds or 900 }}"
+                                    aria-describedby="document-access-index-cache-ttl-help"
+                                >
+                                <div class="form-text" id="document-access-index-cache-ttl-help">Default 900 seconds. Scope-version invalidation makes document changes visible immediately; TTL clears unreachable old entries.</div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="row g-3">
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Backfill State</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-backfill-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Repair Backlog</div>
+                                <div class="fw-semibold" id="document-access-index-repair-count">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m DAI Read Attempts</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-attempts">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Redis Cache Hit Rate</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-hit-rate">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Cache Hits / Misses</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-hits-misses">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Cache Bypasses / Errors</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-bypasses-errors">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Cache Invalidations</div>
+                                <div class="fw-semibold" id="document-access-index-cache-15m-invalidations">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Served from DAI</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-served">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Source Fallbacks</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-fallbacks">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Fallback Rate</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-fallback-rate">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m DAI Read RU</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Avg / P95 Latency</div>
+                                <div class="fw-semibold" id="document-access-index-read-15m-latency">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Fallback Reason</div>
+                                <div class="fw-semibold text-break" id="document-access-index-read-last-fallback">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last DAI Read Metric</div>
+                                <div class="fw-semibold text-break" id="document-access-index-read-last-sample">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Cache Event</div>
+                                <div class="fw-semibold text-break" id="document-access-index-cache-last-event">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="alert alert-secondary small mb-0">
+                                <i class="bi bi-speedometer2 me-2" aria-hidden="true"></i>
+                                Production read metrics are lightweight in-process counters for the current app worker. Application Insights logs remain the durable fleet-wide source for fallback warnings and query failures.
+                            </div>
+                        </div>
+                        {% if settings.enable_dai_debug %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Shadow Result</div>
+                                <span class="badge text-bg-secondary" id="document-access-index-shadow-last-status">Not run</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Shadow Mismatches</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-mismatches">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Source / Validation RU</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-ru-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Validation Index RU</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-validation-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Candidate Read RU</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-candidate-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Estimated Wave 5 Savings</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-wave5-ru-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Source / Candidate Latency</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-ms-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Estimated Wave 5 Latency</div>
+                                <div class="fw-semibold" id="document-access-index-shadow-ms-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="alert alert-secondary small mb-0">
+                                <i class="bi bi-graph-up-arrow me-2" aria-hidden="true"></i>
+                                Rolling decision metrics aggregate shadow-validation samples over recent windows. Use these totals to compare source container RU with candidate access-index RU before enabling the future read path or Redis document access cache.
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">5m Source / Candidate RU</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-5m-ru-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">5m Estimated Wave 5 Savings</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-5m-wave5-ru-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Source / Candidate RU</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-ru-comparison">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Estimated Wave 5 Savings</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-wave5-ru-savings">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Validation Overhead</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-validation-overhead">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">15m Shadow Samples</div>
+                                <div class="fw-semibold" id="document-access-index-rolling-15m-samples">Not loaded</div>
+                            </div>
+                        </div>
+                        {% endif %}
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Current Scope</div>
+                                <div class="fw-semibold" id="document-access-index-current-scope">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Completed Scopes</div>
+                                <div class="fw-semibold" id="document-access-index-completed-scopes">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Total Documents Processed</div>
+                                <div class="fw-semibold" id="document-access-index-total-processed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Total Documents Failed</div>
+                                <div class="fw-semibold" id="document-access-index-total-failed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Rows Upserted</div>
+                                <div class="fw-semibold" id="document-access-index-total-upserted">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Rows Deleted</div>
+                                <div class="fw-semibold" id="document-access-index-total-deleted">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Batch Completed</div>
+                                <div class="fw-semibold text-break" id="document-access-index-last-completed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Error</div>
+                                <div class="fw-semibold text-break" id="document-access-index-last-error">Not loaded</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="cosmos-maintenance-section" data-testid="cosmos-maintenance-section">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-tools me-2"></i>Cosmos Maintenance
+                            </h5>
+                            <p class="text-muted mb-0">
+                                Review expected indexing policies and clean up stale operational cache documents without touching source configuration or user data.
+                            </p>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2" role="group" aria-label="Cosmos maintenance actions">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-maintenance-refresh-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Status
+                            </button>
+                            <button type="button" class="btn btn-outline-warning btn-sm" id="cosmos-indexing-policy-apply-btn" data-bs-toggle="modal" data-bs-target="#cosmosIndexingPolicyApplyModal">
+                                <i class="bi bi-lightning-charge me-1" aria-hidden="true"></i>Apply Missing Indexes
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="stale-cache-cleanup-dry-run-btn">
+                                <i class="bi bi-search me-1" aria-hidden="true"></i>Dry Run Cleanup
+                            </button>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="stale-cache-cleanup-apply-btn" data-bs-toggle="modal" data-bs-target="#staleCacheCleanupApplyModal">
+                                <i class="bi bi-trash3 me-1" aria-hidden="true"></i>Delete Stale Cache Docs
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info small mb-3">
+                        <i class="bi bi-info-circle me-2" aria-hidden="true"></i>
+                        Indexing maintenance only adds missing expected composite indexes and preserves existing policy paths. Composite indexes can increase write-index overhead while improving supported lookup and ordered-query speed. Stale cleanup is allowlisted to obsolete cache artifacts, supports dry-run review, and deletes at most one bounded batch per run.
+                    </div>
+                    <div id="cosmos-maintenance-message" class="alert alert-info d-none" role="status" aria-live="polite"></div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Indexing Policy Status</div>
+                                <span class="badge text-bg-secondary" id="cosmos-indexing-policy-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Indexing Mode</div>
+                                <div class="fw-semibold" id="cosmos-indexing-policy-mode">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Containers Checked</div>
+                                <div class="fw-semibold" id="cosmos-indexing-policy-container-count">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Missing Expected Indexes</div>
+                                <div class="fw-semibold" id="cosmos-indexing-policy-missing-count">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Updated Containers</div>
+                                <div class="fw-semibold" id="cosmos-indexing-policy-updated-count">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Indexing Failures</div>
+                                <div class="fw-semibold" id="cosmos-indexing-policy-failed-count">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Indexing Evaluation</div>
+                                <div class="fw-semibold text-break" id="cosmos-indexing-policy-last-evaluated">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Stale Cleanup Status</div>
+                                <span class="badge text-bg-secondary" id="stale-cache-cleanup-status">Not loaded</span>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Cleanup Mode</div>
+                                <div class="fw-semibold" id="stale-cache-cleanup-mode">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Cleanup Candidates</div>
+                                <div class="fw-semibold" id="stale-cache-cleanup-candidates">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Deleted Docs</div>
+                                <div class="fw-semibold" id="stale-cache-cleanup-deleted">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Cleanup Failures</div>
+                                <div class="fw-semibold" id="stale-cache-cleanup-failed">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-xl-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">More Candidates</div>
+                                <div class="fw-semibold" id="stale-cache-cleanup-more-candidates">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Cleanup Categories</div>
+                                <div class="fw-semibold text-break" id="stale-cache-cleanup-categories">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Cleanup Evaluation</div>
+                                <div class="fw-semibold text-break" id="stale-cache-cleanup-last-evaluated">Not loaded</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="cosmosIndexingPolicyApplyModal" tabindex="-1" aria-labelledby="cosmosIndexingPolicyApplyModalLabel" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="cosmosIndexingPolicyApplyModalLabel">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>Apply Missing Cosmos Indexes
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>
+                                    This adds any missing expected composite indexes to the configured hot Cosmos containers. Existing included paths, excluded paths, default indexes, TTL settings, and full-text policies are preserved.
+                                </p>
+                                <p>
+                                    Composite indexes can improve lookup and ordered-query performance, but Cosmos will maintain those indexes on future writes and may temporarily run index transformation after the policy update.
+                                </p>
+                                <p class="mb-0 text-muted small">
+                                    Choose Apply only when you accept the additional write-index overhead for the faster supported query patterns shown in the maintenance status.
+                                </p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Decline</button>
+                                <button type="button" class="btn btn-warning" id="cosmos-indexing-policy-apply-confirm-btn">
+                                    Apply Indexes
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="staleCacheCleanupApplyModal" tabindex="-1" aria-labelledby="staleCacheCleanupApplyModalLabel" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="staleCacheCleanupApplyModalLabel">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>Delete Stale Cache Documents
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>
+                                    This deletes only allowlisted stale cache artifacts from the settings container, such as retired conversation cache version documents and obsolete volatile cache payloads.
+                                </p>
+                                <p class="mb-0 text-muted small">
+                                    It does not delete app settings, active cache-version documents, DAI state, maintenance state, source documents, or user data. Run a dry run first if you want to review the candidate count.
+                                </p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="stale-cache-cleanup-apply-confirm-btn">
+                                    Delete Stale Cache Docs
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {% if settings.enable_dai_debug %}
+                <div class="modal fade" id="documentAccessIndexResetModal" tabindex="-1" aria-labelledby="documentAccessIndexResetModalLabel" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="documentAccessIndexResetModalLabel">
+                                    <i class="bi bi-exclamation-triangle me-2"></i>Reset Document Access Backfill
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>
+                                    Resetting the checkpoint makes the next batch start from the first source scope again. The operation is idempotent, but it may reprocess documents that already have projection rows.
+                                </p>
+                                <p class="mb-0 text-muted small">
+                                    This does not delete source documents or projection rows. It only resets backfill progress and immediately runs one saved-size backfill batch.
+                                </p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-danger" id="document-access-index-reset-confirm-btn">
+                                    Reset and Run Batch
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="card p-3 mb-3" id="cosmos-throughput-section" data-testid="cosmos-throughput-section">
+                    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+                        <div>
+                            <h5 class="mb-1">
+                                <i class="bi bi-speedometer2 me-2"></i>Cosmos DB Throughput
+                            </h5>
+                            <p class="text-muted mb-0">
+                                Monitor RU utilization and automatically adjust shared database or dedicated container throughput.
+                            </p>
+                        </div>
+                        <button type="button" class="btn btn-outline-info btn-sm" id="cosmos-throughput-setup-guide-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputSetupModal">
+                            <i class="bi bi-journal-text me-1"></i>Setup Guide
+                        </button>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2 mb-3" role="group" aria-label="Cosmos throughput actions">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-refresh-btn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                        <button type="button" class="btn btn-outline-success btn-sm" id="cosmos-throughput-validate-access-btn">
+                            <i class="bi bi-shield-check me-1"></i>Validate Access
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-container-policies-btn" data-bs-toggle="modal" data-bs-target="#cosmosThroughputContainerModal">
+                            <i class="bi bi-sliders me-1"></i>Containers
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-convert-autoscale-btn" title="Convert database manual throughput to Cosmos autoscale">
+                            <i class="bi bi-lightning-charge me-1"></i>Convert
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="cosmos-throughput-scale-up-btn">
+                            <i class="bi bi-arrow-up-circle me-1"></i>Scale Up
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-scale-down-btn">
+                            <i class="bi bi-arrow-down-circle me-1"></i>Scale Down
+                        </button>
+                    </div>
+
+                    <div class="alert alert-info small mb-3">
+                        <i class="bi bi-info-circle me-2"></i>
+                        Automation checks Cosmos throughput on the Metrics Window cadence while enabled and saves the last observed database or container view. SimpleChat can scale throughput up or down at 10,000 RU/s or lower. Above 10,000 RU/s, SimpleChat monitors utilization only; use the Azure portal for capacity changes, which can take 4 to 6 hours. Native Cosmos autoscale conversion is separate from SimpleChat scale-up and scale-down automation.
+                    </div>
+
+                    <textarea class="d-none" id="cosmos_throughput_container_policies_json" name="cosmos_throughput_container_policies_json">{{ settings.cosmos_throughput_container_policies | tojson }}</textarea>
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="cosmos_throughput_autoscale_enabled"
+                            name="cosmos_throughput_autoscale_enabled"
+                            {% if settings.cosmos_throughput_autoscale_enabled %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="cosmos_throughput_autoscale_enabled">
+                            Enable Cosmos throughput automation
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, a background task checks recent Cosmos DB RU utilization and scales the configured database up or down within the saved guardrails."></i>
+                    </div>
+
+                    <div id="cosmos-throughput-automation-settings" class="{% if not settings.cosmos_throughput_autoscale_enabled %}d-none{% endif %}">
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6 col-xl-3">
+                                <label for="cosmos_throughput_subscription_id" class="form-label">Subscription ID</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="cosmos_throughput_subscription_id"
+                                    name="cosmos_throughput_subscription_id"
+                                    value="{{ settings.cosmos_throughput_subscription_id or settings.cosmos_throughput_resolved_subscription_id or '' }}"
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="cosmos_throughput_resource_group" class="form-label">Resource Group</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="cosmos_throughput_resource_group"
+                                    name="cosmos_throughput_resource_group"
+                                    value="{{ settings.cosmos_throughput_resource_group or settings.cosmos_throughput_resolved_resource_group or '' }}"
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="cosmos_throughput_account_name" class="form-label">Cosmos Account</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="cosmos_throughput_account_name"
+                                    name="cosmos_throughput_account_name"
+                                    value="{{ settings.cosmos_throughput_account_name or settings.cosmos_throughput_resolved_account_name or '' }}"
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <div class="col-md-6 col-xl-3">
+                                <label for="cosmos_throughput_database_name" class="form-label">Database</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="cosmos_throughput_database_name"
+                                    name="cosmos_throughput_database_name"
+                                    value="{{ settings.cosmos_throughput_database_name or settings.cosmos_throughput_resolved_database_name or 'SimpleChat' }}"
+                                    autocomplete="off"
+                                >
+                            </div>
+                        </div>
+
+                        <div class="border rounded p-3 mb-3">
+                            <h6 class="mb-3">Metrics Window</h6>
+                            <div class="row g-3">
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_metrics_window_minutes" class="form-label">Metrics Window</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_metrics_window_minutes" name="cosmos_throughput_metrics_window_minutes" min="1" max="60" value="{{ settings.cosmos_throughput_metrics_window_minutes }}">
+                                        <span class="input-group-text">min</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border rounded p-3 mb-3" id="cosmos-throughput-scale-up-policy">
+                            <h6 class="mb-3">Scale Up Policy</h6>
+                            <div class="row g-3 align-items-start">
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check form-switch mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_auto_scale_up_enabled" name="cosmos_throughput_auto_scale_up_enabled" {% if settings.cosmos_throughput_auto_scale_up_enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_auto_scale_up_enabled">Auto scale up</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_up_threshold_percent" class="form-label">Scale Up At</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_up_threshold_percent" name="cosmos_throughput_scale_up_threshold_percent" min="1" max="100" value="{{ settings.cosmos_throughput_scale_up_threshold_percent }}">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_up_step_ru" class="form-label">Scale Up Step</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_up_step_ru" name="cosmos_throughput_scale_up_step_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_scale_up_step_ru }}">
+                                        <span class="input-group-text">RU/s</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_up_cooldown_minutes" class="form-label">Scale Up Interval</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_up_cooldown_minutes" name="cosmos_throughput_scale_up_cooldown_minutes" min="1" max="1440" value="{{ settings.cosmos_throughput_scale_up_cooldown_minutes }}">
+                                        <span class="input-group-text">min</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_max_ru" class="form-label">Maximum RU/s</label>
+                                    <input type="number" class="form-control" id="cosmos_throughput_max_ru" name="cosmos_throughput_max_ru" min="1000" max="10000" step="1000" value="{{ settings.cosmos_throughput_max_ru }}">
+                                    <div class="form-text">SimpleChat-managed scaling stops at 10,000 RU/s. Use the Azure portal above this limit.</div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_ignore_max_limit" name="cosmos_throughput_ignore_max_limit" {% if settings.cosmos_throughput_ignore_max_limit %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_ignore_max_limit">Ignore maximum guardrail</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border rounded p-3 mb-3" id="cosmos-throughput-scale-down-policy">
+                            <h6 class="mb-3">Scale Down Policy</h6>
+                            <div class="row g-3 align-items-start">
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check form-switch mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_auto_scale_down_enabled" name="cosmos_throughput_auto_scale_down_enabled" {% if settings.cosmos_throughput_auto_scale_down_enabled %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_auto_scale_down_enabled">Auto scale down</label>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_down_threshold_percent" class="form-label">Scale Down At</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_down_threshold_percent" name="cosmos_throughput_scale_down_threshold_percent" min="0" max="99" value="{{ settings.cosmos_throughput_scale_down_threshold_percent }}">
+                                        <span class="input-group-text">%</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_down_step_ru" class="form-label">Scale Down Step</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_down_step_ru" name="cosmos_throughput_scale_down_step_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_scale_down_step_ru }}">
+                                        <span class="input-group-text">RU/s</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_scale_down_cooldown_minutes" class="form-label">Scale Down Interval</label>
+                                    <div class="input-group">
+                                        <input type="number" class="form-control" id="cosmos_throughput_scale_down_cooldown_minutes" name="cosmos_throughput_scale_down_cooldown_minutes" min="1" max="1440" value="{{ settings.cosmos_throughput_scale_down_cooldown_minutes }}">
+                                        <span class="input-group-text">min</span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <label for="cosmos_throughput_min_ru" class="form-label">Minimum RU/s</label>
+                                    <input type="number" class="form-control" id="cosmos_throughput_min_ru" name="cosmos_throughput_min_ru" min="1000" step="1000" value="{{ settings.cosmos_throughput_min_ru }}">
+                                </div>
+                                <div class="col-md-6 col-xl-3">
+                                    <div class="form-check mt-4 pt-2">
+                                        <input class="form-check-input" type="checkbox" id="cosmos_throughput_ignore_min_limit" name="cosmos_throughput_ignore_min_limit" {% if settings.cosmos_throughput_ignore_min_limit %}checked{% endif %}>
+                                        <label class="form-check-label" for="cosmos_throughput_ignore_min_limit">Ignore minimum guardrail</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="cosmos-throughput-validation-message" class="alert alert-danger d-none" role="alert" aria-live="polite"></div>
+
+                        <div class="border rounded p-3 mb-3">
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="cosmos_throughput_convert_manual_to_autoscale_enabled"
+                                    name="cosmos_throughput_convert_manual_to_autoscale_enabled"
+                                    {% if settings.cosmos_throughput_convert_manual_to_autoscale_enabled %}checked{% endif %}
+                                >
+                                <label class="form-check-label fw-semibold" for="cosmos_throughput_convert_manual_to_autoscale_enabled">
+                                    Convert manual throughput to Cosmos autoscale
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, background automation converts manual database or dedicated container throughput to native Cosmos autoscale before applying RU guardrails. The autoscale max preserves the current manual RU/s rounded up to Cosmos autoscale increments."></i>
+                            </div>
+                            <div class="form-check form-switch">
+                                <input
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    id="cosmos_throughput_enforce_container_defaults"
+                                    name="cosmos_throughput_enforce_container_defaults"
+                                    {% if settings.cosmos_throughput_enforce_container_defaults %}checked{% endif %}
+                                >
+                                <label class="form-check-label fw-semibold" for="cosmos_throughput_enforce_container_defaults">
+                                    Enforce global policy for all containers
+                                </label>
+                                <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, every dedicated-throughput container uses the global thresholds, intervals, step sizes, and guardrails above. New containers discovered later inherit the same policy automatically."></i>
+                            </div>
+                            <div class="small text-muted mt-1">
+                                Use this when container throughput should follow one standard automation policy instead of per-container overrides. Global policy also applies the Cosmos autoscale conversion setting above to current and future dedicated-throughput containers.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="cosmos-throughput-message" class="alert d-none mt-3" role="status"></div>
+
+                    <div class="row g-3 mt-1" id="cosmos-throughput-status-panel">
+                        <div class="col-md-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Mode</div>
+                                <div class="fw-semibold" id="cosmos-throughput-mode">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Current RU/s</div>
+                                <div class="fw-semibold" id="cosmos-throughput-current-ru">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">RU Utilization</div>
+                                <div class="fw-semibold" id="cosmos-throughput-utilization">Not loaded</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="border rounded p-2 h-100">
+                                <div class="small text-muted">Last Checked</div>
+                                <div class="fw-semibold" id="cosmos-throughput-last-checked">Not loaded</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mt-3">
+                        <div class="flex-grow-1">
+                            <label for="cosmos-throughput-container-filter" class="form-label mb-1">Filter Containers</label>
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">
+                                    <i class="bi bi-search" aria-hidden="true"></i>
+                                </span>
+                                <input
+                                    type="search"
+                                    class="form-control"
+                                    id="cosmos-throughput-container-filter"
+                                    placeholder="Filter by container name"
+                                    aria-describedby="cosmos-throughput-container-filter-count"
+                                    autocomplete="off"
+                                    data-ignore-settings-change="true"
+                                >
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                            <div id="cosmos-throughput-container-filter-count" class="small text-muted" aria-live="polite"></div>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="cosmos-throughput-refresh-table-btn">
+                                <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Refresh Table
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive mt-2" id="cosmos-throughput-metrics-table-section">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th scope="col" aria-sort="ascending">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="container_name" aria-label="Sort containers by container name">
+                                            Container <i class="bi bi-arrow-up-short ms-1" aria-hidden="true"></i>
+                                        </button>
+                                    </th>
+                                    <th scope="col">Mode</th>
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="current_ru" aria-label="Sort containers by current RU/s">
+                                            Current RU/s <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
+                                    </th>
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="ru_utilization" aria-label="Sort containers by RU utilization">
+                                            RU Utilization <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
+                                        <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Highest normalized RU percentage Azure Monitor reported for the selected window. If that metric is not available, SimpleChat estimates average utilization from request units divided by current RU/s."></i>
+                                    </th>
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="request_units" aria-label="Sort containers by request units">
+                                            Request Units <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
+                                        <i class="bi bi-info-circle ms-1" data-bs-toggle="tooltip" title="Total request units consumed during the selected metrics window. This is consumption volume, not a percentage."></i>
+                                    </th>
+                                    <th scope="col" aria-sort="none">
+                                        <button type="button" class="btn btn-link btn-sm p-0 text-body text-decoration-none cosmos-throughput-container-sort" data-sort-field="policy" aria-label="Sort containers by policy">
+                                            Policy <i class="bi bi-arrow-down-up ms-1" aria-hidden="true"></i>
+                                        </button>
+                                    </th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="cosmos-throughput-containers-body">
+                                <tr>
+                                    <td colspan="7" class="text-muted">Refresh to load Cosmos metrics.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="cosmosThroughputSetupModal" tabindex="-1" aria-labelledby="cosmosThroughputSetupModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="cosmosThroughputSetupModalLabel">
+                                    <i class="bi bi-journal-text me-2"></i>Cosmos Throughput Setup Guide
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info small mb-3">
+                                    Validate Access runs the same read checks automation depends on using the current form values: resource identity, Azure Resource Manager throughput reads, container discovery, and Azure Monitor metrics.
+                                </div>
+                                <div class="mb-3">
+                                    <h6>Required Azure Access</h6>
+                                    <ul class="mb-0">
+                                        <li>Assign roles to the Azure App Service managed identity service principal, not the Microsoft Entra sign-in app registration. In the Azure portal, open the Web App, select Identity, copy the Object (principal) ID, then find the matching Enterprise Application if you need to inspect it in Microsoft Entra ID.</li>
+                                        <li>For SimpleChat deployments, assign the custom <code>SimpleChat Cosmos Throughput Operator</code> role to that web app identity at the resource group scope that contains the Cosmos DB account, or directly at the Cosmos account scope.</li>
+                                        <li>The custom role must include management-plane actions to read the Cosmos account, database, and containers; read and write SQL database and container <code>throughputSettings</code>; run <code>migrateToAutoscale</code>; read throughput operation results; and read <code>Microsoft.Insights/metrics</code>.</li>
+                                        <li>If the custom role is not available, assign equivalent custom RBAC permissions. Broad built-in roles such as Contributor can validate access, but are not the preferred least-privilege configuration.</li>
+                                    </ul>
+                                </div>
+                                <div class="mb-3">
+                                    <h6>Capacity Scope</h6>
+                                    <ul class="mb-0">
+                                        <li>Database mode scales the shared <code>SimpleChat</code> database throughput.</li>
+                                        <li>Container-targeted mode scales only containers with dedicated throughput.</li>
+                                        <li>Containers that inherit shared database throughput are visible but not individually scalable.</li>
+                                        <li>Manual throughput can be converted to native Cosmos autoscale only when the admin enables conversion globally or for the container policy.</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h6>Metrics</h6>
+                                    <ul class="mb-0">
+                                        <li>RU Utilization is a percentage of available throughput for the selected metrics window.</li>
+                                        <li>Request Units is the total RU volume consumed during the selected metrics window.</li>
+                                        <li>Azure Monitor metrics can lag by a few minutes after traffic changes.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                <button type="button" class="btn btn-primary" id="cosmos-throughput-run-setup-test-btn" data-bs-dismiss="modal">
+                                    <i class="bi bi-shield-check me-1"></i>Validate Access
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal fade" id="cosmosThroughputContainerModal" tabindex="-1" aria-labelledby="cosmosThroughputContainerModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="cosmosThroughputContainerModalLabel">
+                                    <i class="bi bi-sliders me-2"></i>Container Throughput Policies
+                                </h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-info small mb-3">
+                                    Dedicated container throughput is controlled per row unless global policy enforcement is enabled. Containers using shared database throughput are shown for visibility, but cannot be scaled or converted individually until they have dedicated throughput. Containers above 10,000 RU/s are monitor-only in SimpleChat; change their capacity in the Azure portal and plan for a 4 to 6 hour provisioning window.
+                                </div>
+                                <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
+                                    <div class="flex-grow-1">
+                                        <label for="cosmos-throughput-container-policy-filter" class="form-label mb-1">Filter Container Policies</label>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text">
+                                                <i class="bi bi-search" aria-hidden="true"></i>
+                                            </span>
+                                            <input
+                                                type="search"
+                                                class="form-control"
+                                                id="cosmos-throughput-container-policy-filter"
+                                                placeholder="Filter by container name"
+                                                aria-describedby="cosmos-throughput-container-policy-filter-count"
+                                                autocomplete="off"
+                                                data-ignore-settings-change="true"
+                                            >
+                                        </div>
+                                    </div>
+                                    <div id="cosmos-throughput-container-policy-filter-count" class="small text-muted mb-1" aria-live="polite"></div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Container</th>
+                                                <th scope="col">Enabled</th>
+                                                <th scope="col">Scale Up</th>
+                                                <th scope="col">Scale Down</th>
+                                                <th scope="col">Cosmos Autoscale</th>
+                                                <th scope="col">Min RU/s</th>
+                                                <th scope="col">Max RU/s</th>
+                                                <th scope="col">Manual</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="cosmos-throughput-container-policies-body">
+                                            <tr>
+                                                <td colspan="8" class="text-muted">Refresh Cosmos throughput status to load containers.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-primary" id="cosmos-throughput-apply-global-policy-btn">
+                                    <i class="bi bi-arrow-repeat me-1"></i>Apply Global Policy
+                                </button>
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                                <button type="button" class="btn btn-primary" id="cosmos-throughput-save-container-policies-btn" data-bs-dismiss="modal">
+                                    Save Container Policies
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>

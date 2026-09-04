@@ -56,7 +56,7 @@ def test_group_agent_endpoint_scope_resolution() -> None:
 
     explicit_index = loader_content.index("if explicit_group_scope_id:")
     persisted_index = loader_content.index("persisted_group_id = str(agent.get(\"group_id\") or \"\").strip()")
-    active_group_index = loader_content.index("return require_active_group(get_current_user_id())")
+    active_group_index = loader_content.index("return require_active_group(scope_user_id)")
     assert explicit_index < persisted_index < active_group_index, (
         "Group scope precedence should be explicit scope, then persisted group_id, then active group fallback."
     )

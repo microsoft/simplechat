@@ -31,6 +31,12 @@ from model_endpoint_clients import (
     infer_model_endpoint_protocol,
     normalize_chat_completion_text,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_fact_memory_autosave import (
+    run_fact_memory_autosave,
+    should_run_fact_memory_autosave,
+    user_requested_memory_update,
+)
 from functions_model_endpoint_runtime import (
     MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
     build_model_endpoint_context,
@@ -67,6 +73,7 @@ from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    question_requests_tabular_exhaustive_row_output as _shared_question_requests_tabular_exhaustive_row_output,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
     settings_flag_enabled as _shared_settings_flag_enabled,
@@ -119,6 +126,7 @@ from functions_assigned_knowledge import (
 from functions_global_agents import get_global_agents
 from functions_group_agents import get_group_agents
 from functions_personal_agents import get_personal_agents
+from functions_chat_stream_events import build_user_message_persisted_stream_event
 from functions_source_review import (
     build_deep_research_ledger,
     build_deep_research_ledger_markdown,
@@ -151,6 +159,9 @@ from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
     build_generated_file_output_guidance,
+    build_structured_artifact_rows_payload,
+    evaluate_generated_file_passthrough_eligibility,
+    estimate_function_result_row_count,
     get_generated_file_export_content,
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
@@ -158,6 +169,8 @@ from functions_generated_file_exports import (
     normalize_json_artifact_payload,
     normalize_generated_output_format,
     normalize_xml_artifact_payload,
+    resolve_pending_generated_file_format,
+    select_prior_turn_action_citations,
     serialize_generated_json,
     serialize_generated_xml,
 )
@@ -179,6 +192,14 @@ from functions_conversation_context import (
     inject_conversation_context_message,
     serialize_conversation_context_snapshot,
 )
+from functions_agent_document_citations import apply_agent_document_citations
+from functions_citation_tracking import (
+    build_cited_source_subsets,
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    resolve_citation_location,
+)
+from functions_collaboration import build_conversation_participation_context
 from functions_conversation_metadata import collect_conversation_metadata, update_conversation_with_metadata
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content
@@ -2249,6 +2270,127 @@ def _has_generated_tabular_csv_output(generated_outputs):
     return has_generated_tabular_csv_output(generated_outputs)
 
 
+PRIOR_TURN_ACTION_RESULT_MAX_MESSAGES = 40
+PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT = 25
+
+
+def _resolve_prior_turn_history_window(settings=None):
+    """Reach back as far as the history the model itself can still see."""
+    resolved_settings = settings if isinstance(settings, dict) else get_settings()
+    return _bounded_int(
+        resolved_settings.get('conversation_history_limit', 10),
+        default=10,
+        minimum=1,
+        maximum=PRIOR_TURN_ACTION_RESULT_MAX_MESSAGES,
+    )
+
+
+def _read_recent_assistant_messages(conversation_id, message_limit):
+    query = (
+        f'SELECT TOP {int(message_limit)} c.id, c.content, c.agent_citations FROM c '
+        'WHERE c.conversation_id = @conversation_id AND c.role = @role '
+        'ORDER BY c.timestamp DESC'
+    )
+    return list(cosmos_messages_container.query_items(
+        query=query,
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@role', 'value': 'assistant'},
+        ],
+        partition_key=conversation_id,
+    ))
+
+
+def _read_agent_citation_artifact_payloads(conversation_id, artifact_ids):
+    if not artifact_ids:
+        return {}
+    artifact_documents = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT * FROM c WHERE c.conversation_id = @conversation_id '
+            'AND (ARRAY_CONTAINS(@artifact_ids, c.id) '
+            'OR ARRAY_CONTAINS(@artifact_ids, c.parent_message_id))'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@artifact_ids', 'value': artifact_ids},
+        ],
+        partition_key=conversation_id,
+    ))
+    return build_message_artifact_payload_map(artifact_documents)
+
+
+def _load_prior_turn_function_results(user_id, conversation_id, settings=None):
+    """Return the full action results an earlier turn already gathered in this conversation."""
+    normalized_user_id = str(user_id or '').strip()
+    normalized_conversation_id = str(conversation_id or '').strip()
+    if not normalized_user_id or not normalized_conversation_id:
+        return []
+
+    try:
+        _authorize_personal_conversation_access(normalized_user_id, normalized_conversation_id)
+        assistant_messages = _read_recent_assistant_messages(
+            normalized_conversation_id,
+            _resolve_prior_turn_history_window(settings),
+        )
+        selected_citations = select_prior_turn_action_citations(
+            assistant_messages,
+        )[:PRIOR_TURN_ACTION_RESULT_ARTIFACT_LIMIT]
+        if not selected_citations:
+            return []
+
+        artifact_payload_map = _read_agent_citation_artifact_payloads(
+            normalized_conversation_id,
+            [
+                str(citation.get('artifact_id') or '').strip()
+                for citation in selected_citations
+                if str(citation.get('artifact_id') or '').strip()
+            ],
+        )
+
+        resolved_citations = []
+        for citation in selected_citations:
+            artifact_payload = artifact_payload_map.get(str(citation.get('artifact_id') or ''))
+            stored_citation = artifact_payload.get('citation') if isinstance(artifact_payload, dict) else None
+            resolved_citations.append(stored_citation if isinstance(stored_citation, dict) else citation)
+        return resolved_citations
+    except Exception as exc:
+        log_event(
+            '[GENERATED_FILE_EXPORT] Could not reuse earlier action results',
+            {
+                'conversation_id': normalized_conversation_id,
+                'error': str(exc),
+            },
+            debug_only=True,
+        )
+    return []
+
+
+def _resolve_pending_generated_file_format(user_question, conversation_id, user_id):
+    """Return the artifact format still owed from an unanswered schema clarification."""
+    try:
+        _authorize_personal_conversation_access(str(user_id or '').strip(), str(conversation_id or '').strip())
+        recent_assistant_messages = _read_recent_assistant_messages(str(conversation_id or '').strip(), 1)
+    except Exception:
+        return None
+    if not recent_assistant_messages:
+        return None
+    return resolve_pending_generated_file_format(
+        user_question,
+        recent_assistant_messages[0].get('content') or '',
+    )
+
+
+def _resolve_generated_file_guidance_format(user_question, conversation_id, user_id):
+    """Return the artifact format this reply owes, including one carried from a clarification."""
+    requested_format = str(get_tabular_generated_output_format(user_question) or '').strip().lower()
+    if requested_format or not conversation_id:
+        return requested_format
+    # A reply that only answers "which rows and columns?" still owes the originally requested file,
+    # so the publication contract has to reach the model on this turn too.
+    pending_format = _resolve_pending_generated_file_format(user_question, conversation_id, user_id)
+    return str(pending_format or '').strip().lower()
+
+
 def maybe_create_generated_file_output(
     user_question,
     assistant_content,
@@ -2266,6 +2408,12 @@ def maybe_create_generated_file_output(
     )
     output_format = get_requested_generated_file_format(user_question)
     if not output_format:
+        output_format = _resolve_pending_generated_file_format(
+            user_question,
+            conversation_id,
+            get_current_user_id(),
+        )
+    if not output_format:
         return None
     if output_format == 'csv' and _has_generated_tabular_csv_output(existing_outputs):
         return None
@@ -2276,6 +2424,12 @@ def maybe_create_generated_file_output(
         user_question,
         assistant_content,
         function_results=function_results,
+        prior_function_results_loader=lambda: _load_prior_turn_function_results(
+            get_current_user_id(),
+            conversation_id,
+            settings=get_settings(),
+        ),
+        pending_output_format=output_format,
     )
     if not export_payload:
         return None
@@ -2305,6 +2459,7 @@ def maybe_create_generated_file_output(
                 source_candidate={
                     'filename': generated_file_name,
                     'selected_sheet': '',
+                    'passthrough_reason_code': export_payload.get('passthrough_reason_code'),
                     'source_authorization': {
                         'source': 'chat',
                     },
@@ -2499,11 +2654,26 @@ def _build_streaming_assistant_file_status(output_format):
     return f'Generating the {normalized_output_format} file. It will appear here when ready.'
 
 
+def _build_structured_artifact_rows_payload(user_question, output_format, conversation_id, function_results):
+    """Fall back to authorized action rows when a JSON/XML reply carried no payload."""
+    return build_structured_artifact_rows_payload(
+        user_question,
+        output_format,
+        function_results=function_results,
+        prior_function_results_loader=lambda: _load_prior_turn_function_results(
+            get_current_user_id(),
+            conversation_id,
+            settings=get_settings(),
+        ),
+    )
+
+
 def maybe_create_assistant_file_generated_output(
     user_question,
     assistant_content,
     conversation_id,
     existing_outputs=None,
+    function_results=None,
 ):
     """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
     output_format = get_tabular_generated_output_format(user_question)
@@ -2516,20 +2686,40 @@ def maybe_create_assistant_file_generated_output(
 
     preview_items = []
     preview_lines = []
+    row_payload = None
     if output_format == 'json':
         json_payload = normalize_json_artifact_payload(assistant_content)
         if json_payload is None:
-            return None
-        file_content = serialize_generated_json(json_payload)
-        if isinstance(json_payload, list):
-            preview_items = json_payload[:3]
-        elif isinstance(json_payload, dict):
-            preview_items = [json_payload]
+            row_payload = _build_structured_artifact_rows_payload(
+                user_question,
+                output_format,
+                conversation_id,
+                function_results,
+            )
+            if row_payload is None:
+                return None
+            file_content = row_payload['file_content']
+            preview_items = row_payload['rows'][:3]
+        else:
+            file_content = serialize_generated_json(json_payload)
+            if isinstance(json_payload, list):
+                preview_items = json_payload[:3]
+            elif isinstance(json_payload, dict):
+                preview_items = [json_payload]
     else:
         xml_payload = normalize_xml_artifact_payload(assistant_content)
         if not xml_payload:
-            return None
-        file_content = xml_payload
+            row_payload = _build_structured_artifact_rows_payload(
+                user_question,
+                output_format,
+                conversation_id,
+                function_results,
+            )
+            if row_payload is None:
+                return None
+            file_content = row_payload['file_content']
+        else:
+            file_content = xml_payload
         preview_lines = _build_assistant_file_preview_lines(file_content)
 
     generated_file_name = _build_assistant_file_export_name(output_format)
@@ -2826,6 +3016,35 @@ def _append_new_plugin_invocation_citations(
         agent_citations_list.append(_build_plugin_invocation_agent_citation(invocation))
 
     return len(new_invocations)
+
+
+def _get_current_message_plugin_invocations(user_id, conversation_id):
+    """Return this message's plugin invocations.
+
+    Invocations are cleared per chat request, so everything the logger holds for the
+    conversation belongs to the message being generated. Streaming cancellation and
+    error paths read this directly because invocations are only folded into the agent
+    citation list once a stream completes normally.
+    """
+    if not user_id or not conversation_id:
+        return []
+
+    try:
+        return get_plugin_logger().get_invocations_for_conversation(
+            user_id,
+            conversation_id,
+            limit=1000,
+        )
+    except Exception as e:
+        log_event(
+            '[AGENT_DOCUMENT_CITATIONS] Unable to read plugin invocations for document citations',
+            extra={
+                'conversation_id': conversation_id,
+                'error_message': str(e),
+            },
+            level=logging.WARNING,
+        )
+        return []
 
 
 def normalize_fact_memory_type(memory_type):
@@ -3428,8 +3647,15 @@ def _create_personal_conversation(user_id, conversation_id=None):
     return conversation_item
 
 
-def _authorize_personal_conversation_access(user_id, conversation_id):
-    """Load a personal conversation and ensure the caller owns it."""
+def _resolve_authorized_conversation_context(user_id, conversation_id):
+    """Load a conversation plus the access context that authorized the caller.
+
+    Shared conversations are backed by a hidden source conversation owned by the shared
+    conversation creator, so participants can never satisfy a plain ownership comparison even
+    though they are legitimate members. The returned context distinguishes an owner acting in
+    their own conversation from a participant acting inside a shared one, which downstream
+    artifact writes use to decide whether an approval is required.
+    """
     try:
         conversation_item = cosmos_conversations_container.read_item(
             item=conversation_id,
@@ -3438,9 +3664,13 @@ def _authorize_personal_conversation_access(user_id, conversation_id):
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
-    if conversation_item.get('user_id') != user_id:
-        raise PermissionError('You can only access your own conversations')
+    access_context = build_conversation_participation_context(user_id, conversation_item)
+    return conversation_item, access_context
 
+
+def _authorize_personal_conversation_access(user_id, conversation_id):
+    """Load a personal conversation and ensure the caller may act in it."""
+    conversation_item, _ = _resolve_authorized_conversation_context(user_id, conversation_id)
     return conversation_item
 
 
@@ -4011,6 +4241,9 @@ def question_requests_attachment_backed_row_follow_up(user_question):
         'each row',
         'every row',
         'per row',
+        'each line',
+        'every line',
+        'per line',
         'each comment',
         'every comment',
         'per comment',
@@ -4294,17 +4527,19 @@ def build_tabular_fallback_system_message(tabular_filenames_str, execution_mode=
 
 def build_search_augmentation_system_prompt(retrieved_content):
     """Build the retrieval augmentation prompt without blocking later tool-backed results."""
-    return f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number).
+    return f"""You are an AI assistant. Use the following retrieved document excerpts to answer the user's question. Cite sources using the format (Source: filename, Page: page number) [#citation-id]. Copy the exact bracketed citation ID shown after the supporting excerpt.
 
                         Retrieved Excerpts:
                         {retrieved_content}
 
-                        Base your answer only on information supported by the retrieved excerpts and any computed tool-backed results included elsewhere in this conversation context. If the answer is not supported by that information, say so.
+                        These excerpts are your starting evidence, not your only means of gathering evidence. If you have actions or tools available and the excerpts do not contain what the question needs, call the appropriate action to obtain it, then reason over the retrieved excerpts and the action results together. Gather the evidence you are capable of gathering before declining to answer.
+                        Ground every claim in a retrieved excerpt, in computed tool-backed results included elsewhere in this conversation context, or in a result you obtained by calling an action. Never estimate, infer, or fabricate values that none of those sources support; if the evidence is still missing after you have used the actions available to you, say so.
+                        Excerpts drawn from a spreadsheet or other tabular source contain only a truncated schema preview of that file, not its data. Never derive counts, totals, averages, minimums, maximums, trends, or any other numeric conclusion from those preview rows; obtain such values from a computed tabular result instead.
                         If computed tabular results are provided in another system message, treat them as authoritative for row-level values, calculations, and numeric conclusions. Do not say that you lack direct access to the data when those computed results are present.
 
                         Example
                         User: What is the policy on double dipping?
-                        Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12)
+                        Assistant: The policy prohibits entities from using federal funds received through one program to apply for additional funds through another program, commonly known as 'double dipping' (Source: PolicyDocument.pdf, Page: 12) [#example-citation-id]
                         """
 
 
@@ -5015,15 +5250,28 @@ def question_requests_tabular_hierarchical_analysis(user_question):
     return _shared_question_requests_tabular_hierarchical_analysis(user_question)
 
 
+def question_requests_tabular_exhaustive_row_output(user_question):
+    """Return True when the prompt requires one narrative result per source row."""
+    return _shared_question_requests_tabular_exhaustive_row_output(user_question)
+
+
 def _settings_flag_enabled(settings, key, default=False):
     return _shared_settings_flag_enabled(settings, key, default=default)
 
 
-def _get_tabular_generated_output_task_type(generated_output_requested, hierarchical_analysis_requested, settings):
+def _get_tabular_generated_output_task_type(
+    generated_output_requested,
+    hierarchical_analysis_requested,
+    settings,
+    action_mode=None,
+    exhaustive_row_output_requested=False,
+):
     return _shared_get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=action_mode,
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     )
 
 
@@ -5037,14 +5285,27 @@ def question_requests_tabular_structured_object_output(user_question):
         'one object per comment',
         'one json object per comment',
         'one object per row',
+        'one object per line',
         'one row per comment',
+        'one line per comment',
         'one object per submission',
         'one object for each row',
+        'one output row for each source row',
+        'one output row per source row',
+        'one output row for every source row',
+        'one output row for each row',
+        'exactly one output row',
         'for each row',
         'for every row',
+        'for each line',
+        'for every line',
         'every row',
         'each row',
+        'every line',
+        'each line',
         'one row per',
+        'one line per',
+        'line by line',
         'each object must contain',
         'exactly these fields',
     )
@@ -5745,20 +6006,38 @@ def _build_tabular_generated_output_query_descriptor(
     return descriptor
 
 
-def _build_direct_tabular_generated_output_source(user_question, file_contexts, user_id, conversation_id, settings):
+def _build_direct_tabular_generated_output_source(
+    user_question,
+    file_contexts,
+    user_id,
+    conversation_id,
+    settings,
+    action_mode=None,
+    planner_metadata=None,
+):
     """Build a replayable full-tabular source descriptor without requiring a prior tool page."""
     generated_output_requested = question_requests_tabular_generated_output(user_question)
     hierarchical_analysis_requested = question_requests_tabular_hierarchical_analysis(user_question)
+    exhaustive_row_output_requested = question_requests_tabular_exhaustive_row_output(user_question)
     durable_task_type = _get_tabular_generated_output_task_type(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=action_mode,
+        exhaustive_row_output_requested=exhaustive_row_output_requested,
     )
     analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
-    if not generated_output_requested and not analysis_only_requested:
+    if generated_output_requested and str(action_mode or '').strip().lower() == 'analyze' and not durable_task_type:
         return None
-    if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
+    if not generated_output_requested and not analysis_only_requested and not exhaustive_row_output_requested:
+        return None
+    if (
+        hierarchical_analysis_requested
+        and not generated_output_requested
+        and not analysis_only_requested
+        and not exhaustive_row_output_requested
+    ):
         return None
 
     normalized_contexts = dedupe_tabular_file_contexts(file_contexts)
@@ -5902,7 +6181,11 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
             )
         ),
     })
-    output_format = get_tabular_generated_output_format(user_question) or 'md'
+    output_format = (
+        str((planner_metadata or {}).get('output_format') or '').strip().lower()
+        or get_tabular_generated_output_format(user_question)
+        or 'md'
+    )
     queued_output_format = 'md' if analysis_only_requested else output_format
     return {
         'file_context': file_context,
@@ -5940,6 +6223,7 @@ def _build_direct_tabular_generated_output_source(user_question, file_contexts, 
         'batch_count_estimate': max(1, math.ceil(row_count / max(batch_budget['max_rows'], 1))),
         'analysis_only_requested': analysis_only_requested,
         'combined_requested': combined_requested,
+        'exhaustive_row_output_requested': exhaustive_row_output_requested,
     }
 
 
@@ -5995,6 +6279,8 @@ def maybe_queue_direct_tabular_generated_output(
             user_id,
             conversation_id,
             settings,
+            action_mode=planner_action_mode,
+            planner_metadata=planner_metadata,
         )
         if not direct_source:
             emit_direct_parity_event(
@@ -6025,6 +6311,10 @@ def maybe_queue_direct_tabular_generated_output(
             planner_metadata=planner_metadata,
         )
         background_metadata = build_background_tabular_generated_output_metadata(background_run)
+        actual_batch_count = (
+            _safe_int(background_metadata.get('batch_count'))
+            or direct_source['batch_count_estimate']
+        )
         accepted_parity_result = parity_result
         if callable(parity_result_builder):
             accepted_parity_result = parity_result_builder(
@@ -6042,7 +6332,7 @@ def maybe_queue_direct_tabular_generated_output(
             metrics={
                 'source_count': len(file_contexts or []),
                 'row_count': direct_source.get('row_count'),
-                'batch_count_estimate': direct_source.get('batch_count_estimate'),
+                'batch_count_estimate': actual_batch_count,
             },
         )
         emit_direct_parity_event(
@@ -6063,7 +6353,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'content': title,
                 'detail': (
                     f"run_id={background_metadata.get('export_run_id')}; "
-                    f"rows={direct_source['row_count']}; batches~={direct_source['batch_count_estimate']}; checkpointed=true"
+                    f"rows={direct_source['row_count']}; batches={actual_batch_count}; checkpointed=true"
                 ),
                 'activity': build_tabular_post_processing_activity_payload(
                     'tabular.generated_output',
@@ -6073,7 +6363,7 @@ def maybe_queue_direct_tabular_generated_output(
                     output_format=direct_source['output_format'],
                     file_name=direct_source['source_candidate'].get('filename'),
                     batch_index=0,
-                    batch_count=direct_source['batch_count_estimate'],
+                    batch_count=actual_batch_count,
                 ),
             }
             maybe_callback_result = thought_callback(thought_payload)
@@ -6086,7 +6376,7 @@ def maybe_queue_direct_tabular_generated_output(
                 'conversation_id': conversation_id,
                 'source_file_name': direct_source['source_candidate'].get('filename'),
                 'row_count': direct_source['row_count'],
-                'batch_count_estimate': direct_source['batch_count_estimate'],
+                'batch_count_estimate': actual_batch_count,
                 'task_type': direct_source.get('task_type') or 'structured_export',
                 'output_format': direct_source['output_format'],
                 'export_run_id': background_metadata.get('export_run_id'),
@@ -6169,7 +6459,11 @@ def _emit_search_shared_preflight_event(
             safe_dimensions.update({
                 'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
                 'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_state': str(rollout_assignment.get('rollout_state') or 'active').strip().lower()[:40],
                 'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_assignment_reason': str(
+                    rollout_assignment.get('assignment_reason_code') or ''
+                ).strip().lower()[:80],
                 'rollout_percent': str(_safe_int(rollout_assignment.get('rollout_percent'))),
                 'rollout_cohort_bucket': str(_safe_int(rollout_assignment.get('cohort_bucket'))),
                 'legacy_post_tool_fallback_mode': str(
@@ -6868,9 +7162,12 @@ async def maybe_create_tabular_generated_output(
         generated_output_requested,
         hierarchical_analysis_requested,
         settings,
+        action_mode=mode,
     )
     analysis_only_requested = durable_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
     combined_requested = durable_task_type == TABULAR_RUN_TASK_COMBINED
+    if generated_output_requested and str(mode or '').strip().lower() == 'analyze' and not durable_task_type:
+        return None
     if hierarchical_analysis_requested and not generated_output_requested and not analysis_only_requested:
         return None
     if not generated_output_requested and not hierarchical_analysis_requested:
@@ -7290,6 +7587,7 @@ async def maybe_create_tabular_generated_output(
     if not output_format or not rows:
         return None
 
+    passthrough_reason_code = None
     if question_requests_tabular_structured_object_output(user_question):
         raise_if_mixed_source_cancelled(
             cancel_requested,
@@ -7321,6 +7619,31 @@ async def maybe_create_tabular_generated_output(
         if isinstance(output_entries, dict) and output_entries.get('background_export'):
             return output_entries
     else:
+        passthrough_eligibility = evaluate_generated_file_passthrough_eligibility(
+            user_question,
+            rows=rows,
+        )
+        if not passthrough_eligibility.get('allowed'):
+            reason_code = str(passthrough_eligibility.get('reason_code') or 'schema_not_satisfied').strip()
+            log_event(
+                '[TABULAR_GENERATED_OUTPUT] Refused source-row passthrough for generated export',
+                {
+                    'conversation_id': conversation_id,
+                    'source_file_name': source_candidate.get('filename'),
+                    'output_format': output_format,
+                    'row_count': len(rows),
+                    'passthrough_reason_code': reason_code,
+                },
+                level=logging.WARNING,
+            )
+            return _build_failed_tabular_generated_output_metadata(
+                source_candidate,
+                output_format,
+                'The requested export requires generated output and could not be safely created from raw source rows. No partial file was created.',
+            )
+        passthrough_reason_code = str(
+            passthrough_eligibility.get('reason_code') or 'explicit_format_conversion'
+        ).strip()[:80]
         output_entries = rows
 
     if output_format == 'csv':
@@ -7360,6 +7683,7 @@ async def maybe_create_tabular_generated_output(
             'generated_file_name': generated_file_name,
             'output_format': output_format,
             'row_count': len(output_entries),
+            'passthrough_reason_code': passthrough_reason_code,
         },
         debug_only=True,
     )
@@ -7410,6 +7734,7 @@ async def maybe_create_tabular_generated_output(
             'generated_file_name': uploaded_file_name,
             'output_format': output_format,
             'row_count': len(output_entries),
+            'passthrough_reason_code': passthrough_reason_code,
         },
         debug_only=True,
     )
@@ -7425,6 +7750,7 @@ async def maybe_create_tabular_generated_output(
         'source_file_name': source_candidate.get('filename'),
         'selected_sheet': source_candidate.get('selected_sheet'),
         'preview_rows': preview_rows,
+        'passthrough_reason_code': passthrough_reason_code,
         'summary': (
             f"Saved {len(output_entries)} row(s) to {uploaded_file_name} "
             'in this chat as a downloadable export.'
@@ -9362,16 +9688,22 @@ def question_requests_tabular_exhaustive_results(user_question):
     explicit_phrases = (
         'all results',
         'all rows',
+        'all lines',
         'all values',
         'all of them',
         'complete list',
         'each row',
+        'each line',
         'each one',
         'every row',
+        'every line',
         'every one',
         'exhaustive',
         'for each row',
         'for every row',
+        'for each line',
+        'for every line',
+        'line by line',
         'full list',
         'list all',
         'list each',
@@ -9389,11 +9721,17 @@ def question_requests_tabular_exhaustive_results(user_question):
         r'\bone object per comment row\b',
         r'\bone object per (?:comment|submission)\b',
         r'\bone object per (?:comment|submission|input )?row\b',
+        r'\bone object per (?:comment|submission|input )?line\b',
         r'\bone row per (?:comment|submission|input )?row\b',
+        r'\bone line per (?:comment|submission|input )?line\b',
         r'\bone row per (?:comment|submission)\b',
+        r'\bone line per (?:comment|submission)\b',
         r'\bone object for each row\b',
+        r'\bone object for each line\b',
         r'\bone row per\b',
+        r'\bone line per\b',
         r'\bfor (?:each|every) row\b',
+        r'\bfor (?:each|every) line\b',
     )
     structured_output_markers = (
         'json array',
@@ -12939,17 +13277,12 @@ def is_tabular_filename(filename):
 
 def get_citation_location(file_name, page_number=None, chunk_text=None, sheet_name=None):
     """Return a display label/value pair for a citation location."""
-    if sheet_name:
-        return 'Sheet', str(sheet_name)
-
-    normalized_chunk_text = (chunk_text or '').strip()
-    if is_tabular_filename(file_name) and (
-        normalized_chunk_text.startswith('Tabular workbook:')
-        or normalized_chunk_text.startswith('Tabular data file:')
-    ):
-        return 'Location', 'Workbook Schema'
-
-    return 'Page', str(page_number or 1)
+    return resolve_citation_location(
+        page_number=page_number,
+        chunk_text=chunk_text,
+        sheet_name=sheet_name,
+        is_tabular=is_tabular_filename(file_name),
+    )
 
 
 def get_document_container_for_scope(document_scope):
@@ -13602,6 +13935,9 @@ def build_streaming_multi_endpoint_client(
     api_type='',
     anthropic_version='',
     allow_private_custom_endpoints=False,
+    settings=None,
+    endpoint_config=None,
+    identity_context=None,
 ):
     """Create an inference client for a resolved streaming model endpoint."""
     client, _ = build_model_endpoint_sync_chat_client(
@@ -13613,6 +13949,9 @@ def build_streaming_multi_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        settings=settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
     )
     return client
 
@@ -13837,6 +14176,9 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         allow_private_custom_endpoints=bool(
             settings.get('allow_private_custom_model_endpoints', False)
         ),
+        settings=settings,
+        endpoint_config=resolved_endpoint_cfg,
+        identity_context={'user_id': user_id},
     )
     debug_print(
         f"[STREAMING][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -13973,6 +14315,29 @@ def register_route_backend_chats(bp):
 
     def is_provider_bad_request_error(error_message, exc):
         return '400' in str(error_message or '') and 'BadRequestError' in str(type(exc))
+
+    def is_rate_limit_error(error_message, exc=None):
+        """Return True when a failure is upstream throttling rather than a fault.
+
+        Retries already absorb transient 429s, so reaching this point means the
+        throttle outlasted them. That is the case an admin wants to explain in
+        their own words instead of showing a generic failure.
+        """
+        if exc is not None:
+            if isinstance(exc, RateLimitError):
+                return True
+            if str(getattr(exc, 'status_code', '')) == '429':
+                return True
+
+        normalized_message = str(error_message or '').lower()
+        return (
+            # Bounded so an unrelated number such as 14290 cannot look like a 429.
+            re.search(r'\b429\b', normalized_message) is not None
+            or 'rate limit' in normalized_message
+            or 'rate_limit' in normalized_message
+            or 'too many requests' in normalized_message
+            or 'throttl' in normalized_message
+        )
 
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
@@ -14119,6 +14484,9 @@ def register_route_backend_chats(bp):
             'augmented': payload.get('augmented', False),
             'hybrid_citations': payload.get('hybrid_citations', []),
             'web_search_citations': payload.get('web_search_citations', []),
+            'citation_tracking_version': payload.get('citation_tracking_version'),
+            'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
+            'cited_web_search_citations': payload.get('cited_web_search_citations', []),
             'agent_citations': payload.get('agent_citations', []),
             'agent_display_name': payload.get('agent_display_name'),
             'agent_name': payload.get('agent_name'),
@@ -14937,6 +15305,13 @@ def register_route_backend_chats(bp):
             'metadata': user_metadata,
         })
         cosmos_messages_container.upsert_item(user_message_doc)
+        if callable(publish_background_event):
+            publish_background_event(
+                build_user_message_persisted_stream_event(
+                    conversation_id,
+                    user_message_id,
+                )
+            )
 
         try:
             document_action_activity_context = {
@@ -15065,7 +15440,8 @@ def register_route_backend_chats(bp):
             'assigned_knowledge_context': assigned_context_metadata,
             'model_endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
             'model_id': str(data.get('model_id') or '').strip(),
-            'legacy_model_deployment': str(data.get('model_deployment') or '').strip(),
+            'model_provider': str(data.get('model_provider') or '').strip(),
+            'legacy_model_deployment': str(data.get('model_deployment') or data.get('model_id') or '').strip(),
             'model_binding_summary': {
                 'endpoint_id': str(data.get('model_endpoint_id') or '').strip(),
                 'model_id': str(data.get('model_id') or '').strip(),
@@ -15201,6 +15577,12 @@ def register_route_backend_chats(bp):
             document_action_agent_citations,
             document_action_context_json,
         )
+        apply_agent_document_citations(
+            hybrid_citations_list,
+            document_action_agent_citations,
+            sort_key=_build_hybrid_citation_sort_key,
+            conversation_id=conversation_id,
+        )
         prepared_agent_citations = []
         document_generated_analysis_artifacts = list(execution_result.get('generated_analysis_artifacts') or [])
         document_generated_tabular_outputs = list(execution_result.get('generated_tabular_outputs') or [])
@@ -15243,6 +15625,7 @@ def register_route_backend_chats(bp):
                 assistant_content=document_action_reply_content,
                 conversation_id=conversation_id,
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                function_results=execution_result.get('agent_citations') or [],
             )
             if assistant_file_generated_output:
                 document_generated_analysis_artifacts.append(assistant_file_generated_output)
@@ -15291,6 +15674,11 @@ def register_route_backend_chats(bp):
             generated_analysis_artifacts=document_generated_analysis_artifacts,
             generated_tabular_outputs=document_generated_tabular_outputs,
         )
+        document_action_citation_tracking = build_cited_source_subsets(
+            document_action_reply_content,
+            hybrid_citations=hybrid_citations_list,
+            web_search_citations=[],
+        )
         document_action_capability_usage = _build_capability_usage_metadata(
             workspace_search_used=True,
             workspace_search_result_count=len(hybrid_citations_list or []),
@@ -15310,6 +15698,7 @@ def register_route_backend_chats(bp):
             'augmented': False,
             'hybrid_citations': hybrid_citations_list,
             'web_search_citations': [],
+            **document_action_citation_tracking,
             'hybridsearch_query': None,
             'agent_citations': prepared_agent_citations,
             'model_deployment_name': execution_result.get('model_deployment_name'),
@@ -15412,6 +15801,7 @@ def register_route_backend_chats(bp):
 
         conversation_item['last_updated'] = datetime.utcnow().isoformat()
         conversation_item['chat_type'] = data.get('chat_type') or conversation_item.get('chat_type') or 'new'
+        initialize_conversation_used_document_tracking(conversation_item)
 
         try:
             conversation_item = collect_conversation_metadata(
@@ -15439,6 +15829,10 @@ def register_route_backend_chats(bp):
         except Exception as exc:
             debug_print(f'[CHAT_DOCUMENT_ANALYSIS] Conversation metadata update failed: {exc}')
 
+        merge_cited_documents_into_conversation(
+            conversation_item,
+            document_action_citation_tracking['cited_hybrid_citations'],
+        )
         cosmos_conversations_container.upsert_item(conversation_item)
         invalidate_conversation_cache_for_item(conversation_item, reason="document_action_chat_completed")
         debug_print(
@@ -15471,6 +15865,7 @@ def register_route_backend_chats(bp):
             'augmented': False,
             'hybrid_citations': hybrid_citations_list,
             'web_search_citations': [],
+            **document_action_citation_tracking,
             'agent_citations': prepared_agent_citations,
             'reload_messages': False,
             'kernel_fallback_notice': None,
@@ -15777,6 +16172,9 @@ def register_route_backend_chats(bp):
             if is_content_safety_error(error_message):
                 error_message = 'Image generation was blocked by content safety policies. Please edit the prompt and try again.'
                 status_code = 400
+            elif is_rate_limit_error(error_message, exc):
+                error_message = get_rate_limit_message()
+                status_code = 429
             elif is_provider_bad_request_error(error_message, exc):
                 error_message = 'Image generation request was invalid. Please edit the prompt and try again.'
                 status_code = 400
@@ -15789,13 +16187,21 @@ def register_route_backend_chats(bp):
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            return jsonify({'error': error_message}), status_code
+            return jsonify({
+                'error': error_message,
+                **({'rate_limited': True} if status_code == 429 else {}),
+            }), status_code
 
     @bp.route('/api/chat', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def chat_api():
+        publish_background_event = getattr(
+            g,
+            'chat_publish_background_event',
+            None,
+        )
         try:
             request_start_time = time.time()
             settings = get_settings()
@@ -15938,7 +16344,11 @@ def register_route_backend_chats(bp):
             system_messages_for_augmentation = [] # Collect system messages from search
             generated_file_output_guidance = build_generated_file_output_guidance(
                 user_message,
-                requested_format=get_tabular_generated_output_format(user_message),
+                requested_format=_resolve_generated_file_guidance_format(
+                    user_message,
+                    conversation_id,
+                    user_id,
+                ),
             )
             if generated_file_output_guidance:
                 system_messages_for_augmentation.append({
@@ -16179,6 +16589,10 @@ def register_route_backend_chats(bp):
             )
             try:
                 multi_endpoint_config = None
+                legacy_identity_headers = build_model_endpoint_identity_headers(
+                    settings,
+                    identity_context={'user_id': user_id},
+                )
                 if settings.get('enable_multi_model_endpoints', False):
                     multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                         settings,
@@ -16245,7 +16659,8 @@ def register_route_backend_chats(bp):
                     gpt_client = AzureOpenAI(
                         api_version=settings.get('azure_apim_gpt_api_version'),
                         azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-                        api_key=settings.get('azure_apim_gpt_subscription_key')
+                        api_key=settings.get('azure_apim_gpt_subscription_key'),
+                        default_headers=legacy_identity_headers or None
                     )
                 else:
                     auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -16273,7 +16688,8 @@ def register_route_backend_chats(bp):
                         gpt_client = AzureOpenAI(
                             api_version=api_version,
                             azure_endpoint=endpoint,
-                            azure_ad_token_provider=token_provider
+                            azure_ad_token_provider=token_provider,
+                            default_headers=legacy_identity_headers or None
                         )
                     else: # Default to API Key
                         api_key = settings.get('azure_openai_gpt_key')
@@ -16281,7 +16697,8 @@ def register_route_backend_chats(bp):
                         gpt_client = AzureOpenAI(
                             api_version=api_version,
                             azure_endpoint=endpoint,
-                            api_key=api_key
+                            api_key=api_key,
+                            default_headers=legacy_identity_headers or None
                         )
 
                 if not gpt_client or not gpt_model:
@@ -16855,6 +17272,13 @@ def register_route_backend_chats(bp):
                 # Note: Message-level chat_type will be updated after document search
 
                 cosmos_messages_container.upsert_item(user_message_doc)
+                if callable(publish_background_event):
+                    publish_background_event(
+                        build_user_message_persisted_stream_event(
+                            conversation_id,
+                            user_message_id,
+                        )
+                    )
 
                 # Log chat activity for real-time tracking
                 try:
@@ -17489,6 +17913,9 @@ def register_route_backend_chats(bp):
                             "document_id": source_doc.get("document_id"),
                             "citation_id": source_doc.get("citation_id"), # Seems like a useful identifier
                             "page_number": source_doc.get("page_number"),
+                            "sheet_name": source_doc.get("sheet_name"),
+                            "location_label": source_doc.get("location_label"),
+                            "location_value": source_doc.get("location_value"),
                             "chunk_id": source_doc.get("chunk_id"), # Specific chunk identifier
                             "chunk_sequence": source_doc.get("chunk_sequence"), # Order within document/group
                             "score": source_doc.get("score"), # Relevance score from search
@@ -17955,6 +18382,9 @@ def register_route_backend_chats(bp):
                     if is_content_safety_error(error_message):
                         user_friendly_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
                         status_code = 400  # Bad request rather than server error
+                    elif is_rate_limit_error(error_message, e):
+                        user_friendly_message = get_rate_limit_message()
+                        status_code = 429
                     elif is_provider_bad_request_error(error_message, e):
                         user_friendly_message = "Image generation request was invalid. Please edit the prompt and try again."
                         status_code = 400
@@ -17969,7 +18399,8 @@ def register_route_backend_chats(bp):
                     )
 
                     return jsonify({
-                        'error': user_friendly_message
+                        'error': user_friendly_message,
+                        **({'rate_limited': True} if status_code == 429 else {}),
                     }), status_code
 
             workspace_tabular_file_contexts = []
@@ -19430,6 +19861,8 @@ def register_route_backend_chats(bp):
                                     gpt_endpoint,
                                     candidate,
                                     deployment_name=gpt_model,
+                                    settings=settings,
+                                    identity_context={'user_id': user_id},
                                 )
                                 response = retry_client.chat.completions.create(**api_params)
                                 break
@@ -19496,6 +19929,25 @@ def register_route_backend_chats(bp):
                 ai_message, final_model_used, chat_mode, kernel_fallback_notice = fallback_result
                 token_usage_data = None
             ai_message = _append_inline_chart_blocks_to_message(ai_message, agent_citations_list)
+
+            if should_run_fact_memory_autosave(user_message, fact_memory_enabled, selected_agent):
+                fact_memory_autosave_payload = asyncio.run(run_fact_memory_autosave(
+                    user_message=user_message,
+                    assistant_message=ai_message,
+                    settings=settings,
+                    gpt_model=gpt_model,
+                    scope_id=scope_id,
+                    scope_type=scope_type,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    model_context=tabular_model_context,
+                ))
+                for thought in fact_memory_autosave_payload.get('thoughts', []):
+                    thought_tracker.add_thought(
+                        thought.get('step_type') or 'fact_memory',
+                        thought.get('content'),
+                        thought.get('detail'),
+                    )
 
             # Emit responded thought for non-agent paths (agent paths emit their own inside callbacks)
             if not selected_agent:
@@ -19624,6 +20076,13 @@ def register_route_backend_chats(bp):
                     request_correlation_id=mixed_source_request_correlation_id,
                 )
             assistant_timestamp = datetime.utcnow().isoformat()
+            apply_agent_document_citations(
+                hybrid_citations_list,
+                agent_citations_list,
+                sort_key=_build_hybrid_citation_sort_key,
+                conversation_id=conversation_id,
+                plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+            )
             prepared_agent_citations = persist_agent_citation_artifacts(
                 conversation_id=conversation_id,
                 assistant_message_id=assistant_message_id,
@@ -19647,6 +20106,7 @@ def register_route_backend_chats(bp):
                 assistant_content=ai_message,
                 conversation_id=conversation_id,
                 existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                function_results=agent_citations_list,
             )
             if assistant_file_generated_output:
                 generated_analysis_artifacts_list.append(assistant_file_generated_output)
@@ -19664,7 +20124,9 @@ def register_route_backend_chats(bp):
             assistant_capability_usage = _build_capability_usage_metadata(
                 workspace_search_enabled=mixed_source_document_context_active,
                 workspace_search_used=bool(
-                    search_results or mixed_source_has_authorized_evidence_sources
+                    search_results
+                    or mixed_source_has_authorized_evidence_sources
+                    or hybrid_citations_list
                 ),
                 workspace_search_result_count=len(hybrid_citations_list or []),
                 document_action_type=DOCUMENT_ACTION_TYPE_NONE,
@@ -19684,6 +20146,11 @@ def register_route_backend_chats(bp):
                 deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
             )
             agent_runtime_metadata = _build_foundry_runtime_metadata(selected_agent) if selected_agent else {}
+            citation_tracking = build_cited_source_subsets(
+                ai_message,
+                hybrid_citations=hybrid_citations_list,
+                web_search_citations=web_search_citations_list,
+            )
 
             assistant_doc = make_json_serializable({
                 'id': assistant_message_id,
@@ -19694,6 +20161,7 @@ def register_route_backend_chats(bp):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list, # <--- SIMPLIFIED: Directly use the list
                 'web_search_citations': web_search_citations_list,
+                **citation_tracking,
                 'hybridsearch_query': search_query if search_results else None, # Log query when any bounded document retrieval produced results
                 'agent_citations': prepared_agent_citations,
                 'model_deployment_name': actual_model_used,
@@ -19805,6 +20273,7 @@ def register_route_backend_chats(bp):
 
             # Update conversation's last_updated timestamp one last time
             conversation_item['last_updated'] = datetime.utcnow().isoformat()
+            initialize_conversation_used_document_tracking(conversation_item)
 
             # Collect comprehensive conversation metadata
             try:
@@ -19848,6 +20317,10 @@ def register_route_backend_chats(bp):
                 debug_print(f"Error collecting conversation metadata: {e}")
                 # Continue even if metadata collection fails
 
+            merge_cited_documents_into_conversation(
+                conversation_item,
+                citation_tracking['cited_hybrid_citations'],
+            )
             # Add any other final updates to conversation_item if needed (like classifications if not done earlier)
             cosmos_conversations_container.upsert_item(conversation_item)
             invalidate_conversation_cache_for_item(conversation_item, reason="chat_completed")
@@ -19876,6 +20349,7 @@ def register_route_backend_chats(bp):
                 'augmented': bool(system_messages_for_augmentation),
                 'hybrid_citations': hybrid_citations_list,
                 'web_search_citations': web_search_citations_list,
+                **citation_tracking,
                 'source_review': compact_source_review_result_for_metadata(source_review_result),
                 'deep_research': deep_research_result,
                 'agent_citations': prepared_agent_citations,
@@ -20011,6 +20485,9 @@ def register_route_backend_chats(bp):
                 'augmented': payload.get('augmented', False),
                 'hybrid_citations': payload.get('hybrid_citations', []),
                 'web_search_citations': payload.get('web_search_citations', []),
+                'citation_tracking_version': payload.get('citation_tracking_version'),
+                'cited_hybrid_citations': payload.get('cited_hybrid_citations', []),
+                'cited_web_search_citations': payload.get('cited_web_search_citations', []),
                 'agent_citations': payload.get('agent_citations', []),
                 'agent_display_name': payload.get('agent_display_name'),
                 'agent_name': payload.get('agent_name'),
@@ -20022,7 +20499,7 @@ def register_route_backend_chats(bp):
                 'blocked': payload.get('blocked', False),
             })
 
-        def generate_compatibility_response():
+        def generate_compatibility_response(publish_background_event=None):
             """Bridge legacy JSON chat handling into a terminal SSE event for parity cases."""
             try:
                 g.conversation_id = finalized_conversation_id
@@ -20045,6 +20522,7 @@ def register_route_backend_chats(bp):
                     }
                     yield f"data: {json.dumps(image_request_event)}\n\n"
 
+                g.chat_publish_background_event = publish_background_event
                 legacy_result = chat_api()
                 legacy_response = legacy_result
                 status_code = 200
@@ -20253,9 +20731,11 @@ def register_route_backend_chats(bp):
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
                 system_messages_for_augmentation = []
-                requested_streamed_file_format = str(
-                    get_tabular_generated_output_format(user_message) or ''
-                ).strip().lower()
+                requested_streamed_file_format = _resolve_generated_file_guidance_format(
+                    user_message,
+                    conversation_id,
+                    user_id,
+                )
                 suppress_streamed_file_payload = requested_streamed_file_format in {'json', 'xml'}
                 streamed_file_status_content = _build_streaming_assistant_file_status(
                     requested_streamed_file_format
@@ -20490,7 +20970,9 @@ def register_route_backend_chats(bp):
                     return _build_capability_usage_metadata(
                         workspace_search_enabled=mixed_source_document_context_active,
                         workspace_search_used=bool(
-                            search_results or mixed_source_has_authorized_evidence_sources
+                            search_results
+                            or mixed_source_has_authorized_evidence_sources
+                            or hybrid_citations_list
                         ),
                         workspace_search_result_count=len(hybrid_citations_list or []),
                         document_action_type=DOCUMENT_ACTION_TYPE_NONE,
@@ -20508,6 +20990,39 @@ def register_route_backend_chats(bp):
                         deep_research_enabled=deep_research_enabled,
                         deep_research_used=bool(deep_research_enabled and (deep_research_result or deep_research_web_search_runs or source_review_was_used)),
                         deep_research_query_count=_deep_research_query_count(deep_research_query_plan, deep_research_web_search_runs),
+                    )
+
+                def collect_stream_response_conversation_metadata():
+                    nonlocal conversation_item
+                    source_continuity_refs = None
+                    if (
+                        is_mixed_source_conversation_continuity_enabled(settings)
+                        and mixed_source_manifest
+                    ):
+                        source_continuity_refs = _build_mixed_source_continuity_refs(
+                            mixed_source_manifest,
+                            mixed_source_evidence_envelopes,
+                            effective_mixed_source_selection_mode,
+                        )
+                    conversation_item = collect_conversation_metadata(
+                        user_message=user_message,
+                        conversation_id=conversation_id,
+                        user_id=user_id,
+                        active_group_id=effective_active_group_id,
+                        active_group_ids=effective_active_group_ids,
+                        document_scope=effective_document_scope,
+                        selected_document_id=effective_selected_document_id,
+                        model_deployment=final_model_used if use_agent_streaming else gpt_model,
+                        hybrid_search_enabled=mixed_source_document_context_active,
+                        image_gen_enabled=False,
+                        selected_documents=combined_documents if combined_documents else None,
+                        selected_agent=agent_name_used if use_agent_streaming else None,
+                        selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
+                        search_results=search_results if search_results else None,
+                        conversation_item=conversation_item,
+                        active_public_workspace_id=effective_active_public_workspace_id,
+                        active_public_workspace_ids=effective_active_public_workspace_ids,
+                        source_continuity_refs=source_continuity_refs,
                     )
 
                 # Initialize GPT client (simplified version)
@@ -20535,6 +21050,10 @@ def register_route_backend_chats(bp):
 
                 try:
                     streaming_multi_endpoint_config = None
+                    legacy_identity_headers = build_model_endpoint_identity_headers(
+                        settings,
+                        identity_context={'user_id': user_id},
+                    )
                     if settings.get('enable_multi_model_endpoints', False):
                         streaming_multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                             settings,
@@ -20585,7 +21104,8 @@ def register_route_backend_chats(bp):
                         gpt_client = AzureOpenAI(
                             api_version=gpt_api_version,
                             azure_endpoint=gpt_endpoint,
-                            api_key=settings.get('azure_apim_gpt_subscription_key')
+                            api_key=settings.get('azure_apim_gpt_subscription_key'),
+                            default_headers=legacy_identity_headers or None
                         )
                     else:
                         auth_type = settings.get('azure_openai_gpt_authentication_type')
@@ -20614,13 +21134,15 @@ def register_route_backend_chats(bp):
                             gpt_client = AzureOpenAI(
                                 api_version=api_version,
                                 azure_endpoint=endpoint,
-                                azure_ad_token_provider=token_provider
+                                azure_ad_token_provider=token_provider,
+                                default_headers=legacy_identity_headers or None
                             )
                         else:
                             gpt_client = AzureOpenAI(
                                 api_version=api_version,
                                 azure_endpoint=endpoint,
-                                api_key=settings.get('azure_openai_gpt_key')
+                                api_key=settings.get('azure_openai_gpt_key'),
+                                default_headers=legacy_identity_headers or None
                             )
 
                     if not gpt_client or not gpt_model:
@@ -21135,6 +21657,10 @@ def register_route_backend_chats(bp):
                     }
 
                     cosmos_messages_container.upsert_item(user_message_doc)
+                    yield build_user_message_persisted_stream_event(
+                        conversation_id,
+                        user_message_id,
+                    )
                     debug_print(
                         f"[STREAMING] Saved user message {user_message_id} | thread_id={current_user_thread_id} | previous_thread_id={previous_thread_id}"
                     )
@@ -21748,6 +22274,9 @@ def register_route_backend_chats(bp):
                                 "document_id": document_id,
                                 "citation_id": citation_id,
                                 "page_number": page_number,
+                                "sheet_name": sheet_name,
+                                "location_label": location_label,
+                                "location_value": location_value,
                                 "chunk_id": chunk_id,
                                 "chunk_sequence": chunk_sequence,
                                 "score": score,
@@ -22806,6 +23335,7 @@ def register_route_backend_chats(bp):
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
                     partial_content = accumulated_content.strip()
                     message_persisted = False
+                    partial_citation_tracking = {}
                     cancel_metadata = {
                         'incomplete': True,
                         'canceled': True,
@@ -22832,6 +23362,18 @@ def register_route_backend_chats(bp):
 
                     if partial_content:
                         assistant_timestamp = datetime.utcnow().isoformat()
+                        apply_agent_document_citations(
+                            hybrid_citations_list,
+                            agent_citations_list,
+                            sort_key=_build_hybrid_citation_sort_key,
+                            conversation_id=conversation_id,
+                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                        )
+                        partial_citation_tracking = build_cited_source_subsets(
+                            partial_content,
+                            hybrid_citations=hybrid_citations_list,
+                            web_search_citations=web_search_citations_list,
+                        )
                         prepared_agent_citations = persist_agent_citation_artifacts(
                             conversation_id=conversation_id,
                             assistant_message_id=assistant_message_id,
@@ -22852,6 +23394,7 @@ def register_route_backend_chats(bp):
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
+                            **partial_citation_tracking,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                             'agent_citations': prepared_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
@@ -22888,6 +23431,24 @@ def register_route_backend_chats(bp):
                         })
                         cosmos_messages_container.upsert_item(assistant_doc)
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                        initialize_conversation_used_document_tracking(conversation_item)
+                        try:
+                            collect_stream_response_conversation_metadata()
+                        except Exception as metadata_error:
+                            log_event(
+                                '[STREAMING] Failed to collect canceled response metadata',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'message_id': assistant_message_id,
+                                    'error_type': type(metadata_error).__name__,
+                                },
+                                level=logging.WARNING,
+                                exceptionTraceback=True,
+                            )
+                        merge_cited_documents_into_conversation(
+                            conversation_item,
+                            partial_citation_tracking['cited_hybrid_citations'],
+                        )
                         cosmos_conversations_container.upsert_item(conversation_item)
                         invalidate_conversation_cache_for_item(conversation_item, reason="chat_stream_stopped")
                         message_persisted = True
@@ -22915,6 +23476,7 @@ def register_route_backend_chats(bp):
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
+                            **partial_citation_tracking,
                             'agent_citations': agent_citations_list,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'model_icon': gpt_model_icon,
@@ -23435,6 +23997,26 @@ def register_route_backend_chats(bp):
                     if appended_chart_content:
                         if not suppress_streamed_file_payload:
                             yield f"data: {json.dumps({'content': appended_chart_content})}\n\n"
+
+                    if should_run_fact_memory_autosave(user_message, fact_memory_enabled, selected_agent):
+                        fact_memory_autosave_payload = asyncio.run(run_fact_memory_autosave(
+                            user_message=user_message,
+                            assistant_message=accumulated_content,
+                            settings=settings,
+                            gpt_model=gpt_model,
+                            scope_id=scope_id,
+                            scope_type=scope_type,
+                            conversation_id=conversation_id,
+                            user_id=user_id,
+                            model_context=tabular_model_context,
+                        ))
+                        for thought in fact_memory_autosave_payload.get('thoughts', []):
+                            yield emit_thought(
+                                thought.get('step_type') or 'fact_memory',
+                                thought.get('content'),
+                                thought.get('detail'),
+                            )
+
                     user_info_for_assistant = response_message_context.get('user_info')
                     user_thread_id = response_message_context.get('thread_id')
                     user_previous_thread_id = response_message_context.get('previous_thread_id')
@@ -23463,6 +24045,13 @@ def register_route_backend_chats(bp):
                             request_correlation_id=mixed_source_request_correlation_id,
                         )
                     assistant_timestamp = datetime.utcnow().isoformat()
+                    apply_agent_document_citations(
+                        hybrid_citations_list,
+                        agent_citations_list,
+                        sort_key=_build_hybrid_citation_sort_key,
+                        conversation_id=conversation_id,
+                        plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                    )
                     prepared_agent_citations = persist_agent_citation_artifacts(
                         conversation_id=conversation_id,
                         assistant_message_id=assistant_message_id,
@@ -23495,6 +24084,7 @@ def register_route_backend_chats(bp):
                         assistant_content=accumulated_content,
                         conversation_id=conversation_id,
                         existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                        function_results=agent_citations_list,
                     )
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
@@ -23538,6 +24128,11 @@ def register_route_backend_chats(bp):
                         generated_tabular_outputs=generated_tabular_outputs_list,
                     )
                     agent_runtime_metadata = _build_foundry_runtime_metadata(selected_agent) if use_agent_streaming else {}
+                    stream_citation_tracking = build_cited_source_subsets(
+                        accumulated_content,
+                        hybrid_citations=hybrid_citations_list,
+                        web_search_citations=web_search_citations_list,
+                    )
 
                     assistant_doc = make_json_serializable({
                         'id': assistant_message_id,
@@ -23548,6 +24143,7 @@ def register_route_backend_chats(bp):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
+                        **stream_citation_tracking,
                         'hybridsearch_query': search_query if search_results else None,
                         'agent_citations': prepared_agent_citations,
                         'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
@@ -23650,6 +24246,7 @@ def register_route_backend_chats(bp):
 
                     # Update conversation
                     conversation_item['last_updated'] = datetime.utcnow().isoformat()
+                    initialize_conversation_used_document_tracking(conversation_item)
 
                     try:
                         user_message_doc = cosmos_messages_container.read_item(
@@ -23667,39 +24264,14 @@ def register_route_backend_chats(bp):
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
 
                     try:
-                        source_continuity_refs = None
-                        if (
-                            is_mixed_source_conversation_continuity_enabled(settings)
-                            and mixed_source_manifest
-                        ):
-                            source_continuity_refs = _build_mixed_source_continuity_refs(
-                                mixed_source_manifest,
-                                mixed_source_evidence_envelopes,
-                                effective_mixed_source_selection_mode,
-                            )
-                        conversation_item = collect_conversation_metadata(
-                            user_message=user_message,
-                            conversation_id=conversation_id,
-                            user_id=user_id,
-                            active_group_id=effective_active_group_id,
-                            active_group_ids=effective_active_group_ids,
-                            document_scope=effective_document_scope,
-                            selected_document_id=effective_selected_document_id,
-                            model_deployment=final_model_used if use_agent_streaming else gpt_model,
-                            hybrid_search_enabled=mixed_source_document_context_active,
-                            image_gen_enabled=False,
-                            selected_documents=combined_documents if combined_documents else None,
-                            selected_agent=agent_name_used if use_agent_streaming else None,
-                            selected_agent_details=selected_agent_metadata if use_agent_streaming else None,
-                            search_results=search_results if search_results else None,
-                            conversation_item=conversation_item,
-                            active_public_workspace_id=effective_active_public_workspace_id,
-                            active_public_workspace_ids=effective_active_public_workspace_ids,
-                            source_continuity_refs=source_continuity_refs,
-                        )
+                        collect_stream_response_conversation_metadata()
                     except Exception as e:
                         debug_print(f"Error collecting conversation metadata: {e}")
 
+                    merge_cited_documents_into_conversation(
+                        conversation_item,
+                        stream_citation_tracking['cited_hybrid_citations'],
+                    )
                     if is_personal_chat_conversation(conversation_item):
                         conversation_item = mark_conversation_unread(
                             conversation_item,
@@ -23743,6 +24315,7 @@ def register_route_backend_chats(bp):
                         'augmented': bool(system_messages_for_augmentation),
                         'hybrid_citations': hybrid_citations_list,
                         'web_search_citations': web_search_citations_list,
+                        **stream_citation_tracking,
                         'source_review': compact_source_review_result_for_metadata(source_review_result),
                         'deep_research': deep_research_result,
                         'agent_citations': prepared_agent_citations,
@@ -23813,11 +24386,35 @@ def register_route_backend_chats(bp):
                     error_msg = str(e)
                     debug_print(f"Error during streaming: {error_msg}")
 
+                    # Retries have already been exhausted by the time a throttle
+                    # reaches here, so tell the user that plainly rather than
+                    # letting it look like an unexplained stream failure.
+                    stream_rate_limited = is_rate_limit_error(error_msg, e)
+                    stream_failure_message = (
+                        get_rate_limit_message() if stream_rate_limited
+                        else CLIENT_SAFE_STREAM_ERROR_MESSAGE
+                    )
+
                     # Save partial response if we have content
+                    interrupted_message_persisted = False
+                    interrupted_citation_tracking = {}
+                    interrupted_agent_citations = []
                     if accumulated_content:
                         current_assistant_thread_id = str(uuid.uuid4())
                         assistant_timestamp = datetime.utcnow().isoformat()
-                        prepared_agent_citations = persist_agent_citation_artifacts(
+                        apply_agent_document_citations(
+                            hybrid_citations_list,
+                            agent_citations_list,
+                            sort_key=_build_hybrid_citation_sort_key,
+                            conversation_id=conversation_id,
+                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
+                        )
+                        interrupted_citation_tracking = build_cited_source_subsets(
+                            accumulated_content,
+                            hybrid_citations=hybrid_citations_list,
+                            web_search_citations=web_search_citations_list,
+                        )
+                        interrupted_agent_citations = persist_agent_citation_artifacts(
                             conversation_id=conversation_id,
                             assistant_message_id=assistant_message_id,
                             agent_citations=agent_citations_list,
@@ -23838,15 +24435,16 @@ def register_route_backend_chats(bp):
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
                             'web_search_citations': web_search_citations_list,
+                            **interrupted_citation_tracking,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
-                            'agent_citations': prepared_agent_citations,
+                            'agent_citations': interrupted_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'metadata': {
                                 'incomplete': True,
-                                'error': 'stream_interrupted',
-                                'error_message': CLIENT_SAFE_STREAM_ERROR_MESSAGE,
+                                'error': 'rate_limited' if stream_rate_limited else 'stream_interrupted',
+                                'error_message': stream_failure_message,
                                 'reasoning_effort': reasoning_effort,
                                 'history_context': history_debug_info,
                                 'capability_usage': build_streaming_capability_usage(),
@@ -23863,12 +24461,70 @@ def register_route_backend_chats(bp):
                         })
                         try:
                             cosmos_messages_container.upsert_item(assistant_doc)
-                        except Exception as ex:
-                            pass
+                            interrupted_message_persisted = True
+                            conversation_item['last_updated'] = assistant_timestamp
+                            initialize_conversation_used_document_tracking(
+                                conversation_item
+                            )
+                            try:
+                                collect_stream_response_conversation_metadata()
+                            except Exception as metadata_error:
+                                log_event(
+                                    '[STREAMING] Failed to collect interrupted response metadata',
+                                    extra={
+                                        'conversation_id': conversation_id,
+                                        'message_id': assistant_message_id,
+                                        'error_type': type(
+                                            metadata_error
+                                        ).__name__,
+                                    },
+                                    level=logging.WARNING,
+                                    exceptionTraceback=True,
+                                )
+                            merge_cited_documents_into_conversation(
+                                conversation_item,
+                                interrupted_citation_tracking[
+                                    'cited_hybrid_citations'
+                                ],
+                            )
+                            cosmos_conversations_container.upsert_item(
+                                conversation_item
+                            )
+                            invalidate_conversation_cache_for_item(
+                                conversation_item,
+                                reason="chat_stream_interrupted",
+                            )
+                        except Exception as persistence_error:
+                            log_event(
+                                '[STREAMING] Failed to persist interrupted response metadata',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'message_id': assistant_message_id,
+                                    'error_type': type(
+                                        persistence_error
+                                    ).__name__,
+                                },
+                                level=logging.WARNING,
+                                exceptionTraceback=True,
+                            )
 
                     yield build_stream_error_event(
-                        CLIENT_SAFE_STREAM_ERROR_MESSAGE,
+                        stream_failure_message,
+                        rate_limited=stream_rate_limited or None,
+                        status_code=429 if stream_rate_limited else None,
                         partial_content=accumulated_content,
+                        conversation_id=conversation_id,
+                        user_message_id=user_message_id,
+                        message_id=(
+                            assistant_message_id
+                            if interrupted_message_persisted
+                            else None
+                        ),
+                        message_persisted=interrupted_message_persisted,
+                        hybrid_citations=hybrid_citations_list,
+                        web_search_citations=web_search_citations_list,
+                        agent_citations=interrupted_agent_citations,
+                        **interrupted_citation_tracking,
                     )
 
             except Exception as e:
@@ -23885,7 +24541,14 @@ def register_route_backend_chats(bp):
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                yield build_stream_error_event()
+                if is_rate_limit_error(str(e), e):
+                    yield build_stream_error_event(
+                        get_rate_limit_message(),
+                        rate_limited=True,
+                        status_code=429,
+                    )
+                else:
+                    yield build_stream_error_event()
 
         return build_background_stream_response(generate, stream_session=stream_session)
 

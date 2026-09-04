@@ -34,6 +34,7 @@ import jwt
 import pandas
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
+from functions_azure_endpoint_validation import validate_azure_blob_endpoint
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -96,8 +97,16 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.250.172"
+VERSION = "0.261.008"
 IS_DEVELOPMENT = is_development_env_enabled()
+
+# Opt-out for deployments where App Service Easy Auth is active but the platform
+# /.auth/logout endpoint is not reachable on the public host (for example, when a
+# custom domain or gateway does not route /.auth/* to the App Service origin).
+DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT = os.getenv(
+    'DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT',
+    ''
+).strip().lower() == 'true'
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
 SESSION_COOKIE_HTTPONLY = os.getenv('SESSION_COOKIE_HTTPONLY', 'true').lower() != 'false'
@@ -339,6 +348,7 @@ LOGIN_REDIRECT_URL = os.getenv("LOGIN_REDIRECT_URL")
 HOME_REDIRECT_URL = os.getenv("HOME_REDIRECT_URL")  # Front Door URL for home page
 AZURE_ENVIRONMENT = os.getenv("AZURE_ENVIRONMENT", "public") # public, usgovernment, custom
 ENABLE_TEAMS_SSO = os.getenv("ENABLE_TEAMS_SSO", "false").lower() == "true"
+ENABLE_AUTO_LOGIN_ON_INDEX = os.getenv("ENABLE_AUTO_LOGIN_ON_INDEX", "false").lower() == "true"
 TEAMS_APP_RESOURCE = os.getenv("TEAMS_APP_RESOURCE", "")
 TEAMS_SUCCESS_REDIRECT_PATH = os.getenv("TEAMS_SUCCESS_REDIRECT_PATH", "/chats")
 TEAMS_FRAME_ANCESTORS = _split_origin_list(os.getenv("TEAMS_FRAME_ANCESTORS", ""))
@@ -518,7 +528,9 @@ def build_enhanced_citations_blob_service_client(settings):
         blob_endpoint = str(settings.get("office_docs_storage_account_blob_endpoint") or "").strip()
         if not blob_endpoint:
             raise ValueError("Enhanced Citations blob endpoint is required for managed identity authentication.")
-        return BlobServiceClient(account_url=blob_endpoint, credential=DefaultAzureCredential())
+        safe_blob_endpoint = validate_azure_blob_endpoint(blob_endpoint)
+        # codeql[py/full-ssrf]
+        return BlobServiceClient(account_url=safe_blob_endpoint, credential=DefaultAzureCredential())
 
     connection_string = str(settings.get("office_docs_storage_account_url") or "").strip()
     if not connection_string:

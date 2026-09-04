@@ -7,6 +7,7 @@ import uuid
 
 
 COLLABORATION_KIND = 'collaborative'
+COLLABORATION_SOURCE_KIND = 'collaboration_source'
 
 PERSONAL_MULTI_USER_CHAT_TYPE = 'personal_multi_user'
 GROUP_MULTI_USER_CHAT_TYPE = 'group_multi_user'
@@ -678,6 +679,9 @@ def build_collaboration_message_doc_from_legacy(
         'augmented',
         'hybrid_citations',
         'web_search_citations',
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
         'agent_citations',
         'agent_display_name',
         'agent_name',

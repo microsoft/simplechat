@@ -455,6 +455,7 @@ def build_openai_style_chat_client(
     token_or_key: str,
     base_url: str,
     api_version: Any = "",
+    default_headers: Dict[str, str] | None = None,
     *,
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
@@ -473,6 +474,8 @@ def build_openai_style_chat_client(
         client_kwargs["http_client"] = build_custom_openai_sync_http_client(
             allow_private=allow_private_custom_endpoints,
         )
+    if default_headers:
+        client_kwargs["default_headers"] = default_headers
     if request_api_version:
         client_kwargs["default_query"] = {"api-version": request_api_version}
     return OpenAIStyleChatCompletionClient(
@@ -631,6 +634,7 @@ def build_anthropic_chat_client(
     endpoint: str,
     api_key: str = "",
     bearer_token: str = "",
+    extra_headers: Dict[str, str] | None = None,
     timeout: int = 90,
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
     direct_custom: bool = False,
@@ -641,6 +645,7 @@ def build_anthropic_chat_client(
         endpoint=endpoint,
         api_key=api_key,
         bearer_token=bearer_token,
+        extra_headers=extra_headers,
         timeout=timeout,
         anthropic_version=anthropic_version,
         direct_custom=direct_custom,
@@ -657,6 +662,7 @@ class AnthropicChatCompletionClient:
         endpoint: str,
         api_key: str = "",
         bearer_token: str = "",
+        extra_headers: Dict[str, str] | None = None,
         timeout: int = 90,
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
         direct_custom: bool = False,
@@ -668,6 +674,7 @@ class AnthropicChatCompletionClient:
         )
         self.api_key = api_key
         self.bearer_token = bearer_token
+        self.extra_headers = extra_headers or {}
         self.timeout = timeout
         self.anthropic_version = str(
             anthropic_version or DEFAULT_ANTHROPIC_VERSION
@@ -757,6 +764,10 @@ class AnthropicChatCompletionClient:
             headers["x-api-key"] = self.api_key
         else:
             raise ValueError("Anthropic model endpoints require an API key or bearer token.")
+        existing_header_names = {header_name.lower() for header_name in headers}
+        for header_name, header_value in self.extra_headers.items():
+            if header_name.lower() not in existing_header_names:
+                headers[header_name] = header_value
         return headers
 
     def _build_payload(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -1085,6 +1096,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     endpoint: str
     api_key: str = ""
     bearer_token: str = ""
+    extra_headers: Dict[str, str] = Field(default_factory=dict)
     timeout: int = 90
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION
     direct_custom: bool = False
@@ -1099,6 +1111,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         endpoint: str,
         api_key: str = "",
         bearer_token: str = "",
+        extra_headers: Dict[str, str] | None = None,
         timeout: int = 90,
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
         direct_custom: bool = False,
@@ -1110,6 +1123,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             endpoint=endpoint,
             api_key=api_key,
             bearer_token=bearer_token,
+            extra_headers=extra_headers or {},
             timeout=timeout,
             anthropic_version=anthropic_version,
             direct_custom=direct_custom,
@@ -1281,6 +1295,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             endpoint=self.endpoint,
             api_key=self.api_key,
             bearer_token=self.bearer_token,
+            extra_headers=self.extra_headers,
             timeout=self.timeout,
             anthropic_version=self.anthropic_version,
             direct_custom=self.direct_custom,

@@ -13,6 +13,7 @@ import re
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
@@ -38,6 +39,7 @@ from collaboration_models import (
 )
 from config import (
     SECRET_KEY,
+    TABULAR_EXTENSIONS,
     VERSION,
     cognitive_services_scope,
     cosmos_conversations_container,
@@ -52,6 +54,13 @@ from functions_conversation_context import (
     build_conversation_context_snapshot,
     build_conversation_context_system_message,
     serialize_conversation_context_snapshot,
+)
+from functions_agent_document_citations import apply_agent_document_citations
+from functions_citation_tracking import (
+    build_cited_source_subsets,
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    resolve_citation_location,
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
@@ -149,6 +158,7 @@ from functions_mixed_source_orchestration import (
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
@@ -158,6 +168,14 @@ from functions_model_endpoint_types import (
     resolve_model_endpoint_request_model,
 )
 from functions_notifications import create_workflow_priority_notification
+from functions_workflow_alerts import (
+    build_workflow_alert_facts,
+    evaluate_workflow_alert_rules,
+    normalize_agent_alert_signal,
+    normalize_alert_severity,
+    resolve_workflow_alert_config,
+    summarize_alert_decision,
+)
 from functions_personal_workflows import (
     get_personal_workflow,
     get_personal_workflow_run,
@@ -232,6 +250,7 @@ TABULAR_DOCUMENT_EXTENSIONS = {'.csv', '.xls', '.xlsx', '.xlsm'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
 WORKFLOW_RUN_CANCELLED_MESSAGE = 'Workflow cancellation was requested.'
 WORKFLOW_TASK_CONTEXT_MAX_CHARS = 12000
+WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS = 8000
 
 
 class WorkflowRunCancelledError(BaseException):
@@ -735,6 +754,14 @@ def _get_primary_tabular_generated_outputs(primary_generated_outputs):
 
         normalized_outputs.append(output)
     return normalized_outputs
+
+
+def _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs):
+    for output in primary_tabular_outputs or []:
+        status = str(output.get('status') or output.get('run_status') or '').strip().lower()
+        if output.get('background_export') or status in {'pending', 'queued', 'running', 'in_progress'}:
+            return True
+    return False
 
 
 def _prompt_explicitly_requests_markdown_artifact(analysis_prompt):
@@ -1243,6 +1270,13 @@ def _upload_document_analysis_generated_artifact(
         )
         return None
 
+    debug_print(
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Uploaded generated artifact | '
+        f'conversation_id={normalized_conversation_id} | '
+        f'file={file_name} | '
+        f'output_format={output_format} | '
+        f'content_chars={len(str(file_content or ""))}'
+    )
     artifact_payload = {
         'capability': 'analyze',
         'artifact_message_id': upload_result.get('message', {}).get('id'),
@@ -1340,14 +1374,33 @@ def _maybe_create_document_analysis_generated_artifacts(
     json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
     xml_payload = normalize_xml_artifact_payload(analysis_reply)
     xml_artifact_requested = bool(artifact_intent.get('xml_artifact_requested'))
+    debug_print(
+        '[WORKFLOW_DOCUMENT_ANALYSIS] Analysis artifact sizing | '
+        f'document_count={document_count} | '
+        f'analysis_reply_chars={len(analysis_reply)} | '
+        f'xml_payload_chars={len(xml_payload) if xml_payload else 0} | '
+        f'xml_artifact_requested={xml_artifact_requested} | '
+        f'json_payload_present={json_payload is not None} | '
+        f'json_artifact_requested={json_artifact_requested}'
+    )
     create_lossless_artifacts = bool(
         artifact_intent.get('exhaustive')
         or artifact_intent.get('table_output_requested')
+        or json_artifact_requested
         or xml_artifact_requested
         or primary_tabular_outputs
+        or analysis_reply
     )
     deferred_composition = analysis_result.get('deferred_composition') if isinstance(analysis_result.get('deferred_composition'), dict) else {}
     if deferred_composition.get('status') in {'pending', 'gate_disabled', 'continuation_unavailable'}:
+        return {'artifacts': [], 'assistant_reply': None}
+
+    primary_tabular_outputs_pending = _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs)
+    pure_tabular_durable_handoff = bool(
+        primary_tabular_outputs
+        and isinstance(analysis_result.get('tabular_preflight_result'), dict)
+    )
+    if pure_tabular_durable_handoff:
         return {'artifacts': [], 'assistant_reply': None}
 
     if create_lossless_artifacts:
@@ -1376,15 +1429,8 @@ def _maybe_create_document_analysis_generated_artifacts(
 
             markdown_output = _build_document_analysis_markdown_artifact(analysis_result)
             should_create_markdown_artifact = bool(
-                (
-                    artifact_intent.get('markdown_analysis_artifact_recommended')
-                    or (json_payload is not None and not json_artifact_requested)
-                )
-                and markdown_output
-                and (
-                    not primary_tabular_outputs
-                    or _prompt_explicitly_requests_markdown_artifact(analysis_prompt)
-                )
+                markdown_output
+                and not primary_tabular_outputs_pending
             )
             if should_create_markdown_artifact:
                 markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
@@ -1450,14 +1496,26 @@ def _maybe_create_document_analysis_generated_artifacts(
             raise
 
         if artifacts or primary_tabular_outputs:
-            assistant_reply = _build_document_analysis_multi_artifact_reply(
-                document_count,
-                artifacts,
-                len(structured_rows),
-                len(raw_analysis_items),
-                analysis_reply,
-                structured_rows=structured_rows,
+            markdown_only_artifacts = bool(
+                artifacts
+                and not primary_tabular_outputs
+                and all(str(artifact.get('output_format') or '').strip().lower() == 'md' for artifact in artifacts)
             )
+            if markdown_only_artifacts:
+                assistant_reply = _build_document_analysis_artifact_reply(
+                    document_count,
+                    'md',
+                    analysis_reply=analysis_reply,
+                )
+            else:
+                assistant_reply = _build_document_analysis_multi_artifact_reply(
+                    document_count,
+                    artifacts,
+                    len(structured_rows),
+                    len(raw_analysis_items),
+                    analysis_reply,
+                    structured_rows=structured_rows,
+                )
             if primary_tabular_outputs:
                 assistant_reply = _build_document_analysis_primary_output_reply(
                     document_count,
@@ -2555,15 +2613,9 @@ def _build_mixed_source_deferred_composition_descriptor(
 
 
 def _build_mixed_source_deferred_reply(deferred_descriptor):
-    descriptor = deferred_descriptor if isinstance(deferred_descriptor, dict) else {}
-    pending_source_count = _coerce_document_analysis_count(
-        descriptor.get('pending_source_count'),
-    )
-    source_label = 'source' if pending_source_count == 1 else 'sources'
     return (
-        f'Completed narrative and bounded evidence has been preserved, but {pending_source_count} tabular {source_label} '
-        'still require full-source generated-output processing. Automatic deferred composition is unavailable, so no '
-        'collective conclusion was generated from incomplete table evidence. Individual generated outputs will continue.'
+        'We are analyzing the data and generating the requested file in the background. '
+        'It will be available here shortly.'
     )
 
 
@@ -2593,7 +2645,11 @@ def _emit_analyze_shared_preflight_event(
             safe_dimensions.update({
                 'rollout_contract_version': str(rollout_assignment.get('contract_version') or '').strip()[:80],
                 'rollout_mode': str(rollout_assignment.get('mode') or '').strip().lower()[:40],
+                'rollout_state': str(rollout_assignment.get('rollout_state') or 'active').strip().lower()[:40],
                 'rollout_assigned': str(bool(rollout_assignment.get('assigned'))).lower(),
+                'rollout_assignment_reason': str(
+                    rollout_assignment.get('assignment_reason_code') or ''
+                ).strip().lower()[:80],
                 'rollout_percent': str(_coerce_document_analysis_count(rollout_assignment.get('rollout_percent'))),
                 'rollout_cohort_bucket': str(_coerce_document_analysis_count(rollout_assignment.get('cohort_bucket'))),
                 'legacy_post_tool_fallback_mode': str(
@@ -2684,6 +2740,11 @@ def _maybe_execute_pure_tabular_analyze_preflight(
     gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
     if not user_id or not gpt_model:
         return None
+    model_context = _build_workflow_model_context(
+        workflow,
+        gpt_model,
+        workflow.get('model_provider'),
+    )
 
     file_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
     if len(file_contexts) != 1:
@@ -2723,6 +2784,7 @@ def _maybe_execute_pure_tabular_analyze_preflight(
             user_id=user_id,
             conversation_id=conversation_id,
             gpt_model=gpt_model,
+            model_context=model_context,
             thought_callback=publish_post_processing_thought,
             cancel_requested=cancel_requested,
             request_correlation_id=request_correlation_id,
@@ -2938,6 +3000,7 @@ def _execute_mixed_source_analyze_workflow(
         return tabular_preflight_result
 
     narrative_sources = partitions['narrative_sources']
+    narrative_result = None
     if narrative_sources:
         if callable(activity_callback):
             activity_callback({'type': 'mixed_source_progress', 'phase': 'analyzing_narrative', 'label': 'Analyzing narrative documents'})
@@ -2982,20 +3045,29 @@ def _execute_mixed_source_analyze_workflow(
                     if total_windows and processed_windows == total_windows and not failed_windows
                     else ('partial' if processed_windows else EVIDENCE_STATUS_FAILED)
                 )
+                narrative_summary_source_text = str(narrative_item.get('text') or '')
                 evidence_envelopes.append(build_evidence_envelope(
                     document_id=document_id,
                     source_kind='narrative',
                     engine=EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
                     status=status,
-                    summary=str(narrative_item.get('text') or ''),
+                    summary=narrative_summary_source_text,
                     citations=[],
                     generated_artifacts=[],
                     coverage={'terminal': True, 'processed_windows': processed_windows, 'total_windows': total_windows, 'failed_windows': failed_windows},
                     error='Narrative analysis could not be completed.' if status == EVIDENCE_STATUS_FAILED else None,
                 ))
+                debug_print(
+                    '[MIXED_SOURCE_ANALYZE] Narrative evidence envelope sized | '
+                    f'document_id={document_id} | '
+                    f'source_text_chars={len(narrative_summary_source_text)} | '
+                    f"envelope_summary_chars={len(evidence_envelopes[-1].get('summary') or '')} | "
+                    f"envelope_truncated={bool((evidence_envelopes[-1].get('coverage') or {}).get('evidence_envelope_truncated'))}"
+                )
         except MixedSourceCancellationError:
             raise
         except Exception:
+            narrative_result = None
             for source in narrative_sources:
                 evidence_envelopes.append(build_evidence_envelope(
                     document_id=source.get('document_id'), source_kind='narrative',
@@ -3003,6 +3075,39 @@ def _execute_mixed_source_analyze_workflow(
                     summary='Narrative evidence could not be completed for this source.',
                     coverage={'terminal': True}, error='Narrative analysis could not be completed.',
                 ))
+
+    if narrative_sources and narrative_result is not None and not partitions['tabular_sources']:
+        # Pure-narrative Analyze (no tabular sources): use run_document_analysis's own
+        # full-fidelity synthesis directly instead of the bounded evidence-envelope/collective-
+        # reduction hop below, which exists to combine different engine types (narrative +
+        # tabular) and caps each source's contribution far below what run_document_analysis
+        # already produced.
+        debug_print(
+            '[MIXED_SOURCE_ANALYZE] Pure narrative sources only | skipping bounded evidence handoff | '
+            f'document_count={len(narrative_sources)} | '
+            f"analysis_reply_chars={len(str(narrative_result.get('analysis_reply') or ''))}"
+        )
+        if callable(activity_callback):
+            activity_callback({
+                'type': 'mixed_source_progress',
+                'phase': 'complete',
+                'label': 'Analysis complete',
+                'status': EVIDENCE_STATUS_COMPLETED,
+            })
+        return {
+            'reply': narrative_result.get('reply') or narrative_result.get('analysis_reply'),
+            'analysis_reply': narrative_result.get('analysis_reply'),
+            'coverage': narrative_result.get('coverage') or {},
+            'documents': (narrative_result.get('coverage') or {}).get('documents') or [],
+            'document_ids': narrative_result.get('document_ids') or [source.get('document_id') for source in narrative_sources],
+            'raw_analysis_items': narrative_result.get('raw_analysis_items') or [],
+            'document_analysis_items': narrative_result.get('document_analysis_items') or [],
+            'analysis_intent': narrative_result.get('analysis_intent') or {},
+            'mixed_source_manifest': manifest,
+            'mixed_source_evidence': [],
+            'generated_tabular_outputs': [],
+            'agent_citations': [],
+        }
 
     tabular_sources = partitions['tabular_sources']
     if tabular_sources:
@@ -3074,6 +3179,12 @@ def _execute_mixed_source_analyze_workflow(
         telemetry_settings=settings,
         request_correlation_id=request_correlation_id,
     )
+    debug_print(
+        '[MIXED_SOURCE_ANALYZE] Evidence handoff sized | '
+        f'envelope_count={len(evidence_envelopes)} | '
+        f'handoff_bytes={len(json.dumps(handoff, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))} | '
+        f"handoff_compacted={bool((handoff.get('mixed_source_coverage') or {}).get('handoff_compacted'))}"
+    )
     mode_outcome = evaluate_mixed_source_mode_outcome(
         'analyze',
         {
@@ -3133,6 +3244,11 @@ def _execute_mixed_source_analyze_workflow(
     )
     if not collective_reply:
         collective_reply = 'The selected sources could not be combined into a final analysis.'
+    debug_print(
+        '[MIXED_SOURCE_ANALYZE] Collective reduction completed | '
+        f'evidence_envelope_count={len(evidence_envelopes)} | '
+        f'collective_reply_chars={len(collective_reply)}'
+    )
     emit_mixed_source_telemetry(
         settings,
         'reduction',
@@ -3765,6 +3881,11 @@ def _maybe_execute_tabular_document_action(
     gpt_model = _resolve_tabular_document_action_model_name(workflow, settings)
     if not gpt_model:
         return None
+    tabular_model_context = _build_workflow_model_context(
+        workflow,
+        gpt_model,
+        workflow.get('model_provider'),
+    )
 
     # Import lazily to avoid a circular dependency during workflow startup.
     from functions_tabular_analysis import (
@@ -3772,6 +3893,8 @@ def _maybe_execute_tabular_document_action(
         build_tabular_related_document_evidence_summary,
         get_new_plugin_invocations,
         maybe_create_tabular_generated_output,
+        maybe_queue_direct_tabular_generated_output,
+        plan_tabular_request,
         run_tabular_analysis_with_thought_tracking,
     )
 
@@ -3801,6 +3924,37 @@ def _maybe_execute_tabular_document_action(
                     plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
                 )
 
+            tabular_file_context = {
+                'file_name': tabular_document.get('file_name'),
+                'source_hint': tabular_document.get('source_hint', 'workspace'),
+                'group_id': tabular_document.get('group_id'),
+                'public_workspace_id': tabular_document.get('public_workspace_id'),
+            }
+            if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+                tabular_plan = plan_tabular_request(
+                    task_prompt,
+                    [tabular_file_context],
+                    action_mode='analyze',
+                    settings=settings,
+                )
+                if isinstance(tabular_plan, dict) and tabular_plan.get('durable_task_type'):
+                    direct_generated_output = maybe_queue_direct_tabular_generated_output(
+                        user_question=task_prompt,
+                        file_contexts=[tabular_file_context],
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        model_context=tabular_model_context,
+                        thought_callback=tabular_post_processing_thought_callback,
+                        cancel_requested=cancel_requested,
+                        request_correlation_id=request_correlation_id,
+                        planner_metadata=tabular_plan,
+                    )
+                    if direct_generated_output:
+                        generated_tabular_outputs.append(direct_generated_output)
+                        continue
+
             parity_result = classify_tabular_parity_request(task_prompt)
             emit_tabular_parity_event(
                 settings,
@@ -3828,12 +3982,8 @@ def _maybe_execute_tabular_document_action(
                     group_id=tabular_document.get('group_id'),
                     public_workspace_id=tabular_document.get('public_workspace_id'),
                     execution_mode='analysis',
-                    tabular_file_contexts=[{
-                        'file_name': tabular_document.get('file_name'),
-                        'source_hint': tabular_document.get('source_hint', 'workspace'),
-                        'group_id': tabular_document.get('group_id'),
-                        'public_workspace_id': tabular_document.get('public_workspace_id'),
-                    }],
+                    tabular_file_contexts=[tabular_file_context],
+                    model_context=tabular_model_context,
                     thought_tracker=thought_tracker,
                     live_thought_callback=live_thought_callback,
                     token_usage_callback=token_usage_callback,
@@ -3881,6 +4031,7 @@ def _maybe_execute_tabular_document_action(
                         conversation_id=conversation_id,
                         thought_callback=tabular_post_processing_thought_callback,
                         user_id=user_id,
+                        model_context=tabular_model_context,
                         cancel_requested=cancel_requested,
                         request_correlation_id=request_correlation_id,
                         token_usage_callback=token_usage_callback,
@@ -3919,6 +4070,88 @@ def _maybe_execute_tabular_document_action(
     tabular_agent_citations = _build_agent_citations_from_plugin_invocations(tabular_invocations)
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
+        pending_generated_output = _get_pending_tabular_generated_output(generated_tabular_outputs)
+        terminal_unsuccessful_output = _get_terminal_unsuccessful_tabular_generated_output(generated_tabular_outputs)
+        completed_tabular_documents = [
+            tabular_document
+            for tabular_document in tabular_documents
+            if str(tabular_document.get('analysis') or '').strip()
+        ]
+        if (pending_generated_output or terminal_unsuccessful_output) and not completed_tabular_documents:
+            terminal_status = _get_tabular_generated_output_status(terminal_unsuccessful_output)
+            terminal_canceled = terminal_status in {'canceled', 'cancelled'}
+            evidence_status = (
+                EVIDENCE_STATUS_PENDING
+                if pending_generated_output
+                else (EVIDENCE_STATUS_CANCELED if terminal_canceled else EVIDENCE_STATUS_FAILED)
+            )
+            failed_units = 0 if pending_generated_output else 1
+            handoff_reply = (
+                _build_tabular_analyze_durable_handoff(pending_generated_output)
+                if pending_generated_output
+                else (
+                    'The full-source tabular work was canceled before completion. No exhaustive tabular result has been completed.'
+                    if terminal_canceled
+                    else 'The full-source tabular work could not be completed. No exhaustive tabular result has been completed.'
+                )
+            )
+            coverage = _build_tabular_document_action_coverage(
+                tabular_documents,
+                'Queued' if pending_generated_output else ('Canceled' if terminal_canceled else 'Failed'),
+            )
+            for document_summary in list(coverage.get('documents') or []):
+                document_summary.update({
+                    'processed_windows': 0,
+                    'processed_chunks': 0,
+                    'failed_windows': failed_units,
+                    'failed_chunks': failed_units,
+                    'status': evidence_status,
+                    'status_text': (
+                        'Full-source tabular work is pending'
+                        if pending_generated_output
+                        else (
+                            'Full-source tabular work was canceled'
+                            if terminal_canceled
+                            else 'Full-source tabular work failed'
+                        )
+                    ),
+                })
+            coverage.update({
+                'processed_windows': 0,
+                'processed_chunks': 0,
+                'failed_windows': failed_units,
+                'failed_chunks': failed_units,
+            })
+            coverage['progress_meta'].update({
+                'phase': 'queued' if pending_generated_output else ('canceled' if terminal_canceled else 'failed'),
+                'phase_label': 'Queued' if pending_generated_output else ('Canceled' if terminal_canceled else 'Failed'),
+                'phase_detail': (
+                    'Full-source tabular work is running in the background'
+                    if pending_generated_output
+                    else (
+                        'Full-source tabular work was canceled before completion'
+                        if terminal_canceled
+                        else 'Full-source tabular work could not be completed'
+                    )
+                ),
+                'status': evidence_status,
+                'percent_override': 0 if pending_generated_output else 100,
+            })
+            return {
+                'result': {
+                    'reply': handoff_reply,
+                    'analysis_reply': handoff_reply,
+                    'coverage': coverage,
+                    'documents': coverage.get('documents', []),
+                    'document_ids': [tabular_document.get('document_id') for tabular_document in tabular_documents],
+                    'doc_scope': action_config.get('doc_scope'),
+                    'window_unit': 'tabular',
+                    'window_size': None,
+                    'window_percent': None,
+                },
+                'agent_citations': tabular_agent_citations,
+                'generated_tabular_outputs': generated_tabular_outputs,
+            }
         raise_if_mixed_source_cancelled(
             cancel_requested,
             'reduction',
@@ -4250,8 +4483,26 @@ def _mirror_assistant_message_to_personal_conversation(
             previous_thread_id,
         ),
     }
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in source_assistant_doc:
+            if field_name == 'citation_tracking_version':
+                mirrored_assistant_doc[field_name] = source_assistant_doc.get(field_name)
+            else:
+                mirrored_assistant_doc[field_name] = list(
+                    source_assistant_doc.get(field_name) or []
+                )
     cosmos_messages_container.upsert_item(mirrored_assistant_doc)
 
+    if 'citation_tracking_version' in mirrored_assistant_doc:
+        initialize_conversation_used_document_tracking(conversation_doc)
+        merge_cited_documents_into_conversation(
+            conversation_doc,
+            mirrored_assistant_doc.get('cited_hybrid_citations'),
+        )
     conversation_doc['last_updated'] = timestamp
     conversation_doc['has_unread_assistant_response'] = True
     conversation_doc['last_unread_assistant_message_id'] = mirrored_message_id
@@ -4339,12 +4590,98 @@ def _mirror_workflow_visualizations_to_created_conversations(workflow, source_as
 
 WORKFLOW_ALERT_PRIORITIES = {'low', 'medium', 'high'}
 
+# Alert signals raised by an agent during a run are collected per run through a
+# context variable so the SimpleChat plugin can hand them to the rule engine
+# without threading the run through every kernel invocation.
+_workflow_alert_signal_context = ContextVar('workflow_alert_signals', default=None)
 
-def _normalize_workflow_alert_priority(priority):
-    normalized = str(priority or '').strip().lower()
-    if normalized not in WORKFLOW_ALERT_PRIORITIES:
-        return 'none'
-    return normalized
+
+@contextmanager
+def workflow_alert_signal_scope(workflow=None, run_id=None):
+    """Collect agent raised alert signals for the duration of a workflow run."""
+    scope = {
+        'workflow_id': str((workflow or {}).get('id') or '').strip(),
+        'run_id': str(run_id or '').strip(),
+        'signals': [],
+    }
+    token = _workflow_alert_signal_context.set(scope)
+    try:
+        yield scope
+    finally:
+        _workflow_alert_signal_context.reset(token)
+
+
+def is_workflow_alert_signal_scope_active():
+    """Return True when the caller is running inside a workflow run."""
+    return isinstance(_workflow_alert_signal_context.get(), dict)
+
+
+def record_workflow_alert_signal(severity, title='', reason='', signal_name=''):
+    """Record an agent raised alert signal for the active workflow run.
+
+    Returns the normalized signal, or None when no workflow run is active so the
+    caller can refuse instead of fabricating a notification.
+    """
+    scope = _workflow_alert_signal_context.get()
+    if not isinstance(scope, dict):
+        return None
+
+    signal = normalize_agent_alert_signal({
+        'severity': severity,
+        'title': title,
+        'reason': reason,
+        'signal_name': signal_name,
+    })
+    scope['signals'].append(signal)
+    return signal
+
+
+def get_workflow_alert_signals():
+    """Return the alert signals raised so far during the active workflow run."""
+    scope = _workflow_alert_signal_context.get()
+    if not isinstance(scope, dict):
+        return []
+    return list(scope.get('signals') or [])
+
+
+def _build_workflow_alert_model_evaluator(workflow, settings=None):
+    """Build the callable the rule engine uses to judge model evaluated conditions.
+
+    Returns None when no model can be resolved, in which case model evaluated
+    rules are reported as unevaluated instead of silently matching.
+    """
+    try:
+        evaluation_settings = settings if isinstance(settings, dict) else get_settings()
+        client, deployment_name, _provider = _resolve_model_workflow_client(workflow, evaluation_settings)
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Alert condition evaluator unavailable: {exc}',
+            extra={'workflow_id': str((workflow or {}).get('id') or '').strip()},
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
+
+    def evaluate(prompt):
+        completion = client.chat.completions.create(
+            model=deployment_name,
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        'You evaluate automated workflow output against alert conditions. '
+                        'You always reply with a single JSON object and never with markdown or commentary.'
+                    ),
+                },
+                {'role': 'user', 'content': prompt},
+            ],
+            temperature=0,
+        )
+        if not getattr(completion, 'choices', None):
+            return ''
+        return _extract_message_text(completion.choices[0].message.content)
+
+    return evaluate
 
 
 def _dedupe_workflow_alert_targets(targets):
@@ -4758,25 +5095,53 @@ def _build_workflow_alert_success_detail(alert_title, action_plan, response_prev
     )
 
 
-def _build_workflow_alert_content(workflow, run_record, execution_result, priority):
+def _build_workflow_alert_trigger_section(decision):
+    """Render the "Triggered by" section listing every rule that matched the run."""
+    decision = decision if isinstance(decision, dict) else {}
+    matched_rules = decision.get('matched_rules') or []
+    if not matched_rules:
+        return ''
+
+    trigger_lines = []
+    for match in matched_rules:
+        rule_name = _normalize_workflow_alert_text(match.get('rule_name') or 'Alert rule')
+        severity = str(match.get('severity') or '').strip().lower()
+        reason = _normalize_workflow_alert_text(match.get('reason'))
+        line = f'- {rule_name}'
+        if severity:
+            line = f'{line} ({severity})'
+        if reason:
+            line = f'{line}: {reason}'
+        trigger_lines.append(line)
+
+    return 'Triggered by\n' + '\n'.join(trigger_lines)
+
+
+def _build_workflow_alert_content(workflow, run_record, execution_result, priority, decision=None):
     execution_result = execution_result if isinstance(execution_result, dict) else {}
+    decision = decision if isinstance(decision, dict) else {}
     workflow_name = _normalize_workflow_alert_title_text(workflow.get('name') or 'Workflow') or 'Workflow'
     trigger_source = str(run_record.get('trigger_source') or 'manual').strip() or 'manual'
     success = bool(run_record.get('success'))
+    is_failure_alert = str(decision.get('category') or '').strip().lower() == 'failure' or not success
     response_preview = _strip_workflow_alert_markdown(run_record.get('response_preview') or '')
     reply_text = _strip_workflow_alert_markdown(execution_result.get('reply') or '')
     error_text = _strip_workflow_alert_markdown(run_record.get('error') or '')
     agent_citations = list(execution_result.get('agent_citations') or [])
     enrichment_labels = _build_workflow_alert_enrichment_labels(agent_citations)
     action_plan = _build_workflow_alert_action_plan(agent_citations)
+    trigger_section = _build_workflow_alert_trigger_section(decision)
+    winning_rule_name = _normalize_workflow_alert_title_text(decision.get('winning_rule_name') or '')
 
     alert_title = _extract_workflow_alert_title_from_citations(agent_citations)
     if not alert_title:
         alert_title = _extract_workflow_alert_event_title(reply_text or response_preview)
     if not alert_title:
-        alert_title = workflow_name
+        alert_title = winning_rule_name or workflow_name
 
-    if success:
+    severity_label = str(decision.get('severity') or priority or '').strip().lower() or 'medium'
+
+    if not is_failure_alert:
         alert_summary = _build_workflow_alert_success_summary(
             alert_title,
             action_plan,
@@ -4791,14 +5156,17 @@ def _build_workflow_alert_content(workflow, run_record, execution_result, priori
             workflow_name,
             trigger_source,
         )
-        notification_title = f'{priority.capitalize()} priority workflow alert: {alert_title}'
+        notification_title = f'{severity_label.capitalize()} priority workflow alert: {alert_title}'
     else:
         failure_text = error_text or response_preview or reply_text or (
             f'{workflow_name} failed from the {trigger_source} trigger.'
         )
         alert_summary = _summarize_workflow_alert_text(failure_text)
         alert_detail = _normalize_workflow_alert_text(failure_text)
-        notification_title = f'{priority.capitalize()} priority workflow alert: {workflow_name} failed'
+        notification_title = f'{severity_label.capitalize()} priority workflow alert: {workflow_name} failed'
+
+    if trigger_section:
+        alert_detail = f'{trigger_section}\n\n{alert_detail}' if alert_detail else trigger_section
 
     return {
         'notification_title': notification_title,
@@ -4879,11 +5247,105 @@ def _collect_agent_alert_targets(user_id, conversation_id):
     return _select_preferred_workflow_alert_targets(alert_targets)
 
 
-def _create_workflow_priority_alert(workflow, run_record, conversation, execution_result=None):
-    execution_result = execution_result if isinstance(execution_result, dict) else {}
-    priority = _normalize_workflow_alert_priority(workflow.get('alert_priority'))
-    if priority == 'none':
+def _record_workflow_alert_decision(workflow, run_record, decision):
+    """Persist a compact record of the alert decision so a run can explain itself."""
+    if not isinstance(run_record, dict):
+        return
+
+    decision = decision if isinstance(decision, dict) else {}
+    run_record['alert_decision'] = {
+        'should_alert': bool(decision.get('should_alert')),
+        'severity': decision.get('severity') or '',
+        'category': decision.get('category') or '',
+        'delivery': decision.get('delivery') or '',
+        'mode': decision.get('mode') or '',
+        'summary': summarize_alert_decision(decision),
+        'matched_rules': [
+            {
+                'rule_id': match.get('rule_id'),
+                'rule_name': match.get('rule_name'),
+                'severity': match.get('severity'),
+                'condition_type': match.get('condition_type'),
+                'reason': match.get('reason'),
+            }
+            for match in decision.get('matched_rules') or []
+        ],
+    }
+
+    try:
+        _save_workflow_run_record(workflow, run_record)
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Failed to persist workflow alert decision: {exc}',
+            extra={
+                'workflow_id': str((workflow or {}).get('id') or '').strip(),
+                'run_id': str(run_record.get('id') or '').strip(),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+
+def _workflow_alert_rules_need_model_evaluation(alert_config, facts):
+    """Return True when at least one enabled model evaluated rule could still change the outcome.
+
+    Building the evaluator resolves a model client, so it is only worth doing when
+    a model evaluated rule outranks every deterministic rule that could match.
+    """
+    alert_config = alert_config if isinstance(alert_config, dict) else {}
+    if alert_config.get('alert_mode') != 'rules':
+        return False
+
+    for rule in alert_config.get('alert_rules') or []:
+        if not isinstance(rule, dict) or not rule.get('enabled', True):
+            continue
+        condition = rule.get('condition') if isinstance(rule.get('condition'), dict) else {}
+        if str(condition.get('type') or '').strip().lower() == 'model_evaluation':
+            return True
+    return False
+
+
+def _create_workflow_priority_alert(workflow, run_record, conversation, execution_result=None, settings=None):
+    execution_result = dict(execution_result) if isinstance(execution_result, dict) else {}
+    if not execution_result.get('agent_alert_signals'):
+        execution_result['agent_alert_signals'] = get_workflow_alert_signals()
+    alert_config = resolve_workflow_alert_config(workflow)
+    if alert_config.get('alert_mode') == 'off':
         return None
+
+    try:
+        facts = build_workflow_alert_facts(workflow, run_record, execution_result)
+        model_evaluator = None
+        if _workflow_alert_rules_need_model_evaluation(alert_config, facts):
+            model_evaluator = _build_workflow_alert_model_evaluator(workflow, settings)
+        decision = evaluate_workflow_alert_rules(workflow, facts, model_evaluator=model_evaluator)
+    except Exception as exc:
+        log_event(
+            f'[WORKFLOW_RUNNER] Failed to evaluate workflow alert rules: {exc}',
+            extra={
+                'workflow_id': str(workflow.get('id') or '').strip(),
+                'user_id': str(workflow.get('user_id') or '').strip(),
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return None
+
+    if not decision.get('should_alert'):
+        _record_workflow_alert_decision(workflow, run_record, decision)
+        log_event(
+            f'[WORKFLOW_RUNNER] {summarize_alert_decision(decision)}',
+            extra={
+                'workflow_id': str(workflow.get('id') or '').strip(),
+                'run_id': str(run_record.get('id') or '').strip(),
+                'alert_mode': decision.get('mode'),
+            },
+            level=logging.INFO,
+        )
+        return None
+
+    _record_workflow_alert_decision(workflow, run_record, decision)
+    priority = normalize_alert_severity(decision.get('severity'))
 
     try:
         user_id = str(workflow.get('user_id') or '').strip()
@@ -4907,12 +5369,27 @@ def _create_workflow_priority_alert(workflow, run_record, conversation, executio
             run_record,
             execution_result,
             priority,
+            decision=decision,
         )
 
         metadata = {
             'workflow_id': workflow_id,
             'workflow_name': workflow_name,
             'priority': priority,
+            'category': decision.get('category') or 'alert',
+            'delivery': decision.get('delivery') or 'popup',
+            'alert_mode': decision.get('mode') or 'rules',
+            'matched_rules': [
+                {
+                    'rule_id': match.get('rule_id'),
+                    'rule_name': match.get('rule_name'),
+                    'severity': match.get('severity'),
+                    'condition_type': match.get('condition_type'),
+                    'reason': match.get('reason'),
+                }
+                for match in decision.get('matched_rules') or []
+            ],
+            'trigger_reason': summarize_alert_decision(decision),
             'trigger_source': trigger_source,
             'run_id': str(run_record.get('id') or '').strip(),
             'runner_type': str(workflow.get('runner_type') or '').strip(),
@@ -5286,6 +5763,7 @@ def _maybe_create_workflow_generated_file_output(
                 source_candidate={
                     'filename': generated_file_name,
                     'selected_sheet': '',
+                    'passthrough_reason_code': export_payload.get('passthrough_reason_code'),
                     'source_authorization': {
                         'source': 'chat',
                     },
@@ -5386,6 +5864,17 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         if generated_file_output.get('output_format') == 'csv':
             generated_tabular_outputs.append(generated_file_output)
     web_search_citations = list(result.get('web_search_citations') or [])
+    hybrid_citations = list(result.get('hybrid_citations') or [])
+    apply_agent_document_citations(
+        hybrid_citations,
+        raw_agent_citations,
+        conversation_id=conversation.get('id'),
+    )
+    citation_tracking = build_cited_source_subsets(
+        result.get('reply', ''),
+        hybrid_citations=hybrid_citations,
+        web_search_citations=web_search_citations,
+    )
     source_review_metadata = result.get('source_review') if isinstance(result.get('source_review'), dict) else {}
     url_access_metadata = result.get('url_access') if isinstance(result.get('url_access'), dict) else {}
     prepared_agent_citations = _persist_agent_citation_artifacts(
@@ -5404,10 +5893,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
         'content': result.get('reply', ''),
         'timestamp': timestamp,
         'model_deployment_name': result.get('model_deployment_name'),
-        'augmented': bool(result.get('augmented') or result.get('hybrid_citations')),
-        'hybrid_citations': list(result.get('hybrid_citations') or []),
+        'augmented': bool(result.get('augmented') or hybrid_citations),
+        'hybrid_citations': hybrid_citations,
         'agent_citations': prepared_agent_citations,
         'web_search_citations': web_search_citations,
+        **citation_tracking,
         'agent_display_name': result.get('agent_display_name'),
         'agent_name': result.get('agent_name'),
         'workspace_type': workspace_type,
@@ -5480,6 +5970,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     conversation['has_unread_assistant_response'] = True
     conversation['last_unread_assistant_message_id'] = assistant_message_id
     conversation['last_unread_assistant_at'] = timestamp
+    initialize_conversation_used_document_tracking(conversation)
+    merge_cited_documents_into_conversation(
+        conversation,
+        citation_tracking['cited_hybrid_citations'],
+    )
     cosmos_conversations_container.upsert_item(conversation)
 
     return assistant_doc
@@ -5552,12 +6047,16 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
         allow_private_custom_endpoints=bool(
             settings.get('allow_private_custom_model_endpoints', False)
         ),
+        settings=settings,
+        endpoint_config=resolved_endpoint,
+        identity_context={'user_id': user_id},
     )
 
     return client, deployment_name, provider
 
 
-def _build_legacy_default_client(settings):
+def _build_legacy_default_client(settings, identity_context=None):
+    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):
         endpoint = settings.get('azure_apim_gpt_endpoint')
         deployment_name = settings.get('azure_apim_gpt_deployment')
@@ -5567,6 +6066,7 @@ def _build_legacy_default_client(settings):
             azure_endpoint=endpoint,
             api_key=api_key,
             api_version=api_version,
+            default_headers=extra_headers or None,
         )
         return client, deployment_name, 'aoai'
 
@@ -5583,6 +6083,7 @@ def _build_legacy_default_client(settings):
             azure_endpoint=endpoint,
             api_key=api_key,
             api_version=api_version,
+            default_headers=extra_headers or None,
         )
         return client, deployment_name, 'aoai'
 
@@ -5600,6 +6101,7 @@ def _build_legacy_default_client(settings):
         azure_endpoint=endpoint,
         azure_ad_token_provider=token_provider,
         api_version=api_version,
+        default_headers=extra_headers or None,
     )
     return client, deployment_name, 'aoai'
 
@@ -5616,7 +6118,7 @@ def _resolve_model_workflow_client(workflow, settings):
         return _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group_id=group_id)
 
     if legacy_model_deployment:
-        client, _, provider = _build_legacy_default_client(settings)
+        client, _, provider = _build_legacy_default_client(settings, identity_context={'user_id': user_id})
         return client, legacy_model_deployment, provider
 
     default_selection = settings.get('default_model_selection', {}) if isinstance(settings, dict) else {}
@@ -5625,7 +6127,7 @@ def _resolve_model_workflow_client(workflow, settings):
     if default_endpoint_id and default_model_id:
         return _build_multi_endpoint_client(user_id, default_endpoint_id, default_model_id, settings)
 
-    return _build_legacy_default_client(settings)
+    return _build_legacy_default_client(settings, identity_context={'user_id': user_id})
 
 
 def _chain_activity_callbacks(*callbacks):
@@ -5966,12 +6468,25 @@ def _build_workflow_search_citation(result):
     document_id = str(result.get('document_id') or '').strip()
     if not document_id:
         document_id = '_'.join(str(citation_id).split('_')[:-1]) if '_' in str(citation_id) else str(citation_id)
+    sheet_name = result.get('sheet_name')
+    page_number = result.get('page_number') or result.get('chunk_sequence') or 1
+    file_name = result.get('file_name') or result.get('title') or 'Unknown document'
+    _, extension = os.path.splitext(str(file_name).strip().lower())
+    location_label, location_value = resolve_citation_location(
+        page_number=page_number,
+        chunk_text=result.get('chunk_text'),
+        sheet_name=sheet_name,
+        is_tabular=extension.lstrip('.') in TABULAR_EXTENSIONS,
+    )
 
     return {
-        'file_name': result.get('file_name') or result.get('title') or 'Unknown document',
+        'file_name': file_name,
         'document_id': document_id,
         'citation_id': citation_id,
-        'page_number': result.get('page_number'),
+        'page_number': page_number,
+        'sheet_name': sheet_name,
+        'location_label': location_label,
+        'location_value': location_value,
         'chunk_id': result.get('chunk_id'),
         'chunk_sequence': result.get('chunk_sequence'),
         'score': result.get('score'),
@@ -5993,9 +6508,18 @@ def _format_workflow_search_results(results):
 
         file_name = str(result.get('file_name') or result.get('title') or 'Unknown document').strip() or 'Unknown document'
         page_number = result.get('page_number') or result.get('chunk_sequence') or 1
+        sheet_name = result.get('sheet_name')
+        _, extension = os.path.splitext(file_name.lower())
+        location_label, location_value = resolve_citation_location(
+            page_number=page_number,
+            chunk_text=chunk_text,
+            sheet_name=sheet_name,
+            is_tabular=extension.lstrip('.') in TABULAR_EXTENSIONS,
+        )
         citation_id = result.get('id') or result.get('chunk_id') or f'workflow-search-{index}'
         result_lines.append(
-            f'[{index}] {file_name}, page {page_number}, citation #{citation_id}\n{chunk_text}'
+            f'[{index}] {chunk_text}\n'
+            f'(Source: {file_name}, {location_label}: {location_value}) [#{citation_id}]'
         )
         citations.append(_build_workflow_search_citation(result))
 
@@ -6016,7 +6540,8 @@ def _build_workflow_search_prompt(task_prompt, search_context):
     prompt_sections = [
         '[Workflow document search context]\n'
         'Use the bounded native-engine evidence below as grounding for the workflow task. '
-        'When the evidence is insufficient or source coverage is partial, say what is missing instead of guessing.'
+        'When the evidence is insufficient or source coverage is partial, say what is missing instead of guessing. '
+        'Preserve the exact (Source: ...) [#citation-id] reference for every excerpt used in the response.'
     ]
     if retrieved_content:
         prompt_sections.append(
@@ -6097,7 +6622,9 @@ def _prepare_workflow_search_context(
     if resolved_action.get('target_mode') != DOCUMENT_ACTION_TARGET_MODE_RECENT and not document_ids:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
-    query = str(workflow.get('task_prompt') or '').strip()
+    # Prefer the task's own instructions. task_prompt also carries injected File Sync context and
+    # previous-task output, which would otherwise become part of the search query itself.
+    query = str(workflow.get('task_search_query') or workflow.get('task_prompt') or '').strip()
     if not query:
         return {'workflow': workflow, 'citations': [], 'result_count': 0, 'document_count': 0, 'query': None}
 
@@ -6477,6 +7004,21 @@ def _execute_workflow_file_sync(workflow, run_id, trigger_source):
     }
 
 
+def _truncate_workflow_file_sync_context(value, max_chars=WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS):
+    """Bound the File Sync context block so a large sync cannot dominate the prompt."""
+    normalized = str(value or '').strip()
+    if len(normalized) <= max_chars:
+        return normalized
+
+    head_length = max_chars // 2
+    tail_length = max_chars - head_length
+    return (
+        f'{normalized[:head_length].rstrip()}\n\n'
+        '[File Sync context truncated]\n\n'
+        f'{normalized[-tail_length:].lstrip()}'
+    )
+
+
 def _format_workflow_file_sync_context(file_sync_result):
     if not isinstance(file_sync_result, dict) or not file_sync_result.get('enabled'):
         return ''
@@ -6509,7 +7051,28 @@ def _format_workflow_file_sync_context(file_sync_result):
         )
     if len(changed_documents) > 50:
         lines.append(f'Additional changed documents omitted from prompt context: {len(changed_documents) - 50}')
-    return '\n'.join(lines)
+    # Truncate here rather than at the injection site so the conversation transcript and the
+    # prompt the model actually receives stay identical.
+    return _truncate_workflow_file_sync_context('\n'.join(lines))
+
+
+def _apply_file_sync_changed_documents_to_action(action_config, changed_document_ids, group_ids, public_workspace_ids):
+    """Point an analyze document action at the documents File Sync just changed."""
+    action_config = action_config if isinstance(action_config, dict) else {}
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+        return None
+
+    if not changed_document_ids:
+        return {'type': DOCUMENT_ACTION_TYPE_NONE}
+
+    updated_action_config = dict(action_config)
+    updated_action_config.update({
+        'document_ids': list(changed_document_ids),
+        'doc_scope': 'all',
+        'active_group_ids': list(group_ids),
+        'active_public_workspace_id': list(public_workspace_ids),
+    })
+    return updated_action_config
 
 
 def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
@@ -6520,19 +7083,16 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
     file_sync_context = _format_workflow_file_sync_context(file_sync_result)
     if file_sync_context:
         prepared_workflow['task_prompt'] = f"{workflow.get('task_prompt', '')}\n\n{file_sync_context}".strip()
+        # Task-based workflows overwrite task_prompt per task, so the context has to travel on
+        # its own key for _build_workflow_task_execution_workflow() to inject it.
+        prepared_workflow['file_sync_prompt_context'] = file_sync_context
+        # Keep an un-augmented query source for the legacy no-tasks path, whose document search
+        # would otherwise use the whole changed-document manifest as its search query.
+        prepared_workflow.setdefault('task_search_query', str(workflow.get('task_prompt') or '').strip())
 
     config = _get_workflow_file_sync_config(workflow)
     changed_document_ids = list(file_sync_result.get('changed_document_ids') or [])
     if not config.get('use_changed_documents'):
-        return prepared_workflow
-
-    action_config = _get_document_action_config(workflow)
-    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
-        return prepared_workflow
-
-    if not changed_document_ids:
-        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
-        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
         return prepared_workflow
 
     group_ids = []
@@ -6545,20 +7105,50 @@ def _apply_file_sync_context_to_workflow(workflow, file_sync_result):
         elif scope_type == 'public' and scope_id and scope_id not in public_workspace_ids:
             public_workspace_ids.append(scope_id)
 
-    updated_action_config = dict(action_config)
-    updated_action_config.update({
-        'document_ids': changed_document_ids,
-        'doc_scope': 'all',
-        'active_group_ids': group_ids,
-        'active_public_workspace_id': public_workspace_ids,
-    })
+    updated_tasks = []
+    tasks_changed = False
+    for raw_task in prepared_workflow.get('tasks') or []:
+        task = dict(raw_task or {})
+        if isinstance(task.get('document_action'), dict):
+            updated_task_action = _apply_file_sync_changed_documents_to_action(
+                task.get('document_action'),
+                changed_document_ids,
+                group_ids,
+                public_workspace_ids,
+            )
+            if updated_task_action is not None:
+                task['document_action'] = updated_task_action
+                tasks_changed = True
+        updated_tasks.append(task)
+    if tasks_changed:
+        prepared_workflow['tasks'] = updated_tasks
+
+    updated_action_config = _apply_file_sync_changed_documents_to_action(
+        _get_document_action_config(workflow),
+        changed_document_ids,
+        group_ids,
+        public_workspace_ids,
+    )
+    if updated_action_config is None:
+        return prepared_workflow
+
     prepared_workflow['document_action'] = updated_action_config
     prepared_workflow['analyze'] = build_analyze_config(updated_action_config)
     return prepared_workflow
 
 
-def _document_run_item_id(run_id, document_id):
+def _get_workflow_active_task(workflow):
+    active_task = (workflow or {}).get('active_task')
+    return active_task if isinstance(active_task, dict) else {}
+
+
+def _document_run_item_id(run_id, document_id, task_id=''):
     normalized_document_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(document_id or '').strip())
+    normalized_task_id = re.sub(r'[^a-zA-Z0-9._-]+', '-', str(task_id or '').strip())
+    if normalized_task_id:
+        # Per-task document actions let two tasks target the same document in one run,
+        # so the run item has to be scoped to the task or statuses overwrite each other.
+        return f'{run_id}:task:{normalized_task_id}:document:{normalized_document_id}'
     return f'{run_id}:document:{normalized_document_id}'
 
 
@@ -6582,8 +7172,10 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
 
     now_iso = _utc_now_iso()
     file_sync_document = _file_sync_document_details(file_sync_result or {}, document_id)
+    active_task = _get_workflow_active_task(workflow)
+    task_id = str(active_task.get('id') or '').strip()
     item = {
-        'id': _document_run_item_id(run_id, document_id),
+        'id': _document_run_item_id(run_id, document_id, task_id=task_id),
         'type': 'workflow_run_item',
         'item_type': 'document',
         'run_id': run_id,
@@ -6591,6 +7183,8 @@ def _save_document_run_item(workflow, run_id, document_id, status, *, file_sync_
         'workflow_id': workflow.get('id'),
         'group_id': _get_workflow_group_id(workflow) or None,
         'workflow_name': workflow.get('name'),
+        'task_id': task_id or None,
+        'task_name': str(active_task.get('name') or '').strip() or None,
         'document_id': document_id,
         'label': _document_label_from_file_sync(file_sync_result or {}, document_id),
         'source': 'file_sync' if file_sync_document else 'workflow',
@@ -7217,6 +7811,7 @@ def _workflow_model_chat_capabilities_enabled(workflow):
 
 
 def _build_workflow_model_context(workflow, deployment_name, provider):
+    """Build non-secret model selection identifiers for deferred execution."""
     workflow = workflow if isinstance(workflow, dict) else {}
     binding_summary = workflow.get('model_binding_summary') if isinstance(workflow.get('model_binding_summary'), dict) else {}
     endpoint_id = str(workflow.get('model_endpoint_id') or binding_summary.get('endpoint_id') or '').strip()
@@ -7234,6 +7829,15 @@ def _build_workflow_model_context(workflow, deployment_name, provider):
     group_id = _get_workflow_group_id(workflow)
     if group_id:
         model_context['active_group_ids'] = [group_id]
+    else:
+        document_action = workflow.get('document_action') if isinstance(workflow.get('document_action'), dict) else {}
+        active_group_ids = [
+            str(group_id or '').strip()
+            for group_id in document_action.get('active_group_ids') or []
+            if str(group_id or '').strip()
+        ]
+        if active_group_ids:
+            model_context['active_group_ids'] = active_group_ids
 
     return model_context
 
@@ -8517,12 +9121,40 @@ def _truncate_workflow_task_context(value, max_chars=WORKFLOW_TASK_CONTEXT_MAX_C
     )
 
 
-def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', include_document_action=False):
+def _resolve_workflow_task_document_action(workflow, task, include_document_action=False):
+    """Resolve the document action a workflow task should execute with.
+
+    Tasks own their document action. Workflows saved before per-task documents have no
+    task-level key, so the workflow-level action still applies to the first task only.
+    """
+    task = task if isinstance(task, dict) else {}
+    if isinstance(task.get('document_action'), dict):
+        return _get_document_action_config({'document_action': task.get('document_action')})
+    if include_document_action:
+        return _get_document_action_config(workflow)
+    return {'type': DOCUMENT_ACTION_TYPE_NONE}
+
+
+def _build_workflow_task_execution_workflow(
+    workflow,
+    task,
+    previous_reply='',
+    include_document_action=False,
+    include_file_sync_context=False,
+):
     task = task if isinstance(task, dict) else {}
     prepared_workflow = dict(workflow or {})
     task_instructions = str(task.get('instructions') or '').strip()
+    # Captured before any context blocks are appended so document search queries stay scoped to
+    # what this task actually asks for.
+    task_search_query = task_instructions
     file_sync_context = str(workflow.get('file_sync_prompt_context') or '').strip()
-    if include_document_action and file_sync_context:
+    task_document_action = _resolve_workflow_task_document_action(
+        workflow,
+        task,
+        include_document_action=include_document_action,
+    )
+    if include_file_sync_context and file_sync_context:
         task_instructions = (
             f'{task_instructions}\n\n'
             '[Workflow input context]\n'
@@ -8538,14 +9170,14 @@ def _build_workflow_task_execution_workflow(workflow, task, previous_reply='', i
         ).strip()
 
     prepared_workflow['task_prompt'] = task_instructions
+    prepared_workflow['task_search_query'] = task_search_query
     prepared_workflow['active_task'] = {
         'id': str(task.get('id') or '').strip(),
         'name': str(task.get('name') or '').strip(),
         'order': int(task.get('order') or 0),
     }
-    if not include_document_action:
-        prepared_workflow['document_action'] = {'type': DOCUMENT_ACTION_TYPE_NONE}
-        prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
+    prepared_workflow['document_action'] = dict(task_document_action)
+    prepared_workflow['analyze'] = build_analyze_config(prepared_workflow['document_action'])
     return prepared_workflow
 
 
@@ -8937,13 +9569,6 @@ def _execute_workflow_task_sequence(
                 title=str(task.get('name') or f'Task {task_index + 1}'),
                 status='running',
             )
-        prepared_workflow = _build_workflow_task_execution_workflow(
-            workflow,
-            task,
-            previous_reply=previous_reply,
-            include_document_action=task_index == 0,
-        )
-
         task_result = None
         task_error = ''
         attempt_count = 0
@@ -8951,6 +9576,15 @@ def _execute_workflow_task_sequence(
             raise_if_cancelled()
             attempt_count = attempt_index + 1
             try:
+                # Built inside the attempt so an invalid task document action fails this
+                # task through the normal retry and error strategy instead of the whole run.
+                prepared_workflow = _build_workflow_task_execution_workflow(
+                    workflow,
+                    task,
+                    previous_reply=previous_reply,
+                    include_document_action=task_index == 0,
+                    include_file_sync_context=task_index == 0,
+                )
                 attempt_workflow, runner_audit = _resolve_workflow_task_runner(
                     prepared_workflow,
                     task,
@@ -9077,6 +9711,20 @@ def _execute_workflow_task_sequence(
     return _merge_workflow_task_execution_results(task_results)
 
 
+def _get_workflow_conversation_for_alert(run_record):
+    """Build a minimal conversation stub so alerts can link to the run's conversation."""
+    run_record = run_record if isinstance(run_record, dict) else {}
+    conversation_id = str(run_record.get('conversation_id') or '').strip()
+    if not conversation_id:
+        return None
+
+    return {
+        'id': conversation_id,
+        'chat_type': 'workflow',
+        'group_id': str(run_record.get('group_id') or '').strip(),
+    }
+
+
 def _finalize_cancelled_workflow_run(
     workflow,
     run_record,
@@ -9141,10 +9789,15 @@ def _finalize_cancelled_workflow_run(
         workspace_type=workspace_type,
         group_id=group_id or None,
     )
+    alert_notification = _create_workflow_priority_alert(
+        execution_workflow if isinstance(execution_workflow, dict) else workflow,
+        run_record,
+        _get_workflow_conversation_for_alert(run_record),
+    )
     return {
         'success': True,
         'run': run_record,
-        'notification': None,
+        'notification': alert_notification,
         'workflow_updates': {
             'last_run_started_at': started_at,
             'last_run_at': completed_at,
@@ -9162,6 +9815,20 @@ def _finalize_cancelled_workflow_run(
 
 
 def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
+    """Execute a workflow and persist a run record."""
+    workflow = workflow if isinstance(workflow, dict) else {}
+    resolved_run_id = str(run_id or create_workflow_run_id())
+    with workflow_alert_signal_scope(workflow, resolved_run_id):
+        return _run_personal_workflow_impl(
+            workflow,
+            trigger_source=trigger_source,
+            user_roles=user_roles,
+            actor_user_id=actor_user_id,
+            run_id=resolved_run_id,
+        )
+
+
+def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     user_id = str(workflow.get('user_id') or '').strip()
@@ -9403,6 +10070,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
                 run_record,
                 conversation,
                 execution_result=execution_result,
+                settings=settings,
             ),
         )
 
@@ -9509,6 +10177,7 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
             execution_workflow,
             run_record,
             conversation,
+            settings=settings,
         )
         return {
             'success': False,

@@ -392,12 +392,39 @@ function getDocumentClassificationBadge(doc) {
     return '<span class="badge bg-secondary">None</span>';
 }
 
+const EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif', '.heic'];
+
 function isPdfDocument(doc) {
     return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
 }
 
-const DOCUMENT_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
-const DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+function isImageDocument(doc) {
+    const fileName = String(doc?.file_name || '').toLowerCase();
+    return EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+}
+
+function supportsExtractionModeChange(doc) {
+    return isPdfDocument(doc) || isImageDocument(doc);
+}
+
+const DOCUMENT_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster, lower-cost text extraction. Best for plain text PDFs and images.';
+const DOCUMENT_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP = 'Enhanced extraction uses Azure AI Content Understanding to preserve tables, page structure, and checkbox states, and to describe figures, charts, and images. Adds latency and higher cost.';
+const DOCUMENT_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+
+function getDocumentExtractionEngine(doc) {
+    return String(doc?.extraction_engine || '').trim().toLowerCase();
+}
+
+function getDocumentExtractionEngineReason(doc) {
+    return String(doc?.extraction_engine_reason || '').trim();
+}
+
+function getDocumentEnhancedTooltipForEngine(engine) {
+    return engine === 'content_understanding'
+        ? DOCUMENT_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP
+        : DOCUMENT_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP;
+}
+
 const DOCUMENT_CITATION_STANDARD_TOOLTIP = 'Standard citations reference indexed text chunks.';
 const DOCUMENT_CITATION_ENHANCED_TOOLTIP = 'Enhanced citations preserve source-file context for richer citation previews and supported file workflows.';
 
@@ -405,8 +432,10 @@ function getDocumentExtractionModeLabelFromMode(mode) {
     return mode === 'layout' ? 'Enhanced' : 'Standard';
 }
 
-function getDocumentExtractionModeTooltipFromMode(mode) {
-    return mode === 'layout' ? DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP : DOCUMENT_EXTRACTION_STANDARD_TOOLTIP;
+function getDocumentExtractionModeTooltipFromMode(mode, engine) {
+    return mode === 'layout'
+        ? getDocumentEnhancedTooltipForEngine(engine)
+        : DOCUMENT_EXTRACTION_STANDARD_TOOLTIP;
 }
 
 function getDocumentExtractionModeIcon(mode) {
@@ -418,9 +447,9 @@ function getDocumentTargetExtractionMode(doc) {
     return currentMode === 'layout' ? 'read' : 'layout';
 }
 
-function getDocumentExtractionChangeTooltip(targetMode) {
+function getDocumentExtractionChangeTooltip(targetMode, engine) {
     return targetMode === 'layout'
-        ? `Extract again with Enhanced extraction. ${DOCUMENT_EXTRACTION_ENHANCED_TOOLTIP}`
+        ? `Extract again with Enhanced extraction. ${getDocumentEnhancedTooltipForEngine(engine)}`
         : `Extract again with Standard extraction. ${DOCUMENT_EXTRACTION_STANDARD_TOOLTIP}`;
 }
 
@@ -431,7 +460,9 @@ function getDocumentExtractionModeLabel(doc) {
 
 function getDocumentExtractionModeTooltip(doc) {
     const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-    return getDocumentExtractionModeTooltipFromMode(mode);
+    const tooltip = getDocumentExtractionModeTooltipFromMode(mode, getDocumentExtractionEngine(doc));
+    const reason = getDocumentExtractionEngineReason(doc);
+    return reason ? `${tooltip} ${reason}.` : tooltip;
 }
 
 function getDocumentCitationTooltip(doc) {
@@ -439,7 +470,7 @@ function getDocumentCitationTooltip(doc) {
 }
 
 function getDocumentExtractionModeBadge(doc) {
-    if (!isPdfDocument(doc)) {
+    if (!supportsExtractionModeChange(doc)) {
         return '';
     }
 
@@ -450,7 +481,7 @@ function getDocumentExtractionModeBadge(doc) {
 }
 
 function getDocumentReprocessDropdownItems(doc) {
-    if (!isPdfDocument(doc)) {
+    if (!supportsExtractionModeChange(doc)) {
         return '';
     }
 
@@ -458,7 +489,7 @@ function getDocumentReprocessDropdownItems(doc) {
     const targetMode = getDocumentTargetExtractionMode(doc);
     const targetLabel = getDocumentExtractionModeLabelFromMode(targetMode);
     const targetIcon = getDocumentExtractionModeIcon(targetMode);
-    const targetTooltip = getDocumentExtractionChangeTooltip(targetMode);
+    const targetTooltip = getDocumentExtractionChangeTooltip(targetMode, getDocumentExtractionEngine(doc));
 
     return `
         <li><hr class="dropdown-divider"></li>
@@ -485,7 +516,7 @@ function getDocumentMetaPills(doc) {
     if (doc.number_of_pages) {
         pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeHtml(String(doc.number_of_pages))} pages</span>`);
     }
-    if (isPdfDocument(doc)) {
+    if (supportsExtractionModeChange(doc)) {
         pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-richtext"></i>${getDocumentExtractionModeLabel(doc)}</span>`);
     }
     if (authors.length) {
@@ -1450,6 +1481,20 @@ async function uploadWorkspaceFiles(files) {
    let completed = 0;
    let failed = 0;
 
+   function updateWorkspaceUploadRequestSummary() {
+       uploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+   }
+
+   function finishWorkspaceUploadRequests() {
+       fileInput.value = '';
+       docsCurrentPage = 1;
+       fetchUserDocuments();
+       uploadStatusSpan.textContent = failed
+           ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+           : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+       if (progressContainer) progressContainer.innerHTML = '';
+   }
+
    // Helper to create a unique ID for each file
    function makeId(file) {
        return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -1504,7 +1549,7 @@ async function uploadWorkspaceFiles(files) {
                    progressBar.classList.remove('progress-bar-animated');
                }
                if (statusText) {
-                   statusText.textContent = `Uploaded ${file.name} (100%)`;
+                   statusText.textContent = `Queued ${file.name} (100%)`;
                }
                completed++;
            } else {
@@ -1514,18 +1559,13 @@ async function uploadWorkspaceFiles(files) {
                    progressBar.classList.remove('progress-bar-animated');
                }
                if (statusText) {
-                   statusText.textContent = `Failed to upload ${file.name}`;
+                   statusText.textContent = `Upload request did not confirm for ${file.name}`;
                }
                failed++;
            }
-           // Update summary status
-           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           updateWorkspaceUploadRequestSummary();
            if (completed + failed === files.length) {
-               fileInput.value = '';
-               docsCurrentPage = 1;
-               fetchUserDocuments();
-               // Clear upload progress bars after all uploads and table refresh
-               if (progressContainer) progressContainer.innerHTML = '';
+               finishWorkspaceUploadRequests();
            }
        };
 
@@ -1536,15 +1576,12 @@ async function uploadWorkspaceFiles(files) {
                progressBar.classList.remove('progress-bar-animated');
            }
            if (statusText) {
-               statusText.textContent = `Failed to upload ${file.name}`;
+               statusText.textContent = `Upload request did not confirm for ${file.name}`;
            }
            failed++;
-           uploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+           updateWorkspaceUploadRequestSummary();
            if (completed + failed === files.length) {
-               fileInput.value = '';
-               docsCurrentPage = 1;
-               fetchUserDocuments();
-               if (progressContainer) progressContainer.innerHTML = '';
+               finishWorkspaceUploadRequests();
            }
        };
 
@@ -1956,7 +1993,7 @@ function renderDocumentRow(doc) {
                     <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || "N/A")}</p>
                     <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(Array.isArray(doc.authors) ? doc.authors.join(", ") : doc.authors || "N/A")}</p>
                     <p class="mb-1"><strong>Pages:</strong> ${escapeHtml(doc.number_of_pages || "N/A")}</p>
-                    ${isPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}</p>` : ''}
+                    ${supportsExtractionModeChange(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getDocumentExtractionModeBadge(doc)}</p>` : ''}
                     <p class="mb-1"><strong>Citations:</strong> ${doc.enhanced_citations ? `<span class="badge bg-success" title="${escapeHtml(getDocumentCitationTooltip(doc))}">Enhanced</span>` : `<span class="badge bg-secondary" title="${escapeHtml(getDocumentCitationTooltip(doc))}">Standard</span>`}</p>
                     <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || "N/A")}</p>
                     <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(Array.isArray(doc.keywords) ? doc.keywords.join(", ") : doc.keywords || "N/A")}</p>
@@ -1978,12 +2015,12 @@ function renderDocumentRow(doc) {
             `;
         }
 
-        if (isOwner && isPdfDocument(doc)) {
+        if (isOwner && supportsExtractionModeChange(doc)) {
             const reprocessDocId = escapeHtml(String(docId || ''));
             const extractionActionMode = getDocumentTargetExtractionMode(doc);
             const extractionActionLabel = getDocumentExtractionModeLabelFromMode(extractionActionMode);
             const extractionActionIcon = getDocumentExtractionModeIcon(extractionActionMode);
-            const extractionActionTooltip = getDocumentExtractionChangeTooltip(extractionActionMode);
+            const extractionActionTooltip = getDocumentExtractionChangeTooltip(extractionActionMode, getDocumentExtractionEngine(doc));
             detailsHtml += `
                 <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}">
                     <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel}

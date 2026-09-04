@@ -147,6 +147,15 @@ window.executeMessageEdit = function() {
                 console.log('   retry_thread_id:', data.chat_request.retry_thread_id);
                 console.log('   retry_thread_attempt:', data.chat_request.retry_thread_attempt);
                 console.log('   Full chat_request:', data.chat_request);
+                window.dispatchEvent(new CustomEvent(
+                    'chat:conversation-documents-refresh',
+                    {
+                        detail: {
+                            conversationId: data.chat_request.conversation_id,
+                            autoOpen: false,
+                        },
+                    }
+                ));
 
                 sendMessageWithStreaming(
                     data.chat_request,

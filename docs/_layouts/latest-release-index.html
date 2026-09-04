@@ -45,6 +45,26 @@ layout: default
       </div>
     </section>
 
+    {% if feature_data.current_release_admin %}
+    <section class="latest-release-section">
+      <div class="latest-release-section-header">
+        <div>
+          <div class="latest-release-section-kicker">Admin controls</div>
+          <h2>{{ feature_data.current_release_admin.label }}</h2>
+          <p>{{ feature_data.current_release_admin.description }}</p>
+        </div>
+        <span class="latest-release-section-badge">{{ feature_data.current_release_admin.badge }}</span>
+      </div>
+
+      <div class="latest-release-card-grid">
+        {% for slug in feature_data.current_release_admin.slugs %}
+          {% assign feature = feature_data.lookup[slug] %}
+          {% include latest_release_card.html feature=feature badge=feature_data.current_release_admin.badge %}
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
     {% for group in feature_data.previous_release_groups %}
       <details class="latest-release-archive-panel">
         <summary>

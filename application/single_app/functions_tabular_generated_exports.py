@@ -6,6 +6,7 @@ from collections import Counter, deque
 import csv
 import heapq
 import hashlib
+import html
 import io
 import json
 import logging
@@ -17,6 +18,7 @@ import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from xml.sax.saxutils import escape as escape_xml_text
 
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
@@ -37,13 +39,33 @@ from config import (
     storage_account_user_documents_container_name,
 )
 from functions_appinsights import log_event
+from functions_analysis_deliverables import (
+    ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+    ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+    ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT,
+    ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH,
+    ANALYSIS_DELIVERABLE_MAX_ARTIFACTS,
+    build_analysis_deliverable_contract,
+    is_analysis_internal_lineage_field,
+    project_structured_deliverable_row,
+    validate_analysis_artifact_set,
+)
 from functions_assistant_table_exports import build_safe_csv_headers, neutralize_csv_spreadsheet_formula
+from functions_tabular_transformations import (
+    TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC,
+    TABULAR_TRANSFORMATION_SPEC_VERSION,
+    evaluate_tabular_transformation_row,
+    get_tabular_transformation_model_fields,
+    is_tabular_transformation_deterministic_only,
+    normalize_tabular_transformation_spec,
+)
 from functions_tabular_csv_query import (
     iter_tabular_csv_query_rows,
     validate_tabular_csv_query_expression,
 )
 from functions_group import assert_group_role
 from functions_generated_file_exports import (
+    ASSISTANT_TEXT_SUPPRESSING_FORMATS,
     normalize_generated_output_format,
     serialize_generated_json,
     serialize_generated_xml,
@@ -51,7 +73,15 @@ from functions_generated_file_exports import (
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
 from functions_settings import get_settings
-from functions_simplechat_operations import upload_generated_analysis_artifact_stream_for_user
+from functions_simplechat_operations import (
+    commit_generated_chat_artifact_publication_for_user,
+    upload_generated_analysis_artifact_stream_for_user,
+)
+from functions_tabular_semantic_validation import (
+    TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION,
+    build_safe_semantic_validation_counts,
+    verify_and_repair_semantic_rows,
+)
 
 
 TABULAR_EXPORT_RUN_TYPE = 'tabular_generated_output_run'
@@ -66,8 +96,30 @@ TABULAR_RESPONSE_PROTOCOLS = {
 TABULAR_COMPACT_PLAN_HASH_PREFIX_LENGTH = 12
 TABULAR_EXECUTOR_MODE_FIXED_WINDOW = 'fixed-window-v1'
 TABULAR_EXECUTOR_MODE_ROLLING_POOL = 'rolling-pool-v1'
-TABULAR_GENERATION_PLAN_VERSION = 1
-TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v1'
+TABULAR_GENERATION_PLAN_VERSION = 2
+TABULAR_GENERATION_PLAN_LEGACY_VERSIONS = {1}
+TABULAR_GENERATION_PLAN_PROMPT_VERSION = 'tabular-generation-plan-v2'
+TABULAR_GENERATION_PLAN_LEGACY_PROMPT_VERSIONS = {
+    1: 'tabular-generation-plan-v1',
+}
+TABULAR_GENERATION_PLAN_REVIEW_VERSION = 1
+TABULAR_GENERATION_PLAN_REVIEW_STATUSES = {'passed', 'failed'}
+TABULAR_GENERATION_PLAN_REVIEW_REASON_CODES = {
+    'boundary_ambiguous',
+    'field_missing',
+    'precedence_mismatch',
+    'review_passed',
+    'rule_missing',
+    'unknown_source_field',
+    'unrequested_inference',
+    'unsupported_rule',
+}
+TABULAR_GENERATION_PLAN_MAX_REVIEW_REASON_CODES = 20
+TABULAR_SEMANTIC_VALIDATION_MODES = {'off', 'shadow', 'active'}
+TABULAR_SEMANTIC_DEFAULT_REPAIR_ATTEMPTS = 2
+TABULAR_SEMANTIC_DEFAULT_MAX_REPAIR_ROWS = 100
+TABULAR_SEMANTIC_MAX_PROMPT_CHARS = 180000
+TABULAR_SEMANTIC_CANDIDATE_CHECKPOINT_VERSION = 1
 TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS = 2
 TABULAR_GENERATION_PLAN_MAX_SAMPLE_ROWS = 5
 TABULAR_GENERATION_PLAN_MAX_COLUMNS = 200
@@ -112,6 +164,52 @@ TABULAR_EXPORT_TERMINAL_STATUSES = {
     TABULAR_EXPORT_STATUS_COMPLETED,
     TABULAR_EXPORT_STATUS_FAILED,
     TABULAR_EXPORT_STATUS_CANCELED,
+}
+TABULAR_ARTIFACT_SET_CONTRACT_VERSION = 'tabular-artifact-set-v1'
+TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED = 'planned'
+TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING = 'generating'
+TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING = 'validating'
+TABULAR_ARTIFACT_SET_LIFECYCLE_READY_TO_PUBLISH = 'ready_to_publish'
+TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING = 'publishing'
+TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED = 'completed'
+TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED = 'failed'
+TABULAR_ARTIFACT_SET_LIFECYCLE_CANCELED = 'canceled'
+TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED = 'rollback_required'
+TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLED_BACK = 'rolled_back'
+TABULAR_ARTIFACT_SET_LIFECYCLE_STATES = {
+    TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_READY_TO_PUBLISH,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_CANCELED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
+    TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLED_BACK,
+}
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED = 'planned'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_GENERATING = 'generating'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED = 'staged'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_VALIDATED = 'validated'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHING = 'publishing'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED = 'published'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_FAILED = 'failed'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_CANCELED = 'canceled'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_ROLLED_BACK = 'rolled_back'
+TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STATES = {
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_GENERATING,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_VALIDATED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHING,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_FAILED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_CANCELED,
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_ROLLED_BACK,
+}
+TABULAR_ARTIFACT_MEMBER_PUBLIC_LIFECYCLE_STATES = {
+    TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED,
 }
 
 TABULAR_EXPORT_DEFAULT_INLINE_MAX_BATCHES = 75
@@ -186,6 +284,8 @@ TABULAR_ANALYSIS_MAX_REDUCE_FAN_IN = 50
 TABULAR_ANALYSIS_SUMMARY_MAX_CHARS = 24000
 TABULAR_ANALYSIS_MAX_FINDINGS = 12
 TABULAR_ANALYSIS_MAX_NOTABLE_ROWS = 25
+TABULAR_ROW_ANALYSIS_MAX_QUESTIONS = 20
+TABULAR_ROW_ANALYSIS_ANSWER_ESTIMATED_CHARS = 180
 TABULAR_EXPORT_SUMMARY_MAX_FIELDS = 25
 TABULAR_EXPORT_SUMMARY_MAX_VALUES_PER_FIELD = 5
 TABULAR_EXPORT_SUMMARY_AGGREGATE_MAX_VALUES = 25
@@ -277,9 +377,10 @@ class TabularExportLeaseLostError(RuntimeError):
 class TabularGenerationPlanError(RuntimeError):
     """Raised when the bounded planner exhausts its allowed attempts."""
 
-    def __init__(self, reason):
+    def __init__(self, reason, failed_run=None):
         super().__init__('Tabular generation planner did not produce a valid plan')
         self.reason = str(reason or 'provider_failure')
+        self.failed_run = failed_run if isinstance(failed_run, dict) else None
 
 
 def _now_utc():
@@ -459,11 +560,15 @@ def _build_tabular_generation_plan_input_contract(sample_rows):
     }
 
 
-def _validate_tabular_generation_plan_output_fields(output_fields):
+def _validate_tabular_generation_plan_output_fields(output_fields, allowed_sources=None):
     if not isinstance(output_fields, list) or not output_fields:
         raise ValueError('Planner response must include at least one output field')
     if len(output_fields) > TABULAR_GENERATION_PLAN_MAX_FIELDS:
         raise ValueError('Planner response contains too many output fields')
+
+    normalized_allowed_sources = set(allowed_sources or {'llm'})
+    if not normalized_allowed_sources or normalized_allowed_sources - {'llm', 'server'}:
+        raise ValueError('Planner output field sources are unsupported')
 
     normalized_fields = []
     seen_names = set()
@@ -502,7 +607,8 @@ def _validate_tabular_generation_plan_output_fields(output_fields):
         nullable = output_field.get('nullable')
         if not isinstance(nullable, bool):
             raise ValueError(f'Planner output field {field_index} must declare nullability')
-        if str(output_field.get('source') or '').strip().lower() != 'llm':
+        field_source = str(output_field.get('source') or '').strip().lower()
+        if field_source not in normalized_allowed_sources:
             raise ValueError(f'Planner output field {field_index} has an unsupported source')
 
         normalized_fields.append({
@@ -510,7 +616,7 @@ def _validate_tabular_generation_plan_output_fields(output_fields):
             'description': field_description,
             'type': value_type,
             'nullable': nullable,
-            'source': 'llm',
+            'source': field_source,
         })
     return normalized_fields
 
@@ -524,15 +630,59 @@ def _get_tabular_generation_plan_source(run):
     }
 
 
+def _validate_tabular_generation_plan_field_ownership(output_fields, transformation_spec):
+    fields_by_name = {
+        str(field.get('name') or '').strip(): field
+        for field in list((transformation_spec or {}).get('fields') or [])
+        if isinstance(field, dict)
+    }
+    for output_field in output_fields:
+        field_name = output_field['name']
+        transformation_field = fields_by_name.get(field_name)
+        if not transformation_field:
+            raise ValueError(f'Planner transformation ownership is missing field {field_name}')
+        expected_source = (
+            'server'
+            if transformation_field.get('mode') == TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC
+            else 'llm'
+        )
+        if output_field.get('source') != expected_source:
+            raise ValueError(f'Planner output field {field_name} has inconsistent transformation ownership')
+        transformation_type = str(transformation_field.get('type') or '').strip()
+        if transformation_type and transformation_type != output_field.get('type'):
+            raise ValueError(f'Planner output field {field_name} has inconsistent transformation type')
+        if (
+            'nullable' in transformation_field
+            and bool(transformation_field.get('nullable')) != output_field.get('nullable')
+        ):
+            raise ValueError(f'Planner output field {field_name} has inconsistent nullability')
+
+
 def _build_tabular_generation_plan(run, planner_payload, input_contract, planner_model, created_at=None):
     if not isinstance(planner_payload, dict):
         raise ValueError('Planner response was not a JSON object')
-    if set(planner_payload) - {'output_fields', 'output_verbosity'}:
+    if set(planner_payload) - {'output_fields', 'output_verbosity', 'transformation_spec'}:
         raise ValueError('Planner response contains unsupported top-level properties')
 
-    llm_fields = _validate_tabular_generation_plan_output_fields(
-        planner_payload.get('output_fields')
+    planned_fields = _validate_tabular_generation_plan_output_fields(
+        planner_payload.get('output_fields'),
+        allowed_sources={'llm', 'server'},
     )
+    public_output_schema = [field['name'] for field in planned_fields]
+    source_schema = [
+        str(column.get('name') or '').strip()
+        for column in list(input_contract.get('columns') or [])
+        if isinstance(column, dict) and str(column.get('name') or '').strip()
+    ]
+    raw_transformation_spec = planner_payload.get('transformation_spec')
+    if not raw_transformation_spec:
+        raise ValueError('Planner response requires explicit transformation ownership for every field')
+    transformation_spec = normalize_tabular_transformation_spec(
+        raw_transformation_spec,
+        public_output_schema=public_output_schema,
+        source_schema=source_schema,
+    )
+    _validate_tabular_generation_plan_field_ownership(planned_fields, transformation_spec)
     output_verbosity = str(planner_payload.get('output_verbosity') or '').strip()
     if len(output_verbosity) > TABULAR_GENERATION_PLAN_MAX_GUIDANCE_CHARS:
         raise ValueError('Planner output verbosity guidance is too long')
@@ -586,8 +736,9 @@ def _build_tabular_generation_plan(run, planner_payload, input_contract, planner
                 'nullable': False,
                 'source': 'server',
             },
-            *llm_fields,
+            *planned_fields,
         ],
+        'transformation_spec': transformation_spec,
         'response_protocol': response_protocol,
         'prompt_version': TABULAR_GENERATION_PLAN_PROMPT_VERSION,
         'batch_budget': {
@@ -621,13 +772,19 @@ def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
         'batch_budget',
         'plan_hash',
     }
-    allowed_keys = required_keys | {'output_verbosity'}
+    plan_version = _safe_int(plan.get('version'))
+    legacy_plan = plan_version in TABULAR_GENERATION_PLAN_LEGACY_VERSIONS
+    if plan_version != TABULAR_GENERATION_PLAN_VERSION and not legacy_plan:
+        raise ValueError('Stored generation plan version is not supported')
+    if legacy_plan:
+        allowed_keys = required_keys | {'output_verbosity'}
+    else:
+        required_keys |= {'transformation_spec', 'review'}
+        allowed_keys = required_keys | {'output_verbosity'}
     if set(plan) - allowed_keys:
         raise ValueError('Stored generation plan contains unsupported properties')
     if not required_keys.issubset(plan):
         raise ValueError('Stored generation plan is missing required properties')
-    if _safe_int(plan.get('version')) != TABULAR_GENERATION_PLAN_VERSION:
-        raise ValueError('Stored generation plan version is not supported')
     if str(plan.get('run_id') or '').strip() != str((run or {}).get('id') or '').strip():
         raise ValueError('Stored generation plan run identity does not match')
     if not str(plan.get('created_at') or '').strip():
@@ -687,7 +844,12 @@ def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
         (run or {}).get('response_protocol_version') or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1
     ):
         raise ValueError('Stored generation plan response protocol does not match')
-    if plan.get('prompt_version') != TABULAR_GENERATION_PLAN_PROMPT_VERSION:
+    expected_prompt_version = (
+        TABULAR_GENERATION_PLAN_LEGACY_PROMPT_VERSIONS.get(plan_version)
+        if legacy_plan
+        else TABULAR_GENERATION_PLAN_PROMPT_VERSION
+    )
+    if plan.get('prompt_version') != expected_prompt_version:
         raise ValueError('Stored generation plan prompt version does not match')
 
     stored_batch_budget = plan.get('batch_budget')
@@ -730,9 +892,30 @@ def _validate_tabular_generation_plan(plan, run, input_schema_hash=None):
         description = str(output_field.get('description') or '').strip()
         if not description or len(description) > TABULAR_GENERATION_PLAN_MAX_FIELD_DESCRIPTION_CHARS:
             raise ValueError('Stored generation plan server field description is invalid')
-    normalized_llm_fields = _validate_tabular_generation_plan_output_fields(output_fields[2:])
-    if normalized_llm_fields != output_fields[2:]:
+    normalized_public_fields = _validate_tabular_generation_plan_output_fields(
+        output_fields[2:],
+        allowed_sources={'llm'} if legacy_plan else {'llm', 'server'},
+    )
+    if normalized_public_fields != output_fields[2:]:
         raise ValueError('Stored generation plan output fields are not normalized')
+    if not legacy_plan:
+        public_output_schema = [field['name'] for field in normalized_public_fields]
+        normalized_transformation_spec = normalize_tabular_transformation_spec(
+            plan.get('transformation_spec'),
+            public_output_schema=public_output_schema,
+        )
+        if normalized_transformation_spec != plan.get('transformation_spec'):
+            raise ValueError('Stored generation plan transformation specification is not normalized')
+        _validate_tabular_generation_plan_field_ownership(
+            normalized_public_fields,
+            normalized_transformation_spec,
+        )
+        normalized_review = _normalize_tabular_generation_plan_review(
+            plan.get('review'),
+            public_output_schema,
+        )
+        if normalized_review != plan.get('review'):
+            raise ValueError('Stored generation plan review is not normalized')
     return plan
 
 
@@ -751,6 +934,93 @@ def _get_tabular_generation_plan_llm_fields(plan):
         if isinstance(output_field, dict)
         and str(output_field.get('source') or '').strip().lower() == 'llm'
     ]
+
+
+def _get_tabular_generation_plan_public_fields(plan):
+    return [
+        output_field
+        for output_field in (plan or {}).get('output_fields') or []
+        if isinstance(output_field, dict)
+        and str(output_field.get('name') or '').strip() not in {
+            TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+            TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+        }
+    ]
+
+
+def _normalize_tabular_generation_plan_review(review_payload, expected_fields, reviewer_model=None):
+    if not isinstance(review_payload, dict):
+        raise ValueError('Generation plan review was not a JSON object')
+    payload_keys = {'status', 'represented_fields', 'reason_codes'}
+    stored_keys = payload_keys | {'version', 'model'}
+    if set(review_payload) not in {frozenset(payload_keys), frozenset(stored_keys)}:
+        raise ValueError('Generation plan review contains invalid properties')
+
+    status = str(review_payload.get('status') or '').strip().lower()
+    if status not in TABULAR_GENERATION_PLAN_REVIEW_STATUSES:
+        raise ValueError('Generation plan review status is unsupported')
+    represented_fields = [
+        str(field_name or '').strip()
+        for field_name in list(review_payload.get('represented_fields') or [])
+        if str(field_name or '').strip()
+    ]
+    if len(represented_fields) != len(set(represented_fields)):
+        raise ValueError('Generation plan review contains duplicate represented fields')
+    normalized_expected_fields = [str(field_name or '').strip() for field_name in expected_fields]
+    if represented_fields != normalized_expected_fields:
+        raise ValueError('Generation plan review does not cover every public output field in order')
+
+    reason_codes = [
+        str(reason_code or '').strip().lower()
+        for reason_code in list(review_payload.get('reason_codes') or [])
+        if str(reason_code or '').strip()
+    ]
+    if len(reason_codes) > TABULAR_GENERATION_PLAN_MAX_REVIEW_REASON_CODES:
+        raise ValueError('Generation plan review contains too many reason codes')
+    if len(reason_codes) != len(set(reason_codes)):
+        raise ValueError('Generation plan review contains duplicate reason codes')
+    if set(reason_codes) - TABULAR_GENERATION_PLAN_REVIEW_REASON_CODES:
+        raise ValueError('Generation plan review contains an unsupported reason code')
+    if status == 'passed' and reason_codes:
+        raise ValueError('Passed generation plan review cannot contain failure reasons')
+    if status == 'failed' and not reason_codes:
+        raise ValueError('Failed generation plan review requires a reason code')
+
+    model_payload = reviewer_model if reviewer_model is not None else review_payload.get('model')
+    normalized_model = {
+        field_name: str((model_payload or {}).get(field_name) or '').strip()
+        for field_name in ('endpoint_id', 'model_id', 'deployment')
+    }
+    if not any(normalized_model.values()) or any(len(value) > 500 for value in normalized_model.values()):
+        raise ValueError('Generation plan review model identity is invalid')
+    return {
+        'version': TABULAR_GENERATION_PLAN_REVIEW_VERSION,
+        'status': status,
+        'represented_fields': represented_fields,
+        'reason_codes': reason_codes,
+        'model': normalized_model,
+    }
+
+
+def _finalize_tabular_generation_plan_review(plan, review_payload, reviewer_model):
+    if _safe_int((plan or {}).get('version')) != TABULAR_GENERATION_PLAN_VERSION:
+        raise ValueError('Only current generation plans can receive a new review')
+    finalized_plan = dict(plan or {})
+    finalized_plan.pop('plan_hash', None)
+    public_fields = [
+        field['name']
+        for field in _get_tabular_generation_plan_public_fields(finalized_plan)
+    ]
+    review = _normalize_tabular_generation_plan_review(
+        review_payload,
+        public_fields,
+        reviewer_model=reviewer_model,
+    )
+    if review['status'] != 'passed':
+        raise ValueError('Generation plan review did not pass')
+    finalized_plan['review'] = review
+    finalized_plan['plan_hash'] = _hash_tabular_generation_plan(finalized_plan)
+    return finalized_plan
 
 
 def _get_compact_plan_hash_prefix(plan):
@@ -889,6 +1159,26 @@ def _normalize_tabular_generation_rollout_settings(settings):
             'shadow',
             TABULAR_ROLLOUT_PLANNER_MODES,
         ),
+        'tabular_semantic_validation_mode': _settings_mode(
+            settings,
+            'tabular_semantic_validation_mode',
+            'off',
+            TABULAR_SEMANTIC_VALIDATION_MODES,
+        ),
+        'tabular_semantic_repair_max_attempts': _settings_int(
+            settings,
+            'tabular_semantic_repair_max_attempts',
+            TABULAR_SEMANTIC_DEFAULT_REPAIR_ATTEMPTS,
+            minimum=0,
+            maximum=5,
+        ),
+        'tabular_semantic_repair_max_rows': _settings_int(
+            settings,
+            'tabular_semantic_repair_max_rows',
+            TABULAR_SEMANTIC_DEFAULT_MAX_REPAIR_ROWS,
+            minimum=1,
+            maximum=500,
+        ),
         'enable_tabular_generation_plan': _settings_bool(
             settings,
             'enable_tabular_generation_plan',
@@ -974,6 +1264,7 @@ def _build_tabular_generation_rollout_assignment(settings, user_id, conversation
         rollout_settings.update({
             'tabular_background_handoff_mode': 'legacy',
             'tabular_generation_plan_mode': 'off',
+            'tabular_semantic_validation_mode': 'off',
             'enable_tabular_generation_plan': False,
             'enable_tabular_compact_response_protocol': False,
             'enable_tabular_completion_driven_checkpointing': False,
@@ -1109,10 +1400,177 @@ def _sync_tabular_generation_contract_fields(run):
     run.setdefault('systemic_failure_category', None)
     run.setdefault('systemic_failure_signature', None)
     run.setdefault('systemic_failure_opened_at', None)
+    run['lineage_schema'] = _get_tabular_run_lineage_schema(run)
+    run['public_output_schema'] = _get_tabular_run_public_output_schema(run)
+    run['internal_checkpoint_schema'] = _get_tabular_run_internal_checkpoint_schema(run)
     run['checkpointed_row_count'] = checkpointed_row_count
     run.setdefault('generation_started_at', run.get('started_at'))
     run.setdefault('generation_completed_at', None)
     return run
+
+
+def _get_tabular_run_lineage_schema(run):
+    raw_schema = list((run or {}).get('lineage_schema') or [
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ])
+    normalized_schema = []
+    seen_fields = set()
+    for field_name in raw_schema:
+        normalized_field = str(field_name or '').strip()
+        if not normalized_field or normalized_field in seen_fields:
+            continue
+        if not is_analysis_internal_lineage_field(normalized_field):
+            continue
+        seen_fields.add(normalized_field)
+        normalized_schema.append(normalized_field)
+    return normalized_schema or [
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ]
+
+
+def _get_tabular_run_public_output_schema(run):
+    raw_public_schema = list((run or {}).get('public_output_schema') or [])
+    if not raw_public_schema:
+        deliverable_contract = (
+            ((run or {}).get('tabular_planner_metadata') or {}).get('deliverable_contract')
+            if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+            else {}
+        )
+        raw_public_schema = list((deliverable_contract or {}).get('public_output_schema') or [])
+    if not raw_public_schema:
+        raw_public_schema = [
+            field_name
+            for field_name in list((run or {}).get('output_schema') or [])
+            if not is_analysis_internal_lineage_field(field_name)
+        ]
+
+    normalized_schema = []
+    seen_fields = set()
+    for field_name in raw_public_schema:
+        normalized_field = str(field_name or '').strip()
+        if not normalized_field or normalized_field in seen_fields:
+            continue
+        if is_analysis_internal_lineage_field(normalized_field):
+            continue
+        seen_fields.add(normalized_field)
+        normalized_schema.append(normalized_field)
+    return normalized_schema
+
+
+def _get_tabular_run_internal_checkpoint_schema(run):
+    raw_internal_schema = list((run or {}).get('internal_checkpoint_schema') or [])
+    if raw_internal_schema:
+        return [str(field_name or '').strip() for field_name in raw_internal_schema if str(field_name or '').strip()]
+    output_schema = list((run or {}).get('output_schema') or [])
+    if output_schema:
+        return [str(field_name or '').strip() for field_name in output_schema if str(field_name or '').strip()]
+    return _get_tabular_run_lineage_schema(run) + _get_tabular_run_public_output_schema(run)
+
+
+def _get_tabular_run_transformation_spec(run, public_output_schema=None):
+    raw_spec = (run or {}).get('transformation_spec')
+    if not raw_spec:
+        deliverable_contract = (
+            ((run or {}).get('tabular_planner_metadata') or {}).get('deliverable_contract')
+            if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+            else {}
+        )
+        raw_spec = (deliverable_contract or {}).get('transformation_spec')
+    if not raw_spec:
+        return {}
+    return normalize_tabular_transformation_spec(
+        raw_spec,
+        public_output_schema=public_output_schema or _get_tabular_run_public_output_schema(run),
+    )
+
+
+def _get_public_fields_from_output_schema(output_schema):
+    return [
+        str(field_name or '').strip()
+        for field_name in list(output_schema or [])
+        if str(field_name or '').strip()
+        and not is_analysis_internal_lineage_field(field_name)
+    ]
+
+
+def _get_lineage_fields_from_output_schema(output_schema):
+    lineage_fields = [
+        str(field_name or '').strip()
+        for field_name in list(output_schema or [])
+        if str(field_name or '').strip()
+        and is_analysis_internal_lineage_field(field_name)
+    ]
+    return lineage_fields or [
+        TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+        TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+    ]
+
+
+def _build_model_expected_output_schema(expected_output_schema, transformation_spec=None):
+    if not transformation_spec:
+        return list(expected_output_schema or [])
+    public_schema = _get_public_fields_from_output_schema(expected_output_schema)
+    if not public_schema:
+        return list(expected_output_schema or [])
+    model_fields = get_tabular_transformation_model_fields(
+        transformation_spec,
+        public_output_schema=public_schema,
+    )
+    return _get_lineage_fields_from_output_schema(expected_output_schema) + model_fields
+
+
+def _merge_deterministic_transformation_entries(
+    source_rows,
+    generated_entries,
+    expected_output_schema,
+    transformation_spec=None,
+):
+    if not transformation_spec:
+        return generated_entries, list(expected_output_schema or [])
+    final_output_schema = list(expected_output_schema or [])
+    public_schema = _get_public_fields_from_output_schema(final_output_schema)
+    if not public_schema:
+        return generated_entries, final_output_schema
+    normalized_spec = normalize_tabular_transformation_spec(
+        transformation_spec,
+        public_output_schema=public_schema,
+    )
+    if not normalized_spec:
+        return generated_entries, final_output_schema
+
+    merged_entries = []
+    for row_index, (source_row, generated_entry) in enumerate(
+        zip(source_rows or [], generated_entries or []),
+        start=1,
+    ):
+        deterministic_values = evaluate_tabular_transformation_row(normalized_spec, source_row)
+        merged_entry = {}
+        for field_name in final_output_schema:
+            if field_name in deterministic_values:
+                merged_entry[field_name] = deterministic_values.get(field_name)
+            elif field_name in generated_entry:
+                merged_entry[field_name] = generated_entry.get(field_name)
+            elif is_analysis_internal_lineage_field(field_name):
+                merged_entry[field_name] = generated_entry.get(field_name)
+            else:
+                raise ValueError(
+                    f'Deterministic transformation merge missing field {field_name} at row {row_index}'
+                )
+        merged_entries.append(merged_entry)
+    return merged_entries, final_output_schema
+
+
+def _get_tabular_run_serialized_public_schema(run):
+    public_schema = _get_tabular_run_public_output_schema(run)
+    if public_schema:
+        return public_schema
+    return [
+        field_name
+        for field_name in list((run or {}).get('output_schema') or [])
+        if not is_analysis_internal_lineage_field(field_name)
+    ]
 
 
 def _build_generation_progress_contract_fields(run, completed_batches, processed_rows):
@@ -1418,8 +1876,13 @@ def _sanitize_file_base_name(file_name):
 
 def _build_generated_file_name(source_file_name, output_format):
     timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-    normalized_extension = normalize_generated_output_format(output_format)
+    normalized_extension = _normalize_tabular_artifact_format(output_format)
     return f"{_sanitize_file_base_name(source_file_name)}_generated_{timestamp_suffix}.{normalized_extension}"
+
+
+def _build_row_analysis_file_name(source_file_name):
+    timestamp_suffix = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+    return f"{_sanitize_file_base_name(source_file_name)}_row_analysis_{timestamp_suffix}.md"
 
 
 def _build_analysis_file_name(source_file_name):
@@ -1438,6 +1901,35 @@ def _serialize_generated_output_value(value):
         except TypeError:
             pass
     return neutralize_csv_spreadsheet_formula(value)
+
+
+def _escape_markdown_text(value):
+    """Render untrusted values as literal Markdown text, not active markup."""
+    normalized_value = str(value or '').replace('\r\n', '\n').replace('\r', '\n').replace('\t', '    ')
+    escaped_lines = []
+    for line in normalized_value.split('\n'):
+        escaped_line = html.escape(line, quote=False).replace('\\', '\\\\')
+        escaped_line = re.sub(r'([`*_[\]{}()#+\-.!|>])', r'\\\1', escaped_line)
+        escaped_lines.append(escaped_line)
+    return '\n'.join(escaped_lines)
+
+
+def _sanitize_generated_xml_tag_name(value, fallback_value='Field'):
+    normalized_name = re.sub(r'[^A-Za-z0-9_.-]+', '_', str(value or '').strip()).strip('._-')
+    if not normalized_name:
+        normalized_name = fallback_value
+    if not re.match(r'^[A-Za-z_]', normalized_name):
+        normalized_name = f'{fallback_value}_{normalized_name}'
+    return normalized_name
+
+
+def _write_generated_xml_row(output_stream, row):
+    output_stream.write('  <Row>\n')
+    for field_name, field_value in (row or {}).items():
+        tag_name = _sanitize_generated_xml_tag_name(field_name)
+        serialized_value = _serialize_generated_output_value(field_value)
+        output_stream.write(f'    <{tag_name}>{escape_xml_text(serialized_value)}</{tag_name}>\n')
+    output_stream.write('  </Row>\n')
 
 
 def _normalize_source_identity_label(value):
@@ -1507,6 +1999,38 @@ def _prepare_tabular_source_rows(rows, start_row=0, token_namespace=''):
         ).hex
         prepared_rows.append(prepared_row)
     return prepared_rows
+
+
+def _extend_passthrough_output_field_names(field_names, rows):
+    """Union already-final passthrough row fields so sparse rows still share one schema."""
+    ordered_fields = list(field_names or [])
+    seen_fields = set(ordered_fields)
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        for field_name in row:
+            normalized_field = str(field_name)
+            if normalized_field in seen_fields or is_analysis_internal_lineage_field(normalized_field):
+                continue
+            seen_fields.add(normalized_field)
+            ordered_fields.append(normalized_field)
+    return ordered_fields
+
+
+def _align_passthrough_rows_to_output_fields(rows, public_output_fields):
+    """Give every passthrough row the same field set before schema validation."""
+    aligned_rows = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            aligned_rows.append(row)
+            continue
+        aligned_row = {
+            TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD: row.get(TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD),
+        }
+        for field_name in public_output_fields:
+            aligned_row[field_name] = row.get(field_name, '')
+        aligned_rows.append(aligned_row)
+    return aligned_rows
 
 
 def _normalize_generated_batch_entries(
@@ -1582,6 +2106,58 @@ def _normalize_generated_batch_entries(
         for entry in normalized_entries
     ]
     return ordered_entries, output_schema
+
+
+def _validate_exhaustive_row_analysis_entries(entries, output_schema):
+    public_fields = [
+        str(field_name or '').strip().lower()
+        for field_name in list(output_schema or [])
+        if str(field_name or '').strip()
+        and not is_analysis_internal_lineage_field(field_name)
+    ]
+    exact_row_fields = (
+        public_fields == ['row_analysis']
+        or any(re.fullmatch(r'answer_\d+', field_name) for field_name in public_fields)
+    )
+    if not exact_row_fields:
+        return
+    if public_fields != ['row_analysis']:
+        expected_fields = [f'answer_{field_index}' for field_index in range(1, len(public_fields) + 1)]
+        if public_fields != expected_fields:
+            raise ValueError(
+                f'Exhaustive row analysis fields must be consecutive answer_1 through answer_N; got {public_fields}'
+            )
+    for row_index, entry in enumerate(entries or [], start=1):
+        for field_name in public_fields:
+            if (entry or {}).get(field_name) in (None, '', [], {}):
+                raise ValueError(
+                    f'Generated exhaustive row analysis left {field_name} empty at row {row_index}'
+                )
+
+
+def _validate_exhaustive_row_analysis_contract(row_analysis_mode, questions, public_output_schema):
+    if str(row_analysis_mode or '').strip().lower() != 'exhaustive':
+        return
+    normalized_questions = [
+        str(question or '').strip()
+        for question in list(questions or [])[:TABULAR_ROW_ANALYSIS_MAX_QUESTIONS]
+        if str(question or '').strip()
+    ]
+    normalized_public_schema = [
+        str(field_name or '').strip().lower()
+        for field_name in list(public_output_schema or [])
+        if str(field_name or '').strip()
+        and not is_analysis_internal_lineage_field(field_name)
+    ]
+    expected_schema = (
+        [f'answer_{question_index}' for question_index in range(1, len(normalized_questions) + 1)]
+        if normalized_questions
+        else ['row_analysis']
+    )
+    if normalized_public_schema != expected_schema:
+        raise ValueError(
+            'Exhaustive row analysis questions do not match the persisted public output schema'
+        )
 
 
 def _generated_entry_has_source_position_conflict(source_row, generated_entry):
@@ -1874,8 +2450,16 @@ def _input_batches_blob_path(user_id, conversation_id, run_id):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/input/input_batches.json"
 
 
-def _tabular_generation_plan_blob_path(user_id, conversation_id, run_id):
-    return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/plan/plan_v1.json"
+def _tabular_generation_plan_blob_path(user_id, conversation_id, run_id, plan_version=None):
+    normalized_version = _safe_int(
+        plan_version,
+        default=TABULAR_GENERATION_PLAN_VERSION,
+        minimum=1,
+    )
+    return (
+        f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/plan/"
+        f"plan_v{normalized_version}.json"
+    )
 
 
 def _chunk_manifest_blob_prefix(user_id, conversation_id, run_id):
@@ -1896,6 +2480,13 @@ def _output_blob_prefix(user_id, conversation_id, run_id):
 
 def _output_summary_blob_path(user_id, conversation_id, run_id, batch_number):
     return f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/summary/batch_{batch_number:06d}.json"
+
+
+def _semantic_candidate_blob_path(user_id, conversation_id, run_id, batch_number):
+    return (
+        f"{user_id}/{conversation_id}/generated/tabular_runs/{run_id}/semantic/candidates/"
+        f"batch_{batch_number:06d}.json"
+    )
 
 
 def _retry_blob_path(user_id, conversation_id, run_id, batch_number):
@@ -2772,6 +3363,15 @@ def _build_combined_chunk_prompt(run, batch_rows, batch_number, batch_count, out
         if model_output_schema
         else ''
     )
+    answer_field_line = (
+        'Fields named answer_N map to the Nth question in the user instructions. '
+        'Answer every answer_N field independently and do not combine or omit questions.\n'
+        if any(
+            re.fullmatch(r'answer_\d+', str(field_name or '').strip().lower())
+            for field_name in model_output_schema
+        )
+        else ''
+    )
     return (
         'Transform and analyze the bounded tabular chunk below for the user.\n\n'
         f'User structured-output instructions:\n{user_question}\n\n'
@@ -2779,6 +3379,7 @@ def _build_combined_chunk_prompt(run, batch_rows, batch_number, batch_count, out
         'Return ONLY a valid JSON object with exactly these top-level fields: structured_rows, analysis_summary.\n'
         f'structured_rows must be an array of exactly {len(batch_rows)} object(s), one per input row, in the same order.\n'
         f'{output_schema_line}'
+        f'{answer_field_line}'
         f'Each structured row must copy {TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD} exactly from the matching input row. '
         f'Do not include {TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD} or {TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD} in structured rows.\n'
         'Do not drop, merge, summarize, or cap structured rows. If a requested field cannot be derived, include it with null or an empty string.\n'
@@ -3253,6 +3854,15 @@ def _build_batch_prompt(
         if model_output_schema
         else ''
     )
+    answer_field_line = (
+        'Fields named answer_N map to the Nth question in the user instructions. '
+        'Answer every answer_N field independently and do not combine or omit questions.\n'
+        if any(
+            re.fullmatch(r'answer_\d+', str(field_name or '').strip().lower())
+            for field_name in model_output_schema
+        )
+        else ''
+    )
 
     return (
         'Transform the tabular input rows below into structured output for the user.\n\n'
@@ -3260,6 +3870,7 @@ def _build_batch_prompt(
         'Return ONLY a valid JSON array.\n'
         f'Return exactly {len(batch_rows)} JSON object(s), one per input row, in the same order.\n'
         f'{output_schema_line}'
+        f'{answer_field_line}'
         f'Copy {TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD} exactly from each input row into its matching output object. '
         f'The {TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD} and {TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD} fields are internal; '
         'do not include those two fields in generated objects.\n'
@@ -3723,14 +4334,86 @@ def _build_tabular_generation_plan_prompt(run, input_contract):
         f"Requested output format: {str((run or {}).get('output_format') or '').strip().lower()}\n"
         f"Source row count: {_safe_int((run or {}).get('row_count'), minimum=0)}\n"
         f'Bounded input schema and redacted value shapes:\n{_dump_generated_output_json(planner_input)}\n\n'
-        'Return ONLY one JSON object with output_fields and optional output_verbosity. '
+        'Return ONLY one JSON object with output_fields, transformation_spec, and optional output_verbosity. '
         'output_fields must be a non-empty array in exact output order. Each field object must contain '
-        'name, description, type, nullable, and source. source must be "llm". Supported types are '
+        'name, description, type, nullable, and source. source must be "server" only when the field is '
+        'fully represented by a deterministic transformation expression; otherwise source must be "llm". '
+        'Supported types are '
         'string, integer, number, boolean, object, and array. Do not include source_row_number, '
         'source_row_identity, or any __simplechat fields; the server adds source metadata. '
+        'transformation_spec must use version tabular-transform-v1 and contain exactly one field descriptor '
+        'for every output field. Deterministic expressions may use only copy, case, coalesce, comparisons, '
+        'boolean all/any/not, membership, null checks, and bounded arithmetic. Preserve ordered condition '
+        'precedence and explicit inclusive or exclusive boundaries. Mark genuinely interpretive fields semantic. '
         'Preserve every explicit output field requested by the user. Do not answer any source row, '
         'copy sample content, include markdown, or add other top-level properties.'
     )
+
+
+def _build_tabular_generation_plan_review_prompt(run, input_contract, plan):
+    user_question = str((run or {}).get('user_question') or '').strip()
+    if not user_question or len(user_question) > TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS:
+        raise ValueError('Reviewer user instructions are empty or exceed the bounded planning limit')
+    review_contract = {
+        'columns': input_contract.get('columns') or [],
+        'output_fields': _get_tabular_generation_plan_public_fields(plan),
+        'transformation_spec': (plan or {}).get('transformation_spec') or {},
+    }
+    return (
+        'Review this tabular generation plan against the user instructions.\n\n'
+        f'User instructions:\n{user_question}\n\n'
+        f'Normalized plan and source schema:\n{_dump_generated_output_json(review_contract)}\n\n'
+        'Return ONLY one JSON object with status, represented_fields, and reason_codes. '
+        'status must be passed or failed. represented_fields must list every requested public output field '
+        'exactly once in output order. Use reason codes only from: boundary_ambiguous, field_missing, '
+        'precedence_mismatch, rule_missing, unknown_source_field, unrequested_inference, unsupported_rule. '
+        'Fail when a requested field or rule is absent, precedence or date boundaries changed, a source field '
+        'is unknown, or the plan added an unrequested inference. Verify every deterministic field uses only '
+        'the supported expression graph and valid source or prior deterministic field references. Verify fields '
+        'marked semantic genuinely require interpretation rather than a direct copy or representable rule. '
+        'Do not answer rows or include explanations.'
+    )
+
+
+async def _generate_tabular_generation_plan_review(
+    chat_service,
+    run,
+    input_contract,
+    plan,
+    reviewer_model,
+    timeout_seconds,
+):
+    review_prompt = _build_tabular_generation_plan_review_prompt(run, input_contract, plan)
+    chat_history = SKChatHistory()
+    chat_history.add_system_message(
+        'You independently verify bounded tabular transformation plans. Return only the requested JSON review.'
+    )
+    chat_history.add_user_message(review_prompt)
+    execution_settings = AzureChatPromptExecutionSettings(
+        service_id='tabular-generated-output-plan-review'
+    )
+    review_started_at = time.monotonic()
+    result = await asyncio.wait_for(
+        chat_service.get_chat_message_contents(chat_history, execution_settings),
+        timeout=timeout_seconds,
+    )
+    review_latency_seconds = time.monotonic() - review_started_at
+    raw_response_content = result[0].content if result and result[0].content else ''
+    review_payload = _parse_generated_json_object(raw_response_content)
+    reviewed_plan = _finalize_tabular_generation_plan_review(
+        plan,
+        review_payload,
+        reviewer_model,
+    )
+    usage = _extract_tabular_response_usage(result)
+    return reviewed_plan, {
+        'latency_seconds': round(review_latency_seconds, 3),
+        'input_char_count': len(review_prompt),
+        'response_char_count': len(raw_response_content),
+        'input_token_count': usage.get('input_token_count'),
+        'output_token_count': usage.get('output_token_count'),
+        'total_token_count': usage.get('total_token_count'),
+    }
 
 
 async def _generate_tabular_generation_plan(
@@ -3778,6 +4461,14 @@ async def _generate_tabular_generation_plan(
                 input_contract,
                 planner_model,
             )
+            plan, review_metrics = await _generate_tabular_generation_plan_review(
+                chat_service,
+                run,
+                input_contract,
+                plan,
+                planner_model,
+                bounded_timeout_seconds,
+            )
             usage = _extract_tabular_response_usage(result)
             metrics = {
                 'attempt_count': attempt_number,
@@ -3788,6 +4479,12 @@ async def _generate_tabular_generation_plan(
                 'input_token_count': usage.get('input_token_count'),
                 'output_token_count': usage.get('output_token_count'),
                 'total_token_count': usage.get('total_token_count'),
+                'review_latency_seconds': review_metrics.get('latency_seconds'),
+                'review_input_char_count': review_metrics.get('input_char_count'),
+                'review_response_char_count': review_metrics.get('response_char_count'),
+                'review_input_token_count': review_metrics.get('input_token_count'),
+                'review_output_token_count': review_metrics.get('output_token_count'),
+                'review_total_token_count': review_metrics.get('total_token_count'),
             }
             return plan, metrics
         except asyncio.TimeoutError as exc:
@@ -3820,6 +4517,48 @@ def _apply_active_tabular_generation_plan(run, plan):
     if current_output_schema and current_output_schema != planned_output_schema:
         raise ValueError('Active generation plan schema does not match the persisted run schema')
     run['output_schema'] = planned_output_schema
+    run['lineage_schema'] = _get_tabular_run_lineage_schema(run)
+    run['public_output_schema'] = [
+        str(output_field.get('name') or '').strip()
+        for output_field in _get_tabular_generation_plan_public_fields(plan)
+    ]
+    run['internal_checkpoint_schema'] = planned_output_schema
+    run['transformation_spec'] = dict((plan or {}).get('transformation_spec') or {})
+    planner_metadata = (
+        (run or {}).get('tabular_planner_metadata')
+        if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+        else {}
+    )
+    deliverable_contract = (
+        planner_metadata.get('deliverable_contract')
+        if isinstance(planner_metadata.get('deliverable_contract'), dict)
+        else {}
+    )
+    current_plan = _safe_int((plan or {}).get('version')) == TABULAR_GENERATION_PLAN_VERSION
+    if current_plan and not deliverable_contract:
+        raise ValueError('Active generation plan v2 requires an initialized deliverable contract')
+    if deliverable_contract and current_plan:
+        transformation_spec = dict(run.get('transformation_spec') or {})
+        mode_counts = dict(transformation_spec.get('field_mode_counts') or {})
+        deterministic_count = _safe_int(mode_counts.get('deterministic'), minimum=0)
+        semantic_count = _safe_int(mode_counts.get('semantic'), minimum=0)
+        hybrid_count = _safe_int(mode_counts.get('hybrid'), minimum=0)
+        if deterministic_count and not semantic_count and not hybrid_count:
+            transformation_mode = 'deterministic'
+        elif deterministic_count or hybrid_count:
+            transformation_mode = 'hybrid'
+        else:
+            transformation_mode = 'semantic'
+        deliverable_contract.update({
+            'public_output_schema': list(run.get('public_output_schema') or []),
+            'internal_checkpoint_schema': list(planned_output_schema),
+            'lineage_schema': _get_tabular_run_lineage_schema(run),
+            'transformation_mode': transformation_mode,
+            'transformation_spec': transformation_spec,
+            'validation_profile': 'exact_rows_schema_and_rules',
+        })
+        planner_metadata['deliverable_contract'] = deliverable_contract
+        run['tabular_planner_metadata'] = planner_metadata
 
 
 def _recover_tabular_generation_plan(run, input_contract, plan_blob_path, plan_mode):
@@ -3874,6 +4613,359 @@ def _mark_tabular_generation_plan_fallback(run, reason, attempt_count=0, latency
     return persisted_run
 
 
+def _fail_active_tabular_generation_plan(run, reason, attempt_count=0, latency_seconds=None):
+    now = _now_iso()
+    run.update({
+        'plan_status': 'failed',
+        'plan_failure_reason': str(reason or 'provider_failure'),
+        'planner_attempt_count': _safe_int(attempt_count, minimum=0),
+        'planner_latency_seconds': latency_seconds,
+        'planner_completed_at': now,
+        'updated_at': now,
+        'last_heartbeat_at': now,
+        'last_message': 'Reviewed generation planning failed; required output was not generated',
+    })
+    persisted_run = _replace_claimed_run(run)
+    raise TabularGenerationPlanError(
+        str(reason or 'provider_failure'),
+        failed_run=persisted_run,
+    )
+
+
+def _get_tabular_semantic_validation_options(run):
+    rollout_settings = _get_tabular_generation_rollout_settings_for_run(run, {})
+    return {
+        'mode': str(rollout_settings.get('tabular_semantic_validation_mode') or 'off').strip().lower(),
+        'max_repair_attempts': _safe_int(
+            rollout_settings.get('tabular_semantic_repair_max_attempts'),
+            default=TABULAR_SEMANTIC_DEFAULT_REPAIR_ATTEMPTS,
+            minimum=0,
+            maximum=5,
+        ),
+        'max_repair_rows': _safe_int(
+            rollout_settings.get('tabular_semantic_repair_max_rows'),
+            default=TABULAR_SEMANTIC_DEFAULT_MAX_REPAIR_ROWS,
+            minimum=1,
+            maximum=500,
+        ),
+    }
+
+
+def _get_tabular_semantic_checkpoint_contract_hash(run):
+    plan_hash = str((run or {}).get('plan_hash') or '').strip()
+    if plan_hash:
+        return plan_hash
+    planner_metadata = (
+        (run or {}).get('tabular_planner_metadata')
+        if isinstance((run or {}).get('tabular_planner_metadata'), dict)
+        else {}
+    )
+    deliverable_contract = (
+        planner_metadata.get('deliverable_contract')
+        if isinstance(planner_metadata.get('deliverable_contract'), dict)
+        else {}
+    )
+    transformation_spec = (run or {}).get('transformation_spec') or deliverable_contract.get('transformation_spec')
+    if not isinstance(transformation_spec, dict) or not transformation_spec:
+        return ''
+    fingerprint_payload = {
+        'transformation_spec': transformation_spec,
+        'public_output_schema': list(
+            (run or {}).get('public_output_schema')
+            or deliverable_contract.get('public_output_schema')
+            or []
+        ),
+        'request_fingerprint': str(deliverable_contract.get('request_fingerprint') or '').strip(),
+    }
+    return hashlib.sha256(
+        json.dumps(
+            fingerprint_payload,
+            ensure_ascii=False,
+            separators=(',', ':'),
+            sort_keys=True,
+        ).encode('utf-8')
+    ).hexdigest()
+
+
+def _build_tabular_semantic_checkpoint_context(run, batch_number):
+    return {
+        'user_id': str((run or {}).get('user_id') or '').strip(),
+        'conversation_id': str((run or {}).get('conversation_id') or '').strip(),
+        'run_id': str((run or {}).get('id') or '').strip(),
+        'batch_number': _safe_int(batch_number, minimum=1),
+        'plan_hash': _get_tabular_semantic_checkpoint_contract_hash(run),
+    }
+
+
+def _load_tabular_semantic_candidate_checkpoint(
+    checkpoint_context,
+    expected_output_schema,
+    expected_row_count,
+):
+    context = checkpoint_context if isinstance(checkpoint_context, dict) else {}
+    if not all(context.get(field_name) for field_name in ('user_id', 'conversation_id', 'run_id', 'plan_hash')):
+        return None
+    blob_path = _semantic_candidate_blob_path(
+        context['user_id'],
+        context['conversation_id'],
+        context['run_id'],
+        context['batch_number'],
+    )
+    if not _blob_exists(blob_path):
+        return None
+    payload = _download_json_blob(blob_path)
+    if not isinstance(payload, dict) or set(payload) != {
+        'version',
+        'plan_hash',
+        'output_schema',
+        'rows',
+        'validation_counts',
+        'repair_attempt_count',
+    }:
+        raise ValueError('Semantic candidate checkpoint shape is invalid')
+    if _safe_int(payload.get('version')) != TABULAR_SEMANTIC_CANDIDATE_CHECKPOINT_VERSION:
+        raise ValueError('Semantic candidate checkpoint version is unsupported')
+    if str(payload.get('plan_hash') or '').strip() != context['plan_hash']:
+        raise ValueError('Semantic candidate checkpoint plan hash does not match')
+    output_schema = list(payload.get('output_schema') or [])
+    if output_schema != list(expected_output_schema or []):
+        raise ValueError('Semantic candidate checkpoint schema does not match')
+    rows = payload.get('rows')
+    if not isinstance(rows, list) or len(rows) != _safe_int(expected_row_count, minimum=0):
+        raise ValueError('Semantic candidate checkpoint row count does not match')
+    if any(not isinstance(row, dict) or list(row) != output_schema for row in rows):
+        raise ValueError('Semantic candidate checkpoint row schema does not match')
+    validation_counts = payload.get('validation_counts')
+    if not isinstance(validation_counts, dict):
+        raise ValueError('Semantic candidate checkpoint validation counts are invalid')
+    return {
+        'rows': rows,
+        'validation_counts': validation_counts,
+        'repair_attempt_count': _safe_int(payload.get('repair_attempt_count'), minimum=0, maximum=5),
+        'blob_path': blob_path,
+    }
+
+
+def _persist_tabular_semantic_candidate_checkpoint(
+    checkpoint_context,
+    output_schema,
+    rows,
+    validation_counts=None,
+    repair_attempt_count=0,
+):
+    context = checkpoint_context if isinstance(checkpoint_context, dict) else {}
+    if not all(context.get(field_name) for field_name in ('user_id', 'conversation_id', 'run_id', 'plan_hash')):
+        return None
+    normalized_schema = list(output_schema or [])
+    normalized_rows = [dict(row) for row in list(rows or [])]
+    if any(list(row) != normalized_schema for row in normalized_rows):
+        raise ValueError('Semantic candidate checkpoint row schema is invalid')
+    blob_path = _semantic_candidate_blob_path(
+        context['user_id'],
+        context['conversation_id'],
+        context['run_id'],
+        context['batch_number'],
+    )
+    _upload_json_blob(
+        blob_path,
+        {
+            'version': TABULAR_SEMANTIC_CANDIDATE_CHECKPOINT_VERSION,
+            'plan_hash': context['plan_hash'],
+            'output_schema': normalized_schema,
+            'rows': normalized_rows,
+            'validation_counts': dict(validation_counts or {}),
+            'repair_attempt_count': _safe_int(repair_attempt_count, minimum=0, maximum=5),
+        },
+        metadata={
+            'run_id': context['run_id'],
+            'conversation_id': context['conversation_id'],
+            'batch_number': context['batch_number'],
+            'plan_hash': context['plan_hash'],
+            'semantic_candidate': 'true',
+        },
+        overwrite=True,
+    )
+    return blob_path
+
+
+def _build_tabular_semantic_field_guidance(generation_plan, transformation_spec):
+    descriptions = {
+        str(field.get('name') or '').strip(): str(field.get('description') or '').strip()
+        for field in _get_tabular_generation_plan_public_fields(generation_plan)
+    }
+    guidance = []
+    for field in list((transformation_spec or {}).get('fields') or []):
+        if not isinstance(field, dict) or str(field.get('mode') or '').strip().lower() == 'deterministic':
+            continue
+        field_name = str(field.get('name') or '').strip()
+        guidance.append({
+            'name': field_name,
+            'description': descriptions.get(field_name, ''),
+            'type': str(field.get('type') or 'string').strip().lower(),
+            'nullable': bool(field.get('nullable', True)),
+            'allowed_values': list(field.get('allowed_values') or []),
+        })
+    return guidance
+
+
+def _build_tabular_semantic_verification_prompt(
+    user_question,
+    verification_request,
+    generation_plan,
+    transformation_spec,
+):
+    payload = {
+        'objective': str(user_question or '').strip()[:TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS],
+        'fields': _build_tabular_semantic_field_guidance(generation_plan, transformation_spec),
+        'rows': verification_request.get('rows') or [],
+    }
+    serialized_payload = _dump_generated_output_json(payload)
+    if len(serialized_payload) > TABULAR_SEMANTIC_MAX_PROMPT_CHARS:
+        raise ValueError('Semantic verification prompt exceeds the bounded limit')
+    return (
+        'Verify every semantic field against the bounded source evidence and objective below. '
+        'Return ONLY one JSON object with version and rows. Use version '
+        f'{TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION}. Each row must preserve row_key and contain '
+        'every semantic field exactly once with name, status, reason_code, and evidence_fields. '
+        'status must be pass, fail, uncertain, or unsupported. evidence_fields may contain only source '
+        'field names present in that row. Do not include reasoning, repaired values, markdown, or extra fields.\n\n'
+        f'{serialized_payload}'
+    )
+
+
+def _build_tabular_semantic_repair_prompt(
+    user_question,
+    verification_request,
+    repair_targets,
+    attempt_number,
+    generation_plan,
+    transformation_spec,
+):
+    target_keys = {
+        (str(target.get('row_key') or ''), str(target.get('field_name') or ''))
+        for target in list(repair_targets or [])
+    }
+    target_row_keys = {row_key for row_key, _ in target_keys}
+    payload = {
+        'objective': str(user_question or '').strip()[:TABULAR_GENERATION_PLAN_MAX_QUESTION_CHARS],
+        'attempt': _safe_int(attempt_number, minimum=1, maximum=5),
+        'fields': [
+            field
+            for field in _build_tabular_semantic_field_guidance(generation_plan, transformation_spec)
+            if any(field['name'] == field_name for _, field_name in target_keys)
+        ],
+        'targets': list(repair_targets or []),
+        'rows': [
+            row
+            for row in list(verification_request.get('rows') or [])
+            if row.get('row_key') in target_row_keys
+        ],
+    }
+    serialized_payload = _dump_generated_output_json(payload)
+    if len(serialized_payload) > TABULAR_SEMANTIC_MAX_PROMPT_CHARS:
+        raise ValueError('Semantic repair prompt exceeds the bounded limit')
+    return (
+        'Repair only the requested semantic row-field targets using the bounded source evidence and objective. '
+        'Return ONLY one JSON object with version and rows. Use version '
+        f'{TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION}. Each row must contain row_key and values, and '
+        'values must contain only targeted fields. Preserve declared types and allowed values. Do not return '
+        'untargeted fields, reasoning, markdown, or extra rows.\n\n'
+        f'{serialized_payload}'
+    )
+
+
+async def _invoke_tabular_semantic_model(chat_service, system_message, prompt, service_id, timeout_seconds):
+    chat_history = SKChatHistory()
+    chat_history.add_system_message(system_message)
+    chat_history.add_user_message(prompt)
+    execution_settings = AzureChatPromptExecutionSettings(service_id=service_id)
+    result = await asyncio.wait_for(
+        chat_service.get_chat_message_contents(chat_history, execution_settings),
+        timeout=max(0.001, _safe_float(timeout_seconds, default=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS)),
+    )
+    raw_response_content = result[0].content if result and result[0].content else ''
+    if not raw_response_content:
+        raise ValueError('Semantic validation model returned an empty response')
+    return _parse_generated_json_object(raw_response_content)
+
+
+async def _verify_and_repair_tabular_batch_entries(
+    chat_service,
+    user_question,
+    source_rows,
+    output_rows,
+    transformation_spec,
+    generation_plan,
+    semantic_validation_options,
+    timeout_seconds,
+    semantic_checkpoint_context=None,
+):
+    options = semantic_validation_options or {}
+    mode = str(options.get('mode') or 'off').strip().lower()
+    public_source_rows = [
+        {
+            str(field_name): field_value
+            for field_name, field_value in source_row.items()
+            if not is_analysis_internal_lineage_field(field_name)
+        }
+        for source_row in list(source_rows or [])
+    ]
+
+    async def invoke_verifier(verification_request):
+        return await _invoke_tabular_semantic_model(
+            chat_service,
+            'You are an independent structured-data field verifier. Return only the requested JSON contract.',
+            _build_tabular_semantic_verification_prompt(
+                user_question,
+                verification_request,
+                generation_plan,
+                transformation_spec,
+            ),
+            'tabular-generated-output-semantic-verifier',
+            timeout_seconds,
+        )
+
+    async def invoke_repair(verification_request, repair_targets, attempt_number):
+        return await _invoke_tabular_semantic_model(
+            chat_service,
+            'You repair only explicitly failed structured-data fields. Return only the requested JSON contract.',
+            _build_tabular_semantic_repair_prompt(
+                user_question,
+                verification_request,
+                repair_targets,
+                attempt_number,
+                generation_plan,
+                transformation_spec,
+            ),
+            'tabular-generated-output-semantic-repair',
+            timeout_seconds,
+        )
+
+    async def checkpoint_candidate(rows, validation_counts, attempt_number):
+        if not rows:
+            return
+        await asyncio.to_thread(
+            _persist_tabular_semantic_candidate_checkpoint,
+            semantic_checkpoint_context,
+            list(rows[0]),
+            rows,
+            validation_counts,
+            attempt_number,
+        )
+
+    return await verify_and_repair_semantic_rows(
+        public_source_rows,
+        output_rows,
+        transformation_spec,
+        mode,
+        invoke_verifier,
+        invoke_repair,
+        max_repair_attempts=options.get('max_repair_attempts'),
+        max_repair_rows=options.get('max_repair_rows'),
+        checkpoint_candidate=checkpoint_candidate,
+    )
+
+
 def _ensure_tabular_generation_plan(
     run,
     chat_service,
@@ -3886,6 +4978,10 @@ def _ensure_tabular_generation_plan(
     if (
         task_type not in {TABULAR_RUN_TASK_STRUCTURED_EXPORT, TABULAR_RUN_TASK_COMBINED}
         or (run or {}).get('passthrough_input_rows')
+        or (
+            bool(_get_tabular_run_transformation_spec(run))
+            and not ((run or {}).get('plan_blob_path') or (run or {}).get('plan_hash'))
+        )
         or chat_service is None
     ):
         if (run or {}).get('plan_status') not in {'ready', 'fallback', 'not_applicable'}:
@@ -3926,14 +5022,27 @@ def _ensure_tabular_generation_plan(
 
     sample_rows = _load_tabular_generation_plan_sample_rows(run, input_batches)
     input_contract = _build_tabular_generation_plan_input_contract(sample_rows)
-    plan_blob_path = _tabular_generation_plan_blob_path(
+    stored_plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
+    current_plan_blob_path = _tabular_generation_plan_blob_path(
         (run or {}).get('user_id'),
         (run or {}).get('conversation_id'),
         (run or {}).get('id'),
     )
-    stored_plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
-    if stored_plan_blob_path and stored_plan_blob_path != plan_blob_path:
+    legacy_plan_blob_paths = {
+        _tabular_generation_plan_blob_path(
+            (run or {}).get('user_id'),
+            (run or {}).get('conversation_id'),
+            (run or {}).get('id'),
+            plan_version=legacy_version,
+        )
+        for legacy_version in TABULAR_GENERATION_PLAN_LEGACY_VERSIONS
+    }
+    if stored_plan_blob_path and stored_plan_blob_path not in {
+        current_plan_blob_path,
+        *legacy_plan_blob_paths,
+    }:
         raise ValueError('Stored generation plan path does not match the run identity')
+    plan_blob_path = stored_plan_blob_path or current_plan_blob_path
     if _blob_exists(plan_blob_path):
         recovered_run, _ = _recover_tabular_generation_plan(
             run,
@@ -3947,6 +5056,8 @@ def _ensure_tabular_generation_plan(
     if (run or {}).get('plan_status') == 'fallback':
         return run
     if (run or {}).get('plan_status') == 'planning':
+        if plan_mode == 'active':
+            return _fail_active_tabular_generation_plan(run, 'interrupted_before_persistence')
         return _mark_tabular_generation_plan_fallback(run, 'interrupted_before_persistence')
 
     planner_model = _resolve_tabular_generation_planner_model(run, settings)
@@ -3970,12 +5081,20 @@ def _ensure_tabular_generation_plan(
             batch_timeout_seconds,
         ))
     except TabularGenerationPlanError as exc:
+        if plan_mode == 'active':
+            return _fail_active_tabular_generation_plan(
+                run,
+                exc.reason,
+                attempt_count=TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS,
+            )
         return _mark_tabular_generation_plan_fallback(
             run,
             exc.reason,
             attempt_count=TABULAR_GENERATION_PLAN_DEFAULT_RETRY_ATTEMPTS,
         )
     except ValueError:
+        if plan_mode == 'active':
+            return _fail_active_tabular_generation_plan(run, 'invalid_input')
         return _mark_tabular_generation_plan_fallback(run, 'invalid_input')
 
     try:
@@ -4011,11 +5130,17 @@ def _ensure_tabular_generation_plan(
         'planner_attempt_count': metrics.get('attempt_count'),
         'planner_latency_seconds': metrics.get('latency_seconds'),
         'planner_model_latency_seconds': metrics.get('model_latency_seconds'),
+        'planner_review_latency_seconds': metrics.get('review_latency_seconds'),
         'planner_input_char_count': metrics.get('input_char_count'),
         'planner_response_char_count': metrics.get('response_char_count'),
         'planner_input_token_count': metrics.get('input_token_count'),
         'planner_output_token_count': metrics.get('output_token_count'),
         'planner_total_token_count': metrics.get('total_token_count'),
+        'planner_review_input_char_count': metrics.get('review_input_char_count'),
+        'planner_review_response_char_count': metrics.get('review_response_char_count'),
+        'planner_review_input_token_count': metrics.get('review_input_token_count'),
+        'planner_review_output_token_count': metrics.get('review_output_token_count'),
+        'planner_review_total_token_count': metrics.get('review_total_token_count'),
         'planner_completed_at': plan.get('created_at'),
         'updated_at': _now_iso(),
         'last_heartbeat_at': _now_iso(),
@@ -4034,6 +5159,10 @@ def _ensure_tabular_generation_plan(
             'planner_input_token_count': persisted_run.get('planner_input_token_count'),
             'planner_output_token_count': persisted_run.get('planner_output_token_count'),
             'planner_total_token_count': persisted_run.get('planner_total_token_count'),
+            'planner_review_latency_seconds': persisted_run.get('planner_review_latency_seconds'),
+            'planner_review_input_token_count': persisted_run.get('planner_review_input_token_count'),
+            'planner_review_output_token_count': persisted_run.get('planner_review_output_token_count'),
+            'planner_review_total_token_count': persisted_run.get('planner_review_total_token_count'),
         },
         level=logging.INFO,
     )
@@ -4054,10 +5183,54 @@ async def _generate_batch_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
+    semantic_validation_options=None,
+    semantic_checkpoint_context=None,
 ):
     batch_number = batch_index + 1
     normalized_response_protocol = str(response_protocol or TABULAR_RESPONSE_PROTOCOL_OBJECT_V1).strip()
     compact_protocol = _is_compact_row_array_protocol(normalized_response_protocol)
+    model_expected_output_schema = _build_model_expected_output_schema(
+        expected_output_schema,
+        transformation_spec=transformation_spec,
+    )
+    semantic_mode = str((semantic_validation_options or {}).get('mode') or 'off').strip().lower()
+    candidate_checkpoint = None
+    if transformation_spec and semantic_mode in {'shadow', 'active'} and expected_output_schema:
+        candidate_checkpoint = _load_tabular_semantic_candidate_checkpoint(
+            semantic_checkpoint_context,
+            expected_output_schema,
+            len(batch_rows),
+        )
+    if candidate_checkpoint:
+        resumed_entries = list(candidate_checkpoint['rows'])
+        (
+            resumed_entries,
+            semantic_validation_counts,
+            semantic_validation_attempts,
+        ) = await _verify_and_repair_tabular_batch_entries(
+            chat_service,
+            user_question,
+            batch_rows,
+            resumed_entries,
+            transformation_spec,
+            generation_plan,
+            semantic_validation_options,
+            batch_timeout_seconds,
+            semantic_checkpoint_context=semantic_checkpoint_context,
+        )
+        return resumed_entries, 0, list(expected_output_schema), {
+            'input_char_count': 0,
+            'response_char_count': 0,
+            'model_latency_seconds': 0,
+            'validation_seconds': None,
+            'input_token_count': 0,
+            'output_token_count': 0,
+            'total_token_count': 0,
+            'semantic_validation_counts': semantic_validation_counts,
+            'semantic_validation_attempts': semantic_validation_attempts,
+            'semantic_candidate_reused': True,
+        }
     batch_prompt = _build_batch_prompt(
         user_question,
         batch_rows,
@@ -4065,7 +5238,7 @@ async def _generate_batch_entries(
         total_batches,
         source_file_name,
         selected_sheet=selected_sheet,
-        output_schema=expected_output_schema,
+        output_schema=model_expected_output_schema,
         response_protocol=normalized_response_protocol,
         generation_plan=generation_plan,
     )
@@ -4160,15 +5333,51 @@ async def _generate_batch_entries(
                 normalized_entries, output_schema = _normalize_model_generated_batch_entries(
                     batch_rows,
                     parsed_entries,
-                    expected_output_schema=expected_output_schema,
+                    expected_output_schema=model_expected_output_schema,
                     allow_source_token_recovery=not compact_protocol,
                     run_id=run_id,
                     batch_number=batch_number,
                 )
+                normalized_entries, output_schema = _merge_deterministic_transformation_entries(
+                    batch_rows,
+                    normalized_entries,
+                    expected_output_schema or output_schema,
+                    transformation_spec=transformation_spec,
+                )
+                _validate_exhaustive_row_analysis_entries(normalized_entries, output_schema)
+                semantic_validation_counts = {}
+                semantic_validation_attempts = []
+                if transformation_spec:
+                    if semantic_mode in {'shadow', 'active'}:
+                        await asyncio.to_thread(
+                            _persist_tabular_semantic_candidate_checkpoint,
+                            semantic_checkpoint_context,
+                            output_schema,
+                            normalized_entries,
+                            {},
+                            0,
+                        )
+                    (
+                        normalized_entries,
+                        semantic_validation_counts,
+                        semantic_validation_attempts,
+                    ) = await _verify_and_repair_tabular_batch_entries(
+                        chat_service,
+                        user_question,
+                        batch_rows,
+                        normalized_entries,
+                        transformation_spec,
+                        generation_plan,
+                        semantic_validation_options,
+                        timeout_seconds,
+                        semantic_checkpoint_context=semantic_checkpoint_context,
+                    )
                 last_attempt_metrics['validation_seconds'] = round(
                     time.monotonic() - validation_started_at,
                     3,
                 )
+                last_attempt_metrics['semantic_validation_counts'] = semantic_validation_counts
+                last_attempt_metrics['semantic_validation_attempts'] = semantic_validation_attempts
                 return normalized_entries, mismatch_count, output_schema, last_attempt_metrics
             except ValueError as exc:
                 last_validation_error = str(exc)
@@ -4220,6 +5429,9 @@ async def _generate_batch_entries_for_window(
     batch_timeout_seconds,
     response_protocol,
     generation_plan,
+    transformation_spec,
+    semantic_validation_options,
+    semantic_checkpoint_context,
 ):
     queued_at = time.monotonic()
     async with semaphore:
@@ -4239,8 +5451,13 @@ async def _generate_batch_entries_for_window(
             batch_timeout_seconds=batch_timeout_seconds,
             response_protocol=response_protocol,
             generation_plan=generation_plan,
+            transformation_spec=transformation_spec,
+            semantic_validation_options=semantic_validation_options,
+            semantic_checkpoint_context=semantic_checkpoint_context,
         )
         elapsed_seconds = time.monotonic() - batch_started_at
+        semantic_validation_counts = dict(attempt_metrics.get('semantic_validation_counts') or {})
+        semantic_validation_attempts = list(attempt_metrics.get('semantic_validation_attempts') or [])[:5]
         log_event(
             '[TABULAR_GENERATED_OUTPUT] Background export batch model completed',
             {
@@ -4259,13 +5476,25 @@ async def _generate_batch_entries_for_window(
                 'output_token_count': attempt_metrics.get('output_token_count'),
                 'total_token_count': attempt_metrics.get('total_token_count'),
                 'mismatch_count': mismatch_count,
+                'semantic_pass_count': _safe_int(semantic_validation_counts.get('pass_count')),
+                'semantic_fail_count': _safe_int(semantic_validation_counts.get('fail_count')),
+                'semantic_uncertain_count': _safe_int(semantic_validation_counts.get('uncertain_count')),
+                'semantic_unsupported_count': _safe_int(semantic_validation_counts.get('unsupported_count')),
+                'semantic_repair_target_count': _safe_int(semantic_validation_counts.get('repair_target_count')),
+                'semantic_repair_attempt_count': _safe_int(semantic_validation_counts.get('repair_attempt_count')),
             },
             debug_only=True,
         )
+        batch_summary = _build_generated_batch_summary(batch_entries)
+        if semantic_validation_counts:
+            batch_summary['semantic_validation'] = {
+                'final': semantic_validation_counts,
+                'attempts': semantic_validation_attempts,
+            }
         return {
             'batch_number': batch_request['batch_number'],
             'batch_entries': batch_entries,
-            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_summary': batch_summary,
             'batch_row_count': len(batch_entries),
             'elapsed_seconds': elapsed_seconds,
             'queue_wait_seconds': queue_wait_seconds,
@@ -4278,6 +5507,7 @@ async def _generate_batch_entries_for_window(
             'total_token_count': attempt_metrics.get('total_token_count'),
             'mismatch_count': mismatch_count,
             'output_schema': output_schema,
+            'semantic_validation_counts': semantic_validation_counts,
         }
 
 
@@ -4295,6 +5525,9 @@ async def _generate_batch_window_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
+    semantic_validation_options=None,
+    semantic_checkpoint_run=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -4312,6 +5545,12 @@ async def _generate_batch_window_entries(
             batch_timeout_seconds,
             response_protocol,
             generation_plan,
+            transformation_spec,
+            semantic_validation_options,
+            _build_tabular_semantic_checkpoint_context(
+                semantic_checkpoint_run,
+                batch_request['batch_number'],
+            ),
         )
         for batch_request in batch_requests
     ]
@@ -4388,6 +5627,8 @@ async def _generate_and_checkpoint_batch_window_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
+    semantic_validation_options=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
@@ -4407,6 +5648,12 @@ async def _generate_and_checkpoint_batch_window_entries(
                 batch_timeout_seconds,
                 response_protocol,
                 generation_plan,
+                transformation_spec,
+                semantic_validation_options,
+                _build_tabular_semantic_checkpoint_context(
+                    run,
+                    batch_request['batch_number'],
+                ),
             )
         )
         for batch_request in batch_requests
@@ -4498,6 +5745,8 @@ async def _generate_and_checkpoint_rolling_pool_entries(
     batch_timeout_seconds=TABULAR_EXPORT_DEFAULT_BATCH_TIMEOUT_SECONDS,
     response_protocol=TABULAR_RESPONSE_PROTOCOL_OBJECT_V1,
     generation_plan=None,
+    transformation_spec=None,
+    semantic_validation_options=None,
 ):
     model_semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     writer_semaphore = asyncio.Semaphore(max(1, checkpoint_writer_concurrency))
@@ -4711,6 +5960,9 @@ async def _generate_and_checkpoint_rolling_pool_entries(
                 batch_timeout_seconds,
                 response_protocol,
                 generation_plan,
+                transformation_spec,
+                semantic_validation_options,
+                _build_tabular_semantic_checkpoint_context(run, batch_number),
             )
         )
         active_batch_requests[model_task] = batch_request
@@ -5014,9 +6266,18 @@ async def _generate_combined_chunk_result(
     retry_attempts,
     batch_timeout_seconds,
     expected_output_schema=None,
+    transformation_spec=None,
+    generation_plan=None,
+    semantic_validation_options=None,
 ):
     batch_number = batch_request['batch_number']
     batch_rows = batch_request['rows']
+    semantic_checkpoint_context = _build_tabular_semantic_checkpoint_context(run, batch_number)
+    semantic_mode = str((semantic_validation_options or {}).get('mode') or 'off').strip().lower()
+    model_expected_output_schema = _build_model_expected_output_schema(
+        expected_output_schema,
+        transformation_spec=transformation_spec,
+    )
     timeout_seconds = max(
         _safe_float(
             batch_timeout_seconds,
@@ -5045,7 +6306,7 @@ async def _generate_combined_chunk_result(
                 batch_rows,
                 batch_number,
                 total_batches,
-                output_schema=expected_output_schema,
+                output_schema=model_expected_output_schema,
             )
         )
 
@@ -5069,9 +6330,59 @@ async def _generate_combined_chunk_result(
                     parsed_payload,
                     batch_rows,
                     batch_number,
-                    expected_output_schema=expected_output_schema,
+                    expected_output_schema=model_expected_output_schema,
                 )
-                return normalized_entries, output_schema, analysis_summary, mismatch_count
+                normalized_entries, output_schema = _merge_deterministic_transformation_entries(
+                    batch_rows,
+                    normalized_entries,
+                    expected_output_schema or output_schema,
+                    transformation_spec=transformation_spec,
+                )
+                _validate_exhaustive_row_analysis_entries(normalized_entries, output_schema)
+                candidate_checkpoint = None
+                if transformation_spec and semantic_mode in {'shadow', 'active'}:
+                    candidate_checkpoint = _load_tabular_semantic_candidate_checkpoint(
+                        semantic_checkpoint_context,
+                        output_schema,
+                        len(batch_rows),
+                    )
+                if candidate_checkpoint:
+                    normalized_entries = list(candidate_checkpoint['rows'])
+                elif transformation_spec and semantic_mode in {'shadow', 'active'}:
+                    await asyncio.to_thread(
+                        _persist_tabular_semantic_candidate_checkpoint,
+                        semantic_checkpoint_context,
+                        output_schema,
+                        normalized_entries,
+                        {},
+                        0,
+                    )
+                semantic_validation_counts = {}
+                semantic_validation_attempts = []
+                if transformation_spec:
+                    (
+                        normalized_entries,
+                        semantic_validation_counts,
+                        semantic_validation_attempts,
+                    ) = await _verify_and_repair_tabular_batch_entries(
+                        chat_service,
+                        run.get('user_question'),
+                        batch_rows,
+                        normalized_entries,
+                        transformation_spec,
+                        generation_plan,
+                        semantic_validation_options,
+                        timeout_seconds,
+                        semantic_checkpoint_context=semantic_checkpoint_context,
+                    )
+                return (
+                    normalized_entries,
+                    output_schema,
+                    analysis_summary,
+                    mismatch_count,
+                    semantic_validation_counts,
+                    semantic_validation_attempts,
+                )
             except ValueError as exc:
                 last_validation_error = str(exc)
 
@@ -5106,10 +6417,20 @@ async def _generate_combined_chunk_result_for_window(
     retry_attempts,
     batch_timeout_seconds,
     expected_output_schema,
+    transformation_spec,
+    generation_plan,
+    semantic_validation_options,
 ):
     async with semaphore:
         batch_started_at = time.monotonic()
-        batch_entries, output_schema, analysis_summary, mismatch_count = await _generate_combined_chunk_result(
+        (
+            batch_entries,
+            output_schema,
+            analysis_summary,
+            mismatch_count,
+            semantic_validation_counts,
+            semantic_validation_attempts,
+        ) = await _generate_combined_chunk_result(
             chat_service,
             run,
             batch_request,
@@ -5117,16 +6438,26 @@ async def _generate_combined_chunk_result_for_window(
             retry_attempts,
             batch_timeout_seconds,
             expected_output_schema=expected_output_schema,
+            transformation_spec=transformation_spec,
+            generation_plan=generation_plan,
+            semantic_validation_options=semantic_validation_options,
         )
+        batch_summary = _build_generated_batch_summary(batch_entries)
+        if semantic_validation_counts:
+            batch_summary['semantic_validation'] = {
+                'final': semantic_validation_counts,
+                'attempts': semantic_validation_attempts[:5],
+            }
         return {
             'batch_number': batch_request['batch_number'],
             'batch_entries': batch_entries,
-            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_summary': batch_summary,
             'analysis_summary': analysis_summary,
             'batch_row_count': len(batch_entries),
             'elapsed_seconds': time.monotonic() - batch_started_at,
             'mismatch_count': mismatch_count,
             'output_schema': output_schema,
+            'semantic_validation_counts': semantic_validation_counts,
         }
 
 
@@ -5139,6 +6470,9 @@ async def _generate_combined_chunk_result_window(
     batch_concurrency,
     batch_timeout_seconds,
     expected_output_schema=None,
+    transformation_spec=None,
+    generation_plan=None,
+    semantic_validation_options=None,
 ):
     semaphore = asyncio.Semaphore(max(1, batch_concurrency))
     tasks = [
@@ -5151,6 +6485,9 @@ async def _generate_combined_chunk_result_window(
             retry_attempts,
             batch_timeout_seconds,
             expected_output_schema,
+            transformation_spec,
+            generation_plan,
+            semantic_validation_options,
         )
         for batch_request in batch_requests
     ]
@@ -5480,12 +6817,34 @@ def _can_resume_run(run, settings=None):
     if status == TABULAR_EXPORT_STATUS_RUNNING:
         return _is_stale_running_run(run, settings or {})
     if status == TABULAR_EXPORT_STATUS_FAILED:
-        return _is_retryable_failed_run(run) or _has_exhausted_independent_batch_retries(run)
+        return (
+            _is_artifact_publication_recoverable(run)
+            or _is_retryable_failed_run(run)
+            or _has_exhausted_independent_batch_retries(run)
+        )
     return False
+
+
+def _is_artifact_publication_recoverable(run):
+    status = str((run or {}).get('status') or '').strip().lower()
+    manifest = (run or {}).get('artifact_set_manifest') if isinstance((run or {}).get('artifact_set_manifest'), dict) else {}
+    manifest_state = str(manifest.get('lifecycle_state') or '').strip().lower()
+    return bool(
+        status == TABULAR_EXPORT_STATUS_FAILED
+        and (run or {}).get('publishing_started_at')
+        and manifest_state in {
+            TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING,
+            TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING,
+            TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
+            TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
+        }
+    )
 
 
 def _can_cancel_run(run):
     status = str((run or {}).get('status') or '').strip().lower()
+    if _is_artifact_publication_recoverable(run):
+        return True
     return not run.get('publishing_started_at') and status not in {
         TABULAR_EXPORT_STATUS_COMPLETED,
         TABULAR_EXPORT_STATUS_CANCELED,
@@ -5555,7 +6914,9 @@ def _normalize_tabular_run_rollout_assignment(raw_assignment):
         'contract_version': str(raw_assignment.get('contract_version') or '').strip()[:80],
         'mode': str(raw_assignment.get('mode') or '').strip().lower()[:40],
         'planner_mode': str(raw_assignment.get('planner_mode') or '').strip().lower()[:40],
+        'rollout_state': str(raw_assignment.get('rollout_state') or 'active').strip().lower()[:40],
         'assigned': bool(raw_assignment.get('assigned')),
+        'assignment_reason_code': str(raw_assignment.get('assignment_reason_code') or '').strip().lower()[:80],
         'cohort_bucket': _safe_int(raw_assignment.get('cohort_bucket'), minimum=0, maximum=99),
         'rollout_percent': _safe_int(raw_assignment.get('rollout_percent'), minimum=0, maximum=100),
         'search_shared_preflight_enabled': bool(raw_assignment.get('search_shared_preflight_enabled')),
@@ -5601,12 +6962,18 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
     if not planner_metadata:
         return {}
 
-    return {
+    normalized_metadata = {
         'planner_contract_version': str(planner_metadata.get('planner_contract_version') or '').strip()[:80],
         'execution_contract': str(planner_metadata.get('execution_contract') or '').strip().lower()[:80],
         'execution_state': str(planner_metadata.get('execution_state') or '').strip().lower()[:40],
         'durable_task_type': _normalize_tabular_run_task_type(planner_metadata.get('durable_task_type')),
         'reason_code': str(planner_metadata.get('reason_code') or '').strip().lower()[:80],
+        'row_analysis_mode': str(planner_metadata.get('row_analysis_mode') or '').strip().lower()[:40],
+        'row_analysis_questions': [
+            str(question or '').strip()[:500]
+            for question in list(planner_metadata.get('row_analysis_questions') or [])[:TABULAR_ROW_ANALYSIS_MAX_QUESTIONS]
+            if str(question or '').strip()
+        ],
         'execution_group_id': str(planner_metadata.get('execution_group_id') or '').strip()[:128],
         'source_coverage_summary': _build_planner_source_coverage_summary(
             planner_metadata.get('source_coverage'),
@@ -5615,6 +6982,95 @@ def _normalize_tabular_run_planner_metadata(planner_metadata):
             planner_metadata.get('rollout_assignment'),
         ),
     }
+    deliverable_contract = planner_metadata.get('deliverable_contract')
+    if isinstance(deliverable_contract, dict):
+        normalized_metadata['deliverable_contract'] = {
+            'contract_version': str(deliverable_contract.get('contract_version') or '').strip()[:80],
+            'action_mode': str(deliverable_contract.get('action_mode') or '').strip().lower()[:40],
+            'analysis_required': bool(deliverable_contract.get('analysis_required')),
+            'primary_artifact_role': str(deliverable_contract.get('primary_artifact_role') or '').strip().lower()[:80],
+            'requested_artifacts': [
+                {
+                    'artifact_id': str(artifact.get('artifact_id') or '').strip()[:ANALYSIS_DELIVERABLE_MAX_ARTIFACT_ID_LENGTH],
+                    'role': str(artifact.get('role') or '').strip().lower()[:40],
+                    'format': str(artifact.get('format') or '').strip().lower()[:20],
+                    'required': bool(artifact.get('required', True)),
+                    'request_order': _safe_int(artifact.get('request_order'), default=0, minimum=0),
+                }
+                for artifact in list(deliverable_contract.get('requested_artifacts') or [])[:ANALYSIS_DELIVERABLE_MAX_ARTIFACTS]
+                if isinstance(artifact, dict) and str(artifact.get('artifact_id') or '').strip()
+            ],
+            'public_output_schema': [
+                str(field_name or '').strip()
+                for field_name in list(deliverable_contract.get('public_output_schema') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS]
+                if str(field_name or '').strip()
+                and not is_analysis_internal_lineage_field(field_name)
+            ],
+            'internal_checkpoint_schema': [
+                str(field_name or '').strip()
+                for field_name in list(deliverable_contract.get('internal_checkpoint_schema') or [])[
+                    :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
+                ]
+                if str(field_name or '').strip()
+            ],
+            'lineage_schema': [
+                str(field_name or '').strip()
+                for field_name in list(deliverable_contract.get('lineage_schema') or [])[:8]
+                if str(field_name or '').strip()
+                and is_analysis_internal_lineage_field(field_name)
+            ],
+            'row_cardinality': str(deliverable_contract.get('row_cardinality') or '').strip().lower()[:80],
+            'ordering': str(deliverable_contract.get('ordering') or '').strip().lower()[:80],
+            'transformation_mode': str(deliverable_contract.get('transformation_mode') or '').strip().lower()[:80],
+            'validation_profile': str(deliverable_contract.get('validation_profile') or '').strip().lower()[:80],
+            'publication_policy': str(deliverable_contract.get('publication_policy') or '').strip().lower()[:80],
+        }
+        if isinstance(deliverable_contract.get('transformation_spec'), dict):
+            normalized_metadata['deliverable_contract']['transformation_spec'] = normalize_tabular_transformation_spec(
+                deliverable_contract.get('transformation_spec'),
+                public_output_schema=normalized_metadata['deliverable_contract']['public_output_schema'],
+            )
+    return normalized_metadata
+
+
+def _ensure_active_tabular_run_deliverable_contract(
+    planner_metadata,
+    requested_plan_mode,
+    task_type,
+    output_format,
+    user_question,
+):
+    """Add a server-owned contract for new active runs from legacy direct preflight."""
+    normalized_metadata = dict(planner_metadata or {})
+    if (
+        str(requested_plan_mode or '').strip().lower() != 'active'
+        or isinstance(normalized_metadata.get('deliverable_contract'), dict)
+    ):
+        return normalized_metadata
+    normalized_task_type = _normalize_tabular_run_task_type(task_type)
+    fallback_action_mode = (
+        'analyze'
+        if normalized_task_type == TABULAR_RUN_TASK_COMBINED
+        else 'search'
+    )
+    fallback_contract = build_analysis_deliverable_contract(
+        action_mode=fallback_action_mode,
+        requested_output_format=output_format,
+        row_cardinality='one_per_source_row',
+        ordering='source_order',
+        transformation_mode='semantic',
+        validation_profile='exact_rows_schema',
+        request_fingerprint=hashlib.sha256(
+            str(user_question or '').encode('utf-8')
+        ).hexdigest(),
+    )
+    normalized_metadata.update({
+        'execution_contract': normalized_task_type,
+        'durable_task_type': normalized_task_type,
+        'reason_code': 'legacy_direct_preflight',
+        'deliverable_contract': fallback_contract.to_dict(),
+    })
+    return normalized_metadata
 
 
 def _normalize_tabular_run_source_format(run):
@@ -5724,6 +7180,68 @@ def _build_tabular_run_rollout_assignment_public_fields(run):
         'mixed_deferred_composition_planning_enabled': False,
         'multifile_execution_unit_planning_enabled': False,
         'legacy_post_tool_fallback_mode': 'enabled',
+    }
+
+
+def _build_safe_tabular_run_failure(run):
+    """Return a stable client-safe failure category without exposing provider details."""
+    run = run if isinstance(run, dict) else {}
+    error_text = str(run.get('last_error') or '').strip().lower()
+    retry_category = str(run.get('last_retry_category') or '').strip().lower()
+    artifact_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
+    artifact_lifecycle = str(artifact_manifest.get('lifecycle_state') or '').strip().lower()
+
+    if artifact_lifecycle in {
+        TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
+        TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
+    } or 'artifact set failed publication validation' in error_text:
+        return {
+            'failure_code': 'artifact_publication_failed',
+            'failure_detail': 'The analysis finished, but its downloadable artifact could not be published.',
+        }
+    if 'deploymentnotfound' in error_text or 'api deployment for this resource does not exist' in error_text:
+        return {
+            'failure_code': 'model_deployment_unavailable',
+            'failure_detail': 'The selected model deployment is unavailable. Select another model or ask an administrator to verify the model endpoint.',
+        }
+    if retry_category == 'rate_limit' or 'http_429' in error_text or 'rate limit' in error_text:
+        return {
+            'failure_code': 'model_rate_limited',
+            'failure_detail': 'The model service is temporarily rate limited. Continue the run after a short wait.',
+        }
+    if retry_category == 'timeout' or 'timed out' in error_text or 'timeout' in error_text:
+        return {
+            'failure_code': 'model_timeout',
+            'failure_detail': 'The model service did not finish this batch before the processing timeout.',
+        }
+    if 'authorization' in error_text or 'permission' in error_text or 'access is no longer authorized' in error_text:
+        return {
+            'failure_code': 'source_access_changed',
+            'failure_detail': 'Access to the selected source changed before processing completed.',
+        }
+    if 'source csv changed' in error_text or 'source etag' in error_text or 'source version' in error_text:
+        return {
+            'failure_code': 'source_changed',
+            'failure_detail': 'The selected source changed during processing. Start a new run against the latest version.',
+        }
+    if (
+        retry_category == 'model_validation'
+        or 'schema' in error_text
+        or 'validation' in error_text
+        or 'valid combined output' in error_text
+    ):
+        return {
+            'failure_code': 'output_validation_failed',
+            'failure_detail': 'The generated output did not satisfy the required row and artifact structure.',
+        }
+    if retry_category in {'transient', 'connection', 'provider_transient'}:
+        return {
+            'failure_code': 'model_service_interrupted',
+            'failure_detail': 'The model service was interrupted while processing the background run.',
+        }
+    return {
+        'failure_code': 'background_processing_failed',
+        'failure_detail': 'The background analysis could not be completed.',
     }
 
 
@@ -5934,14 +7452,11 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
             'retry_delay_seconds': None,
         }
     if status == TABULAR_EXPORT_STATUS_FAILED:
+        safe_failure = _build_safe_tabular_run_failure(run)
         return {
             'status_label': 'Failed',
             'status_tone': 'danger',
-            'status_detail': (
-                'Analysis failed and cannot continue from checkpoints.'
-                if is_analysis_like
-                else 'Export failed and cannot continue from checkpoints.'
-            ),
+            'status_detail': safe_failure['failure_detail'],
             'is_stale': False,
             'waiting_for_retry': False,
             'retry_due': False,
@@ -5998,63 +7513,64 @@ def _build_run_public_status(run, settings=None):
     deferred_composition = _build_tabular_run_deferred_composition_reference(run)
     rollout_assignment = _build_tabular_run_rollout_assignment_public_fields(run)
     checkpoint_summary = _build_checkpoint_summary(completed_batches, batch_count, processed_rows, row_count)
-    generated_artifacts = []
-
-    def append_generated_artifact(artifact, fallback_file_name, fallback_output_format, summary):
-        artifact = artifact if isinstance(artifact, dict) else {}
-        if not artifact.get('artifact_message_id'):
-            return
-        generated_artifacts.append({
-            'capability': artifact.get('capability') or 'tabular',
-            'artifact_message_id': artifact.get('artifact_message_id'),
-            'conversation_id': run.get('conversation_id'),
-            'file_name': artifact.get('file_name') or fallback_file_name,
-            'output_format': artifact.get('output_format') or fallback_output_format,
-            'row_count': processed_rows or row_count,
-            'storage_scope': 'chat',
-            'source_file_name': run.get('source_file_name'),
-            'selected_sheet': run.get('selected_sheet'),
-            'summary': summary,
-            'preview_rows': list(artifact.get('preview_rows') or [])[
-                :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS
-            ],
-            'preview_columns': list(artifact.get('preview_columns') or [])[
-                :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
-            ],
-            'preview_text': str(artifact.get('preview_text') or '')[
-                :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS
-            ],
-            'suppress_assistant_text': bool(artifact.get('suppress_assistant_text')),
-            'suppress_assistant_table_export': True,
+    artifact_set_manifest = _build_or_update_artifact_set_manifest(run)
+    safe_failure = _build_safe_tabular_run_failure({
+        **run,
+        'artifact_set_manifest': artifact_set_manifest,
+    })
+    artifact_publication_incomplete = bool(
+        str(run.get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED
+        and artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+    )
+    public_status = run.get('status')
+    if artifact_publication_incomplete:
+        public_status = TABULAR_EXPORT_STATUS_FAILED
+        status_detail = {
+            'status_label': 'Failed',
+            'status_tone': 'danger',
+            'status_detail': safe_failure['failure_detail'],
+            'is_stale': False,
+            'waiting_for_retry': False,
+            'retry_due': False,
+            'retry_delay_seconds': None,
+        }
+        lifecycle_fields.update({
+            'lifecycle_state': 'intervention_required',
+            'execution_state': 'intervention_required',
+            'evidence_status': 'failed',
+            'terminal': True,
+            'safe_reason_code': safe_failure['failure_code'],
         })
-
-    if task_type == TABULAR_RUN_TASK_COMBINED:
-        append_generated_artifact(
-            run.get('structured_export_artifact') or final_artifact,
-            run.get('generated_file_name'),
-            run.get('output_format'),
-            run.get('post_run_export_summary'),
-        )
-        append_generated_artifact(
-            run.get('analysis_artifact'),
-            run.get('analysis_generated_file_name'),
-            'md',
-            run.get('post_run_summary'),
-        )
-    else:
-        append_generated_artifact(
-            final_artifact,
-            run.get('generated_file_name'),
-            run.get('output_format'),
-            run.get('post_run_summary'),
-        )
+    generated_artifacts = _build_public_generated_artifacts_from_manifest(run, artifact_set_manifest)
     generated_artifact = generated_artifacts[0] if generated_artifacts else None
+    primary_final_artifact = generated_artifact or (
+        _build_public_artifact_projection(final_artifact)
+        if (
+            run.get('status') == TABULAR_EXPORT_STATUS_COMPLETED
+            and artifact_set_manifest.get('lifecycle_state') == TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+        )
+        else None
+    ) or {}
+    structured_export_public_artifact = next(
+        (
+            artifact for artifact in generated_artifacts
+            if artifact.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+        ),
+        None,
+    )
+    analysis_public_artifact = next(
+        (
+            artifact for artifact in generated_artifacts
+            if artifact.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS
+        ),
+        None,
+    )
 
     return {
         'run_id': run.get('id'),
         'conversation_id': run.get('conversation_id'),
         'task_type': task_type,
-        'status': run.get('status'),
+        'status': public_status,
         'metadata_contract_version': 'phase8.v1',
         'planner_contract_version': planner_metadata.get('planner_contract_version'),
         'execution_contract': planner_metadata.get('execution_contract') or task_type,
@@ -6104,10 +7620,20 @@ def _build_run_public_status(run, settings=None):
         'updated_at': run.get('updated_at'),
         'completed_at': run.get('completed_at'),
         'last_heartbeat_at': run.get('last_heartbeat_at'),
-        'last_message': run.get('last_message'),
+        'last_message': status_detail.get('status_detail'),
         'status_label': status_detail.get('status_label'),
         'status_tone': status_detail.get('status_tone'),
         'status_detail': status_detail.get('status_detail'),
+        'failure_code': (
+            safe_failure['failure_code']
+            if public_status == TABULAR_EXPORT_STATUS_FAILED
+            else None
+        ),
+        'failure_detail': (
+            safe_failure['failure_detail']
+            if public_status == TABULAR_EXPORT_STATUS_FAILED
+            else None
+        ),
         'checkpoint_summary': checkpoint_summary,
         'is_stale': status_detail.get('is_stale'),
         'waiting_for_retry': status_detail.get('waiting_for_retry'),
@@ -6128,12 +7654,22 @@ def _build_run_public_status(run, settings=None):
         'can_resume': can_resume,
         'can_cancel': _can_cancel_run(run),
         'retryable_failure': retryable_failure,
-        'artifact_message_id': final_artifact.get('artifact_message_id'),
-        'file_name': final_artifact.get('file_name') or run.get('generated_file_name'),
+        'artifact_message_id': primary_final_artifact.get('artifact_message_id'),
+        'file_name': primary_final_artifact.get('file_name') or run.get('generated_file_name'),
         'generated_artifact': generated_artifact,
         'generated_artifacts': generated_artifacts,
-        'structured_export_artifact': run.get('structured_export_artifact'),
-        'analysis_artifact': run.get('analysis_artifact'),
+        'artifact_set': {
+            'contract_version': artifact_set_manifest.get('contract_version'),
+            'set_id': artifact_set_manifest.get('set_id'),
+            'lifecycle_state': artifact_set_manifest.get('lifecycle_state'),
+            'validation_state': artifact_set_manifest.get('validation_state'),
+            'primary_artifact_id': artifact_set_manifest.get('primary_artifact_id'),
+            'member_count': len(artifact_set_manifest.get('members') or []),
+            'published_member_count': len(generated_artifacts),
+            'publication_generation': _safe_int(artifact_set_manifest.get('publication_generation'), minimum=0),
+        },
+        'structured_export_artifact': structured_export_public_artifact,
+        'analysis_artifact': analysis_public_artifact,
         'capability': 'tabular',
         'suppress_assistant_table_export': True,
         'background_export': not (
@@ -6193,6 +7729,10 @@ def get_tabular_generated_output_run_status(user_id, run_id):
         )
     except CosmosResourceNotFoundError:
         return None
+    # Legacy completion repair is a bounded, idempotent status-read exception:
+    # the partition-authorized run already owns the uploaded artifact, and the
+    # missing publication commit is the only mutation performed.
+    run = _reconcile_completed_tabular_artifact_set(run)
     return _build_run_public_status(run, settings=settings)
 
 
@@ -6279,6 +7819,7 @@ def resume_tabular_generated_output_run(user_id, run_id):
         'lease_holder_id': None,
         'lease_expires_at': None,
         'next_attempt_at': now,
+        'publishing_started_at': None,
         'last_message': 'Manual resume queued; export will continue from completed checkpoints',
         'transient_failure_count': 0,
         'auto_retry_exhausted': False,
@@ -6553,6 +8094,7 @@ def _mark_run_failed(run, error_message):
         'last_error': str(error_message or 'Unknown error')[:1000],
         'last_message': 'Background structured export failed',
     })
+    run['failure_code'] = _build_safe_tabular_run_failure(run)['failure_code']
     run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     try:
         run = _replace_claimed_run(run)
@@ -6856,17 +8398,28 @@ def _write_ordered_output_stream(run, output_stream):
     expected_row_count = _safe_int(run.get('row_count'))
     output_format = str(run.get('output_format') or 'json').strip().lower() or 'json'
     output_schema = list(run.get('output_schema') or [])
+    public_output_schema = _get_tabular_run_serialized_public_schema(run)
     if not output_schema:
         raise ValueError('Generated output schema is missing')
+    if not public_output_schema:
+        raise ValueError('Generated public output schema is missing')
     if TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD not in output_schema:
         raise ValueError('Generated output schema is missing source row order')
 
     csv_writer = None
     safe_output_schema = None
     if output_format == 'csv':
-        safe_output_schema = build_safe_csv_headers(output_schema)
+        safe_output_schema = build_safe_csv_headers(public_output_schema)
         csv_writer = csv.DictWriter(output_stream, fieldnames=safe_output_schema, lineterminator='\n')
         csv_writer.writeheader()
+    elif output_format == 'xml':
+        output_stream.write('<?xml version="1.0" encoding="UTF-8"?>\n<GeneratedOutput>\n')
+    elif output_format == 'md':
+        output_stream.write('# Row-by-Row Tabular Analysis\n\n')
+        output_stream.write(
+            f"Source file: {run.get('source_file_name') or 'unknown file'}  \n"
+            f"Rows: {expected_row_count:,}\n\n"
+        )
     else:
         output_stream.write('[\n')
 
@@ -6899,20 +8452,54 @@ def _write_ordered_output_stream(run, output_stream):
                 field_name: entry.get(field_name)
                 for field_name in output_schema
             }
+            public_entry = project_structured_deliverable_row(
+                ordered_entry,
+                public_output_schema,
+                require_all_fields=True,
+            )
             if csv_writer:
                 csv_writer.writerow({
-                    safe_field_name: _serialize_generated_output_value(ordered_entry.get(field_name))
-                    for field_name, safe_field_name in zip(output_schema, safe_output_schema)
+                    safe_field_name: _serialize_generated_output_value(public_entry.get(field_name))
+                    for field_name, safe_field_name in zip(public_output_schema, safe_output_schema)
                 })
+            elif output_format == 'xml':
+                _write_generated_xml_row(output_stream, public_entry)
+            elif output_format == 'md':
+                source_row_identity = _normalize_analysis_text(
+                    ordered_entry.get(TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD),
+                    max_chars=200,
+                )
+                identity_suffix = f": {source_row_identity}" if source_row_identity else ''
+                output_stream.write(
+                    f"## Row {source_row_number}{_escape_markdown_text(identity_suffix)}\n\n"
+                )
+                row_questions = list((run or {}).get('row_analysis_questions') or [])
+                for field_index, field_name in enumerate(public_output_schema, start=1):
+                    question_label = (
+                        _normalize_analysis_text(row_questions[field_index - 1], max_chars=500)
+                        if field_index <= len(row_questions)
+                        else str(field_name or '').replace('_', ' ').strip().title()
+                    )
+                    field_value = _escape_markdown_text(
+                        _serialize_generated_output_value(public_entry.get(field_name))
+                    )
+                    output_stream.write(
+                        f"{field_index}. **{_escape_markdown_text(question_label)}**\n\n"
+                    )
+                    for value_line in field_value.split('\n'):
+                        output_stream.write(f"   {value_line}\n")
+                    output_stream.write('\n')
             else:
                 if written_row_count:
                     output_stream.write(',\n')
-                output_stream.write(json.dumps(ordered_entry, default=str, ensure_ascii=False))
+                output_stream.write(json.dumps(public_entry, default=str, ensure_ascii=False))
 
             written_row_count += 1
             expected_source_row_number += 1
 
-    if output_format != 'csv':
+    if output_format == 'xml':
+        output_stream.write('</GeneratedOutput>\n')
+    elif output_format not in {'csv', 'md'}:
         output_stream.write('\n]\n')
     if written_row_count != expected_row_count:
         raise ValueError(
@@ -6923,14 +8510,17 @@ def _write_ordered_output_stream(run, output_stream):
 
 def _build_structured_export_preview_rows(run):
     output_schema = list((run or {}).get('output_schema') or [])
+    public_output_schema = _get_tabular_run_serialized_public_schema(run)
     if not output_schema:
+        return []
+    if not public_output_schema:
         return []
 
     output_format = str((run or {}).get('output_format') or 'json').strip().lower() or 'json'
     preview_schema = (
-        build_safe_csv_headers(output_schema)
+        build_safe_csv_headers(public_output_schema)
         if output_format == 'csv'
-        else output_schema
+        else public_output_schema
     )
     preview_rows = []
     preview_char_count = 0
@@ -6961,8 +8551,13 @@ def _build_structured_export_preview_rows(run):
                 )
 
             preview_row = {}
-            for field_name, preview_field_name in zip(output_schema, preview_schema):
-                rendered_value = _serialize_generated_output_value(entry.get(field_name))
+            public_entry = project_structured_deliverable_row(
+                entry,
+                public_output_schema,
+                require_all_fields=True,
+            )
+            for field_name, preview_field_name in zip(public_output_schema, preview_schema):
+                rendered_value = _serialize_generated_output_value(public_entry.get(field_name))
                 if len(rendered_value) > TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS:
                     rendered_value = (
                         f'{rendered_value[:TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS - 3]}...'
@@ -7008,12 +8603,648 @@ def _build_artifact_metadata(
     }
 
 
-def _publish_structured_export_artifact(run):
-    output_format = normalize_generated_output_format(run.get('output_format'))
+def _normalize_tabular_artifact_lifecycle_state(value, allowed_states, default_state):
+    normalized_state = str(value or '').strip().lower()
+    if normalized_state in allowed_states:
+        return normalized_state
+    return default_state
+
+
+def _normalize_tabular_artifact_format(value, fallback_format='json'):
+    normalized_format = str(value or '').strip().lower().lstrip('.')
+    if normalized_format:
+        return normalized_format[:20]
+    return str(fallback_format or 'json').strip().lower().lstrip('.')[:20] or 'json'
+
+
+def _normalize_tabular_artifact_role(value, fallback_role=ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT):
+    normalized_role = str(value or '').strip().lower()
+    if normalized_role in {
+        ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+        ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+        ANALYSIS_ARTIFACT_ROLE_SUPPORTING_OUTPUT,
+    }:
+        return normalized_role
+    return fallback_role
+
+
+def _normalize_tabular_artifact_member_id(value, role, output_format, request_order):
+    normalized_value = re.sub(r'[^a-z0-9_-]+', '-', str(value or '').strip().lower())
+    normalized_value = re.sub(r'-+', '-', normalized_value).strip('-')
+    if normalized_value:
+        return normalized_value[:96]
+    if role == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
+        return 'analysis'
+    return f'requested-{output_format or request_order}'[:96]
+
+
+def _get_tabular_run_deliverable_contract(run):
+    planner_metadata = (run or {}).get('tabular_planner_metadata')
+    if not isinstance(planner_metadata, dict):
+        return {}
+    deliverable_contract = planner_metadata.get('deliverable_contract')
+    if not isinstance(deliverable_contract, dict):
+        return {}
+    normalized_contract = dict(deliverable_contract)
+    if not list(normalized_contract.get('requested_artifacts') or []):
+        # Every durable task publishes at least one artifact; empty lists only
+        # occur on legacy or malformed durable contracts.
+        task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+        normalized_contract['requested_artifacts'] = _default_artifact_descriptors_for_run(run)
+        normalized_contract['analysis_required'] = task_type in {
+            TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS,
+            TABULAR_RUN_TASK_COMBINED,
+        }
+        normalized_contract['primary_artifact_role'] = (
+            ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS
+            if normalized_contract['analysis_required']
+            else ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+        )
+    return normalized_contract
+
+
+def _normalize_artifact_descriptor(raw_descriptor, fallback_order=0):
+    raw_descriptor = raw_descriptor if isinstance(raw_descriptor, dict) else {}
+    request_order = _safe_int(raw_descriptor.get('request_order'), default=fallback_order, minimum=0)
+    role = _normalize_tabular_artifact_role(raw_descriptor.get('role'))
+    output_format = _normalize_tabular_artifact_format(
+        raw_descriptor.get('format') or raw_descriptor.get('output_format'),
+        fallback_format='md' if role == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS else 'json',
+    )
+    member_id = _normalize_tabular_artifact_member_id(
+        raw_descriptor.get('artifact_id') or raw_descriptor.get('member_id'),
+        role,
+        output_format,
+        request_order,
+    )
+    return {
+        'member_id': member_id,
+        'artifact_id': member_id,
+        'role': role,
+        'format': output_format,
+        'required': bool(raw_descriptor.get('required', True)),
+        'request_order': request_order,
+    }
+
+
+def _default_artifact_descriptors_for_run(run):
+    task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+    output_format = _normalize_tabular_artifact_format((run or {}).get('output_format'), fallback_format='json')
+    if task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
+        return [{
+            'artifact_id': 'analysis',
+            'role': ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+            'format': 'md',
+            'required': True,
+            'request_order': 0,
+        }]
+    if task_type == TABULAR_RUN_TASK_COMBINED:
+        return [
+            {
+                'artifact_id': 'analysis',
+                'role': ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS,
+                'format': 'md',
+                'required': True,
+                'request_order': 0,
+            },
+            {
+                'artifact_id': f'requested-{output_format}',
+                'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+                'format': output_format,
+                'required': True,
+                'request_order': 1,
+            },
+        ]
+    return [{
+        'artifact_id': f'requested-{output_format}',
+        'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+        'format': output_format,
+        'required': True,
+        'request_order': 0,
+    }]
+
+
+def _get_artifact_descriptors_for_run(run):
+    deliverable_contract = _get_tabular_run_deliverable_contract(run)
+    contract_artifacts = list(deliverable_contract.get('requested_artifacts') or [])
+    if not contract_artifacts:
+        contract_artifacts = _default_artifact_descriptors_for_run(run)
+    descriptors = [
+        _normalize_artifact_descriptor(raw_descriptor, fallback_order=index)
+        for index, raw_descriptor in enumerate(contract_artifacts)
+    ]
+    return sorted(descriptors, key=lambda descriptor: (
+        _safe_int(descriptor.get('request_order'), minimum=0),
+        str(descriptor.get('member_id') or ''),
+    ))
+
+
+def _get_primary_artifact_member_id(run, descriptors):
+    deliverable_contract = _get_tabular_run_deliverable_contract(run)
+    primary_role = str(deliverable_contract.get('primary_artifact_role') or '').strip().lower()
+    if not primary_role:
+        task_type = _normalize_tabular_run_task_type((run or {}).get('task_type'))
+        primary_role = (
+            ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS
+            if task_type in {TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS, TABULAR_RUN_TASK_COMBINED}
+            else ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+        )
+    for descriptor in descriptors:
+        if descriptor.get('role') == primary_role:
+            return descriptor.get('member_id')
+    return descriptors[0].get('member_id') if descriptors else ''
+
+
+def _get_structured_artifact_member_id(run):
+    output_format = _normalize_tabular_artifact_format((run or {}).get('output_format'), fallback_format='json')
+    for descriptor in _get_artifact_descriptors_for_run(run):
+        if (
+            descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+            and descriptor.get('format') == output_format
+        ):
+            return descriptor.get('member_id')
+    return f'requested-{output_format}'
+
+
+def _get_structured_artifact_descriptors_for_run(run):
+    descriptors = [
+        descriptor for descriptor in _get_artifact_descriptors_for_run(run)
+        if descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT
+    ]
+    if descriptors:
+        return descriptors
+    output_format = _normalize_tabular_artifact_format((run or {}).get('output_format'), fallback_format='json')
+    return [{
+        'member_id': f'requested-{output_format}',
+        'artifact_id': f'requested-{output_format}',
+        'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+        'format': output_format,
+        'required': True,
+        'request_order': 0,
+    }]
+
+
+def _get_structured_export_artifact_for_member(run, member):
+    member_id = str((member or {}).get('member_id') or '').strip()
+    member_format = str((member or {}).get('format') or '').strip().lower()
+    for artifact in list((run or {}).get('structured_export_artifacts') or []):
+        if not isinstance(artifact, dict):
+            continue
+        if str(artifact.get('artifact_id') or artifact.get('member_id') or '').strip() == member_id:
+            return artifact
+    artifact = (run or {}).get('structured_export_artifact') if isinstance((run or {}).get('structured_export_artifact'), dict) else {}
+    if artifact and str(artifact.get('output_format') or '').strip().lower() == member_format:
+        return artifact
+    if artifact and not (run or {}).get('structured_export_artifacts'):
+        return artifact
+    return {}
+
+
+def _get_analysis_artifact_member_id(run):
+    for descriptor in _get_artifact_descriptors_for_run(run):
+        if descriptor.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
+            return descriptor.get('member_id')
+    return 'analysis'
+
+
+def _build_artifact_member_idempotency_key(run, member):
+    role = str((member or {}).get('role') or '').strip().lower()
+    output_format = str((member or {}).get('format') or '').strip().lower()
+    member_id = str((member or {}).get('member_id') or '').strip()
+    run_id = (run or {}).get('id')
+    if role == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS and output_format == 'md':
+        return f'tabular-hierarchical-analysis:{run_id}'
+    if role == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT and output_format == (run or {}).get('output_format'):
+        return f'tabular-generated-output:{run_id}'
+    return f'tabular-artifact-set:{run_id}:{member_id}'
+
+
+def _build_artifact_set_member(run, descriptor, existing_member=None):
+    existing_member = existing_member if isinstance(existing_member, dict) else {}
+    lifecycle_state = _normalize_tabular_artifact_lifecycle_state(
+        existing_member.get('lifecycle_state'),
+        TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STATES,
+        TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+    )
+    validation_state = str(existing_member.get('validation_state') or '').strip().lower()[:40]
+    member = {
+        'member_id': descriptor.get('member_id'),
+        'artifact_id': descriptor.get('artifact_id') or descriptor.get('member_id'),
+        'role': descriptor.get('role'),
+        'format': descriptor.get('format'),
+        'required': bool(descriptor.get('required', True)),
+        'request_order': _safe_int(descriptor.get('request_order'), minimum=0),
+        'lifecycle_state': lifecycle_state,
+        'validation_state': validation_state or TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+        'artifact_message_id': existing_member.get('artifact_message_id'),
+        'file_name': existing_member.get('file_name'),
+        'capability': existing_member.get('capability') or 'tabular',
+        'output_format': existing_member.get('output_format') or descriptor.get('format'),
+        'row_count': _safe_int(existing_member.get('row_count'), default=_safe_int((run or {}).get('row_count'))),
+        'preview_rows': list(existing_member.get('preview_rows') or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS],
+        'preview_columns': list(existing_member.get('preview_columns') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS + 2],
+        'preview_text': str(existing_member.get('preview_text') or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(existing_member.get('suppress_assistant_text', True)),
+    }
+    member['idempotency_key'] = existing_member.get('idempotency_key') or _build_artifact_member_idempotency_key(
+        run,
+        member,
+    )
+    return member
+
+
+def _artifact_lifecycle_for_existing_run_artifact(run, artifact):
+    artifact = artifact if isinstance(artifact, dict) else {}
+    status = str((run or {}).get('status') or '').strip().lower()
+    if not artifact.get('artifact_message_id'):
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED
+    if status == TABULAR_EXPORT_STATUS_CANCELED:
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_CANCELED
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_FAILED
+    return TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED
+
+
+def _artifact_set_lifecycle_for_run(run, members):
+    status = str((run or {}).get('status') or '').strip().lower()
+    member_states = {
+        str((member or {}).get('lifecycle_state') or '').strip().lower()
+        for member in list(members or [])
+        if isinstance(member, dict)
+    }
+    if status == TABULAR_EXPORT_STATUS_COMPLETED:
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+    if status == TABULAR_EXPORT_STATUS_CANCELED:
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_CANCELED
+    if status == TABULAR_EXPORT_STATUS_FAILED:
+        if TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED in member_states:
+            return TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED
+    if (run or {}).get('publishing_started_at'):
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING
+    if TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED in member_states:
+        return TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING
+    return TABULAR_ARTIFACT_SET_LIFECYCLE_GENERATING if status == TABULAR_EXPORT_STATUS_RUNNING else TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED
+
+
+def _merge_artifact_metadata_into_member(member, artifact, lifecycle_state=None, validation_state=None):
+    artifact = artifact if isinstance(artifact, dict) else {}
+    if not artifact:
+        return member
+    member.update({
+        'artifact_message_id': artifact.get('artifact_message_id') or member.get('artifact_message_id'),
+        'file_name': artifact.get('file_name') or member.get('file_name'),
+        'capability': artifact.get('capability') or member.get('capability') or 'tabular',
+        'output_format': artifact.get('output_format') or member.get('output_format') or member.get('format'),
+        'row_count': _safe_int(artifact.get('row_count'), default=_safe_int(member.get('row_count'))),
+        'preview_rows': list(artifact.get('preview_rows') or member.get('preview_rows') or [])[
+            :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS
+        ],
+        'preview_columns': list(artifact.get('preview_columns') or member.get('preview_columns') or [])[
+            :TABULAR_GENERATION_PLAN_MAX_FIELDS + 2
+        ],
+        'preview_text': str(artifact.get('preview_text') or member.get('preview_text') or '')[
+            :TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS
+        ],
+        'suppress_assistant_text': bool(artifact.get('suppress_assistant_text', member.get('suppress_assistant_text', True))),
+    })
+    if lifecycle_state:
+        member['lifecycle_state'] = _normalize_tabular_artifact_lifecycle_state(
+            lifecycle_state,
+            TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STATES,
+            member.get('lifecycle_state') or TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PLANNED,
+        )
+    if validation_state:
+        member['validation_state'] = str(validation_state or '').strip().lower()[:40]
+    return member
+
+
+def _build_or_update_artifact_set_manifest(run):
+    run = run if isinstance(run, dict) else {}
+    existing_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
+    descriptors = _get_artifact_descriptors_for_run(run)
+    existing_members = {
+        str(member.get('member_id') or '').strip(): member
+        for member in list(existing_manifest.get('members') or [])
+        if isinstance(member, dict)
+    }
+    members = []
+    for descriptor in descriptors:
+        member = _build_artifact_set_member(
+            run,
+            descriptor,
+            existing_members.get(descriptor.get('member_id')),
+        )
+        if member.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS:
+            artifact = run.get('analysis_artifact') if isinstance(run.get('analysis_artifact'), dict) else {}
+            if (
+                not artifact
+                and _normalize_tabular_run_task_type(run.get('task_type')) == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+            ):
+                artifact = run.get('final_artifact') if isinstance(run.get('final_artifact'), dict) else {}
+            _merge_artifact_metadata_into_member(
+                member,
+                artifact,
+                lifecycle_state=_artifact_lifecycle_for_existing_run_artifact(run, artifact),
+                validation_state='validated' if artifact.get('artifact_message_id') else None,
+            )
+        elif member.get('role') == ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT:
+            artifact = _get_structured_export_artifact_for_member(run, member)
+            if not artifact and _normalize_tabular_run_task_type(run.get('task_type')) != TABULAR_RUN_TASK_COMBINED:
+                artifact = run.get('final_artifact') if isinstance(run.get('final_artifact'), dict) else {}
+            _merge_artifact_metadata_into_member(
+                member,
+                artifact,
+                lifecycle_state=_artifact_lifecycle_for_existing_run_artifact(run, artifact),
+                validation_state='validated' if artifact.get('artifact_message_id') else None,
+            )
+        members.append(member)
+
+    primary_member_id = existing_manifest.get('primary_artifact_id') or _get_primary_artifact_member_id(run, descriptors)
+    lifecycle_state = _normalize_tabular_artifact_lifecycle_state(
+        existing_manifest.get('lifecycle_state'),
+        TABULAR_ARTIFACT_SET_LIFECYCLE_STATES,
+        _artifact_set_lifecycle_for_run(run, members),
+    )
+    if lifecycle_state == TABULAR_ARTIFACT_SET_LIFECYCLE_PLANNED:
+        lifecycle_state = _artifact_set_lifecycle_for_run(run, members)
+    manifest = {
+        'contract_version': TABULAR_ARTIFACT_SET_CONTRACT_VERSION,
+        'set_id': existing_manifest.get('set_id') or f"tabular-artifact-set:{run.get('id')}",
+        'run_id': run.get('id'),
+        'conversation_id': run.get('conversation_id'),
+        'user_id': run.get('user_id'),
+        'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
+        'source_fingerprint': str(_get_tabular_run_deliverable_contract(run).get('source_fingerprint') or '')[:64],
+        'request_fingerprint': str(_get_tabular_run_deliverable_contract(run).get('request_fingerprint') or '')[:64],
+        'lifecycle_state': lifecycle_state,
+        'publication_generation': _safe_int(existing_manifest.get('publication_generation'), minimum=0),
+        'primary_artifact_id': primary_member_id,
+        'validation_state': str(existing_manifest.get('validation_state') or '').strip().lower()[:40] or 'planned',
+        'rollback_state': str(existing_manifest.get('rollback_state') or '').strip().lower()[:40],
+        'members': members,
+    }
+    if (
+        str((run or {}).get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED
+        and lifecycle_state != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+    ):
+        log_event(
+            '[TABULAR_GENERATED_OUTPUT] Artifact set stuck below completed lifecycle on a completed run',
+            {
+                'run_id': run.get('id'),
+                'conversation_id': run.get('conversation_id'),
+                'task_type': manifest.get('task_type'),
+                'persisted_lifecycle_state': str(existing_manifest.get('lifecycle_state') or ''),
+                'recomputed_lifecycle_state': lifecycle_state,
+                'validation_state': manifest.get('validation_state'),
+                'validation_report': existing_manifest.get('validation_report'),
+                'members': [
+                    {
+                        'member_id': member.get('member_id'),
+                        'role': member.get('role'),
+                        'lifecycle_state': member.get('lifecycle_state'),
+                        'validation_state': member.get('validation_state'),
+                        'has_artifact_message_id': bool(member.get('artifact_message_id')),
+                    }
+                    for member in members
+                ],
+            },
+            level=logging.WARNING,
+        )
+    return manifest
+
+
+def _set_artifact_set_member_state(run, member_id, artifact=None, lifecycle_state=None, validation_state=None):
+    manifest = _build_or_update_artifact_set_manifest(run)
+    for member in manifest.get('members') or []:
+        if member.get('member_id') == member_id:
+            _merge_artifact_metadata_into_member(
+                member,
+                artifact,
+                lifecycle_state=lifecycle_state,
+                validation_state=validation_state,
+            )
+            break
+    manifest['lifecycle_state'] = _artifact_set_lifecycle_for_run(run, manifest.get('members') or [])
+    run['artifact_set_manifest'] = manifest
+    return manifest
+
+
+def _build_artifact_member_upload_metadata(run, member_id):
+    manifest = _build_or_update_artifact_set_manifest(run)
+    return {
+        'artifact_run_id': run.get('id'),
+        'artifact_set_id': manifest.get('set_id'),
+        'artifact_member_id': member_id,
+        'artifact_lifecycle_state': TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        'artifact_validation_state': TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        'artifact_publication_generation': _safe_int(manifest.get('publication_generation'), minimum=0),
+    }
+
+
+def _publish_artifact_set_members(run, published_member_ids):
+    published_ids = {str(member_id or '').strip() for member_id in list(published_member_ids or []) if member_id}
+    manifest = _build_or_update_artifact_set_manifest(run)
+    for member in manifest.get('members') or []:
+        if member.get('member_id') in published_ids and member.get('artifact_message_id'):
+            member['lifecycle_state'] = TABULAR_ARTIFACT_MEMBER_LIFECYCLE_PUBLISHED
+            member['validation_state'] = 'validated'
+    validation_artifacts = [
+        {
+            'artifact_id': member.get('artifact_id') or member.get('member_id'),
+            'role': member.get('role'),
+            'format': member.get('format'),
+            'status': member.get('lifecycle_state'),
+        }
+        for member in manifest.get('members') or []
+    ]
+    deliverable_contract = _get_tabular_run_deliverable_contract(run)
+    artifact_set_valid = True
+    validation_report = None
+    if deliverable_contract:
+        validation_report = validate_analysis_artifact_set(deliverable_contract, validation_artifacts)
+        artifact_set_valid = validation_report.valid
+        manifest['validation_state'] = 'validated' if validation_report.valid else 'invalid'
+        manifest['validation_report'] = validation_report.to_dict()
+    else:
+        manifest['validation_state'] = 'validated'
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Artifact set publication validation',
+        {
+            'run_id': run.get('id'),
+            'conversation_id': run.get('conversation_id'),
+            'task_type': _normalize_tabular_run_task_type(run.get('task_type')),
+            'published_member_ids': sorted(published_ids),
+            'has_deliverable_contract': bool(deliverable_contract),
+            'artifact_set_valid': artifact_set_valid,
+            'reason_codes': list(validation_report.reason_codes) if validation_report else [],
+            'counts': dict(validation_report.counts) if validation_report else {},
+            'validation_artifacts': validation_artifacts,
+            'expected_artifact_ids': [
+                artifact.get('artifact_id')
+                for artifact in list((deliverable_contract or {}).get('requested_artifacts') or [])
+            ],
+        },
+        level=logging.INFO,
+    )
+    manifest['lifecycle_state'] = (
+        TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED
+        if artifact_set_valid
+        else TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED
+    )
+    next_publication_generation = _safe_int(manifest.get('publication_generation'), minimum=0) + 1
+    if artifact_set_valid:
+        for member in manifest.get('members') or []:
+            if member.get('member_id') not in published_ids or not member.get('artifact_message_id'):
+                continue
+            commit_generated_chat_artifact_publication_for_user(
+                run.get('user_id'),
+                run.get('conversation_id'),
+                member.get('artifact_message_id'),
+                manifest.get('set_id'),
+                member.get('member_id'),
+                next_publication_generation,
+            )
+    manifest['publication_generation'] = next_publication_generation
+    run['artifact_set_manifest'] = manifest
+    return manifest
+
+
+def _reconcile_completed_tabular_artifact_set(run):
+    """Repair completed legacy runs whose uploaded artifacts were never committed."""
+    run = run if isinstance(run, dict) else {}
+    if str(run.get('status') or '').strip().lower() != TABULAR_EXPORT_STATUS_COMPLETED:
+        return run
+
+    existing_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
+    if existing_manifest.get('lifecycle_state') == TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        return run
+
+    manifest = _build_or_update_artifact_set_manifest(run)
+    published_member_ids = [
+        member.get('member_id')
+        for member in list(manifest.get('members') or [])
+        if member.get('member_id') and member.get('artifact_message_id')
+    ]
+    if not published_member_ids:
+        return run
+
+    reconciled_manifest = _publish_artifact_set_members(run, published_member_ids)
+    if reconciled_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        return run
+
+    try:
+        repaired_run = _replace_run(run)
+    except Exception as exc:
+        if getattr(exc, 'status_code', None) not in (409, 412):
+            raise
+        repaired_run = _read_run(run.get('user_id'), run.get('id'))
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Reconciled completed artifact-set publication',
+        {
+            'run_id': repaired_run.get('id'),
+            'conversation_id': repaired_run.get('conversation_id'),
+            'user_id': repaired_run.get('user_id'),
+            'published_member_ids': published_member_ids,
+        },
+        level=logging.INFO,
+    )
+    return repaired_run
+
+
+def _build_public_generated_artifact_from_member(run, manifest, member):
+    if not isinstance(member, dict) or not member.get('artifact_message_id'):
+        return None
+    if member.get('lifecycle_state') not in TABULAR_ARTIFACT_MEMBER_PUBLIC_LIFECYCLE_STATES:
+        return None
+    return {
+        'artifact_id': member.get('artifact_id') or member.get('member_id'),
+        'artifact_set_id': manifest.get('set_id'),
+        'artifact_set_contract_version': manifest.get('contract_version'),
+        'role': member.get('role'),
+        'required': bool(member.get('required', True)),
+        'request_order': _safe_int(member.get('request_order'), minimum=0),
+        'lifecycle_state': member.get('lifecycle_state'),
+        'validation_state': member.get('validation_state'),
+        'capability': member.get('capability') or 'tabular',
+        'artifact_message_id': member.get('artifact_message_id'),
+        'conversation_id': run.get('conversation_id'),
+        'file_name': member.get('file_name') or run.get('generated_file_name'),
+        'output_format': member.get('output_format') or member.get('format'),
+        'row_count': _safe_int(member.get('row_count'), default=_safe_int(run.get('processed_rows'), default=_safe_int(run.get('row_count')))),
+        'storage_scope': 'chat',
+        'source_file_name': run.get('source_file_name'),
+        'selected_sheet': run.get('selected_sheet'),
+        'summary': run.get('post_run_summary') if member.get('role') == ANALYSIS_ARTIFACT_ROLE_PRIMARY_ANALYSIS else run.get('post_run_export_summary') or run.get('post_run_summary'),
+        'preview_rows': list(member.get('preview_rows') or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS],
+        'preview_columns': list(member.get('preview_columns') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS + 2],
+        'preview_text': str(member.get('preview_text') or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(member.get('suppress_assistant_text')),
+        'suppress_assistant_table_export': True,
+    }
+
+
+def _build_public_generated_artifacts_from_manifest(run, manifest):
+    manifest = manifest if isinstance(manifest, dict) else {}
+    if manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        return []
+    public_artifacts = []
+    for member in sorted(
+        list(manifest.get('members') or []),
+        key=lambda item: (_safe_int(item.get('request_order'), minimum=0), str(item.get('member_id') or '')),
+    ):
+        public_artifact = _build_public_generated_artifact_from_member(run, manifest, member)
+        if public_artifact:
+            public_artifacts.append(public_artifact)
+    primary_member_id = str(manifest.get('primary_artifact_id') or '').strip()
+    primary_artifact = next(
+        (
+            artifact for artifact in public_artifacts
+            if str(artifact.get('artifact_id') or '').strip() == primary_member_id
+        ),
+        public_artifacts[0] if public_artifacts else None,
+    )
+    if primary_artifact and public_artifacts and public_artifacts[0] != primary_artifact:
+        public_artifacts = [primary_artifact] + [
+            artifact for artifact in public_artifacts
+            if artifact.get('artifact_id') != primary_artifact.get('artifact_id')
+        ]
+    return public_artifacts
+
+
+def _build_public_artifact_projection(artifact):
+    artifact = artifact if isinstance(artifact, dict) else {}
+    if not artifact.get('artifact_message_id'):
+        return None
+    return {
+        'artifact_message_id': artifact.get('artifact_message_id'),
+        'file_name': artifact.get('file_name'),
+        'capability': artifact.get('capability') or 'tabular',
+        'output_format': artifact.get('output_format'),
+        'preview_rows': list(artifact.get('preview_rows') or [])[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_ROWS],
+        'preview_columns': list(artifact.get('preview_columns') or [])[:TABULAR_GENERATION_PLAN_MAX_FIELDS + 2],
+        'preview_text': str(artifact.get('preview_text') or '')[:TABULAR_EXPORT_ARTIFACT_PREVIEW_MAX_CHARS],
+        'suppress_assistant_text': bool(artifact.get('suppress_assistant_text')),
+    }
+
+
+def _publish_structured_export_artifact(run, descriptor=None):
+    descriptor = descriptor if isinstance(descriptor, dict) else {}
+    member_id = str(descriptor.get('member_id') or _get_structured_artifact_member_id(run)).strip()
+    output_format = _normalize_tabular_artifact_format(
+        descriptor.get('format') or run.get('output_format')
+    )
+    if output_format not in {'csv', 'json', 'xml', 'md'}:
+        raise ValueError(f'Unsupported tabular structured artifact format: {output_format}')
     generated_file_name = run.get('generated_file_name') or _build_generated_file_name(
         run.get('source_file_name'),
         output_format,
     )
+    run_for_output = dict(run)
+    run_for_output['output_format'] = output_format
+    run_for_output['generated_file_name'] = generated_file_name
     with tempfile.SpooledTemporaryFile(
         max_size=TABULAR_EXPORT_FINAL_SPOOL_MAX_MEMORY_BYTES,
         mode='w+b',
@@ -7025,18 +9256,21 @@ def _publish_structured_export_artifact(run):
             write_through=True,
         )
         try:
-            output_entry_count = _write_ordered_output_stream(run, text_output_stream)
-            post_run_summary = _build_compact_post_run_summary(run)
-            _authorize_tabular_export_run_execution(run)
-            _raise_if_tabular_export_canceled(run)
+            output_entry_count = _write_ordered_output_stream(run_for_output, text_output_stream)
+            post_run_summary = _build_compact_post_run_summary(run_for_output)
+            _authorize_tabular_export_run_execution(run_for_output)
+            _raise_if_tabular_export_canceled(run_for_output)
             if not run.get('publishing_started_at'):
                 run.update({
                     'publishing_started_at': _now_iso(),
                     'last_message': 'Final validation passed; publishing the generated artifact',
                 })
                 run = _replace_claimed_run(run)
-            _authorize_tabular_export_run_execution(run)
-            _revalidate_tabular_source_version_for_publication(run)
+                run_for_output.update(run)
+                run_for_output['output_format'] = output_format
+                run_for_output['generated_file_name'] = generated_file_name
+            _authorize_tabular_export_run_execution(run_for_output)
+            _revalidate_tabular_source_version_for_publication(run_for_output)
             text_output_stream.flush()
             output_size = binary_output_stream.tell()
             binary_output_stream.seek(0)
@@ -7049,27 +9283,67 @@ def _publish_structured_export_artifact(run):
                 capability='tabular',
                 output_format=output_format,
                 summary=post_run_summary,
-                artifact_idempotency_key=f"tabular-generated-output:{run.get('id')}",
+                artifact_idempotency_key=_build_artifact_member_idempotency_key(run, {
+                    'role': ANALYSIS_ARTIFACT_ROLE_REQUESTED_OUTPUT,
+                    'format': output_format,
+                    'member_id': member_id,
+                }),
+                artifact_lifecycle_metadata=_build_artifact_member_upload_metadata(
+                    run,
+                    member_id,
+                ),
             )
-            _raise_if_tabular_export_canceled(run)
+            _raise_if_tabular_export_canceled(run_for_output)
         finally:
             text_output_stream.detach()
 
     uploaded_message = upload_result.get('message') or {}
-    return run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name
+    artifact_metadata = _build_artifact_metadata(
+        uploaded_message,
+        generated_file_name,
+        output_format,
+        preview_rows=_build_structured_export_preview_rows(run_for_output),
+        suppress_assistant_text=output_format in ASSISTANT_TEXT_SUPPRESSING_FORMATS,
+    )
+    artifact_metadata['artifact_id'] = member_id
+    artifact_metadata['member_id'] = member_id
+    artifact_metadata['request_order'] = _safe_int(descriptor.get('request_order'), minimum=0)
+    return run, artifact_metadata, post_run_summary, output_entry_count, output_format, generated_file_name
+
+
+def _publish_structured_export_artifacts(run):
+    artifacts = []
+    first_summary = ''
+    first_entry_count = None
+    first_output_format = _normalize_tabular_artifact_format(run.get('output_format'))
+    first_file_name = run.get('generated_file_name') or _build_generated_file_name(
+        run.get('source_file_name'),
+        first_output_format,
+    )
+    for descriptor in _get_structured_artifact_descriptors_for_run(run):
+        run, artifact, post_run_summary, output_entry_count, output_format, generated_file_name = _publish_structured_export_artifact(
+            run,
+            descriptor=descriptor,
+        )
+        if first_entry_count is None:
+            first_entry_count = output_entry_count
+            first_summary = post_run_summary
+            first_output_format = output_format
+            first_file_name = generated_file_name
+        elif first_entry_count != output_entry_count:
+            raise ValueError('Structured artifact sibling row counts do not match')
+        artifacts.append(artifact)
+    return run, artifacts, first_summary, _safe_int(first_entry_count), first_output_format, first_file_name
 
 
 def _complete_run(run):
-    run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name = (
-        _publish_structured_export_artifact(run)
+    run, structured_artifacts, post_run_summary, output_entry_count, output_format, generated_file_name = (
+        _publish_structured_export_artifacts(run)
     )
-    artifact_preview_rows = _build_structured_export_preview_rows(run)
+    structured_artifact = structured_artifacts[0] if structured_artifacts else {}
     now = _now_iso()
     run.update({
-        'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
-        'completed_at': now,
-        'generation_completed_at': now,
         'last_heartbeat_at': now,
         'processed_rows': output_entry_count,
         'completed_batches': _safe_int(run.get('batch_count')),
@@ -7077,15 +9351,22 @@ def _complete_run(run):
         'failed_chunk_count': 0,
         'last_message': 'Background structured export completed',
         'post_run_summary': post_run_summary,
-        'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
-        'final_artifact': _build_artifact_metadata(
-            uploaded_message,
-            generated_file_name,
-            output_format,
-            preview_rows=artifact_preview_rows,
-            suppress_assistant_text=True,
-        ),
+        'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
+        'structured_export_artifacts': structured_artifacts,
+        'structured_export_artifact': structured_artifact,
+        'final_artifact': structured_artifact,
         'estimated_remaining_seconds': 0,
+    })
+    artifact_set_manifest = _publish_artifact_set_members(
+        run,
+        [artifact.get('artifact_id') or artifact.get('member_id') for artifact in structured_artifacts],
+    )
+    if artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        raise ValueError('Generated artifact set failed publication validation')
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'completed_at': now,
+        'generation_completed_at': now,
     })
     run.update(_build_generation_progress_contract_fields(
         run,
@@ -7108,8 +9389,8 @@ def _complete_run(run):
             'checkpointed_row_count': run.get('checkpointed_row_count'),
             'generation_contract_version': run.get('generation_contract_version'),
             'response_protocol_version': run.get('response_protocol_version'),
-            'artifact_message_id': uploaded_message.get('id'),
-            'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+            'artifact_message_id': structured_artifact.get('artifact_message_id'),
+            'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
             **run.get('performance_summary', {}),
         },
         level=logging.INFO,
@@ -7216,6 +9497,10 @@ def _publish_analysis_artifact(run, final_summary):
             output_format='md',
             summary=final_summary.get('summary'),
             artifact_idempotency_key=f"tabular-hierarchical-analysis:{run.get('id')}",
+            artifact_lifecycle_metadata=_build_artifact_member_upload_metadata(
+                run,
+                _get_analysis_artifact_member_id(run),
+            ),
         )
         _raise_if_tabular_export_canceled(run)
 
@@ -7226,14 +9511,25 @@ def _publish_analysis_artifact(run, final_summary):
 def _complete_analysis_run(run, final_summary):
     run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
     artifact_preview_text = _build_analysis_summary_markdown(run, final_summary)
+    analysis_artifact = _build_artifact_metadata(
+        uploaded_message,
+        generated_file_name,
+        'md',
+        preview_text=artifact_preview_text,
+        suppress_assistant_text=True,
+    )
+    _set_artifact_set_member_state(
+        run,
+        _get_analysis_artifact_member_id(run),
+        artifact=analysis_artifact,
+        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        validation_state='validated',
+    )
     now = _now_iso()
     run.update({
-        'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
-        'completed_at': now,
-        'generation_completed_at': now,
         'last_heartbeat_at': now,
-        'analysis_phase': 'completed',
+        'analysis_phase': 'publishing',
         'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
         'completed_batches': _safe_int(run.get('batch_count')),
         'processed_chunk_count': _safe_int(run.get('batch_count')),
@@ -7242,14 +9538,19 @@ def _complete_analysis_run(run, final_summary):
         'post_run_summary': final_summary.get('summary'),
         'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
         'output_format': 'md',
-        'final_artifact': _build_artifact_metadata(
-            uploaded_message,
-            generated_file_name,
-            'md',
-            preview_text=artifact_preview_text,
-            suppress_assistant_text=True,
-        ),
+        'analysis_artifact': analysis_artifact,
+        'final_artifact': analysis_artifact,
         'estimated_remaining_seconds': 0,
+    })
+    artifact_set_manifest = _publish_artifact_set_members(run, [_get_analysis_artifact_member_id(run)])
+    if artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        raise ValueError('Generated analysis artifact failed publication validation')
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'completed_at': now,
+        'generation_completed_at': now,
+        'analysis_phase': 'completed',
+        'last_message': 'Background tabular analysis completed',
     })
     run.update(_build_generation_progress_contract_fields(
         run,
@@ -7280,16 +9581,10 @@ def _publish_combined_structured_export_phase(run):
     if isinstance(run.get('structured_export_artifact'), dict) and run.get('structured_export_artifact'):
         return run
 
-    run, uploaded_message, post_run_summary, output_entry_count, output_format, generated_file_name = (
-        _publish_structured_export_artifact(run)
+    run, structured_artifacts, post_run_summary, output_entry_count, output_format, generated_file_name = (
+        _publish_structured_export_artifacts(run)
     )
-    structured_artifact = _build_artifact_metadata(
-        uploaded_message,
-        generated_file_name,
-        output_format,
-        preview_rows=_build_structured_export_preview_rows(run),
-        suppress_assistant_text=True,
-    )
+    structured_artifact = structured_artifacts[0] if structured_artifacts else {}
     now = _now_iso()
     run.update({
         'updated_at': now,
@@ -7301,11 +9596,20 @@ def _publish_combined_structured_export_phase(run):
         'analysis_phase': 'reducing',
         'last_message': 'Combined structured export published; reducing tabular analysis summaries',
         'post_run_export_summary': post_run_summary,
-        'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
+        'structured_export_artifacts': structured_artifacts,
         'structured_export_artifact': structured_artifact,
         'final_artifact': structured_artifact,
         'estimated_remaining_seconds': None,
     })
+    for artifact in structured_artifacts:
+        _set_artifact_set_member_state(
+            run,
+            artifact.get('artifact_id') or artifact.get('member_id'),
+            artifact=artifact,
+            lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+            validation_state='validated',
+        )
     run = _replace_claimed_run(run)
     log_event(
         '[TABULAR_GENERATED_OUTPUT] Combined structured export artifact published',
@@ -7317,8 +9621,8 @@ def _publish_combined_structured_export_phase(run):
             'output_format': output_format,
             'row_count': output_entry_count,
             'batch_count': run.get('batch_count'),
-            'artifact_message_id': uploaded_message.get('id'),
-            'generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+            'artifact_message_id': structured_artifact.get('artifact_message_id'),
+            'generated_file_name': structured_artifact.get('file_name') or generated_file_name,
         },
         level=logging.INFO,
     )
@@ -7334,6 +9638,7 @@ def _complete_combined_analysis_run(run, final_summary):
         )
         analysis_artifact = existing_analysis_artifact
         generated_file_name = existing_analysis_artifact.get('file_name') or run.get('analysis_generated_file_name')
+        uploaded_message = {'file_name': generated_file_name}
     else:
         run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
         analysis_artifact = _build_artifact_metadata(
@@ -7344,15 +9649,30 @@ def _complete_combined_analysis_run(run, final_summary):
             suppress_assistant_text=True,
         )
 
+    structured_artifacts = list(run.get('structured_export_artifacts') or [])
     structured_artifact = run.get('structured_export_artifact') or run.get('final_artifact') or {}
+    if not structured_artifacts and structured_artifact:
+        structured_artifacts = [structured_artifact]
+    for artifact in structured_artifacts:
+        _set_artifact_set_member_state(
+            run,
+            artifact.get('artifact_id') or artifact.get('member_id') or _get_structured_artifact_member_id(run),
+            artifact=artifact,
+            lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+            validation_state='validated',
+        )
+    _set_artifact_set_member_state(
+        run,
+        _get_analysis_artifact_member_id(run),
+        artifact=analysis_artifact,
+        lifecycle_state=TABULAR_ARTIFACT_MEMBER_LIFECYCLE_STAGED,
+        validation_state='validated',
+    )
     now = _now_iso()
     run.update({
-        'status': TABULAR_EXPORT_STATUS_COMPLETED,
         'updated_at': now,
-        'completed_at': now,
-        'generation_completed_at': now,
         'last_heartbeat_at': now,
-        'analysis_phase': 'completed',
+        'analysis_phase': 'publishing',
         'processed_rows': _safe_int(final_summary.get('row_count'), default=_safe_int(run.get('row_count'))),
         'completed_batches': _safe_int(run.get('batch_count')),
         'processed_chunk_count': _safe_int(run.get('batch_count')),
@@ -7360,13 +9680,33 @@ def _complete_combined_analysis_run(run, final_summary):
         'last_message': 'Background combined tabular analysis and export completed',
         'post_run_summary': final_summary.get('summary'),
         'analysis_generated_file_name': uploaded_message.get('file_name') or generated_file_name,
+        'structured_export_artifacts': structured_artifacts,
         'structured_export_artifact': structured_artifact,
         'analysis_artifact': analysis_artifact,
         'combined_artifacts': [
-            artifact for artifact in (structured_artifact, analysis_artifact) if artifact
+            artifact for artifact in [analysis_artifact, *structured_artifacts] if artifact
         ],
-        'final_artifact': structured_artifact or analysis_artifact,
+        'final_artifact': analysis_artifact or structured_artifact,
         'estimated_remaining_seconds': 0,
+    })
+    artifact_set_manifest = _publish_artifact_set_members(
+        run,
+        [
+            _get_analysis_artifact_member_id(run),
+            *[
+                artifact.get('artifact_id') or artifact.get('member_id')
+                for artifact in structured_artifacts
+            ],
+        ],
+    )
+    if artifact_set_manifest.get('lifecycle_state') != TABULAR_ARTIFACT_SET_LIFECYCLE_COMPLETED:
+        raise ValueError('Generated combined artifact set failed publication validation')
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'completed_at': now,
+        'generation_completed_at': now,
+        'analysis_phase': 'completed',
+        'last_message': 'Background combined tabular analysis and export completed',
     })
     run.update(_build_generation_progress_contract_fields(
         run,
@@ -7668,15 +10008,22 @@ def _record_shadow_tabular_generation_plan_comparison(run, actual_output_schema)
 def _load_active_compact_generation_plan(run):
     if not _is_compact_row_array_protocol((run or {}).get('response_protocol_version')):
         return None
-    if _get_tabular_generation_plan_mode(run) != 'active' or (run or {}).get('plan_status') != 'ready':
+    plan = _load_ready_active_tabular_generation_plan(run)
+    if plan is None:
         raise ValueError('Compact row protocol requires a ready active generation plan')
+    return plan
+
+
+def _load_ready_active_tabular_generation_plan(run):
+    if _get_tabular_generation_plan_mode(run) != 'active' or (run or {}).get('plan_status') != 'ready':
+        return None
     plan_blob_path = str((run or {}).get('plan_blob_path') or '').strip()
     if not plan_blob_path:
-        raise ValueError('Compact row protocol plan path is missing')
+        raise ValueError('Active generation plan path is missing')
     plan = _download_json_blob(plan_blob_path)
     _validate_tabular_generation_plan(plan, run)
     if plan.get('plan_hash') != (run or {}).get('plan_hash'):
-        raise ValueError('Compact row protocol plan hash does not match the run record')
+        raise ValueError('Active generation plan hash does not match the run record')
     return plan
 
 
@@ -7699,6 +10046,8 @@ def _checkpoint_generated_batch_results(run, generated_results):
     run_contract_changed = False
     if list(run.get('output_schema') or []) != expected_output_schema:
         run['output_schema'] = expected_output_schema
+        run['public_output_schema'] = _get_tabular_run_public_output_schema(run)
+        run['internal_checkpoint_schema'] = _get_tabular_run_internal_checkpoint_schema(run)
         run_contract_changed = True
     if _record_shadow_tabular_generation_plan_comparison(run, expected_output_schema):
         run_contract_changed = True
@@ -7898,9 +10247,14 @@ def _build_passthrough_batch_results(run, batch_requests):
     generated_results = []
     for batch_request in batch_requests:
         batch_started_at = time.monotonic()
+        source_rows = batch_request['rows']
+        public_output_fields = (
+            _get_public_fields_from_output_schema(expected_output_schema)
+            or _extend_passthrough_output_field_names([], source_rows)
+        )
         batch_entries, output_schema = _normalize_generated_batch_entries(
-            batch_request['rows'],
-            batch_request['rows'],
+            source_rows,
+            _align_passthrough_rows_to_output_fields(source_rows, public_output_fields),
             expected_output_schema=expected_output_schema,
         )
         if not expected_output_schema:
@@ -7913,6 +10267,49 @@ def _build_passthrough_batch_results(run, batch_requests):
             'elapsed_seconds': time.monotonic() - batch_started_at,
             'mismatch_count': 0,
             'output_schema': output_schema,
+        })
+    return generated_results
+
+
+def _build_deterministic_transformation_batch_results(run, batch_requests):
+    """Create checkpoint entries directly from a deterministic transformation spec."""
+    expected_output_schema = list(run.get('output_schema') or _get_tabular_run_internal_checkpoint_schema(run))
+    public_output_schema = _get_public_fields_from_output_schema(expected_output_schema)
+    transformation_spec = _get_tabular_run_transformation_spec(
+        run,
+        public_output_schema=public_output_schema,
+    )
+    if not is_tabular_transformation_deterministic_only(
+        transformation_spec,
+        public_output_schema=public_output_schema,
+    ):
+        raise ValueError('Deterministic transformation checkpoints require a deterministic-only spec')
+
+    generated_results = []
+    for batch_request in batch_requests:
+        batch_started_at = time.monotonic()
+        batch_entries = []
+        for source_row in batch_request['rows']:
+            deterministic_values = evaluate_tabular_transformation_row(transformation_spec, source_row)
+            checkpoint_entry = {}
+            for field_name in expected_output_schema:
+                if field_name == TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD:
+                    checkpoint_entry[field_name] = source_row.get(TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD)
+                elif field_name == TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD:
+                    checkpoint_entry[field_name] = str(source_row.get(TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD) or '')
+                elif field_name in deterministic_values:
+                    checkpoint_entry[field_name] = deterministic_values.get(field_name)
+                else:
+                    raise ValueError(f'Deterministic transformation did not produce field {field_name}')
+            batch_entries.append(checkpoint_entry)
+        generated_results.append({
+            'batch_number': batch_request['batch_number'],
+            'batch_entries': batch_entries,
+            'batch_summary': _build_generated_batch_summary(batch_entries),
+            'batch_row_count': len(batch_entries),
+            'elapsed_seconds': time.monotonic() - batch_started_at,
+            'mismatch_count': 0,
+            'output_schema': expected_output_schema,
         })
     return generated_results
 
@@ -8279,9 +10676,14 @@ def _process_combined_run(
                     batch_concurrency,
                     batch_timeout_seconds,
                     expected_output_schema=run.get('output_schema'),
+                    transformation_spec=_get_tabular_run_transformation_spec(run),
+                    generation_plan=_load_ready_active_tabular_generation_plan(run),
+                    semantic_validation_options=_get_tabular_semantic_validation_options(run),
                 )
             )
             _raise_if_tabular_export_canceled(run)
+            if generation_error and not generated_results:
+                raise generation_error
             batch_results.update(_checkpoint_combined_batch_results(run, generated_results))
 
         previous_completed_batches = completed_batches
@@ -8365,6 +10767,8 @@ def _process_structured_export_rolling_pool(
             batch_timeout_seconds=batch_timeout_seconds,
             response_protocol=run.get('response_protocol_version'),
             generation_plan=generation_plan,
+            transformation_spec=_get_tabular_run_transformation_spec(run),
+            semantic_validation_options=_get_tabular_semantic_validation_options(run),
         )
     )
     del last_logged_at
@@ -8391,6 +10795,11 @@ def process_tabular_generated_output_run(run_id, user_id):
         run = _migrate_legacy_tabular_export_run(run)
         if run.get('source_descriptor') and not run.get('source_staging_complete'):
             run = _stage_tabular_generated_output_source(run, settings)
+        _validate_exhaustive_row_analysis_contract(
+            run.get('row_analysis_mode'),
+            run.get('row_analysis_questions'),
+            _get_tabular_run_public_output_schema(run),
+        )
 
         retry_attempts = _settings_int(
             settings,
@@ -8426,8 +10835,17 @@ def process_tabular_generated_output_run(run_id, user_id):
             ),
             max(30, stale_seconds - 30),
         )
+        normalized_task_type = _normalize_tabular_run_task_type(run.get('task_type'))
+        transformation_spec = _get_tabular_run_transformation_spec(run)
+        deterministic_only_structured_export = (
+            normalized_task_type == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+            and is_tabular_transformation_deterministic_only(
+                transformation_spec,
+                public_output_schema=_get_tabular_run_public_output_schema(run),
+            )
+        )
         chat_service = None
-        if not run.get('passthrough_input_rows'):
+        if not run.get('passthrough_input_rows') and not deterministic_only_structured_export:
             has_snapshotted_chunk_model = bool(str(run.get('chunk_gpt_model') or '').strip())
             chat_service = _build_chat_service(
                 run.get('chunk_gpt_model') if has_snapshotted_chunk_model else run.get('gpt_model'),
@@ -8457,7 +10875,7 @@ def process_tabular_generated_output_run(run_id, user_id):
             settings,
             batch_timeout_seconds,
         )
-        generation_plan = _load_active_compact_generation_plan(run)
+        generation_plan = _load_ready_active_tabular_generation_plan(run)
         if str(run.get('executor_mode') or '').strip() == TABULAR_EXECUTOR_MODE_ROLLING_POOL:
             if not _is_rolling_executor_ready(run):
                 if str(run.get('plan_status') or '').strip().lower() in {'fallback', 'disabled', 'not_applicable'}:
@@ -8484,7 +10902,6 @@ def process_tabular_generated_output_run(run_id, user_id):
             level=logging.INFO,
         )
 
-        normalized_task_type = _normalize_tabular_run_task_type(run.get('task_type'))
         if normalized_task_type == TABULAR_RUN_TASK_COMBINED:
             return _process_combined_run(
                 run,
@@ -8556,6 +10973,8 @@ def process_tabular_generated_output_run(run_id, user_id):
                 )
                 if run.get('passthrough_input_rows'):
                     generated_results = _build_passthrough_batch_results(run, batch_requests)
+                elif deterministic_only_structured_export:
+                    generated_results = _build_deterministic_transformation_batch_results(run, batch_requests)
                 elif _is_completion_driven_checkpointing_enabled(settings, run):
                     generated_batch_results, generation_error = asyncio.run(
                         _generate_and_checkpoint_batch_window_entries(
@@ -8574,6 +10993,9 @@ def process_tabular_generated_output_run(run_id, user_id):
                             batch_timeout_seconds=batch_timeout_seconds,
                             response_protocol=run.get('response_protocol_version'),
                             generation_plan=generation_plan,
+                            transformation_spec=_get_tabular_run_transformation_spec(run),
+                            semantic_validation_options=_get_tabular_semantic_validation_options(run),
+                            semantic_checkpoint_run=run,
                         )
                     )
                     batch_results.update(generated_batch_results)
@@ -8595,6 +11017,8 @@ def process_tabular_generated_output_run(run_id, user_id):
                             batch_timeout_seconds=batch_timeout_seconds,
                             response_protocol=run.get('response_protocol_version'),
                             generation_plan=generation_plan,
+                            transformation_spec=_get_tabular_run_transformation_spec(run),
+                            semantic_validation_options=_get_tabular_semantic_validation_options(run),
                         )
                     )
                 _raise_if_tabular_export_canceled(run)
@@ -8624,6 +11048,9 @@ def process_tabular_generated_output_run(run_id, user_id):
         return _read_run(normalized_user_id, normalized_run_id)
     except TabularExportLeaseLostError:
         return _read_run(normalized_user_id, normalized_run_id)
+    except TabularGenerationPlanError as exc:
+        failed_run = exc.failed_run if isinstance(exc.failed_run, dict) else run
+        return _mark_run_failed(failed_run, exc)
     except Exception as exc:
         if _is_retryable_export_error(exc):
             return _mark_run_retryable(run, exc, settings, retry_category='transient')
@@ -8690,6 +11117,8 @@ def queue_tabular_generated_output_run(
         normalized_analysis_objective = str(user_question or '').strip()
     if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS:
         generated_file_name = _build_analysis_file_name(source_file_name)
+    elif normalized_output_format == 'md':
+        generated_file_name = _build_row_analysis_file_name(source_file_name)
     else:
         generated_file_name = _build_generated_file_name(source_file_name, normalized_output_format)
     analysis_generated_file_name = (
@@ -8700,6 +11129,17 @@ def queue_tabular_generated_output_run(
     settings = settings or {}
     source_descriptor = dict(source_descriptor or {})
     tabular_planner_metadata = _normalize_tabular_run_planner_metadata(planner_metadata)
+    deliverable_contract = tabular_planner_metadata.get('deliverable_contract') or {}
+    contract_public_output_schema = list(deliverable_contract.get('public_output_schema') or [])
+    contract_internal_checkpoint_schema = list(deliverable_contract.get('internal_checkpoint_schema') or [])
+    contract_transformation_spec = dict(deliverable_contract.get('transformation_spec') or {})
+    deterministic_only_structured_export = (
+        normalized_task_type == TABULAR_RUN_TASK_STRUCTURED_EXPORT
+        and is_tabular_transformation_deterministic_only(
+            contract_transformation_spec,
+            public_output_schema=contract_public_output_schema,
+        )
+    )
     source_authorization = dict(source_candidate.get('source_authorization') or {})
     staged_row_count = 0
     staged_char_count = 0
@@ -8712,6 +11152,28 @@ def queue_tabular_generated_output_run(
         task_type=normalized_task_type,
         user_question=user_question,
     )
+    row_analysis_mode = str(tabular_planner_metadata.get('row_analysis_mode') or '').strip().lower()
+    row_analysis_questions = list(tabular_planner_metadata.get('row_analysis_questions') or [])
+    _validate_exhaustive_row_analysis_contract(
+        row_analysis_mode,
+        row_analysis_questions,
+        contract_public_output_schema,
+    )
+    if row_analysis_mode == 'exhaustive':
+        question_count = max(1, len(row_analysis_questions))
+        estimated_output_chars_per_row = max(
+            600,
+            question_count * TABULAR_ROW_ANALYSIS_ANSWER_ESTIMATED_CHARS,
+        )
+        output_char_budget = max(
+            1000,
+            _safe_int(model_batch_budget.get('output_token_budget'), minimum=1)
+            * TABULAR_EXPORT_APPROXIMATE_CHARS_PER_TOKEN,
+        )
+        model_batch_budget['max_rows'] = min(
+            _safe_int(model_batch_budget.get('max_rows'), minimum=1),
+            max(1, output_char_budget // estimated_output_chars_per_row),
+        )
     chunk_gpt_model, chunk_model_context = _resolve_tabular_chunk_model_selection(
         gpt_model,
         settings,
@@ -8728,8 +11190,20 @@ def queue_tabular_generated_output_run(
         if rollout_settings.get('enable_tabular_generation_plan')
         else 'off'
     )
-    if normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS or passthrough_input_rows:
+    if (
+        normalized_task_type == TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS
+        or passthrough_input_rows
+        or deterministic_only_structured_export
+        or bool(contract_transformation_spec)
+    ):
         requested_plan_mode = 'off'
+    tabular_planner_metadata = _ensure_active_tabular_run_deliverable_contract(
+        tabular_planner_metadata,
+        requested_plan_mode,
+        normalized_task_type,
+        normalized_output_format,
+        user_question,
+    )
     response_protocol_version = _select_tabular_response_protocol(
         rollout_settings,
         requested_plan_mode,
@@ -8743,6 +11217,7 @@ def queue_tabular_generated_output_run(
         passthrough_input_rows=passthrough_input_rows,
     )
     retry_mode = _select_tabular_retry_mode(rollout_settings, executor_mode)
+    passthrough_output_fields = []
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
@@ -8826,6 +11301,11 @@ def queue_tabular_generated_output_run(
                 start_row=staged_row_count,
                 token_namespace=run_id,
             )
+            if passthrough_input_rows:
+                passthrough_output_fields = _extend_passthrough_output_field_names(
+                    passthrough_output_fields,
+                    prepared_batch_rows,
+                )
             _upload_json_blob(
                 _input_blob_path(normalized_user_id, normalized_conversation_id, run_id, index),
                 prepared_batch_rows,
@@ -8843,6 +11323,15 @@ def queue_tabular_generated_output_run(
 
         if not staged_batch_count or not staged_row_count:
             raise ValueError('At least one source row is required for a background tabular export')
+
+    passthrough_output_schema = (
+        [
+            TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+            TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+        ] + passthrough_output_fields
+        if passthrough_output_fields
+        else []
+    )
 
     chunk_manifest = _write_chunk_manifest_for_run(
         normalized_user_id,
@@ -8868,6 +11357,8 @@ def queue_tabular_generated_output_run(
         'tabular_planner_metadata': tabular_planner_metadata,
         'task_type': normalized_task_type,
         'analysis_objective': normalized_analysis_objective,
+        'row_analysis_mode': row_analysis_mode,
+        'row_analysis_questions': row_analysis_questions,
         'user_id': normalized_user_id,
         'conversation_id': normalized_conversation_id,
         'status': TABULAR_EXPORT_STATUS_QUEUED,
@@ -8885,6 +11376,11 @@ def queue_tabular_generated_output_run(
         'chunk_gpt_model': str(chunk_gpt_model or '').strip(),
         'chunk_model_context': chunk_model_context if isinstance(chunk_model_context, dict) else {},
         'passthrough_input_rows': bool(passthrough_input_rows),
+        'passthrough_reason_code': (
+            str(source_candidate.get('passthrough_reason_code') or '').strip()[:80]
+            if passthrough_input_rows
+            else None
+        ),
         'generated_file_name': generated_file_name,
         'analysis_generated_file_name': analysis_generated_file_name,
         'row_count': staged_row_count,
@@ -8918,7 +11414,21 @@ def queue_tabular_generated_output_run(
         'planner_started_at': None,
         'planner_completed_at': None,
         'processed_rows': 0,
-        'output_schema': None,
+        # Only lock the schema up front when real output columns are already known; otherwise
+        # defer to batch-1 discovery instead of validating against a lineage-only placeholder.
+        # Passthrough rows are already final output, so their union schema is known at queue time.
+        'output_schema': (
+            contract_internal_checkpoint_schema
+            if contract_public_output_schema
+            else passthrough_output_schema or None
+        ),
+        'public_output_schema': contract_public_output_schema or passthrough_output_fields,
+        'internal_checkpoint_schema': contract_internal_checkpoint_schema or passthrough_output_schema,
+        'lineage_schema': [
+            TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD,
+            TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD,
+        ],
+        'transformation_spec': contract_transformation_spec,
         'source_descriptor': source_descriptor or None,
         'batch_budget': model_batch_budget,
         'source_authorization': source_authorization or None,
@@ -8957,6 +11467,7 @@ def queue_tabular_generated_output_run(
         'analysis_artifact': None,
         'combined_artifacts': [],
     }
+    run['artifact_set_manifest'] = _build_or_update_artifact_set_manifest(run)
     cosmos_tabular_export_runs_container.create_item(body=run)
     submitted = submit_tabular_generated_output_run(run_id, normalized_user_id)
     run['submitted_to_executor'] = submitted
@@ -9067,17 +11578,16 @@ def check_due_tabular_generated_output_runs_once(limit=None):
                     'reason': f"{candidate.get('reason')}; claim or processing did not start",
                 })
 
-    if scanned_candidates or candidates:
-        log_event(
-            '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
-            {
-                'scanned_count': len(scanned_candidates),
-                'candidate_count': len(candidates),
-                'status_counts': status_counts,
-                'processed_run_ids': processed,
-                'processed_count': len(processed),
-                'skipped': skipped[:10],
-            },
-            debug_only=True,
-        )
+    log_event(
+        '[TABULAR_GENERATED_OUTPUT] Background scheduler scan result',
+        {
+            'scanned_count': len(scanned_candidates),
+            'candidate_count': len(candidates),
+            'status_counts': status_counts,
+            'processed_run_ids': processed,
+            'processed_count': len(processed),
+            'skipped': skipped[:10],
+        },
+        debug_only=True,
+    )
     return processed

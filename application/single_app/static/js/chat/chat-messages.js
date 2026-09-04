@@ -17,7 +17,11 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
-import { autoplayTTSIfEnabled } from "./chat-tts.js";
+import {
+  buildGeneratedFileApprovalBlock,
+  generatedFileApprovalBlocksDownload,
+} from "./chat-file-approvals.js";
+import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
@@ -28,6 +32,7 @@ import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, 
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
 import { renderInlineAzureMaps } from './chat-inline-maps.js';
+import { getCitedHybridCitations, getCitedWebCitations } from './chat-citation-tracking.js';
 
 // Conditionally import TTS if enabled
 let ttsModule = null;
@@ -1263,7 +1268,7 @@ function toggleComparisonDropzoneHighlight(dropzone, isHighlighted) {
   dropzone.classList.toggle('bg-primary-subtle', isHighlighted);
 }
 
-function updateComparisonChatUploadCatalog(messages = []) {
+export function updateComparisonChatUploadCatalog(messages = []) {
   const preferredLeftSelection = String(documentComparisonLeftSelect?.value || '').trim();
   comparisonChatUploadCatalog = buildComparisonChatUploadCatalog(messages);
   syncComparisonSelectionState(preferredLeftSelection);
@@ -1862,6 +1867,23 @@ function resolveHybridCitationId(cite, index) {
   return `${cite?.chunk_id || ''}_${cite?.page_number || index}`;
 }
 
+// Agent document search can return hundreds of source chunks for one answer, so the
+// source list is collapsed past this many entries instead of being capped server-side.
+const DOCUMENT_CITATION_VISIBLE_LIMIT = 25;
+
+function buildDocumentCitationGroupHtml(citationParts) {
+  if (!Array.isArray(citationParts) || citationParts.length <= DOCUMENT_CITATION_VISIBLE_LIMIT) {
+    return Array.isArray(citationParts) ? citationParts.join("") : "";
+  }
+
+  const visibleParts = citationParts.slice(0, DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const overflowParts = citationParts.slice(DOCUMENT_CITATION_VISIBLE_LIMIT);
+  const collapsedLabel = `Show ${overflowParts.length} more sources`;
+  const expandedLabel = "Show fewer sources";
+
+  return `${visibleParts.join("")}<span class="citation-overflow-group d-none">${overflowParts.join("")}</span><button type="button" class="btn btn-sm citation-button citation-overflow-toggle" data-collapsed-label="${escapeHtml(collapsedLabel)}" data-expanded-label="${escapeHtml(expandedLabel)}" aria-expanded="false" title="${escapeHtml(collapsedLabel)}"><i class="bi bi-plus-circle me-1"></i>${escapeHtml(collapsedLabel)}</button>`;
+}
+
 function createCitationsHtml(
   hybridCitations = [],
   webCitations = [],
@@ -1874,6 +1896,7 @@ function createCitationsHtml(
 
   if (hybridCitations && hybridCitations.length > 0) {
     hasCitations = true;
+    const documentCitationParts = [];
     hybridCitations.forEach((cite, index) => {
       const citationId = resolveHybridCitationId(cite, index);
       const fileName = cite.file_name || 'Document';
@@ -1907,7 +1930,7 @@ function createCitationsHtml(
 
       if (isMetadata && documentId) {
         const summaryText = `${escapeHtml(locationLabel)}: ${escapeHtml(locationValue)}`;
-        citationsHtml += `
+        documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1935,11 +1958,11 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source summary: ${displayText}">
                   <i class="bi bi-tags me-1"></i>${summaryText}
-              </a>`;
+              </a>`);
         return;
       }
 
-      citationsHtml += `
+      documentCitationParts.push(`
               <a href="#"
                  class="btn btn-sm citation-button hybrid-citation-link ${isMetadata ? 'metadata-citation' : ''}"
                  data-citation-id="${escapeHtml(citationId)}"
@@ -1954,8 +1977,9 @@ function createCitationsHtml(
                  data-metadata-content="${escapeHtml(metadataContent)}"
                  title="View source: ${displayText}">
                   <i class="bi ${isMetadata ? 'bi-tags' : 'bi-file-earmark-text'} me-1"></i>${displayText}
-              </a>`;
+              </a>`);
     });
+    citationsHtml += buildDocumentCitationGroupHtml(documentCitationParts);
   }
 
   if (webCitations && webCitations.length > 0) {
@@ -3394,6 +3418,273 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return getGeneratedAnalysisArtifacts(fullMessageObject).filter(output => output.capability === 'tabular');
   }
 
+  function getGeneratedArtifactSetDedupeKey(outputMetadata) {
+    const artifactMessageId = String(outputMetadata?.artifact_message_id || '').trim();
+    if (artifactMessageId) {
+      return `message:${artifactMessageId}`;
+    }
+
+    const stableArtifactId = String(
+      outputMetadata?.artifact_id
+      || outputMetadata?.member_id
+      || outputMetadata?.id
+      || outputMetadata?.document_id
+      || ''
+    ).trim();
+    if (stableArtifactId) {
+      return `artifact:${stableArtifactId}`;
+    }
+
+    const fileName = String(outputMetadata?.file_name || '').trim();
+    const outputFormat = String(outputMetadata?.output_format || '').trim().toLowerCase();
+    return `${fileName}:${outputFormat}`;
+  }
+
+  function isGeneratedArtifactSetComplete(statusMetadata = {}) {
+    const normalizedRunStatus = String(statusMetadata?.status || '').trim().toLowerCase();
+    if (normalizedRunStatus !== 'completed') {
+      return false;
+    }
+
+    const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
+      ? statusMetadata.artifact_set
+      : null;
+    if (!artifactSet) {
+      return true;
+    }
+
+    const lifecycleState = String(artifactSet.lifecycle_state || '').trim().toLowerCase();
+    if (lifecycleState && lifecycleState !== 'completed') {
+      return false;
+    }
+
+    const validationState = String(artifactSet.validation_state || '').trim().toLowerCase();
+    return !['failed', 'invalid', 'rollback_required', 'rolled_back'].includes(validationState);
+  }
+
+  function normalizeGeneratedArtifactSetMember(rawMember, statusMetadata = {}, fallbackMetadata = {}) {
+    if (!rawMember || typeof rawMember !== 'object') {
+      return null;
+    }
+
+    const runId = String(statusMetadata?.run_id || fallbackMetadata?.run_id || fallbackMetadata?.export_run_id || '').trim();
+    const defaultCapability = String(
+      rawMember.capability
+      || fallbackMetadata?.capability
+      || statusMetadata?.capability
+      || 'tabular'
+    ).trim().toLowerCase() || 'tabular';
+    return normalizeGeneratedAnalysisArtifact({
+      ...fallbackMetadata,
+      ...statusMetadata,
+      ...rawMember,
+      capability: defaultCapability,
+      status: 'completed',
+      export_run_id: runId,
+      run_id: runId,
+      background_export: false,
+      suppress_assistant_table_export: Boolean(
+        rawMember.suppress_assistant_table_export
+        || fallbackMetadata?.suppress_assistant_table_export
+        || statusMetadata?.suppress_assistant_table_export
+      ),
+    }, defaultCapability);
+  }
+
+  function sortGeneratedArtifactSetMembers(members, primaryArtifactId) {
+    const normalizedPrimaryArtifactId = String(primaryArtifactId || '').trim();
+    const primaryAnalysisIndex = members.findIndex(member => {
+      const role = String(member?.role || member?.artifact_role || '').trim().toLowerCase();
+      if (role === 'primary_analysis') {
+        return true;
+      }
+      return Boolean(
+        normalizedPrimaryArtifactId
+        && String(member?.artifact_id || member?.member_id || member?.id || '').trim() === normalizedPrimaryArtifactId
+        && isGeneratedMarkdownArtifact(member, member?.output_format)
+      );
+    });
+
+    if (primaryAnalysisIndex <= 0) {
+      return members;
+    }
+
+    const sortedMembers = members.slice();
+    const primaryMember = sortedMembers.splice(primaryAnalysisIndex, 1)[0];
+    sortedMembers.unshift(primaryMember);
+    return sortedMembers;
+  }
+
+  function normalizeGeneratedArtifactSet(statusMetadata = {}, fallbackMetadata = {}) {
+    const artifactSet = statusMetadata?.artifact_set && typeof statusMetadata.artifact_set === 'object'
+      ? statusMetadata.artifact_set
+      : {};
+    const pluralMembersProvided = Array.isArray(statusMetadata?.generated_artifacts);
+    const pluralMembers = pluralMembersProvided ? statusMetadata.generated_artifacts : [];
+    const singularMember = statusMetadata?.generated_artifact && typeof statusMetadata.generated_artifact === 'object'
+      ? statusMetadata.generated_artifact
+      : null;
+    const legacyAnalysisMembers = Array.isArray(statusMetadata?.generated_analysis_artifacts)
+      ? statusMetadata.generated_analysis_artifacts
+      : [];
+    const legacyTabularMembers = Array.isArray(statusMetadata?.generated_tabular_outputs)
+      ? statusMetadata.generated_tabular_outputs
+      : [];
+    const rawMembers = pluralMembersProvided
+      ? pluralMembers
+      : (singularMember ? [singularMember] : [...legacyAnalysisMembers, ...legacyTabularMembers]);
+    const seenMemberKeys = new Set();
+    const members = [];
+    let duplicateSuppressedCount = 0;
+
+    rawMembers.forEach(rawMember => {
+      const normalizedMember = normalizeGeneratedArtifactSetMember(rawMember, statusMetadata, fallbackMetadata);
+      if (!normalizedMember) {
+        return;
+      }
+      const dedupeKey = getGeneratedArtifactSetDedupeKey(normalizedMember);
+      if (dedupeKey && seenMemberKeys.has(dedupeKey)) {
+        duplicateSuppressedCount += 1;
+        return;
+      }
+      if (dedupeKey) {
+        seenMemberKeys.add(dedupeKey);
+      }
+      members.push(normalizedMember);
+    });
+
+    const orderedMembers = sortGeneratedArtifactSetMembers(members, artifactSet.primary_artifact_id);
+    return {
+      contractVersion: String(artifactSet.contract_version || statusMetadata?.contract_version || '').trim(),
+      setId: String(artifactSet.set_id || statusMetadata?.artifact_set_id || '').trim(),
+      status: String(statusMetadata?.status || '').trim().toLowerCase(),
+      lifecycleState: String(artifactSet.lifecycle_state || '').trim().toLowerCase(),
+      validationState: String(artifactSet.validation_state || '').trim().toLowerCase(),
+      primaryArtifactId: String(artifactSet.primary_artifact_id || '').trim(),
+      publicationGeneration: Number.parseInt(artifactSet.publication_generation, 10) || 0,
+      isComplete: isGeneratedArtifactSetComplete(statusMetadata),
+      legacyFallbackUsed: !pluralMembers.length && Boolean(singularMember),
+      duplicateSuppressedCount,
+      members: orderedMembers,
+    };
+  }
+
+  function recordGeneratedArtifactSetUiEvent(eventType, details = {}) {
+    const boundedFormats = Array.isArray(details.formats)
+      ? details.formats.map(format => String(format || '').trim().toLowerCase()).filter(Boolean).slice(0, 8)
+      : [];
+    const eventDetail = {
+      eventType: String(eventType || '').trim().toLowerCase().slice(0, 80),
+      runId: String(details.runId || '').trim().slice(0, 96),
+      status: String(details.status || '').trim().toLowerCase().slice(0, 40),
+      lifecycleState: String(details.lifecycleState || '').trim().toLowerCase().slice(0, 40),
+      memberCount: Number.isFinite(Number.parseInt(details.memberCount, 10))
+        ? Math.max(0, Number.parseInt(details.memberCount, 10))
+        : 0,
+      formats: boundedFormats,
+      primaryRendered: Boolean(details.primaryRendered),
+      legacyFallbackUsed: Boolean(details.legacyFallbackUsed),
+      duplicateSuppressedCount: Number.isFinite(Number.parseInt(details.duplicateSuppressedCount, 10))
+        ? Math.max(0, Number.parseInt(details.duplicateSuppressedCount, 10))
+        : 0,
+    };
+
+    document.dispatchEvent(new CustomEvent('simplechat:generated-artifact-set', { detail: eventDetail }));
+  }
+
+  function createGeneratedArtifactSetGroup(artifactSet, runId = '') {
+    const group = document.createElement('div');
+    group.className = 'generated-artifact-set-group d-grid gap-3 mt-3';
+    group.dataset.generatedArtifactSet = 'true';
+    if (artifactSet.setId) {
+      group.dataset.generatedArtifactSetId = artifactSet.setId;
+    }
+    if (runId) {
+      group.dataset.generatedArtifactRunId = runId;
+    }
+    group.setAttribute('role', 'group');
+    group.setAttribute('aria-label', artifactSet.members.length === 1 ? 'Generated artifact' : 'Generated artifacts');
+
+    if (artifactSet.members.length > 1) {
+      const heading = document.createElement('div');
+      heading.className = 'small fw-semibold';
+      heading.textContent = `${artifactSet.members.length.toLocaleString()} generated artifacts`;
+      group.appendChild(heading);
+    }
+
+    artifactSet.members.forEach(memberMetadata => {
+      group.appendChild(createGeneratedAnalysisArtifactCard(memberMetadata));
+    });
+
+    return group;
+  }
+
+  function replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet) {
+    if (!(card instanceof HTMLElement) || !document.body.contains(card) || !artifactSet?.isComplete || !artifactSet.members.length) {
+      return false;
+    }
+
+    const runId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || artifactSet.members[0]?.run_id || '').trim();
+    const primaryMember = artifactSet.members.find(member => {
+      const role = String(member?.role || member?.artifact_role || '').trim().toLowerCase();
+      return role === 'primary_analysis';
+    }) || artifactSet.members[0];
+    const group = createGeneratedArtifactSetGroup(artifactSet, runId);
+    const formats = artifactSet.members.map(member => member?.output_format || '');
+    const primaryRendered = Boolean(primaryMember);
+
+    card.dataset.generatedArtifactSetCompleted = 'true';
+    card.replaceWith(group);
+    hideCompletedGeneratedArtifactHandoff(group, primaryMember || outputMetadata);
+
+    recordGeneratedArtifactSetUiEvent('set_card_hydrated', {
+      runId,
+      status: artifactSet.status,
+      lifecycleState: artifactSet.lifecycleState,
+      memberCount: artifactSet.members.length,
+      formats,
+      primaryRendered,
+      legacyFallbackUsed: artifactSet.legacyFallbackUsed,
+      duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+    });
+    recordGeneratedArtifactSetUiEvent('plural_completion_rendered', {
+      runId,
+      status: artifactSet.status,
+      lifecycleState: artifactSet.lifecycleState,
+      memberCount: artifactSet.members.length,
+      formats,
+      primaryRendered,
+      legacyFallbackUsed: artifactSet.legacyFallbackUsed,
+      duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+    });
+
+    if (artifactSet.legacyFallbackUsed) {
+      recordGeneratedArtifactSetUiEvent('legacy_singular_fallback_used', {
+        runId,
+        status: artifactSet.status,
+        lifecycleState: artifactSet.lifecycleState,
+        memberCount: artifactSet.members.length,
+        formats,
+        primaryRendered,
+        legacyFallbackUsed: true,
+      });
+    }
+
+    if (artifactSet.duplicateSuppressedCount > 0) {
+      recordGeneratedArtifactSetUiEvent('duplicate_member_suppressed', {
+        runId,
+        status: artifactSet.status,
+        lifecycleState: artifactSet.lifecycleState,
+        memberCount: artifactSet.members.length,
+        formats,
+        primaryRendered,
+        duplicateSuppressedCount: artifactSet.duplicateSuppressedCount,
+      });
+    }
+
+    return true;
+  }
+
   function getGeneratedTabularStorageNote(outputMetadata) {
     if (outputMetadata?.background_export) {
       return 'Continuing in the background. Progress is checkpointed and the download will appear here when complete.';
@@ -4044,6 +4335,13 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
   }
 
   function getGeneratedAnalysisArtifactTitle(outputMetadata, outputFormat) {
+    const artifactId = String(outputMetadata?.artifact_id || outputMetadata?.member_id || '').trim().toLowerCase();
+    if (artifactId === 'analysis-summary') {
+      return 'Analyze Markdown summary';
+    }
+    if (artifactId === 'row-analysis-md') {
+      return 'Row-by-row Markdown output';
+    }
     const capability = String(outputMetadata?.capability || '').trim().toLowerCase();
     if (capability === 'analyze') {
       return `Analyze ${outputFormat.toUpperCase()} artifact`;
@@ -4804,24 +5102,27 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         throw new Error(responseData?.error || `Server responded with status ${response.status}`);
       }
 
+      if (!document.body.contains(card)) {
+        return;
+      }
+
       const runStatus = responseData?.run || {};
-      const generatedArtifact = runStatus?.generated_artifact || null;
+      const artifactSet = normalizeGeneratedArtifactSet(runStatus, outputMetadata);
+      const hasCompletedArtifactSet = Boolean(artifactSet.isComplete && artifactSet.members.length);
       Object.assign(outputMetadata, runStatus, {
         export_run_id: runStatus.run_id || runId,
         run_id: runStatus.run_id || runId,
-        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+        background_export: !hasCompletedArtifactSet,
       });
 
-      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
-        Object.assign(outputMetadata, generatedArtifact, {
+      if (hasCompletedArtifactSet) {
+        Object.assign(outputMetadata, artifactSet.members[0], {
           background_export: false,
           status: 'completed',
           export_run_id: runStatus.run_id || runId,
           run_id: runStatus.run_id || runId,
         });
-        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
-        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
-        card.replaceWith(refreshedCard);
+        replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet);
         return;
       }
 
@@ -4862,23 +5163,22 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       }
 
       const runStatus = responseData?.run || {};
-      const generatedArtifact = runStatus?.generated_artifact || null;
+      const artifactSet = normalizeGeneratedArtifactSet(runStatus, outputMetadata);
+      const hasCompletedArtifactSet = Boolean(artifactSet.isComplete && artifactSet.members.length);
       Object.assign(outputMetadata, runStatus, {
         export_run_id: runStatus.run_id || runId,
         run_id: runStatus.run_id || runId,
-        background_export: String(runStatus.status || '').toLowerCase() !== 'completed' || !generatedArtifact,
+        background_export: !hasCompletedArtifactSet,
       });
 
-      if (String(runStatus.status || '').toLowerCase() === 'completed' && generatedArtifact) {
-        Object.assign(outputMetadata, generatedArtifact, {
+      if (hasCompletedArtifactSet) {
+        Object.assign(outputMetadata, artifactSet.members[0], {
           background_export: false,
           status: 'completed',
           export_run_id: runStatus.run_id || runId,
           run_id: runStatus.run_id || runId,
         });
-        const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
-        hideCompletedGeneratedArtifactHandoff(card, outputMetadata);
-        card.replaceWith(refreshedCard);
+        replaceBackgroundGeneratedOutputCardWithArtifacts(outputMetadata, card, artifactSet);
         showToast(responseData?.message || 'Background export is already complete.', 'success');
         return;
       }
@@ -5048,6 +5348,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       backgroundDetailElements.push(rowCountDetail);
     }
 
+    if (outputMetadata?.rows_truncated) {
+      // The completed-artifact layout hides the summary, so partial coverage needs its own badge.
+      const truncatedBadge = document.createElement('span');
+      truncatedBadge.className = 'badge text-bg-warning';
+      truncatedBadge.textContent = 'Partial';
+      truncatedBadge.title = 'The source action reported truncated results, so this file covers only the rows it returned.';
+      header.appendChild(truncatedBadge);
+    }
+
     card.appendChild(header);
 
     if (!isCompletedTabularArtifact) {
@@ -5134,6 +5443,27 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const actions = document.createElement('div');
     actions.className = 'd-flex flex-wrap gap-2 mt-3';
 
+    // A staged file is withheld from everyone until an approver releases it, so the download
+    // and preview controls are replaced by the approval banner rather than left to fail.
+    const approvalBlock = buildGeneratedFileApprovalBlock(outputMetadata, (decision, payload) => {
+      if (outputMetadata && typeof outputMetadata.approval === 'object') {
+        outputMetadata.approval.state = payload?.approval_state
+          || (decision === 'approve' ? 'approved' : 'denied');
+        outputMetadata.approval.viewer_can_approve = false;
+        outputMetadata.approval.resolved_by_name = payload?.resolved_by_name || '';
+      }
+      const refreshedCard = createGeneratedAnalysisArtifactCard(outputMetadata);
+      if (refreshedCard && card.parentNode) {
+        card.parentNode.replaceChild(refreshedCard, card);
+      }
+    });
+    if (approvalBlock) {
+      card.appendChild(approvalBlock);
+    }
+    if (generatedFileApprovalBlocksDownload(outputMetadata)) {
+      return card;
+    }
+
     if (outputMetadata?.background_export) {
       const backgroundRunId = String(outputMetadata?.export_run_id || outputMetadata?.run_id || '').trim();
       if (!backgroundRunId) {
@@ -5176,7 +5506,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     downloadButton.type = 'button';
     downloadButton.className = 'btn btn-sm btn-outline-primary generated-tabular-download-btn';
     downloadButton.textContent = `Download ${outputFormat.toUpperCase()}`;
+    downloadButton.setAttribute('aria-label', `Download ${fileName}`);
     downloadButton.addEventListener('click', () => {
+      recordGeneratedArtifactSetUiEvent('member_download_action', {
+        runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+        status: outputMetadata?.status,
+        memberCount: 1,
+        formats: [outputFormat],
+      });
       triggerGeneratedTabularOutputDownload(outputMetadata);
     });
     actions.appendChild(downloadButton);
@@ -5186,8 +5523,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-btn';
       viewButton.textContent = `View ${outputFormat.toUpperCase()}`;
-      viewButton.setAttribute('aria-label', `View generated ${outputFormat.toUpperCase()} preview`);
+      viewButton.setAttribute('aria-label', `View ${fileName}`);
       viewButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_view_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         showGeneratedArtifactPreviewModal(outputMetadata, outputFormat);
       });
       actions.appendChild(viewButton);
@@ -5201,9 +5544,16 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         exportPowerPointButton.type = 'button';
         exportPowerPointButton.className = 'btn btn-sm btn-outline-primary generated-artifact-export-ppt-btn';
         exportPowerPointButton.textContent = 'Create PowerPoint';
+        exportPowerPointButton.setAttribute('aria-label', `Create PowerPoint from ${fileName}`);
         exportPowerPointButton.dataset.artifactMessageId = normalizedArtifactMessageId;
         exportPowerPointButton.dataset.conversationId = normalizedConversationId;
         exportPowerPointButton.addEventListener('click', () => {
+          recordGeneratedArtifactSetUiEvent('member_powerpoint_action', {
+            runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+            status: outputMetadata?.status,
+            memberCount: 1,
+            formats: [outputFormat],
+          });
           exportGeneratedMarkdownArtifactAsPowerPoint(outputMetadata, exportPowerPointButton);
         });
         actions.appendChild(exportPowerPointButton);
@@ -5213,7 +5563,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       viewButton.type = 'button';
       viewButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-view-md-btn';
       viewButton.textContent = 'View MD';
+      viewButton.setAttribute('aria-label', `View ${fileName}`);
       viewButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_view_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         viewGeneratedMarkdownArtifact(outputMetadata, viewButton);
       });
       actions.appendChild(viewButton);
@@ -5226,7 +5583,14 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       promoteButton.type = 'button';
       promoteButton.className = 'btn btn-sm btn-outline-secondary generated-artifact-promote-btn';
       promoteButton.textContent = 'Add to Workspace';
+      promoteButton.setAttribute('aria-label', `Add ${fileName} to workspace`);
       promoteButton.addEventListener('click', () => {
+        recordGeneratedArtifactSetUiEvent('member_promotion_action', {
+          runId: outputMetadata?.run_id || outputMetadata?.export_run_id,
+          status: outputMetadata?.status,
+          memberCount: 1,
+          formats: [outputFormat],
+        });
         promoteGeneratedArtifactToWorkspace(outputMetadata, promoteButton);
       });
       actions.appendChild(promoteButton);
@@ -5647,17 +6011,23 @@ export function appendMessage(
     }
 
     void (async () => {
+      // Inline galleries present media as supporting the answer, so they render
+      // only what the response cited. The Sources disclosure keeps the complete
+      // retrieved set.
+      const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);
+      const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);
+
       await renderInlineVideoGalleries(
         messageDiv,
-        hybridCitations || [],
-        webCitations || [],
+        citedHybridCitations,
+        citedWebCitations,
         agentCitations || [],
         messageConversationId
       );
       await renderInlineImageGalleries(
         messageDiv,
-        hybridCitations || [],
-        webCitations || [],
+        citedHybridCitations,
+        citedWebCitations,
         agentCitations || [],
         messageId,
         messageConversationId
@@ -6179,6 +6549,9 @@ export function appendMessage(
     // Add event listeners for user message buttons
     if (sender === "You") {
       attachUserMessageEventListeners(messageDiv, messageId, messageContent);
+      if (String(messageId || '').startsWith('temp_user_')) {
+        setUserMessageStreamingActionsDisabled(messageId, true);
+      }
 
       // Apply masked state if message has masking
       if (fullMessageObject?.metadata) {
@@ -6295,7 +6668,7 @@ export function appendMessage(
   } // End of the large 'else' block for non-AI messages
 }
 
-export async function sendMessage() {
+export async function sendMessage(turnOptions = {}) {
   if (!userInput) {
     console.error("User input element not found.");
     return;
@@ -6347,10 +6720,10 @@ export async function sendMessage() {
 
   if (!currentConversationId) {
     createNewConversation(() => {
-      actuallySendMessage(combinedMessage);
+      actuallySendMessage(combinedMessage, turnOptions);
     }, { preserveSelections: true, initialMessage: combinedMessage });
   } else {
-    actuallySendMessage(combinedMessage);
+    actuallySendMessage(combinedMessage, turnOptions);
   }
 
   userInput.value = "";
@@ -7017,7 +7390,32 @@ export function shouldUseCollaborativeAiWorkflow(messageData = {}, explicitInvoc
   return Boolean(buildCollaborativeInvocationTarget(messageData, explicitInvocationTarget));
 }
 
-export function actuallySendMessage(finalMessageToSend) {
+function buildVoiceResponseCompletionHandler(responseModality) {
+  if (responseModality !== "voice" || !window.appSettings?.enable_text_to_speech) {
+    return null;
+  }
+
+  return (finalData = {}) => {
+    if (isTTSAutoplayEnabled()) {
+      return;
+    }
+
+    const messageId = String(finalData.message_id || "").trim();
+    const responseText = String(finalData.full_content || finalData.content || "").trim();
+    if (!messageId || !responseText || finalData.cancelled || finalData.canceled) {
+      return;
+    }
+
+    void playTTS(messageId, responseText);
+  };
+}
+
+export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
+  const inputModality = turnOptions.inputModality === "voice" ? "voice" : "text";
+  const responseModality = inputModality === "voice" && turnOptions.responseModality === "voice"
+    ? "voice"
+    : "text";
+  const onVoiceResponseDone = buildVoiceResponseCompletionHandler(responseModality);
   const isCollaborativeConversation = Boolean(
     currentConversationId
     && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
@@ -7031,6 +7429,8 @@ export function actuallySendMessage(finalMessageToSend) {
       explicitInvocationTarget,
       displayMessageText,
     } = buildCollaborativeSendContext(finalMessageToSend, currentConversationId);
+    collaborativeMessageData.input_modality = inputModality;
+    collaborativeMessageData.response_modality = responseModality;
     if (invocationTarget && !String(displayMessageText || '').trim()) {
       showToast('Add a message after the selected @agent or @model tag.', 'warning');
       return;
@@ -7048,6 +7448,7 @@ export function actuallySendMessage(finalMessageToSend) {
         tempUserMessageId,
         collaborativeMessageData,
         pendingCollaborativeContext,
+        { onDone: onVoiceResponseDone },
       )
       : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
 
@@ -7064,6 +7465,8 @@ export function actuallySendMessage(finalMessageToSend) {
   // Generate a temporary message ID for the user message
   const tempUserMessageId = `temp_user_${Date.now()}`;
   const messageData = buildChatRequestPayload(finalMessageToSend, currentConversationId);
+  messageData.input_modality = inputModality;
+  messageData.response_modality = responseModality;
   const actionType = String(messageData.document_action?.type || DOCUMENT_ACTION_NONE).trim() || DOCUMENT_ACTION_NONE;
   const useDocumentAction = actionType !== DOCUMENT_ACTION_NONE;
   const totalSelectedDocuments = actionType === DOCUMENT_ACTION_COMPARISON
@@ -7119,6 +7522,7 @@ export function actuallySendMessage(finalMessageToSend) {
     {
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
+      onDone: onVoiceResponseDone,
     }
   );
 
@@ -7171,7 +7575,7 @@ function attachCodeBlockCopyButtons(parentElement) {
 }
 
 if (sendBtn) {
-  sendBtn.addEventListener("click", sendMessage);
+  sendBtn.addEventListener("click", () => sendMessage());
 }
 
 if (userInput) {
@@ -7215,8 +7619,58 @@ if (promptSelect) {
 
 updateDocumentActionControls();
 
+let userMetadataRequestSequence = 0;
+
+function renderUserMetadataStatus(container, message, className = 'text-muted') {
+  const status = document.createElement('div');
+  status.className = className;
+  status.textContent = message;
+  container.replaceChildren(status);
+}
+
+export function setUserMessageStreamingActionsDisabled(messageId, disabled) {
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!normalizedMessageId) {
+    return false;
+  }
+
+  const messageDiv = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  if (!messageDiv) {
+    return false;
+  }
+
+  messageDiv.dataset.streamingActionsDisabled = disabled ? 'true' : 'false';
+  const mutatingActions = getUserMessageMutatingActions(normalizedMessageId);
+  mutatingActions.forEach(action => {
+    action.dataset.streamingDisabled = disabled ? 'true' : 'false';
+    action.classList.toggle('disabled', disabled);
+    action.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    if (disabled) {
+      action.setAttribute('tabindex', '-1');
+    } else {
+      action.removeAttribute('tabindex');
+    }
+    if (action instanceof HTMLButtonElement) {
+      action.disabled = disabled;
+    }
+  });
+  return mutatingActions.length > 0;
+}
+
+function getUserMessageMutatingActions(messageId) {
+  const normalizedMessageId = String(messageId || '').trim();
+  return Array.from(document.querySelectorAll(
+    '.dropdown-edit-btn, .dropdown-delete-btn, .dropdown-retry-btn, .mask-add-btn, .mask-remove-btn'
+  )).filter(action => action.getAttribute('data-message-id') === normalizedMessageId);
+}
+
+function isUserMessageStreamingActionDisabled(action) {
+  return action?.dataset.streamingDisabled === 'true';
+}
+
 // Helper function to update user message ID after backend response
-export function updateUserMessageId(tempId, realId) {
+export function updateUserMessageId(tempId, realId, options = {}) {
+  const { refreshExpandedMetadata = false } = options;
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
 
   // Find the message with the temporary ID
@@ -7227,12 +7681,13 @@ export function updateUserMessageId(tempId, realId) {
     console.log(`✅ Updated messageDiv data-message-id to: ${realId}`);
 
     // Update ALL elements with the temporary ID to ensure consistency
-    const elementsToUpdate = [
+    const elementsToUpdate = new Set([
       messageDiv.querySelector('.copy-user-btn'),
       messageDiv.querySelector('.metadata-toggle-btn'),
       ...messageDiv.querySelectorAll(`[data-message-id="${tempId}"]`),
-      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`)
-    ];
+      ...messageDiv.querySelectorAll(`[aria-controls*="${tempId}"]`),
+      ...getUserMessageMutatingActions(tempId)
+    ]);
 
     let updateCount = 0;
     elementsToUpdate.forEach(element => {
@@ -7265,6 +7720,13 @@ export function updateUserMessageId(tempId, realId) {
       updateCount++;
     }
 
+    if (['pending', 'unconfirmed'].includes(metadataContainer?.dataset.metadataState)) {
+      metadataContainer.dataset.metadataState = 'ready';
+      if (metadataContainer.style.display !== 'none') {
+        loadUserMessageMetadata(realId, metadataContainer);
+      }
+    }
+
     console.log(`✅ Updated ${updateCount} elements with new message ID`);
 
     // Verify the update was successful
@@ -7278,10 +7740,72 @@ export function updateUserMessageId(tempId, realId) {
     const existingRealMessageDiv = document.querySelector(`[data-message-id="${realId}"]`);
     if (existingRealMessageDiv) {
       console.info(`ℹ️ Message div for temp ID ${tempId} was already reconciled to ${realId}`);
+      if (refreshExpandedMetadata) {
+        refreshUserMessageMetadata(realId);
+      }
     } else {
       console.warn(`⚠️ Message div with temp ID ${tempId} not found for update`);
     }
   }
+}
+
+export function refreshUserMessageMetadata(messageId) {
+  const normalizedMessageId = String(messageId || '').trim();
+  const messageDiv = normalizedMessageId
+    ? document.querySelector(`[data-message-id="${normalizedMessageId}"]`)
+    : null;
+  const metadataContainer = messageDiv?.querySelector('.metadata-container');
+  if (!metadataContainer) {
+    return false;
+  }
+
+  if (metadataContainer.style.display !== 'none') {
+    loadUserMessageMetadata(normalizedMessageId, metadataContainer);
+  } else {
+    metadataContainer.dataset.metadataState = 'stale';
+    metadataContainer.dataset.metadataRequestToken = '';
+  }
+  return true;
+}
+
+function markUserMessageMetadataState(messageId, metadataState, statusMessage) {
+  const normalizedMessageId = String(messageId || '').trim();
+  if (!normalizedMessageId) {
+    return false;
+  }
+
+  const messageDiv = document.querySelector(`[data-message-id="${normalizedMessageId}"]`);
+  const metadataContainer = messageDiv?.querySelector('.metadata-container');
+  if (!metadataContainer) {
+    return false;
+  }
+
+  metadataContainer.dataset.metadataState = metadataState;
+  metadataContainer.dataset.metadataRequestToken = '';
+  if (metadataContainer.style.display !== 'none') {
+    renderUserMetadataStatus(
+      metadataContainer,
+      statusMessage,
+      'text-warning'
+    );
+  }
+  return true;
+}
+
+export function markUserMessageMetadataUnconfirmed(messageId) {
+  return markUserMessageMetadataState(
+    messageId,
+    'unconfirmed',
+    'Message metadata persistence could not be confirmed. Refresh the conversation to check.'
+  );
+}
+
+export function markUserMessageMetadataFinalizationUnconfirmed(messageId) {
+  return markUserMessageMetadataState(
+    messageId,
+    'finalization-unconfirmed',
+    'Message metadata may still be updating after the stream disconnected. Refresh the conversation to check.'
+  );
 }
 
 // Helper function to attach event listeners to user message buttons
@@ -7309,7 +7833,8 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
 
   if (metadataToggleBtn) {
     metadataToggleBtn.addEventListener("click", () => {
-      toggleUserMessageMetadata(messageDiv, messageId);
+      const currentMessageId = messageDiv.getAttribute('data-message-id') || messageId;
+      toggleUserMessageMetadata(messageDiv, currentMessageId);
     });
   }
 
@@ -7319,6 +7844,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownDeleteBtn) {
     dropdownDeleteBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       // This ensures we use the updated ID after updateUserMessageId is called
       const currentMessageId = messageDiv.getAttribute('data-message-id');
@@ -7331,6 +7859,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownRetryBtn) {
     dropdownRetryBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       const currentMessageId = messageDiv.getAttribute('data-message-id');
       console.log(`🔄 Retry button clicked - using message ID from DOM: ${currentMessageId}`);
@@ -7342,6 +7873,9 @@ function attachUserMessageEventListeners(messageDiv, messageId, messageContent) 
   if (dropdownEditBtn) {
     dropdownEditBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      if (isUserMessageStreamingActionDisabled(e.currentTarget)) {
+        return;
+      }
       // Always read the message ID from the DOM attribute dynamically
       const currentMessageId = messageDiv.getAttribute('data-message-id');
       console.log(`✏️ Edit button clicked - using message ID from DOM: ${currentMessageId}`);
@@ -7454,22 +7988,8 @@ function attachCollaboratorMessageEventListeners(messageDiv, fullMessageObject, 
 
 // Function to toggle user message metadata drawer
 function toggleUserMessageMetadata(messageDiv, messageId) {
+  messageId = messageDiv.getAttribute('data-message-id') || messageId;
   console.log(`🔀 Toggling metadata for message: ${messageId}`);
-
-  // Validate that we're not using a temporary ID
-  if (messageId && messageId.startsWith('temp_user_')) {
-    console.error(`❌ Metadata toggle called with temporary ID: ${messageId}`);
-    console.log(`🔍 Checking if real ID is available in DOM...`);
-
-    // Try to find the real ID from the message div
-    const actualMessageId = messageDiv.getAttribute('data-message-id');
-    if (actualMessageId && actualMessageId !== messageId && !actualMessageId.startsWith('temp_user_')) {
-      console.log(`✅ Found real ID in DOM: ${actualMessageId}, using that instead`);
-      messageId = actualMessageId;
-    } else {
-      console.error(`❌ No valid real ID found, metadata toggle may fail`);
-    }
-  }
 
   const toggleBtn = messageDiv.querySelector('.metadata-toggle-btn');
   const targetId = toggleBtn.getAttribute('aria-controls');
@@ -7500,7 +8020,7 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
     toggleBtn.innerHTML = '<i class="bi bi-chevron-up"></i>';
 
     // Load metadata if not already loaded
-    if (metadataContainer.innerHTML.includes('Loading metadata...')) {
+    if (metadataContainer.dataset.metadataState !== 'loaded') {
       console.log(`🔄 Loading metadata content for ${messageId}`);
       loadUserMessageMetadata(messageId, metadataContainer);
     }
@@ -7521,36 +8041,61 @@ function toggleUserMessageMetadata(messageDiv, messageId) {
 
 // Function to load user message metadata into the drawer
 function loadUserMessageMetadata(messageId, container, retryCount = 0) {
+  const currentMessageId = container.closest('[data-message-id]')?.getAttribute('data-message-id');
+  if (
+    messageId?.startsWith('temp_user_')
+    && currentMessageId
+    && !currentMessageId.startsWith('temp_user_')
+  ) {
+    messageId = currentMessageId;
+  }
+
   console.log(`🔍 Loading metadata for message ID: ${messageId} (attempt ${retryCount + 1})`);
+
+  if (container.dataset.metadataState === 'unconfirmed') {
+    renderUserMetadataStatus(
+      container,
+      'Message metadata persistence could not be confirmed. Refresh the conversation to check.',
+      'text-warning'
+    );
+    return;
+  }
+
+  if (container.dataset.metadataState === 'finalization-unconfirmed') {
+    renderUserMetadataStatus(
+      container,
+      'Message metadata may still be updating after the stream disconnected. Refresh the conversation to check.',
+      'text-warning'
+    );
+    return;
+  }
 
   // Validate message ID to catch temporary IDs early
   if (!messageId || messageId === "null" || messageId === "undefined") {
     console.error(`❌ Invalid message ID: ${messageId}`);
-    container.innerHTML = '<div class="text-muted">Message metadata not available.</div>';
+    container.dataset.metadataState = 'error';
+    renderUserMetadataStatus(container, 'Message metadata not available.');
     return;
   }
 
-  // Check for temporary IDs which indicate a bug
+  // Wait for the persistence event instead of polling with a stale temporary ID.
   if (messageId.startsWith('temp_user_')) {
-    console.error(`❌ Attempting to load metadata with temporary ID: ${messageId}`);
-    console.error(`This indicates the updateUserMessageId function didn't work properly`);
-
-    if (retryCount < 2) {
-      // Short retry for temp IDs in case the real ID update is still in progress
-      console.log(`🔄 Retrying metadata load for temp ID in 100ms (attempt ${retryCount + 1}/3)`);
-      setTimeout(() => {
-        loadUserMessageMetadata(messageId, container, retryCount + 1);
-      }, 100);
-      return;
-    } else {
-      container.innerHTML = '<div class="text-danger">Message metadata unavailable (temporary ID not updated).</div>';
-      return;
-    }
+    container.dataset.metadataState = 'pending';
+    renderUserMetadataStatus(container, 'Saving message metadata...');
+    return;
   }
+
+  container.dataset.metadataState = 'loading';
+  const requestToken = String(++userMetadataRequestSequence);
+  container.dataset.metadataRequestToken = requestToken;
+  renderUserMetadataStatus(container, 'Loading metadata...');
 
   // Fetch message metadata from the backend
   fetch(`/api/message/${messageId}/metadata`)
     .then(response => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       console.log(`📡 Metadata API response for ${messageId}: ${response.status}`);
 
       if (!response.ok) {
@@ -7559,7 +8104,9 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
           const delay = Math.min((retryCount + 1) * 500, 2000); // Cap at 2 seconds
           console.log(`⏳ Message ${messageId} not found, retrying in ${delay}ms (attempt ${retryCount + 1}/3)`);
           setTimeout(() => {
-            loadUserMessageMetadata(messageId, container, retryCount + 1);
+            if (container.dataset.metadataRequestToken === requestToken) {
+              loadUserMessageMetadata(messageId, container, retryCount + 1);
+            }
           }, delay);
           return;
         }
@@ -7568,8 +8115,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       return response.json();
     })
     .then(data => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       if (data) {
         console.log(`✅ Successfully loaded metadata for ${messageId}`);
+        container.dataset.metadataState = 'loaded';
         container.innerHTML = formatMetadataForDrawer(data);
 
         // Attach event listeners to View Text buttons
@@ -7596,8 +8147,12 @@ function loadUserMessageMetadata(messageId, container, retryCount = 0) {
       }
     })
     .catch(error => {
+      if (container.dataset.metadataRequestToken !== requestToken) {
+        return;
+      }
       console.error(`❌ Error fetching message metadata for ${messageId}:`, error);
 
+      container.dataset.metadataState = 'error';
       if (retryCount >= 3) {
         container.innerHTML = '<div class="text-danger">Failed to load message metadata after multiple attempts.</div>';
       } else {
@@ -8927,6 +9482,9 @@ function attachMaskButtonEventListeners(messageDiv) {
       updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
     });
     addButton.addEventListener('click', () => {
+      if (isUserMessageStreamingActionDisabled(addButton)) {
+        return;
+      }
       handleMaskAddButtonClick(messageDiv);
     });
   }
@@ -8937,6 +9495,9 @@ function attachMaskButtonEventListeners(messageDiv) {
       updateMaskControls(messageDiv, messageDiv._maskingMetadata || {});
     });
     removeButton.addEventListener('click', () => {
+      if (isUserMessageStreamingActionDisabled(removeButton)) {
+        return;
+      }
       handleMaskRemoveButtonClick(messageDiv);
     });
   }
@@ -9079,6 +9640,17 @@ function executeMessageDeletion(deleteThread = false) {
       // Optionally reload conversation list to update preview
       if (typeof loadConversations === 'function') {
         loadConversations();
+      }
+      if (window.currentConversationId) {
+        window.dispatchEvent(new CustomEvent(
+          'chat:conversation-documents-refresh',
+          {
+            detail: {
+              conversationId: window.currentConversationId,
+              autoOpen: false,
+            },
+          }
+        ));
       }
     } else {
       showToast('Failed to delete message', 'error');

@@ -1,8 +1,9 @@
 # test_tabular_row_orchestration_scale.py
 """
 Functional test for scalable per-row tabular orchestration.
-Version: 0.250.167
-Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166
+Version: 0.250.201
+Updated in: 0.250.201 for exhaustive Markdown compatibility.
+Implemented in: 0.250.060; generated CSV formula safety in 0.250.065; generated file export routing in 0.250.072; source descriptor generalization in 0.250.127; unified durable run contract in 0.250.128; hierarchical analysis in 0.250.129; combined analysis and export in 0.250.130; scale validation in 0.250.132; direct source-backed exhaustive queueing in 0.250.133; direct queue call-site hardening in 0.250.134; model-validation auto retry in 0.250.135; model-aware parallel throughput in 0.250.136; Phase 1 acceleration contracts and observability in 0.250.137; Phase 2 truthful background handoff in 0.250.138; Phase 3 durable LLM generation planning in 0.250.139; Phase 4 compact row response protocol in 0.250.140; Phase 5 completion-driven checkpointing in 0.250.141; Phase 6 rolling worker pool in 0.250.142; Phase 7 independent batch retries in 0.250.143; Phase 8 scale, chaos, and rollout in 0.250.144; background metadata streaming fix in 0.250.145; source-token echo recovery in 0.250.146; fixed-window stale heartbeat fix in 0.250.147; nested CSV output recovery in 0.250.148; generic tabular artifact routing and fast startup in 0.250.149; balanced concurrency waves and default completion checkpoints in 0.250.152; Search shared preflight adapter in 0.250.159; aggregate route-helper harness coverage in 0.250.166; Analyze artifact Phase 7A harness compatibility updated in 0.250.178; reviewed correctness planning and semantic validation updated in 0.250.179; artifact publication lifecycle updated in 0.250.180; safe failure helper compatibility updated in 0.250.199; exhaustive Markdown scale compatibility updated in 0.250.200
 
 This test ensures generated exports preserve source identity and row order while
 enforcing one stable output schema across independently generated batches.
@@ -57,6 +58,15 @@ from functions_generated_file_exports import (  # noqa: E402
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
 )
+from functions_analysis_deliverables import (  # noqa: E402
+    is_analysis_internal_lineage_field,
+    project_structured_deliverable_row,
+)
+from functions_tabular_transformations import normalize_tabular_transformation_spec  # noqa: E402
+from functions_tabular_transformations import (  # noqa: E402
+    TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC,
+    TABULAR_TRANSFORMATION_SPEC_VERSION,
+)
 from functions_tabular_orchestration import (  # noqa: E402
     build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format,
@@ -91,6 +101,8 @@ CANDIDATE_FUNCTIONS = {
 STREAM_FUNCTIONS = {
     '_serialize_generated_output_value',
     '_validate_tabular_output_checkpoint_metadata',
+    '_get_tabular_run_public_output_schema',
+    '_get_tabular_run_serialized_public_schema',
     '_write_ordered_output_stream',
 }
 SOURCE_VERSION_FUNCTIONS = {'_revalidate_tabular_source_version_for_publication'}
@@ -102,6 +114,7 @@ SOURCE_READER_FUNCTIONS = {
 }
 AUTHORIZATION_FUNCTIONS = {'_authorize_tabular_export_run_execution'}
 CANCELLATION_FUNCTIONS = {
+    '_is_artifact_publication_recoverable',
     '_can_cancel_run',
     'cancel_tabular_generated_output_run',
 }
@@ -124,7 +137,9 @@ RETRY_FUNCTIONS = {
     '_has_exhausted_independent_batch_retries',
     '_is_auto_retry_exhausted',
     '_can_auto_retry_failed_run',
+    '_is_artifact_publication_recoverable',
     '_can_resume_run',
+    '_build_safe_tabular_run_failure',
     '_mark_run_failed',
     '_get_auto_retry_limit_for_category',
     '_mark_run_retryable',
@@ -139,6 +154,8 @@ RETRY_CONSTANTS = {
     'TABULAR_EXPORT_DEFAULT_MODEL_VALIDATION_AUTO_RETRIES',
     'TABULAR_EXPORT_RETRYABLE_MESSAGE_MARKERS',
     'TABULAR_EXPORT_MODEL_VALIDATION_RETRYABLE_MESSAGE_MARKERS',
+    'TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED',
+    'TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED',
 }
 LEGACY_MIGRATION_FUNCTIONS = {
     '_normalize_source_identity_label',
@@ -160,7 +177,12 @@ FAILURE_FUNCTIONS = {
 }
 BACKGROUND_METADATA_FUNCTIONS = {'build_background_tabular_generated_output_metadata'}
 STATUS_DETAIL_FUNCTIONS = {'_build_run_status_detail'}
-ARTIFACT_FUNCTIONS = {'_upload_generated_chat_artifact_for_current_user'}
+ARTIFACT_FUNCTIONS = {
+    '_safe_positive_int',
+    '_build_generated_chat_artifact_lifecycle_metadata',
+    '_build_generated_chat_artifact_lifecycle_response',
+    '_upload_generated_chat_artifact_for_current_user',
+}
 SCHEDULER_FUNCTIONS = {'_query_scheduler_candidates_by_status'}
 MANIFEST_FUNCTIONS = {
     '_normalize_tabular_run_task_type',
@@ -210,6 +232,9 @@ PERFORMANCE_FUNCTIONS = {
     '_build_tabular_generation_rollout_assignment',
     '_get_tabular_generation_rollout_settings_for_run',
     '_sync_tabular_generation_contract_fields',
+    '_get_tabular_run_lineage_schema',
+    '_get_tabular_run_public_output_schema',
+    '_get_tabular_run_internal_checkpoint_schema',
     '_build_generation_progress_contract_fields',
     '_extract_tabular_response_usage',
     '_resolve_tabular_batch_concurrency',
@@ -246,9 +271,17 @@ GENERATION_PLAN_FUNCTIONS = {
     '_build_tabular_generation_plan_input_contract',
     '_validate_tabular_generation_plan_output_fields',
     '_get_tabular_generation_plan_source',
+    '_validate_tabular_generation_plan_field_ownership',
     '_build_tabular_generation_plan',
     '_validate_tabular_generation_plan',
     '_get_tabular_generation_plan_output_schema',
+    '_get_tabular_generation_plan_llm_fields',
+    '_get_tabular_generation_plan_public_fields',
+    '_normalize_tabular_generation_plan_review',
+    '_finalize_tabular_generation_plan_review',
+    '_get_tabular_run_lineage_schema',
+    '_get_tabular_run_public_output_schema',
+    '_get_tabular_run_transformation_spec',
     '_tabular_generation_plan_blob_path',
     '_get_tabular_generation_plan_source_etag',
     '_build_tabular_output_checkpoint_metadata',
@@ -256,10 +289,13 @@ GENERATION_PLAN_FUNCTIONS = {
     '_get_tabular_generation_plan_mode',
     '_load_tabular_generation_plan_sample_rows',
     '_build_tabular_generation_plan_prompt',
+    '_build_tabular_generation_plan_review_prompt',
+    '_generate_tabular_generation_plan_review',
     '_generate_tabular_generation_plan',
     '_apply_active_tabular_generation_plan',
     '_recover_tabular_generation_plan',
     '_mark_tabular_generation_plan_fallback',
+    '_fail_active_tabular_generation_plan',
     '_ensure_tabular_generation_plan',
     '_record_shadow_tabular_generation_plan_comparison',
     '_dump_generated_output_json',
@@ -300,10 +336,14 @@ COMPACT_PROTOCOL_FUNCTIONS = {
     '_build_tabular_generation_plan_input_contract',
     '_validate_tabular_generation_plan_output_fields',
     '_get_tabular_generation_plan_source',
+    '_validate_tabular_generation_plan_field_ownership',
     '_build_tabular_generation_plan',
     '_validate_tabular_generation_plan',
     '_get_tabular_generation_plan_output_schema',
     '_get_tabular_generation_plan_llm_fields',
+    '_get_tabular_generation_plan_public_fields',
+    '_normalize_tabular_generation_plan_review',
+    '_finalize_tabular_generation_plan_review',
     '_get_compact_plan_hash_prefix',
     '_build_compact_batch_row_key',
     '_build_compact_batch_key_map',
@@ -527,6 +567,7 @@ def _load_direct_source_queue_helpers(route_dependencies):
     namespace.setdefault('TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS', 'hierarchical_analysis')
     namespace.setdefault('TABULAR_RUN_TASK_COMBINED', 'combined')
     namespace.setdefault('TABULAR_EXTENSIONS', {'csv', 'xlsx', 'xls', 'xlsm'})
+    namespace.setdefault('question_requests_tabular_exhaustive_row_output', lambda question: False)
     namespace.setdefault(
         '_dump_tabular_generated_output_json',
         lambda value: json.dumps(value, default=str, ensure_ascii=False, separators=(',', ':')),
@@ -780,6 +821,8 @@ def _load_stream_writer(download_json_blob):
         '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: batch_number,
         '_download_json_blob': download_json_blob,
         'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': 'source_row_number',
+        'is_analysis_internal_lineage_field': is_analysis_internal_lineage_field,
+        'project_structured_deliverable_row': project_structured_deliverable_row,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -943,8 +986,13 @@ def _load_cancellation_helpers(initial_run):
     namespace = {
         'logging': logging,
         'CosmosResourceNotFoundError': CosmosResourceNotFoundError,
+        'TABULAR_EXPORT_STATUS_FAILED': 'failed',
         'TABULAR_EXPORT_STATUS_COMPLETED': 'completed',
         'TABULAR_EXPORT_STATUS_CANCELED': 'canceled',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_VALIDATING': 'validating',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_PUBLISHING': 'publishing',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED': 'rollback_required',
+        'TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED': 'failed',
         'get_settings': lambda: {},
         '_read_run': read_run,
         '_replace_run': replace_run,
@@ -1343,13 +1391,19 @@ def _load_idempotent_artifact_helper():
             return self.clients.setdefault((container, blob), BlobClient())
 
     module_tree = ast.parse(SIMPLECHAT_OPERATIONS.read_text(encoding='utf-8'), filename=str(SIMPLECHAT_OPERATIONS))
-    selected_nodes = [
-        node
-        for node in module_tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in ARTIFACT_FUNCTIONS
-    ]
-    if len(selected_nodes) != len(ARTIFACT_FUNCTIONS):
-        raise AssertionError('Missing idempotent artifact helper')
+    selected_nodes = []
+    found_functions = set()
+    for node in module_tree.body:
+        if isinstance(node, ast.Assign):
+            assigned_names = {target.id for target in node.targets if isinstance(target, ast.Name)}
+            if any(name.startswith('GENERATED_CHAT_ARTIFACT_') for name in assigned_names):
+                selected_nodes.append(node)
+        elif isinstance(node, ast.FunctionDef) and node.name in ARTIFACT_FUNCTIONS:
+            selected_nodes.append(node)
+            found_functions.add(node.name)
+    missing_functions = ARTIFACT_FUNCTIONS - found_functions
+    if missing_functions:
+        raise AssertionError(f'Missing idempotent artifact helpers: {sorted(missing_functions)}')
 
     message_container = MessageContainer()
     blob_service_client = BlobServiceClient()
@@ -1368,6 +1422,23 @@ def _load_idempotent_artifact_helper():
         'uuid': uuid,
         'storage_account_personal_chat_container_name': 'personal-chat',
         '_get_latest_personal_thread_id': lambda conversation_id: None,
+        # Shared conversations authorize through the participation context. This fixture is a
+        # single-owner conversation, so no approval staging applies.
+        'build_conversation_participation_context': lambda user_id, conversation_item: {
+            'user_id': user_id,
+            'owner_user_id': (conversation_item or {}).get('user_id', ''),
+            'is_owner': True,
+            'collaboration_conversation_id': '',
+            'group_id': '',
+        },
+        'requires_generated_file_approval': lambda *args, **kwargs: False,
+        'build_generated_file_approval_metadata': lambda *args, **kwargs: {},
+        '_get_current_user_summary_or_none': lambda fallback_user_id='': {
+            'user_id': fallback_user_id,
+            'display_name': '',
+            'email': '',
+        },
+        '_notify_generated_file_approval_requested': lambda *args, **kwargs: None,
         'log_event': lambda *args, **kwargs: None,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
@@ -1434,6 +1505,7 @@ def _load_performance_helpers(progress_updates=None):
                 or name.startswith('TABULAR_EXECUTOR_')
                 or name.startswith('TABULAR_RETRY_')
                 or name.startswith('TABULAR_ROLLOUT_')
+                or name.startswith('TABULAR_SEMANTIC_')
                 for name in assigned_names
             ):
                 selected_nodes.append(node)
@@ -1451,6 +1523,7 @@ def _load_performance_helpers(progress_updates=None):
         'os': os,
         're': re,
         'timezone': timezone,
+        'is_analysis_internal_lineage_field': is_analysis_internal_lineage_field,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -1505,16 +1578,20 @@ def _load_generation_plan_helpers():
         raise AssertionError(f'Missing generation plan helpers: {sorted(missing_functions)}')
 
     class PlannerError(RuntimeError):
-        def __init__(self, reason):
+        def __init__(self, reason, failed_run=None):
             super().__init__('planner failed')
             self.reason = reason
+            self.failed_run = failed_run
 
     class ChatHistory:
+        def __init__(self):
+            self.messages = []
+
         def add_system_message(self, message):
-            del message
+            self.messages.append(('system', message))
 
         def add_user_message(self, message):
-            del message
+            self.messages.append(('user', message))
 
     class ExecutionSettings:
         def __init__(self, **kwargs):
@@ -1571,6 +1648,10 @@ def _load_generation_plan_helpers():
             (input_batches or run['_test_batches'])[batch_number - 1]
         ),
         '_normalize_tabular_run_task_type': lambda value: value or 'structured_export',
+        'is_analysis_internal_lineage_field': is_analysis_internal_lineage_field,
+        'normalize_tabular_transformation_spec': normalize_tabular_transformation_spec,
+        'TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC': TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC,
+        'TABULAR_TRANSFORMATION_SPEC_VERSION': TABULAR_TRANSFORMATION_SPEC_VERSION,
         '_resolve_tabular_generation_planner_model': lambda run, settings: {
             'endpoint_id': 'endpoint-1',
             'model_id': 'gpt-plan',
@@ -1604,6 +1685,7 @@ def _load_compact_protocol_helpers():
                 or name.startswith('TABULAR_RUN_TASK_')
                 or name.startswith('TABULAR_ROLLOUT_')
                 or name.startswith('TABULAR_COMPACT_')
+                or name.startswith('TABULAR_SEMANTIC_')
                 for name in assigned_names
             ):
                 selected_nodes.append(node)
@@ -1616,6 +1698,9 @@ def _load_compact_protocol_helpers():
         'hashlib': hashlib,
         'json': json,
         're': re,
+        'normalize_tabular_transformation_spec': normalize_tabular_transformation_spec,
+        'TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC': TABULAR_TRANSFORMATION_FIELD_MODE_DETERMINISTIC,
+        'TABULAR_TRANSFORMATION_SPEC_VERSION': TABULAR_TRANSFORMATION_SPEC_VERSION,
     }
     extracted_module = ast.Module(body=selected_nodes, type_ignores=[])
     exec(compile(extracted_module, str(EXPORT_MODULE), 'exec'), namespace)
@@ -1701,6 +1786,32 @@ def _build_phase_three_test_run(plan_mode='shadow', plan_status='pending'):
         'plan_hash': None,
         'output_schema': None,
         'passthrough_input_rows': False,
+        'tabular_planner_metadata': {
+            'deliverable_contract': {
+                'contract_version': 'analysis-deliverables-v3',
+                'action_mode': 'search',
+                'analysis_required': False,
+                'primary_artifact_role': '',
+                'requested_artifacts': [{
+                    'artifact_id': 'requested-csv',
+                    'role': 'requested_output',
+                    'format': 'csv',
+                    'required': True,
+                    'request_order': 0,
+                }],
+                'public_output_schema': [],
+                'internal_checkpoint_schema': [],
+                'lineage_schema': ['source_row_number', 'source_row_identity'],
+                'row_cardinality': 'one_per_source_row',
+                'ordering': 'source_order',
+                'transformation_mode': 'semantic',
+                'transformation_spec': {},
+                'validation_profile': 'exact_rows_schema',
+                'publication_policy': 'all_required_artifacts',
+                'source_fingerprint': 'source-fixture',
+                'request_fingerprint': 'request-fixture',
+            },
+        },
         '_test_batches': [
             [{
                 'Case ID': 'SC-1',
@@ -1743,6 +1854,23 @@ def _build_phase_three_plan(helpers, run):
                     'source': 'llm',
                 },
             ],
+            'transformation_spec': {
+                'version': 'tabular-transform-v1',
+                'fields': [
+                    {
+                        'name': 'answer',
+                        'mode': 'semantic',
+                        'type': 'string',
+                        'nullable': False,
+                    },
+                    {
+                        'name': 'risk',
+                        'mode': 'semantic',
+                        'type': 'string',
+                        'nullable': True,
+                    },
+                ],
+            },
             'output_verbosity': 'concise',
         },
         input_contract,
@@ -1753,7 +1881,20 @@ def _build_phase_three_plan(helpers, run):
         },
         created_at='2026-08-10T12:00:00+00:00',
     )
-    return plan, input_contract
+    reviewed_plan = helpers['_finalize_tabular_generation_plan_review'](
+        plan,
+        {
+            'status': 'passed',
+            'represented_fields': ['answer', 'risk'],
+            'reason_codes': [],
+        },
+        {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-plan',
+            'deployment': 'gpt-plan',
+        },
+    )
+    return reviewed_plan, input_contract
 
 
 def _build_phase_four_plan(helpers, run):
@@ -1807,6 +1948,17 @@ def _build_phase_four_plan(helpers, run):
                     'source': 'llm',
                 },
             ],
+            'transformation_spec': {
+                'version': 'tabular-transform-v1',
+                'fields': [
+                    {'name': 'answer', 'mode': 'semantic', 'type': 'string', 'nullable': False},
+                    {'name': 'risk', 'mode': 'semantic', 'type': 'string', 'nullable': True},
+                    {'name': 'score', 'mode': 'semantic', 'type': 'number', 'nullable': False},
+                    {'name': 'flagged', 'mode': 'semantic', 'type': 'boolean', 'nullable': False},
+                    {'name': 'evidence', 'mode': 'semantic', 'type': 'object', 'nullable': False},
+                    {'name': 'tags', 'mode': 'semantic', 'type': 'array', 'nullable': False},
+                ],
+            },
             'output_verbosity': 'concise',
         },
         input_contract,
@@ -2049,6 +2201,9 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
         'tabular_generation_rollout_percentage': 100,
         'tabular_background_handoff_mode': 'legacy',
         'tabular_generation_plan_mode': 'shadow',
+        'tabular_semantic_validation_mode': 'off',
+        'tabular_semantic_repair_max_attempts': 2,
+        'tabular_semantic_repair_max_rows': 100,
         'enable_tabular_generation_plan': True,
         'enable_tabular_compact_response_protocol': False,
         'enable_tabular_completion_driven_checkpointing': True,
@@ -2063,6 +2218,9 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
     overridden = normalize_rollout({
         'tabular_background_handoff_mode': 'server',
         'tabular_generation_plan_mode': 'shadow',
+        'tabular_semantic_validation_mode': 'active',
+        'tabular_semantic_repair_max_attempts': 99,
+        'tabular_semantic_repair_max_rows': 9999,
         'enable_tabular_generation_plan': 'true',
         'enable_tabular_compact_response_protocol': 'yes',
         'enable_tabular_completion_driven_checkpointing': '1',
@@ -2075,6 +2233,9 @@ def test_phase_three_rollout_activates_shadow_only_and_stays_backend_only():
     })
     assert overridden['tabular_background_handoff_mode'] == 'server'
     assert overridden['tabular_generation_plan_mode'] == 'shadow'
+    assert overridden['tabular_semantic_validation_mode'] == 'active'
+    assert overridden['tabular_semantic_repair_max_attempts'] == 5
+    assert overridden['tabular_semantic_repair_max_rows'] == 500
     assert overridden['enable_tabular_generation_plan'] is True
     assert overridden['enable_tabular_compact_response_protocol'] is True
     assert overridden['enable_tabular_completion_driven_checkpointing'] is True
@@ -2614,6 +2775,202 @@ def test_phase_three_plan_contract_is_bounded_immutable_and_private():
         raise AssertionError('Plan mutation must fail canonical hash validation')
 
 
+def test_phase_7b_generation_plan_persists_reviewed_transformation_contract():
+    """Active plans persist reviewed deterministic and semantic field ownership."""
+    helpers, _, _ = _load_generation_plan_helpers()
+    run = _build_phase_three_test_run(plan_mode='active')
+    input_contract = helpers['_build_tabular_generation_plan_input_contract'](
+        run['_test_batches'][0] + run['_test_batches'][1]
+    )
+    plan = helpers['_build_tabular_generation_plan'](
+        run,
+        {
+            'output_fields': [
+                {
+                    'name': 'answer',
+                    'description': 'Copy the source comment exactly.',
+                    'type': 'string',
+                    'nullable': False,
+                    'source': 'server',
+                },
+                {
+                    'name': 'risk',
+                    'description': 'Semantic risk classification for the source row.',
+                    'type': 'string',
+                    'nullable': False,
+                    'source': 'llm',
+                },
+            ],
+            'transformation_spec': {
+                'version': 'tabular-transform-v1',
+                'fields': [
+                    {
+                        'name': 'answer',
+                        'mode': 'deterministic',
+                        'type': 'string',
+                        'nullable': False,
+                        'expression': {'op': 'copy', 'source': 'Comment'},
+                    },
+                    {
+                        'name': 'risk',
+                        'mode': 'semantic',
+                        'type': 'string',
+                        'nullable': False,
+                        'allowed_values': ['High', 'Medium', 'Low'],
+                    },
+                ],
+            },
+        },
+        input_contract,
+        {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-plan',
+            'deployment': 'gpt-plan',
+        },
+        created_at='2026-08-12T12:00:00+00:00',
+    )
+    reviewed_plan = helpers['_finalize_tabular_generation_plan_review'](
+        plan,
+        {
+            'status': 'passed',
+            'represented_fields': ['answer', 'risk'],
+            'reason_codes': [],
+        },
+        {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-review',
+            'deployment': 'gpt-review',
+        },
+    )
+
+    assert reviewed_plan['version'] == 2
+    assert reviewed_plan['review']['status'] == 'passed'
+    assert reviewed_plan['transformation_spec']['deterministic_field_order'] == ['answer']
+    assert reviewed_plan['transformation_spec']['field_mode_counts'] == {
+        'deterministic': 1,
+        'hybrid': 0,
+        'semantic': 1,
+    }
+    assert [
+        field['name']
+        for field in helpers['_get_tabular_generation_plan_llm_fields'](reviewed_plan)
+    ] == ['risk']
+    assert [
+        field['name']
+        for field in helpers['_get_tabular_generation_plan_public_fields'](reviewed_plan)
+    ] == ['answer', 'risk']
+    helpers['_validate_tabular_generation_plan'](
+        reviewed_plan,
+        run,
+        input_schema_hash=input_contract['input_schema_hash'],
+    )
+
+    helpers['_apply_active_tabular_generation_plan'](run, reviewed_plan)
+    assert run['output_schema'] == [
+        'source_row_number',
+        'source_row_identity',
+        'answer',
+        'risk',
+    ]
+    assert run['public_output_schema'] == ['answer', 'risk']
+    assert run['transformation_spec'] == reviewed_plan['transformation_spec']
+
+    missing_contract_run = _build_phase_three_test_run(plan_mode='active')
+    missing_contract_run.pop('tabular_planner_metadata')
+    try:
+        helpers['_apply_active_tabular_generation_plan'](missing_contract_run, reviewed_plan)
+    except ValueError as exc:
+        assert 'deliverable contract' in str(exc).lower()
+    else:
+        raise AssertionError('Active v2 plans must not run without a deliverable contract')
+
+
+def test_phase_7b_planner_requires_independent_review_invocation():
+    """The planner cannot return a persistable plan without a separate review call."""
+    helpers, _, _ = _load_generation_plan_helpers()
+    run = _build_phase_three_test_run(plan_mode='active')
+    input_contract = helpers['_build_tabular_generation_plan_input_contract'](
+        run['_test_batches'][0] + run['_test_batches'][1]
+    )
+    planner_payload = {
+        'output_fields': [
+            {
+                'name': 'answer',
+                'description': 'Copy the source comment exactly.',
+                'type': 'string',
+                'nullable': False,
+                'source': 'server',
+            },
+            {
+                'name': 'risk',
+                'description': 'Semantic risk classification for the source row.',
+                'type': 'string',
+                'nullable': False,
+                'source': 'llm',
+            },
+        ],
+        'transformation_spec': {
+            'version': 'tabular-transform-v1',
+            'fields': [
+                {
+                    'name': 'answer',
+                    'mode': 'deterministic',
+                    'type': 'string',
+                    'nullable': False,
+                    'expression': {'op': 'copy', 'source': 'Comment'},
+                },
+                {
+                    'name': 'risk',
+                    'mode': 'semantic',
+                    'type': 'string',
+                    'nullable': False,
+                    'allowed_values': ['High', 'Medium', 'Low'],
+                },
+            ],
+        },
+    }
+    review_payload = {
+        'status': 'passed',
+        'represented_fields': ['answer', 'risk'],
+        'reason_codes': [],
+    }
+
+    class PlanAndReviewService:
+        def __init__(self):
+            self.service_ids = []
+            self.chat_histories = []
+
+        async def get_chat_message_contents(self, chat_history, execution_settings):
+            self.service_ids.append(execution_settings.kwargs.get('service_id'))
+            self.chat_histories.append(list(chat_history.messages))
+            payload = planner_payload if len(self.service_ids) == 1 else review_payload
+            return [SimpleNamespace(
+                content=json.dumps(payload),
+                metadata={'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}},
+            )]
+
+    service = PlanAndReviewService()
+    reviewed_plan, metrics = asyncio.run(helpers['_generate_tabular_generation_plan'](
+        service,
+        run,
+        input_contract,
+        {
+            'endpoint_id': 'endpoint-1',
+            'model_id': 'gpt-plan',
+            'deployment': 'gpt-plan',
+        },
+        30,
+    ))
+
+    assert service.service_ids == [
+        'tabular-generated-output-background',
+        'tabular-generated-output-plan-review',
+    ]
+    assert service.chat_histories[0] != service.chat_histories[1]
+    assert reviewed_plan['review']['status'] == 'passed'
+    assert metrics['review_total_token_count'] == 15
+
+
 def test_phase_three_plan_rejects_malformed_fields_and_source_changes():
     """Duplicate, reserved, excessive, unsupported, and source-mismatched plans fail closed."""
     helpers, _, _ = _load_generation_plan_helpers()
@@ -2741,7 +3098,7 @@ def test_phase_three_shadow_active_and_checkpoint_contracts():
 
 
 def test_phase_three_planner_timeout_retries_before_fallback():
-    """The bounded planner retries provider timeouts and reports a safe fallback reason."""
+    """The bounded planner retries provider timeouts and reports a safe failure reason."""
     helpers, PlannerError, _ = _load_generation_plan_helpers()
     run = _build_phase_three_test_run(plan_mode='active')
     _, input_contract = _build_phase_three_plan(helpers, run)
@@ -2767,12 +3124,12 @@ def test_phase_three_planner_timeout_retries_before_fallback():
     except PlannerError as exc:
         assert exc.reason == 'timeout'
     else:
-        raise AssertionError('Planner timeout exhaustion must request legacy fallback')
+        raise AssertionError('Planner timeout exhaustion must report bounded failure')
     assert planner.calls == 2
 
 
 def test_phase_three_plan_persistence_boundaries_never_replan():
-    """Resume recovers an immutable plan or falls back without automatically replanning."""
+    """Resume recovers immutable plans and active planning failures remain fail-closed."""
     helpers, PlannerError, state = _load_generation_plan_helpers()
     active_run = _build_phase_three_test_run(plan_mode='active', plan_status='planning')
     plan, _ = _build_phase_three_plan(helpers, active_run)
@@ -2804,17 +3161,24 @@ def test_phase_three_plan_persistence_boundaries_never_replan():
 
     interrupted_run = _build_phase_three_test_run(plan_mode='active', plan_status='planning')
     state['blobs'].clear()
-    fallback_run = helpers['_ensure_tabular_generation_plan'](
-        interrupted_run,
-        object(),
-        interrupted_run['_test_batches'],
-        {},
-        60,
-    )
+    try:
+        helpers['_ensure_tabular_generation_plan'](
+            interrupted_run,
+            object(),
+            interrupted_run['_test_batches'],
+            {},
+            60,
+        )
+    except PlannerError as exc:
+        assert exc.reason == 'interrupted_before_persistence'
+        assert exc.failed_run['plan_status'] == 'failed'
+        assert exc.failed_run['plan_failure_reason'] == 'interrupted_before_persistence'
+    else:
+        raise AssertionError('Interrupted active planning must fail closed')
     assert planner_calls == []
-    assert fallback_run['plan_status'] == 'fallback'
-    assert fallback_run['plan_failure_reason'] == 'interrupted_before_persistence'
-    assert fallback_run['output_schema'] is None
+    assert interrupted_run['plan_status'] == 'failed'
+    assert interrupted_run['plan_failure_reason'] == 'interrupted_before_persistence'
+    assert interrupted_run['output_schema'] is None
 
     pending_run = _build_phase_three_test_run(plan_mode='active', plan_status='pending')
 
@@ -2823,16 +3187,22 @@ def test_phase_three_plan_persistence_boundaries_never_replan():
         raise PlannerError('timeout')
 
     helpers['_generate_tabular_generation_plan'] = timed_out_planner
-    timeout_fallback_run = helpers['_ensure_tabular_generation_plan'](
-        pending_run,
-        object(),
-        pending_run['_test_batches'],
-        {},
-        60,
-    )
-    assert timeout_fallback_run['plan_status'] == 'fallback'
-    assert timeout_fallback_run['plan_failure_reason'] == 'timeout'
-    assert timeout_fallback_run['output_schema'] is None
+    try:
+        helpers['_ensure_tabular_generation_plan'](
+            pending_run,
+            object(),
+            pending_run['_test_batches'],
+            {},
+            60,
+        )
+    except PlannerError as exc:
+        assert exc.reason == 'timeout'
+        assert exc.failed_run['plan_status'] == 'failed'
+        assert exc.failed_run['plan_failure_reason'] == 'timeout'
+    else:
+        raise AssertionError('Timed-out active planning must fail closed')
+    assert pending_run['plan_status'] == 'planning'
+    assert pending_run['output_schema'] is None
 
     upload_helpers, _, upload_state = _load_generation_plan_helpers()
     new_run = _build_phase_three_test_run(plan_mode='active', plan_status='pending')
@@ -2863,7 +3233,7 @@ def test_phase_three_plan_persistence_boundaries_never_replan():
     assert len(successful_planner_calls) == 1
     assert len(upload_state['uploads']) == 1
     assert upload_state['uploads'][0]['overwrite'] is False
-    assert upload_state['uploads'][0]['path'].endswith('/plan/plan_v1.json')
+    assert upload_state['uploads'][0]['path'].endswith('/plan/plan_v2.json')
     assert upload_state['uploads'][0]['metadata']['plan_hash'] == new_plan['plan_hash']
     assert planned_run['plan_status'] == 'ready'
     assert planned_run['output_schema'][-2:] == ['answer', 'risk']
@@ -2881,6 +3251,43 @@ def test_phase_three_plan_persistence_boundaries_never_replan():
     )
     assert reloaded_run['plan_hash'] == new_plan['plan_hash']
     assert len(upload_state['uploads']) == 1
+
+    legacy_run = _build_phase_three_test_run(plan_mode='active', plan_status='ready')
+    legacy_plan = json.loads(json.dumps(new_plan))
+    legacy_plan['version'] = 1
+    legacy_plan['prompt_version'] = 'tabular-generation-plan-v1'
+    legacy_plan.pop('transformation_spec')
+    legacy_plan.pop('review')
+    for output_field in legacy_plan['output_fields'][2:]:
+        output_field['source'] = 'llm'
+    legacy_plan['plan_hash'] = upload_helpers['_hash_tabular_generation_plan'](legacy_plan)
+    legacy_plan_path = upload_helpers['_tabular_generation_plan_blob_path'](
+        legacy_run['user_id'],
+        legacy_run['conversation_id'],
+        legacy_run['id'],
+        plan_version=1,
+    )
+    upload_state['blobs'][legacy_plan_path] = legacy_plan
+    legacy_run.update({
+        'plan_blob_path': legacy_plan_path,
+        'plan_hash': legacy_plan['plan_hash'],
+    })
+    legacy_contract_before = json.loads(json.dumps(
+        legacy_run['tabular_planner_metadata']['deliverable_contract']
+    ))
+    recovered_legacy_run = upload_helpers['_ensure_tabular_generation_plan'](
+        legacy_run,
+        object(),
+        legacy_run['_test_batches'],
+        {},
+        60,
+    )
+    assert recovered_legacy_run['plan_blob_path'].endswith('/plan/plan_v1.json')
+    assert recovered_legacy_run['output_schema'][-2:] == ['answer', 'risk']
+    assert (
+        recovered_legacy_run['tabular_planner_metadata']['deliverable_contract']
+        == legacy_contract_before
+    )
 
     mismatched_run = dict(planned_run)
     mismatched_run['plan_hash'] = '0' * 64
@@ -2956,7 +3363,10 @@ def test_phase_four_compact_protocol_requires_active_plan_rollout():
     try:
         helpers['_build_tabular_generation_plan'](
             invalid_run,
-            {'output_fields': plan['output_fields'][2:]},
+            {
+                'output_fields': plan['output_fields'][2:],
+                'transformation_spec': plan['transformation_spec'],
+            },
             input_contract,
             {'model_id': 'gpt-plan', 'deployment': 'gpt-plan'},
         )
@@ -4573,6 +4983,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
     fake_module.TabularProcessingPlugin = FakeWorkbookPlugin
     sys.modules['semantic_kernel_plugins.tabular_processing_plugin'] = fake_module
     queued_runs = []
+    log_events = []
     try:
         helpers = _load_direct_source_queue_helpers({
             '_safe_int': lambda value: int(value or 0),
@@ -4580,7 +4991,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
                 'max_rows': 60,
                 'max_chars': 60000,
             },
-            '_get_tabular_generated_output_task_type': lambda *args: None,
+            '_get_tabular_generated_output_task_type': lambda *args, **kwargs: None,
             'question_requests_tabular_generated_output': lambda question: True,
             'question_requests_tabular_hierarchical_analysis': lambda question: False,
             'get_tabular_generated_output_format': lambda question: 'csv',
@@ -4601,7 +5012,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
                 'status': 'failed',
             },
             'logging': logging,
-            'log_event': lambda *args, **kwargs: None,
+            'log_event': lambda *args, **kwargs: log_events.append((args, kwargs)),
         })
         for source_format in ('xlsx', 'xls', 'xlsm'):
             output_metadata = helpers['maybe_queue_direct_tabular_generated_output'](
@@ -4615,7 +5026,7 @@ def test_direct_source_backed_queue_supports_all_workbook_formats():
                 gpt_model='test-model',
                 settings={},
             )
-            assert output_metadata['background_export'] is True
+            assert output_metadata.get('background_export') is True, log_events
     finally:
         if original_module is None:
             sys.modules.pop('semantic_kernel_plugins.tabular_processing_plugin', None)
@@ -4702,7 +5113,10 @@ def test_direct_source_backed_csv_queue_bypasses_tool_paging():
                 'max_rows': 60,
                 'max_chars': 60000,
             },
-            '_get_tabular_generated_output_task_type': lambda generated, analysis, settings: 'combined' if generated and analysis else None,
+            '_get_tabular_generated_output_task_type': (
+                lambda generated, analysis, settings, action_mode=None, exhaustive_row_output_requested=False:
+                'combined' if generated and analysis else None
+            ),
             'question_requests_tabular_generated_output': lambda question: True,
             'question_requests_tabular_hierarchical_analysis': lambda question: True,
             'get_tabular_generated_output_format': lambda question: 'csv',
@@ -4783,7 +5197,9 @@ def test_direct_source_backed_queue_failure_suppresses_inline_exhaustive_output(
                 'max_rows': 60,
                 'max_chars': 60000,
             },
-            '_get_tabular_generated_output_task_type': lambda generated, analysis, settings: None,
+            '_get_tabular_generated_output_task_type': (
+                lambda generated, analysis, settings, action_mode=None, exhaustive_row_output_requested=False: None
+            ),
             'question_requests_tabular_generated_output': lambda question: True,
             'question_requests_tabular_hierarchical_analysis': lambda question: False,
             'get_tabular_generated_output_format': lambda question: 'csv',
@@ -5666,8 +6082,10 @@ def test_runner_routes_combined_analysis_and_export_once():
     )
     assert '_analysis_chunk_summary_blob_path' in load_summaries_source
     assert "'generated_artifacts': generated_artifacts" in public_status_source
-    assert "'structured_export_artifact': run.get('structured_export_artifact')" in public_status_source
-    assert "'analysis_artifact': run.get('analysis_artifact')" in public_status_source
+    assert "'structured_export_artifact': structured_export_public_artifact" in public_status_source
+    assert "'analysis_artifact': analysis_public_artifact" in public_status_source
+    assert "'structured_export_artifact': run.get('structured_export_artifact')" not in public_status_source
+    assert "'analysis_artifact': run.get('analysis_artifact')" not in public_status_source
     assert 'analysis_generated_file_name' in queue_source
     assert '_generate_combined_chunk_result_window' in export_source
     assert 'tabular_combined_analysis_summary' in export_source
@@ -5983,6 +6401,8 @@ def main():
         test_phase_one_observability_uses_safe_metrics_not_response_content,
         test_phase_one_fake_harnesses_control_completion_order_and_storage_failures,
         test_phase_three_plan_contract_is_bounded_immutable_and_private,
+        test_phase_7b_generation_plan_persists_reviewed_transformation_contract,
+        test_phase_7b_planner_requires_independent_review_invocation,
         test_phase_three_plan_rejects_malformed_fields_and_source_changes,
         test_phase_three_shadow_active_and_checkpoint_contracts,
         test_phase_three_planner_timeout_retries_before_fallback,

@@ -2,7 +2,7 @@
 # test_latest_features_nav_hide_preference.py
 """
 Functional test for versioned Latest Features navigation hiding.
-Version: 0.250.098
+Version: 0.260.001
 Implemented in: 0.250.059
 
 This test ensures that Latest Features navigation entries hide only for the
@@ -24,8 +24,11 @@ from functions_latest_features_nav import (  # noqa: E402
     normalize_latest_features_hidden_version,
     should_hide_latest_features_nav,
 )
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
+# Sample versions used as test data for the hide-comparison logic. These are
+# deliberately fixed values and are not expected to track config.py.
 CURRENT_VERSION = "0.250.098"
 PREVIOUS_VERSION = "0.250.057"
 
@@ -89,10 +92,10 @@ def test_latest_features_nav_wiring():
     profile_template = APP_DIR / "templates" / "profile.html"
     latest_features_js = APP_DIR / "static" / "js" / "latest-features-nav.js"
 
+    assert_app_version_at_least("0.250.059")
     assert_contains(
         config_file,
         [
-            f'VERSION = "{CURRENT_VERSION}"',
             "IS_DEVELOPMENT = is_development_env_enabled()",
         ],
     )

@@ -19,7 +19,7 @@ hero_links:
     url: /reference/deploy/azd-cli_deploy/
     style: primary
   - label: "Enterprise networking"
-    url: /how-to/enterprise_networking/
+    url: /guides/enterprise-networking/
     style: secondary
 nav_links:
   prev:
@@ -75,7 +75,7 @@ The Bicep templates are the infrastructure backbone behind the repo's recommende
 
 ## References
 
-- [Setup Instructions](../../setup_instructions.md)
-- [Special Deployment Scenarios](../../setup_instructions_special.md)
-- [Enterprise Networking](../../how-to/enterprise_networking.md)
+- [Setup Instructions]({{ '/start/deployment-options/' | relative_url }})
+- [Special Deployment Scenarios]({{ '/deploy/special-scenarios/' | relative_url }})
+- [Enterprise Networking]({{ '/guides/enterprise-networking/' | relative_url }})
 - [Bicep deployer README](https://github.com/microsoft/simplechat/blob/main/deployers/bicep/README.md)

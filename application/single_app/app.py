@@ -31,16 +31,18 @@ from functions_authentication import *
 from functions_content import *
 from functions_documents import *
 from functions_latest_features_nav import should_hide_latest_features_nav
+from admin_settings_nav import ADMIN_NAV, get_landing_tab_id
 from functions_search import *
 from functions_settings import *
 from functions_mcp_server_config import is_mcp_ui_enabled
+from functions_rate_limit import build_rate_limit_error_payload
 from functions_appinsights import *
 from functions_activity_logging import *
 
 import threading
 import time
 from datetime import datetime
-from flask import Blueprint, g
+from flask import Blueprint, g, make_response
 from urllib.parse import urlparse
 
 from route_frontend_authentication import *
@@ -320,6 +322,10 @@ def initialize_application(force=False):
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
+        # basicConfig above is a no-op once Azure Monitor owns the root logger,
+        # and that same root handler stops Flask attaching its stderr handler,
+        # so unhandled tracebacks would otherwise never reach the container log.
+        ensure_console_error_logging(app.logger)
         ensure_default_global_agent_exists()
 
         start_background_tasks()
@@ -598,6 +604,8 @@ def inject_settings():
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
+        admin_nav=ADMIN_NAV,
+        admin_landing_tab=get_landing_tab_id(),
         latest_features_current_version=VERSION,
         latest_features_nav_hidden=latest_features_nav_hidden,
         latest_features_nav_hidden_by_development=IS_DEVELOPMENT,
@@ -1092,6 +1100,58 @@ def nl2br_filter(value):
 
 app.jinja_env.filters['nl2br'] = nl2br_filter
 
+
+# =================== Rate Limiting (429) Responses =====================
+def rate_limited_caller_wants_json():
+    """Return True when a rate limited caller expects JSON over a rendered page."""
+    path = request.path or ''
+    if path.startswith('/api/') or path.startswith('/external/'):
+        return True
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return True
+
+    accept = request.accept_mimetypes
+    return accept.accept_json and not accept.accept_html
+
+
+@app.errorhandler(429)
+def handle_rate_limited_request(error):
+    """Return the admin-configured message whenever a request is rate limited.
+
+    Views that build their own 429 body resolve the message themselves, so this
+    handler covers ``abort(429)`` and any 429 raised from within the stack.
+    """
+    settings = get_settings()
+    retry_after = getattr(error, 'retry_after', None)
+
+    if rate_limited_caller_wants_json():
+        response = jsonify(build_rate_limit_error_payload(settings, retry_after=retry_after))
+    else:
+        message = get_rate_limit_message(settings)
+        try:
+            response = make_response(render_template(
+                'errors/429.html',
+                rate_limit_message_html=markdown_filter(message),
+            ))
+        except Exception as render_error:
+            # The message still has to reach the user even if the shell fails
+            # to render, so fall back to the raw Markdown as plain text.
+            log_event(
+                f"[RATE_LIMIT] Failed to render the 429 page: {render_error}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            response = make_response(message)
+            response.mimetype = 'text/plain'
+
+    response.status_code = 429
+    if retry_after:
+        response.headers['Retry-After'] = str(retry_after)
+
+    return response
+
+
 public_app_bp = Blueprint('public_app', __name__)
 
 
@@ -1099,6 +1159,9 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
+        return redirect(url_for('frontend_authentication.login'))
+
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
 

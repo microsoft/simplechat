@@ -3,6 +3,7 @@
 import re
 import shutil
 import subprocess
+import time
 import traceback
 import zipfile
 from io import BytesIO
@@ -26,12 +27,15 @@ from functions_data_management_search_write_fence import (
 )
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
 from functions_content import *
+from functions_office_media import extract_office_embedded_images_with_diagnostics
+from functions_content_understanding import analyze_image_with_content_understanding
 from functions_settings import *
 from functions_search import *
 from functions_logging import *
 from functions_authentication import *
 from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
@@ -45,6 +49,11 @@ _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
 
 class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE = "OrderedDict mutated during iteration"
+MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS = 2
+MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS = 0.5
 
 
 def _search_indexing_results_succeeded(results):
@@ -141,6 +150,9 @@ def _build_model_endpoint_client(
     api_type='',
     anthropic_version='',
     allow_private_custom_endpoints=False,
+    settings=None,
+    endpoint_config=None,
+    identity_context=None,
 ):
     client, _ = build_model_endpoint_sync_chat_client(
         auth_settings,
@@ -151,11 +163,14 @@ def _build_model_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        settings=settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
     )
     return client
 
 
-def _resolve_metadata_extraction_client(settings):
+def _resolve_metadata_extraction_client(settings, identity_context=None):
     selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
 
     if (
@@ -217,17 +232,22 @@ def _resolve_metadata_extraction_client(settings):
             allow_private_custom_endpoints=bool(
                 settings.get("allow_private_custom_model_endpoints", False)
             ),
+            settings=settings,
+            endpoint_config=endpoint_cfg,
+            identity_context=identity_context,
         ), deployment
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:
         raise ValueError("No metadata extraction model is selected.")
 
+    extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key')
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         ), gpt_model
 
     if settings.get('azure_openai_gpt_authentication_type') == 'managed_identity':
@@ -238,13 +258,15 @@ def _resolve_metadata_extraction_client(settings):
         return AzureOpenAI(
             api_version=settings.get('azure_openai_gpt_api_version'),
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-            azure_ad_token_provider=token_provider
+            azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         ), gpt_model
 
     return AzureOpenAI(
         api_version=settings.get('azure_openai_gpt_api_version'),
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
-        api_key=settings.get('azure_openai_gpt_key')
+        api_key=settings.get('azure_openai_gpt_key'),
+        default_headers=extra_headers or None,
     ), gpt_model
 
 
@@ -264,6 +286,16 @@ DI_SELECTION_MARK_PATTERNS = (
 )
 DI_MARKDOWN_TABLE_SEPARATOR_PATTERN = re.compile(r'(?m)^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$')
 DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
+# Document Intelligence Layout emits figures as markdown <figure> blocks or image tags. Auto mode
+# treats them as a signal that Enhanced extraction is worth the extra cost, because Content
+# Understanding is the only engine that describes figures.
+DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
+# Budget for image content merged into an existing chunk. The limit is the embedding character
+# budget, so a merged chunk can never grow past what the embedding endpoint accepts.
+OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT = 4000
+OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT = int(
+    EMBEDDING_CONTEXT_FALLBACK_TOKENS * EMBEDDING_CHUNK_UTILIZATION * EMBEDDING_CHARS_PER_TOKEN
+)
 
 
 def is_pdf_file_name(file_name):
@@ -300,12 +332,357 @@ def _get_document_intelligence_auto_layout_reason(sampled_pages):
         return 'selection marks or checkbox states detected in the sampled pages'
     if DI_MARKDOWN_TABLE_ROW_PATTERN.search(sampled_text) and DI_MARKDOWN_TABLE_SEPARATOR_PATTERN.search(sampled_text):
         return 'table structure detected in the sampled pages'
+    if DI_MARKDOWN_FIGURE_PATTERN.search(sampled_text):
+        return 'figures or images detected in the sampled pages'
     return ''
+
+
+def _analyze_single_embedded_image(image_path, extraction_engine, image_extraction_mode, settings):
+    """Analyze one extracted Office image with the active engine and return its text."""
+    if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING:
+        return analyze_image_with_content_understanding(image_path, settings=settings)
+
+    image_pages = extract_content_with_azure_di(image_path, extraction_mode=image_extraction_mode)
+    return "\n\n".join(
+        str(page.get('content', '') or '').strip()
+        for page in image_pages or []
+        if isinstance(page, dict) and str(page.get('content', '') or '').strip()
+    ).strip()
+
+
+def _describe_embedded_image_skips(diagnostics):
+    """Render skip counts as a short, admin-readable explanation."""
+    reasons = diagnostics.get('skipped_reasons') or {}
+    if not reasons:
+        return ''
+    friendly = {
+        'below_minimum_pixels': 'too small',
+        'below_minimum_bytes': 'too small',
+        'duplicate_image': 'duplicates',
+        'unsupported_format': 'unsupported format',
+        'unreadable_image': 'unreadable',
+        'unreadable_or_oversized': 'unreadable or oversized',
+        'per_document_cap_reached': 'over the per-document cap',
+        'write_failed': 'could not be written',
+        'unsafe_entry_name': 'unsafe file name',
+    }
+    parts = []
+    for reason, count in sorted(reasons.items(), key=lambda item: -item[1]):
+        label = friendly.get(reason, reason.replace('_', ' '))
+        parts.append(f"{count} {label}")
+    return ", ".join(parts)
+
+
+def _build_office_embedded_image_chunks(
+    file_path,
+    settings,
+    update_callback,
+):
+    """Analyze images embedded in an Office file and return placeable content blocks.
+
+    Neither engine describes figures inside Office files, so the images are pulled out of the
+    package and analyzed individually with whichever engine backs the admin's selected mode. Each
+    result carries the position metadata needed to merge it back into the chunk it came from,
+    rather than being appended to the end of the document.
+
+    Returns ``(image_blocks, analyzed_count, extraction_engine, total_body_words)``.
+    """
+    if not settings.get('enable_office_embedded_image_analysis', True):
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, 0
+
+    min_pixels = normalize_office_embedded_image_min_pixels(
+        settings.get('office_embedded_image_min_pixels')
+    )
+    max_images = normalize_office_embedded_image_max_per_document(
+        settings.get('office_embedded_image_max_per_document')
+    )
+    if max_images <= 0:
+        return [], 0, EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, 0
+
+    # Embedded images are images, so they follow the image side of the admin's configured mode.
+    admin_extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
+    image_extraction_mode = 'read' if admin_extraction_mode == 'read' else 'layout'
+    extraction_engine, _ = _resolve_extraction_engine_for_mode(image_extraction_mode, settings)
+
+    chunks = []
+    analyzed_count = 0
+    temp_image_dir = None
+    total_body_words = 0
+
+    try:
+        temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
+        embedded_images, image_diagnostics = extract_office_embedded_images_with_diagnostics(
+            file_path,
+            temp_image_dir,
+            min_pixels=min_pixels,
+            max_images=max_images,
+        )
+
+        candidate_count = image_diagnostics.get('candidates', 0)
+        total_body_words = image_diagnostics.get('total_body_words', 0)
+        if not embedded_images:
+            # Say so explicitly. Otherwise "no images in this file" and "images found but all
+            # skipped" look identical in the workspace log, which is the common confusion.
+            if candidate_count:
+                skip_summary = _describe_embedded_image_skips(image_diagnostics)
+                update_callback(
+                    status=(
+                        f"Found {candidate_count} embedded image(s), none analyzable"
+                        + (f" ({skip_summary})" if skip_summary else "")
+                    ),
+                    office_embedded_image_count=0,
+                    office_embedded_image_candidates=candidate_count,
+                    office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
+                )
+                log_event(
+                    f"[OFFICE_EMBEDDED_IMAGES] {os.path.basename(file_path)}: "
+                    f"{candidate_count} candidate(s), none analyzable. {image_diagnostics}",
+                    level=logging.WARNING,
+                )
+            else:
+                update_callback(
+                    status="No embedded images found in this document",
+                    office_embedded_image_count=0,
+                    office_embedded_image_candidates=0,
+                )
+            return [], 0, extraction_engine, total_body_words
+
+        engine_label = (
+            "Content Understanding"
+            if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+            else "Document Intelligence"
+        )
+        total_images = len(embedded_images)
+        update_callback(
+            status=f"Analyzing {total_images} of {candidate_count} embedded image(s) with {engine_label}..."
+        )
+
+        for image_index, embedded_image in enumerate(embedded_images, start=1):
+            update_callback(
+                status=f"Analyzing embedded image {image_index} of {total_images} with {engine_label}..."
+            )
+            try:
+                analysis_text = _analyze_single_embedded_image(
+                    embedded_image['path'],
+                    extraction_engine,
+                    image_extraction_mode,
+                    settings,
+                )
+            except Exception as image_error:
+                log_event(
+                    f"[OFFICE_EMBEDDED_IMAGES] Failed to analyze {embedded_image.get('name')}: {image_error}",
+                    level=logging.WARNING,
+                )
+                analysis_text = ''
+
+            # Text drawn inside a vector diagram is recovered during rasterization, so a figure
+            # still contributes searchable labels even when the engine returns nothing.
+            embedded_text = str(embedded_image.get('embedded_text') or '').strip()
+            body_parts = []
+            if analysis_text:
+                body_parts.append(analysis_text)
+            if embedded_text and embedded_text not in analysis_text:
+                body_parts.append(f"Text labels in this figure:\n{embedded_text}")
+
+            if not body_parts:
+                continue
+
+            location_label = ''
+            slide_number = embedded_image.get('slide_number')
+            if slide_number:
+                location_label = f" on slide {slide_number}"
+
+            heading = (
+                f"### Embedded image {image_index} of {total_images}: "
+                f"{embedded_image.get('name')}{location_label}"
+            )
+            chunks.append({
+                'content': f"{heading}\n\n" + "\n\n".join(body_parts),
+                'slide_number': embedded_image.get('slide_number'),
+                'word_offset': embedded_image.get('word_offset'),
+                'position_known': bool(embedded_image.get('position_known')),
+                'name': embedded_image.get('name'),
+            })
+            analyzed_count += 1
+
+        if analyzed_count:
+            skip_summary = _describe_embedded_image_skips(image_diagnostics)
+            update_callback(
+                status=(
+                    f"Analyzed {analyzed_count} of {candidate_count} embedded image(s) with {engine_label}."
+                    + (f" Skipped: {skip_summary}." if skip_summary else "")
+                ),
+                office_embedded_image_candidates=candidate_count,
+                office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
+            )
+    except Exception as embedded_image_error:
+        log_event(
+            f"[OFFICE_EMBEDDED_IMAGES] Embedded image analysis failed for "
+            f"{os.path.basename(file_path)}: {embedded_image_error}",
+            level=logging.WARNING,
+        )
+    finally:
+        if temp_image_dir and os.path.isdir(temp_image_dir):
+            shutil.rmtree(temp_image_dir, ignore_errors=True)
+
+    return chunks, analyzed_count, extraction_engine, total_body_words
+
+
+def _resolve_embedded_image_chunk_index(image_block, chunks, total_body_words):
+    """Return the index of the chunk an embedded image belongs to.
+
+    PowerPoint images carry a slide number, which maps onto the chunk covering that slide. Word
+    images carry a word offset, which is mapped proportionally rather than absolutely because the
+    extractor's word count will not match the raw document body exactly; a proportional mapping
+    keeps images spread across the document instead of clustering them at the front. Images with no
+    position at all, which is the case for legacy binary Office formats, anchor to the final chunk
+    so no page number is invented beyond the end of the document.
+    """
+    if not chunks:
+        return None
+
+    slide_number = image_block.get('slide_number')
+    if slide_number:
+        best_index = 0
+        for index, chunk in enumerate(chunks):
+            try:
+                page_number = int(chunk.get('page_number') or 0)
+            except (TypeError, ValueError):
+                continue
+            if page_number <= slide_number:
+                best_index = index
+        return best_index
+
+    word_offset = image_block.get('word_offset')
+    if word_offset is not None and total_body_words > 0:
+        relative_position = float(word_offset) / float(total_body_words)
+        relative_position = min(max(relative_position, 0.0), 1.0)
+        index = int(relative_position * len(chunks))
+        return min(index, len(chunks) - 1)
+
+    return len(chunks) - 1
+
+
+def _merge_embedded_images_into_chunks(final_chunks, image_blocks, total_body_words, settings):
+    """Merge analyzed images into the chunk they came from.
+
+    Chunk ids are derived from the page number, so two chunks sharing a page number overwrite each
+    other in the search index. Image content is therefore appended to the existing chunk's content
+    rather than emitted as a second chunk, which is also what keeps a figure searchable alongside
+    the text it belongs to.
+
+    Returns ``(merged_chunks, merged_count, overflow_blocks)``.
+    """
+    if not image_blocks:
+        return final_chunks, 0, []
+
+    merged_chunks = [dict(chunk) for chunk in final_chunks]
+    if not merged_chunks:
+        return merged_chunks, 0, list(image_blocks)
+
+    try:
+        embedding_char_budget = int(get_embedding_safe_chunk_characters(settings))
+    except Exception:
+        embedding_char_budget = OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT
+    merged_char_limit = max(OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT, embedding_char_budget)
+
+    merged_count = 0
+    overflow_blocks = []
+
+    for image_block in image_blocks:
+        content = str(image_block.get('content') or '').strip()
+        if not content:
+            continue
+
+        target_index = _resolve_embedded_image_chunk_index(image_block, merged_chunks, total_body_words)
+        if target_index is None:
+            overflow_blocks.append(image_block)
+            continue
+
+        target_chunk = merged_chunks[target_index]
+        existing_content = str(target_chunk.get('content') or '')
+
+        # Keep merged chunks under the embedding budget; anything that does not fit spills rather
+        # than silently producing an oversized chunk.
+        if len(existing_content) + len(content) + 2 > merged_char_limit:
+            overflow_blocks.append(image_block)
+            continue
+
+        target_chunk['content'] = (
+            f"{existing_content.rstrip()}\n\n{content}" if existing_content.strip() else content
+        )
+        merged_count += 1
+
+    return merged_chunks, merged_count, overflow_blocks
+
+
+def _append_overflow_image_chunks(merged_chunks, overflow_blocks):
+    """Append images that could not fit their origin chunk, numbered past the existing chunks."""
+    if not overflow_blocks:
+        return merged_chunks
+
+    next_page_number = max(
+        (int(chunk.get('page_number') or 0) for chunk in merged_chunks),
+        default=0,
+    ) + 1
+
+    for offset, image_block in enumerate(overflow_blocks):
+        content = str(image_block.get('content') or '').strip()
+        if not content:
+            continue
+        merged_chunks.append({
+            'page_number': next_page_number + offset,
+            'content': content,
+        })
+
+    return merged_chunks
+
+
+def _assert_unique_chunk_page_numbers(chunks, document_id):
+    """Warn when chunks share a page number, which would overwrite entries in the search index."""
+    seen_page_numbers = set()
+    duplicates = set()
+    for chunk in chunks:
+        page_number = chunk.get('page_number')
+        if page_number in seen_page_numbers:
+            duplicates.add(page_number)
+        seen_page_numbers.add(page_number)
+
+    if duplicates:
+        log_event(
+            f"[OFFICE_EMBEDDED_IMAGES] Duplicate chunk page numbers for document {document_id}: "
+            f"{sorted(duplicates)}. Chunk ids are derived from the page number, so these would "
+            "overwrite each other in the search index.",
+            level=logging.ERROR,
+        )
+    return not duplicates
+
+
+def _resolve_extraction_engine_for_mode(extraction_mode, settings):
+    """Resolve which engine backs the given extraction mode, plus a human-readable reason."""
+    return resolve_extraction_engine_for_mode(extraction_mode, settings)
+
+
+def _extract_pages_with_extraction_engine(
+    file_path,
+    extraction_mode,
+    extraction_engine,
+    settings=None,
+    pages=None,
+):
+    """Extract page content with the resolved engine, falling back to Document Intelligence Layout."""
+    return extract_content_with_extraction_engine(
+        file_path,
+        extraction_mode=extraction_mode,
+        extraction_engine=extraction_engine,
+        settings=settings,
+        pages=pages,
+    )
 
 
 def _resolve_document_intelligence_auto_mode(temp_file_path, is_pdf, is_image, page_count, sample_pages, update_callback):
     if is_image:
-        return 'layout', 'image input benefits from Enhanced extraction for spatial structure and selection marks'
+        return 'layout', 'image input benefits from Enhanced extraction for figures, spatial structure, and selection marks'
 
     if not is_pdf:
         return 'read', 'Auto mode is only evaluated for PDFs and images'
@@ -2660,7 +3037,29 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     try:
         #status = f"Generating embedding for page {page_number}"
         #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding, token_usage = generate_embedding(page_text_content)
+        embedding_input = page_text_content
+        max_embedding_characters = get_embedding_safe_chunk_characters()
+
+        # Last-resort guard. Every processor bounds its own chunks, so reaching this means content
+        # tokenized far worse than estimated. Splitting is not an option here because chunk ids are
+        # derived from the page number, so a second chunk would overwrite the first in the search
+        # index. Only the embedding input is clamped: the full text is still stored below, so the
+        # chunk stays readable and citable and only its vector comes from the leading portion.
+        if embedding_input and len(embedding_input) > max_embedding_characters:
+            log_event(
+                "Chunk exceeded the embedding character budget and was clamped for embedding only.",
+                extra={
+                    "document_id": document_id,
+                    "page_number": page_number,
+                    "file_name": file_name,
+                    "original_characters": len(embedding_input),
+                    "clamped_characters": max_embedding_characters
+                },
+                level=logging.WARNING
+            )
+            embedding_input = embedding_input[:max_embedding_characters]
+
+        embedding, token_usage = generate_embedding(embedding_input)
     except Exception as e:
         print(f"Error generating embedding for page {page_number} of document {document_id}: {e}")
         raise
@@ -4578,7 +4977,10 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
     # --- Step 5: Prepare GPT Client ---
     try:
-        gpt_client, gpt_model = _resolve_metadata_extraction_client(settings)
+        gpt_client, gpt_model = _resolve_metadata_extraction_client(
+            settings,
+            identity_context={'user_id': user_id},
+        )
     except Exception as e:
         add_file_task_to_file_processing_log(
             document_id=document_id,
@@ -6027,6 +6429,7 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
     chunk_config = get_chunk_size_config(get_settings())
     target_chunk_words = chunk_config.get('html', {}).get('value', 1200) # Target size based on requirement
     min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
+    max_chunk_characters = get_embedding_safe_chunk_characters()
 
     if enable_enhanced_citations:
         args = {
@@ -6080,6 +6483,10 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
             else:
                 # Chunk is too small, add to buffer and continue to next chunk
                 buffer_chunk = current_chunk_text + " " # Add space between merged chunks
+
+        # Defensive: the splitter above is character-bounded, but merging small chunks can still
+        # push one past the embedding context window.
+        final_chunks = split_oversized_chunks(final_chunks, max_chunk_characters)
 
         num_chunks_final = len(final_chunks)
         update_callback(number_of_pages=num_chunks_final) # Use number_of_pages for chunk count
@@ -6155,9 +6562,11 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
+    settings = get_settings()
+    chunk_config = get_chunk_size_config(settings)
     target_chunk_words = chunk_config.get('md', {}).get('value', 1200) # Target size based on requirement
     min_chunk_words = max(1, int(target_chunk_words * 0.5)) # Minimum size based on requirement
+    max_chunk_characters = get_embedding_safe_chunk_characters(settings)
 
     if enable_enhanced_citations:
         args = {
@@ -6193,6 +6602,14 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
 
         initial_chunks_content = [doc.page_content for doc in md_header_splits]
 
+        # A header section has no inherent size bound: a heading with no nested subheading yields a
+        # section as large as the text under it. Cap each section before merging, otherwise an
+        # oversized section is sent to the embedding endpoint whole and fails the entire upload.
+        capped_chunks_content = []
+        for section_content in initial_chunks_content:
+            capped_chunks_content.extend(split_text_by_word_limit(section_content, target_chunk_words))
+        initial_chunks_content = capped_chunks_content
+
         # TODO: Advanced Table/Code Block Handling:
         # - Table header replication requires identifying markdown tables (`|---|`),
         #   detecting splits, and injecting headers.
@@ -6213,41 +6630,50 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
             if current_word_count >= min_chunk_words or i == len(initial_chunks_content) - 1:
                  # If the combined chunk meets min size OR it's the last chunk, save it
                 if current_chunk_text.strip():
-                     final_chunks.append(current_chunk_text)
+                    final_chunks.append(current_chunk_text)
                 buffer_chunk = "" # Reset buffer
             else:
                 # Accumulate in buffer if below min size and not the last chunk
                 buffer_chunk = current_chunk_text + "\n\n" # Add separator when buffering
 
+        # The merge loop above can still carry a small trailing chunk onto a full one, and word
+        # counts cannot predict how badly tables, code fences, or long URLs tokenize. Bound the
+        # final list by characters so no chunk can exceed the embedding context window.
+        final_chunks = split_oversized_chunks(final_chunks, max_chunk_characters)
+
         num_chunks_final = len(final_chunks)
         update_callback(number_of_pages=num_chunks_final)
 
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            update_callback(
-                current_file_chunk=idx,
-                status=f"Saving chunk {idx}/{num_chunks_final}..."
-            )
-            args = {
+        all_chunks = []
+        for chunk_content in final_chunks:
+            if not chunk_content or not chunk_content.strip():
+                continue
+            all_chunks.append({
                 "page_text_content": chunk_content,
-                "page_number": idx,
+                "page_number": len(all_chunks) + 1,
                 "file_name": original_filename,
-                "user_id": user_id,
-                "document_id": document_id
-            }
+            })
 
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
+        if all_chunks:
+            if len(all_chunks) != num_chunks_final:
+                num_chunks_final = len(all_chunks)
+                update_callback(number_of_pages=num_chunks_final)
+            update_callback(
+                current_file_chunk=1,
+                status=f"Batch saving {num_chunks_final} Markdown chunk(s)..."
+            )
+            token_usage = save_chunks_batch(
+                all_chunks,
+                user_id,
+                document_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
+            total_chunks_saved = len(all_chunks)
 
-            token_usage = save_chunks(**args)
-            total_chunks_saved += 1
-
-            # Accumulate embedding tokens
             if token_usage:
-                total_embedding_tokens += token_usage.get('total_tokens', 0)
-                if not embedding_model_name:
-                    embedding_model_name = token_usage.get('model_deployment_name')
+                total_embedding_tokens = token_usage.get('total_tokens', 0)
+                embedding_model_name = token_usage.get('model_deployment_name')
 
     except Exception as e:
         raise Exception(f"Failed processing Markdown file {original_filename}: {e}")
@@ -7013,18 +7439,27 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         print(f"Warning: Failed to extract initial metadata for {original_filename}: {e}")
         # Continue processing even if metadata fails
 
-    # --- DI Processing Logic ---
+    # --- Extraction Engine Resolution ---
+    # Standard extraction is always Document Intelligence prebuilt-read. Enhanced prefers Content
+    # Understanding, falling back to Document Intelligence prebuilt-layout when it is unavailable.
     settings = get_settings() # Assuming get_settings is accessible
     chunk_config = get_chunk_size_config(settings)
+    enhanced_extraction_enabled = is_enhanced_extraction_enabled(settings)
     document_intelligence_extraction_mode = 'read'
     document_intelligence_requested_mode = 'read'
     document_intelligence_auto_sample_pages = get_document_intelligence_auto_sample_pages(settings)
     document_intelligence_auto_reason = ''
+    extraction_engine = EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+    extraction_engine_reason = ''
     if is_pdf or is_image:
         if extraction_mode_override:
             document_intelligence_requested_mode = normalize_document_intelligence_manual_extraction_mode(extraction_mode_override)
         else:
-            document_intelligence_requested_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+            document_intelligence_requested_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
+
+        if document_intelligence_requested_mode != 'read' and not enhanced_extraction_enabled:
+            document_intelligence_requested_mode = 'read'
+            extraction_engine_reason = 'Enhanced extraction is disabled, so Standard extraction was used'
 
         if document_intelligence_requested_mode == 'auto':
             document_intelligence_extraction_mode, document_intelligence_auto_reason = _resolve_document_intelligence_auto_mode(
@@ -7039,11 +7474,20 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             document_intelligence_extraction_mode = document_intelligence_requested_mode
             document_intelligence_auto_reason = ''
 
+        resolved_engine, resolved_engine_reason = _resolve_extraction_engine_for_mode(
+            document_intelligence_extraction_mode,
+            settings,
+        )
+        extraction_engine = resolved_engine
+        extraction_engine_reason = resolved_engine_reason or extraction_engine_reason
+
         update_callback(
             document_intelligence_extraction_mode=document_intelligence_extraction_mode,
             document_intelligence_extraction_mode_requested=document_intelligence_requested_mode,
             document_intelligence_auto_sample_pages=document_intelligence_auto_sample_pages,
             document_intelligence_auto_reason=document_intelligence_auto_reason,
+            extraction_engine=extraction_engine,
+            extraction_engine_reason=extraction_engine_reason,
         )
 
     di_limit_bytes = 500 * 1024 * 1024
@@ -7148,29 +7592,44 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             except Exception as e:
                 raise Exception(f"Error extracting content from {chunk_effective_filename} with the legacy PowerPoint extractor: {str(e)}")
         else:
-            # Send chunk to Azure DI
-            update_callback(status=f"Sending {chunk_effective_filename} to Azure Document Intelligence...")
+            # Send chunk to the resolved extraction engine
+            engine_label = (
+                "Azure AI Content Understanding"
+                if extraction_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+                else "Azure Document Intelligence"
+            )
+            update_callback(status=f"Sending {chunk_effective_filename} to {engine_label}...")
             try:
-                di_extracted_pages = extract_content_with_azure_di(
+                di_extracted_pages, engine_used, engine_fallback_reason = _extract_pages_with_extraction_engine(
                     chunk_path,
-                    extraction_mode=document_intelligence_extraction_mode
+                    extraction_mode=document_intelligence_extraction_mode,
+                    extraction_engine=extraction_engine,
+                    settings=settings,
                 )
+                if engine_fallback_reason:
+                    extraction_engine = engine_used
+                    extraction_engine_reason = engine_fallback_reason
+                    update_callback(
+                        extraction_engine=engine_used,
+                        extraction_engine_reason=engine_fallback_reason,
+                    )
+
                 num_di_pages = len(di_extracted_pages)
                 conceptual_pages = num_di_pages if not is_image else 1 # Image is one conceptual item
 
                 if not di_extracted_pages and not is_image:
-                    print(f"Warning: Azure DI returned no content pages for {chunk_effective_filename}.")
-                    status_msg = f"Azure DI found no content in {chunk_effective_filename}."
+                    print(f"Warning: {engine_label} returned no content pages for {chunk_effective_filename}.")
+                    status_msg = f"{engine_label} found no content in {chunk_effective_filename}."
                     # Update page count to 0 if nothing found, otherwise keep previous estimate or conceptual count
                     update_callback(number_of_pages=0 if idx == num_file_chunks else conceptual_pages, status=status_msg)
                 elif not di_extracted_pages and is_image:
-                    print(f"Info: Azure DI processed image {chunk_effective_filename}, but extracted no text.")
+                    print(f"Info: {engine_label} processed image {chunk_effective_filename}, but extracted no text.")
                     update_callback(number_of_pages=conceptual_pages, status=f"Processed image {chunk_effective_filename} (no text found).")
                 else:
-                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from Azure DI for {chunk_effective_filename}.")
+                     update_callback(number_of_pages=conceptual_pages, status=f"Received {num_di_pages} content page(s)/slide(s) from {engine_label} for {chunk_effective_filename}.")
 
             except Exception as e:
-                raise Exception(f"Error extracting content from {chunk_effective_filename} with Azure DI: {str(e)}")
+                raise Exception(f"Error extracting content from {chunk_effective_filename} with {engine_label}: {str(e)}")
 
         # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
         if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
@@ -7258,6 +7717,53 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                  if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
                  final_chunks_to_save = di_extracted_pages
             else: final_chunks_to_save = [] # No text extracted
+
+        # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
+        # Neither extraction engine describes figures inside Office files, so embedded images are
+        # analyzed separately and merged back into the chunk they came from. Merging rather than
+        # appending keeps a figure searchable alongside its surrounding text, and avoids inventing
+        # page numbers past the end of the document.
+        if is_word or is_ppt:
+            image_blocks, embedded_image_count, embedded_image_engine, embedded_total_words = (
+                _build_office_embedded_image_chunks(
+                    chunk_path,
+                    settings,
+                    update_callback,
+                )
+            )
+
+            if image_blocks:
+                final_chunks_to_save, merged_image_count, overflow_image_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        image_blocks,
+                        embedded_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_image_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    office_embedded_image_count=embedded_image_count,
+                    office_embedded_image_merged=merged_image_count,
+                    office_embedded_image_engine=embedded_image_engine,
+                )
+                if overflow_image_blocks:
+                    update_callback(
+                        status=(
+                            f"Merged {merged_image_count} embedded image(s) into their source "
+                            f"chunk; {len(overflow_image_blocks)} exceeded the chunk size budget "
+                            "and were appended."
+                        )
+                    )
+                else:
+                    update_callback(
+                        status=f"Merged {merged_image_count} embedded image(s) into their source chunk."
+                    )
 
         # Save Final Chunks to Search Index
         num_final_chunks = len(final_chunks_to_save)
@@ -7364,12 +7870,12 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
 
 def validate_document_reprocess_source(document_item, user_id=None, group_id=None, public_workspace_id=None):
-    """Validate that a PDF has a stored source blob available for DI extraction changes."""
+    """Validate that a PDF or image has a stored source blob available for extraction changes."""
     if not document_item:
         return False, "Document not found."
 
-    if not is_pdf_file_name(document_item.get('file_name')):
-        return False, "Only PDF documents can change extraction between Standard and Enhanced."
+    if not is_pdf_or_image_file_name(document_item.get('file_name')):
+        return False, "Only PDF and image documents can change extraction between Standard and Enhanced."
 
     container_name, blob_path = get_document_blob_storage_info(
         document_item,
@@ -7378,13 +7884,13 @@ def validate_document_reprocess_source(document_item, user_id=None, group_id=Non
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        return False, "Source PDF is unavailable. Re-upload this PDF before changing extraction."
+        return False, "Source file is unavailable. Re-upload this document before changing extraction."
 
     try:
         if not _blob_exists(container_name, blob_path):
-            return False, "Stored source PDF was not found in Blob Storage. Re-upload this PDF before changing extraction."
+            return False, "Stored source file was not found in Blob Storage. Re-upload this document before changing extraction."
     except Exception as e:
-        return False, f"Unable to validate stored source PDF: {str(e)}"
+        return False, f"Unable to validate stored source file: {str(e)}"
 
     return True, ""
 
@@ -7397,14 +7903,16 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
         public_workspace_id=public_workspace_id,
     )
     if not container_name or not blob_path:
-        raise FileNotFoundError("Source PDF is unavailable.")
+        raise FileNotFoundError("Source file is unavailable.")
+
+    file_suffix = os.path.splitext(str(document_item.get('file_name') or ''))[-1].lower() or '.pdf'
 
     blob_service_client = _get_blob_service_client()
     blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
     temp_file_path = None
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_suffix) as temp_file:
             temp_file_path = temp_file.name
             download_stream = blob_client.download_blob()
             for chunk in download_stream.chunks():
@@ -7417,7 +7925,7 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
 
 
 def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
-    """Extract a stored PDF again with an explicit Standard/Enhanced mode."""
+    """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
@@ -7453,6 +7961,13 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             raise ValueError(validation_message)
 
         original_filename = document_item.get('file_name') or f'{document_id}.pdf'
+        source_file_ext = os.path.splitext(original_filename)[-1].lower() or '.pdf'
+        target_engine, target_engine_reason = _resolve_extraction_engine_for_mode(target_mode, get_settings())
+        target_engine_label = (
+            "Content Understanding"
+            if target_engine == EXTRACTION_ENGINE_CONTENT_UNDERSTANDING
+            else "Document Intelligence"
+        )
         update_doc_callback(
             status=f"Queued to extract again with {target_mode_label}",
             percentage_complete=0,
@@ -7463,6 +7978,8 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             document_intelligence_extraction_mode_requested=target_mode,
             document_intelligence_auto_sample_pages=get_document_intelligence_auto_sample_pages(get_settings()),
             document_intelligence_auto_reason='Manual extraction change requested',
+            extraction_engine=target_engine,
+            extraction_engine_reason=target_engine_reason,
         )
 
         temp_file_path = _download_document_source_to_temp_file(
@@ -7475,13 +7992,13 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
         update_doc_callback(status=f"Deleting existing chunks before extracting again with {target_mode_label}...")
         delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
 
-        update_doc_callback(status=f"Extracting PDF again with Document Intelligence {target_mode_label}...")
+        update_doc_callback(status=f"Extracting again with {target_engine_label} {target_mode_label}...")
         result = process_di_document(
             document_id=document_id,
             user_id=user_id,
             temp_file_path=temp_file_path,
             original_filename=original_filename,
-            file_ext='.pdf',
+            file_ext=source_file_ext,
             enable_enhanced_citations=bool(document_item.get('enhanced_citations')),
             update_callback=update_doc_callback,
             group_id=group_id,
@@ -7498,7 +8015,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
 
         final_update_args = {
             "number_of_pages": total_chunks_saved,
-            "status": _resolve_processing_complete_status(total_chunks_saved, '.pdf', tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
+            "status": _resolve_processing_complete_status(total_chunks_saved, source_file_ext, tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
             "percentage_complete": 100,
             "current_file_chunk": None,
         }
@@ -7508,7 +8025,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             final_update_args["embedding_model_deployment_name"] = embedding_model_name
         update_doc_callback(**final_update_args)
 
-        print(f"Document {document_id} extracted again successfully with Document Intelligence {target_mode}.")
+        print(f"Document {document_id} extracted again successfully with {target_engine_label} {target_mode}.")
     except Exception as e:
         print(f"Error extracting document {document_id} again: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         try:
@@ -8561,6 +9078,50 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
 
     return "Processing complete"
 
+
+def _is_markdown_ordered_dict_mutation_error(exc):
+    """Return whether Markdown processing hit the transient OrderedDict mutation failure."""
+    return MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE in str(exc or "")
+
+
+def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
+    """Retry Markdown processing when the parser hits a transient OrderedDict mutation."""
+    for attempt in range(MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS + 1):
+        try:
+            return process_md(**{k: v for k, v in processor_args.items() if k != "file_ext"})
+        except Exception as exc:
+            if (
+                not _is_markdown_ordered_dict_mutation_error(exc) or
+                attempt >= MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS
+            ):
+                raise
+
+            retry_number = attempt + 1
+            original_filename = processor_args.get("original_filename")
+            document_id = processor_args.get("document_id")
+            log_event(
+                "[DOCUMENTS] Retrying Markdown processing after transient OrderedDict mutation.",
+                extra={
+                    "document_id": document_id,
+                    "file_name": original_filename,
+                    "retry_number": retry_number,
+                    "max_retries": MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS,
+                    "error_type": type(exc).__name__,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            update_callback(
+                status=(
+                    "Retrying Markdown processing after a transient parser concurrency error "
+                    f"({retry_number}/{MARKDOWN_ORDERED_DICT_RETRY_ATTEMPTS})..."
+                )
+            )
+            time.sleep(MARKDOWN_ORDERED_DICT_RETRY_DELAY_SECONDS * retry_number)
+
+    raise RuntimeError("Markdown processing retry loop exited unexpectedly.")
+
+
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """
     Main background task dispatcher for document processing.
@@ -8686,7 +9247,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             else:
                 total_chunks_saved = result
         elif file_ext == '.md':
-            result = process_md(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
+            result = _process_markdown_with_ordered_dict_retry(
+                processor_args_without_auto_metadata,
+                update_doc_callback,
+            )
             if isinstance(result, tuple) and len(result) == 3:
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:

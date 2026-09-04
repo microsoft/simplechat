@@ -17,6 +17,8 @@ import types
 from datetime import datetime, timezone
 from pathlib import Path
 
+from test_support.templates import read_admin_settings_template
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT_DIR / "application" / "single_app"
@@ -165,7 +167,7 @@ def test_integration_wiring():
     background_source = BACKGROUND_TASKS_FILE.read_text(encoding="utf-8")
     admin_route_source = ADMIN_SETTINGS_ROUTE_FILE.read_text(encoding="utf-8")
     control_center_route_source = CONTROL_CENTER_ROUTE_FILE.read_text(encoding="utf-8")
-    template_source = ADMIN_TEMPLATE_FILE.read_text(encoding="utf-8")
+    template_source = read_admin_settings_template()
     javascript_source = CONTROL_CENTER_JS_FILE.read_text(encoding="utf-8")
 
     expected_settings = [

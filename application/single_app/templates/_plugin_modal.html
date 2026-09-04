@@ -166,6 +166,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="openapi-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="openapi-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="openapi-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="openapi-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <!-- Generic endpoint field for other plugin types -->
@@ -301,6 +312,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="databricks-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="databricks-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="databricks-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="databricks-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <div id="snowflake-config-section" class="d-none">
@@ -397,6 +419,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="snowflake-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="snowflake-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="snowflake-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="snowflake-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <div id="tableau-config-section" class="d-none">
@@ -480,6 +513,132 @@
                     <input class="form-check-input" type="checkbox" id="tableau-use-server-version" checked />
                     <label class="form-check-label" for="tableau-use-server-version">Use Tableau server version negotiation</label>
                   </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="tableau-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="tableau-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="tableau-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="tableau-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="yamcs-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Yamcs action:</strong> Connect to a Yamcs mission control server for read-only telemetry, mission database, and archive retrieval.
+            </div>
+            <div class="alert alert-warning mb-3">
+              <i class="bi bi-shield-check me-2"></i><strong>Read-only by design.</strong>
+              This action can never issue commands, set parameter values, run scripts, or change data link state.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-broadcast-pin me-2"></i>Server and Instance
+              </div>
+              <div class="mb-3">
+                <label for="yamcs-server-url" class="form-label">Server URL <span class="text-danger">*</span></label>
+                <input type="url" class="form-control" id="yamcs-server-url" placeholder="https://yamcs.example.com:8090" />
+                <div class="form-text">Base URL of the Yamcs server, including the port. TLS is derived from the scheme.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="yamcs-instance" class="form-label">Instance <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="yamcs-instance" placeholder="simulator" />
+                  <div class="form-text">Default Yamcs instance used by this action.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="yamcs-processor" class="form-label">Processor</label>
+                  <input type="text" class="form-control" id="yamcs-processor" value="realtime" placeholder="realtime" />
+                  <div class="form-text">Processor used to read live parameter values.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="yamcs-action-identity-group">
+                <label for="yamcs-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="yamcs-identity-select"></select>
+                <div class="form-text" id="yamcs-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="yamcs-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="yamcs-auth-method">
+                  <option value="username_password">Username and Password</option>
+                  <option value="api_key">API Key</option>
+                  <option value="bearer_token">Bearer Token</option>
+                  <option value="none">No Authentication</option>
+                </select>
+                <div class="form-text">Choose "No Authentication" only for unsecured Yamcs instances such as a local simulator.</div>
+              </div>
+              <div class="row g-3" id="yamcs-username-password-group">
+                <div class="col-md-6">
+                  <label for="yamcs-username" class="form-label">Username <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="yamcs-username" placeholder="operator" autocomplete="username" />
+                </div>
+                <div class="col-md-6">
+                  <label for="yamcs-password" class="form-label">Password <span class="text-danger">*</span></label>
+                  <input type="password" class="form-control" id="yamcs-password" placeholder="Password" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+                </div>
+              </div>
+              <div class="mb-0 d-none" id="yamcs-api-key-group">
+                <label for="yamcs-api-key" class="form-label">API Key <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="yamcs-api-key" placeholder="Yamcs API key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+              <div class="mb-0 d-none" id="yamcs-bearer-token-group">
+                <label for="yamcs-bearer-token" class="form-label">Bearer Token <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="yamcs-bearer-token" placeholder="Yamcs access token" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-sliders me-2"></i>Retrieval Limits
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="yamcs-max-rows" class="form-label">Max Rows</label>
+                  <input type="number" class="form-control" id="yamcs-max-rows" value="500" min="1" max="5000" />
+                  <div class="form-text">Maximum rows returned by any single retrieval.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="yamcs-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="yamcs-timeout" value="30" min="1" max="300" />
+                  <div class="form-text">Request timeout for Yamcs HTTP calls.</div>
+                </div>
+                <div class="col-12">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="yamcs-tls-verify" checked />
+                    <label class="form-check-label" for="yamcs-tls-verify">Verify TLS certificate</label>
+                    <div class="form-text">Uncheck only for internal ground segments using self-signed certificates.</div>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="yamcs-enable-archive-sql" />
+                    <label class="form-check-label" for="yamcs-enable-archive-sql">Enable read-only archive SQL</label>
+                    <div class="form-text">Allows SELECT, SHOW, and DESCRIBE statements against the Yamcs archive. Disabled by default.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-top" id="yamcs-test-connection-section">
+                <div class="d-flex align-items-center gap-3">
+                  <button type="button" class="btn btn-outline-primary" id="yamcs-test-connection-btn">
+                    <i class="bi bi-plug me-2"></i>Test Yamcs Connection
+                  </button>
+                </div>
+                <div id="yamcs-test-connection-result" class="mt-2 d-none">
+                  <div class="alert mb-0 py-2 px-3 small" id="yamcs-test-connection-alert" role="alert"></div>
                 </div>
               </div>
             </div>
@@ -709,6 +868,17 @@
                 </div>
               </div>
             </div>
+
+            <div class="mt-3 pt-3 border-top" id="mcp-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="mcp-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="mcp-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="mcp-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
           </div>
 
           <div id="azure-maps-config-section" class="d-none">
@@ -727,6 +897,105 @@
                   <input type="password" class="form-control" id="azure-maps-key" placeholder="Azure Maps subscription key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
                   <div class="form-text">The browser receives only a short-lived proxy token. The raw subscription key stays in the stored action configuration.</div>
                 </div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="azure-maps-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="azure-maps-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="azure-maps-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="azure-maps-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="log-analytics-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Log Analytics action:</strong> Configure one Azure Log Analytics workspace so agents can discover table schemas and run read-only KQL queries.
+            </div>
+
+            <div class="simplechat-config-card mb-3">
+              <div class="config-section-label">
+                <i class="bi bi-graph-up me-2"></i>Workspace
+              </div>
+              <div class="mb-3">
+                <label for="log-analytics-workspace-id" class="form-label">Workspace ID <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="log-analytics-workspace-id" placeholder="00000000-0000-0000-0000-000000000000" />
+                <div class="form-text">The Log Analytics workspace ID (GUID), not the workspace resource ID.</div>
+              </div>
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="log-analytics-cloud" class="form-label">Cloud <span class="text-danger">*</span></label>
+                  <select class="form-select" id="log-analytics-cloud">
+                    <option value="public">Azure Commercial</option>
+                    <option value="usgovernment">Azure US Government</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label for="log-analytics-endpoint" class="form-label">API Endpoint</label>
+                  <input type="text" class="form-control" id="log-analytics-endpoint" placeholder="https://api.loganalytics.io" />
+                  <div class="form-text">Optional. Leave blank to use the default endpoint for the selected cloud.</div>
+                </div>
+              </div>
+              <div class="row g-3 mt-1 d-none" id="log-analytics-custom-cloud-group">
+                <div class="col-md-6">
+                  <label for="log-analytics-authority-host" class="form-label">Authority Host <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="log-analytics-authority-host" placeholder="https://login.microsoftonline.com" />
+                </div>
+                <div class="col-md-6">
+                  <label for="log-analytics-endpoint-override" class="form-label">Endpoint Override <span class="text-danger">*</span></label>
+                  <input type="text" class="form-control" id="log-analytics-endpoint-override" placeholder="https://api.loganalytics.example" />
+                </div>
+              </div>
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-shield-lock me-2"></i>Authentication
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-action-identity-group">
+                <label for="log-analytics-identity-select" class="form-label">Reusable Identity</label>
+                <select class="form-select" id="log-analytics-identity-select"></select>
+                <div class="form-text" id="log-analytics-identity-status"></div>
+              </div>
+              <div class="mb-3">
+                <label for="log-analytics-auth-method" class="form-label">Authentication Method</label>
+                <select class="form-select" id="log-analytics-auth-method">
+                  <option value="identity">Managed Identity</option>
+                  <option value="user">On-Behalf-Of User</option>
+                  <option value="servicePrincipal">Service Principal</option>
+                  <option value="key">Key</option>
+                </select>
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-auth-identity-group">
+                <label for="log-analytics-auth-identity" class="form-label" id="log-analytics-auth-identity-label">Managed Identity Client ID</label>
+                <input type="text" class="form-control" id="log-analytics-auth-identity" placeholder="Leave blank to use the system-assigned identity" />
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-auth-key-group">
+                <label for="log-analytics-auth-key" class="form-label" id="log-analytics-auth-key-label">Key</label>
+                <input type="password" class="form-control" id="log-analytics-auth-key" autocomplete="new-password" data-bwignore="true" data-1p-ignore="true" data-lpignore="true" />
+              </div>
+              <div class="mb-3 d-none" id="log-analytics-auth-tenant-id-group">
+                <label for="log-analytics-auth-tenant-id" class="form-label">Tenant ID <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="log-analytics-auth-tenant-id" placeholder="00000000-0000-0000-0000-000000000000" />
+              </div>
+              <div class="alert alert-info mb-0 d-none" id="log-analytics-auth-info">
+                <small id="log-analytics-auth-info-text"></small>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="log-analytics-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="log-analytics-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="log-analytics-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="log-analytics-test-connection-alert" role="alert"></div>
               </div>
             </div>
           </div>
@@ -841,9 +1110,28 @@
                 <i class="bi bi-cloud-arrow-down me-2"></i>Blob Storage Connection
               </div>
               <div class="mb-3">
+                <label for="blob-storage-auth-type" class="form-label">Authentication Type</label>
+                <select class="form-select" id="blob-storage-auth-type">
+                  <option value="connection_string">Connection String</option>
+                  <option value="identity">Managed Identity</option>
+                  <option value="key">Account Key</option>
+                </select>
+                <div class="form-text">Managed identity avoids stored secrets. The endpoint must be an Azure Blob service hostname.</div>
+              </div>
+              <div class="mb-3" id="blob-storage-connection-string-group">
                 <label for="blob-storage-connection-string" class="form-label">Connection String <span class="text-danger">*</span></label>
                 <textarea class="form-control" id="blob-storage-connection-string" rows="3" placeholder="DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;EndpointSuffix=core.windows.net"></textarea>
                 <div class="form-text">Use an Azure Storage account connection string with access to the target container.</div>
+              </div>
+              <div class="mb-3 d-none" id="blob-storage-endpoint-group">
+                <label for="blob-storage-endpoint" class="form-label">Blob Service Endpoint <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="blob-storage-endpoint" placeholder="https://account.blob.core.windows.net" />
+                <div class="form-text">Must be an Azure Blob service endpoint, for example <code>https://account.blob.core.windows.net</code>.</div>
+              </div>
+              <div class="mb-3 d-none" id="blob-storage-account-key-group">
+                <label for="blob-storage-account-key" class="form-label">Account Key <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="blob-storage-account-key" placeholder="Primary or secondary account key" autocomplete="new-password" />
+                <div class="form-text">If this action already uses a Key Vault-backed key, leave the stored value unchanged to preserve the existing secret.</div>
               </div>
               <div class="row g-3">
                 <div class="col-md-6">
@@ -877,6 +1165,17 @@
               <div id="blob-storage-upload-file-types-section">
                 <label class="form-label">Upload File Types</label>
                 <div id="blob-storage-upload-file-types-list" class="d-grid gap-2"></div>
+              </div>
+            </div>
+
+            <div class="mt-3 pt-3 border-top" id="blob-storage-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="blob-storage-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test Connection
+                </button>
+              </div>
+              <div id="blob-storage-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="blob-storage-test-connection-alert" role="alert"></div>
               </div>
             </div>
           </div>
@@ -1237,6 +1536,121 @@
               </div>
             </div>
           </div>
+
+          <!-- RocksDB Configuration -->
+          <div id="rocksdb-config-section" class="d-none">
+            <div class="config-section-label">
+              <i class="bi bi-hdd-stack me-2"></i>RocksDB Configuration
+            </div>
+
+            <div class="rocksdb-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-cloud me-2"></i>RocksDB Service
+              </div>
+
+              <div class="mb-3">
+                <label for="rocksdb-base-url" class="form-label">Service Base URL <span class="text-danger">*</span></label>
+                <input type="text" class="form-control" id="rocksdb-base-url" placeholder="https://rocksdb.example.com/api" />
+                <div class="form-text">API root of a service that implements the SimpleChat RocksDB HTTP contract. Only http and https URLs are accepted.</div>
+              </div>
+
+              <div class="mb-3">
+                <label for="rocksdb-auth-scheme" class="form-label">Authentication Scheme <span class="text-danger">*</span></label>
+                <select class="form-select" id="rocksdb-auth-scheme">
+                  <option value="none">No Authentication</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="api_key">API Key Header</option>
+                </select>
+              </div>
+
+              <div class="mb-3 d-none" id="rocksdb-auth-key-group">
+                <label for="rocksdb-auth-key" class="form-label">Service Token <span class="text-danger">*</span></label>
+                <input type="password" class="form-control" id="rocksdb-auth-key" placeholder="Service token or API key" autocomplete="new-password" />
+                <div class="form-text">If this action already uses a Key Vault-backed token, leave the stored value unchanged to preserve the existing secret.</div>
+              </div>
+
+                <div class="mb-0 d-none" id="rocksdb-api-key-header-group">
+                  <label for="rocksdb-api-key-header" class="form-label">API Key Header Name</label>
+                  <input type="text" class="form-control" id="rocksdb-api-key-header" placeholder="X-API-Key" />
+                  <div class="form-text">Header used to send the API key. Defaults to <code>X-API-Key</code>.</div>
+                </div>
+              </div>
+
+            <div class="rocksdb-config-card">
+              <div class="config-section-label">
+                <i class="bi bi-gear me-2"></i>Data Handling
+              </div>
+
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label for="rocksdb-column-family" class="form-label">Column Family</label>
+                  <input type="text" class="form-control" id="rocksdb-column-family" placeholder="default" />
+                  <div class="form-text">Column family used when a call does not specify one.</div>
+                </div>
+                <div class="col-md-6">
+                  <label for="rocksdb-read-only" class="form-label">Read-Only <span class="text-danger">*</span></label>
+                  <select class="form-select" id="rocksdb-read-only">
+                    <option value="true">Yes (Recommended)</option>
+                    <option value="false">No (Allow writes)</option>
+                  </select>
+                  <div class="form-text">Allowing writes lets the model put, delete, and batch-write records.</div>
+                </div>
+              </div>
+
+              <div class="row g-3 mt-0">
+                <div class="col-md-6">
+                  <label for="rocksdb-key-encoding" class="form-label">Key Encoding</label>
+                  <select class="form-select" id="rocksdb-key-encoding">
+                    <option value="utf8">UTF-8 text</option>
+                    <option value="base64">Base64 (binary keys)</option>
+                  </select>
+                </div>
+                <div class="col-md-6">
+                  <label for="rocksdb-value-encoding" class="form-label">Value Encoding</label>
+                  <select class="form-select" id="rocksdb-value-encoding">
+                    <option value="utf8">UTF-8 text</option>
+                    <option value="json">JSON</option>
+                    <option value="base64">Base64 (binary values)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="mt-3">
+                <label for="rocksdb-key-prefix-hints" class="form-label">Key Prefix Hints</label>
+                <textarea class="form-control" id="rocksdb-key-prefix-hints" rows="3" placeholder="user:&#10;event:&#10;session:"></textarea>
+                <div class="form-text">Optional. Add one key prefix per line so the model knows how the keyspace is organized.</div>
+              </div>
+
+              <div class="row g-3 mt-0">
+                <div class="col-md-4">
+                  <label for="rocksdb-max-results" class="form-label">Max Results</label>
+                  <input type="number" class="form-control" id="rocksdb-max-results" value="100" min="1" max="1000" />
+                  <div class="form-text">Hard cap for records returned per call.</div>
+                </div>
+                <div class="col-md-4">
+                  <label for="rocksdb-max-value-bytes" class="form-label">Max Value Bytes</label>
+                  <input type="number" class="form-control" id="rocksdb-max-value-bytes" value="32768" min="1" max="1048576" />
+                  <div class="form-text">Larger values are truncated and flagged.</div>
+                </div>
+                <div class="col-md-4">
+                  <label for="rocksdb-timeout" class="form-label">Timeout (seconds)</label>
+                  <input type="number" class="form-control" id="rocksdb-timeout" value="30" min="1" max="300" />
+                  <div class="form-text">Absolute timeout for RocksDB service requests.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-top" id="rocksdb-test-connection-section">
+              <div class="d-flex align-items-center gap-3">
+                <button type="button" class="btn btn-outline-primary" id="rocksdb-test-connection-btn">
+                  <i class="bi bi-plug me-2"></i>Test RocksDB Connection
+                </button>
+              </div>
+              <div id="rocksdb-test-connection-result" class="mt-2 d-none">
+                <div class="alert mb-0 py-2 px-3 small" id="rocksdb-test-connection-alert" role="alert"></div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Step 4: Advanced -->
@@ -1586,6 +2000,72 @@
             </div>
           </div>
 
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-rocksdb-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #6f42c1 0%, #43277a 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-hdd-stack me-2"></i>RocksDB Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Service Base URL</label>
+                    <span class="fw-medium font-monospace" id="summary-rocksdb-target">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-rocksdb-auth-scheme">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Access</label>
+                    <span class="fw-medium" id="summary-rocksdb-access">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Column Family</label>
+                    <span class="fw-medium" id="summary-rocksdb-column-family">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Encoding</label>
+                    <span class="fw-medium" id="summary-rocksdb-encoding">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Results</label>
+                    <span class="fw-medium" id="summary-rocksdb-max-results">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Value Bytes</label>
+                    <span class="fw-medium" id="summary-rocksdb-max-value-bytes">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-rocksdb-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Key Prefix Hints</label>
+                    <span class="fw-medium" id="summary-rocksdb-key-prefix-hints">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="card mb-3 border-0 shadow-sm" id="summary-blob-storage-section" style="display: none;">
             <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0dcaf0 0%, #087990 100%);">
               <h6 class="mb-0 fw-bold">
@@ -1790,6 +2270,60 @@
                   <div class="d-flex flex-column">
                     <label class="text-muted small mb-1">Server Version Negotiation</label>
                     <span class="fw-medium" id="summary-tableau-use-server-version">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card mb-3 border-0 shadow-sm d-none" id="summary-yamcs-section">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-broadcast-pin me-2"></i>Yamcs Configuration
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Instance</label>
+                    <span class="fw-medium" id="summary-yamcs-instance">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Processor</label>
+                    <span class="fw-medium" id="summary-yamcs-processor">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Authentication</label>
+                    <span class="fw-medium" id="summary-yamcs-auth-method">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">TLS Verification</label>
+                    <span class="fw-medium" id="summary-yamcs-tls-verify">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Max Rows</label>
+                    <span class="fw-medium" id="summary-yamcs-max-rows">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Timeout</label>
+                    <span class="fw-medium" id="summary-yamcs-timeout">-</span>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Archive SQL</label>
+                    <span class="fw-medium" id="summary-yamcs-archive-sql">-</span>
                   </div>
                 </div>
               </div>
@@ -2142,6 +2676,13 @@
   background-color: #f8f9fa;
 }
 
+#rocksdb-config-section {
+  border: 1px solid #ded4f2;
+  border-radius: 8px;
+  padding: 1rem;
+  background-color: #f8f9fa;
+}
+
 /* Advanced toggle chevron animation */
 #plugin-advanced-toggle-icon {
   transition: transform 0.3s ease;
@@ -2161,6 +2702,14 @@
 }
 
 .cosmos-config-card {
+  background-color: white;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+  border: 1px solid #e9ecef;
+}
+
+.rocksdb-config-card {
   background-color: white;
   border-radius: 6px;
   padding: 1rem;
@@ -2302,10 +2851,16 @@
   background-color: #343a40;
 }
 
+[data-bs-theme="dark"] #rocksdb-config-section {
+  border-color: #495057;
+  background-color: #343a40;
+}
+
 [data-bs-theme="dark"] .sql-connection-config,
 [data-bs-theme="dark"] .sql-auth-config,
 [data-bs-theme="dark"] .simplechat-config-card,
 [data-bs-theme="dark"] .cosmos-config-card,
+[data-bs-theme="dark"] .rocksdb-config-card,
 [data-bs-theme="dark"] .auth-section {
   background-color: #2d3237;
   border-color: #495057;

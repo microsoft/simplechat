@@ -604,26 +604,26 @@
         <label class="form-label" for="workspace-section-select">Section</label>
         <select class="form-select" id="workspace-section-select" data-workspace-section-select aria-label="Select workspace section">
           <option value="documents-tab-btn">Your Documents</option>
-          {% if file_sync_enabled %}
-            <option value="sync-tab-btn">Sync</option>
-          {% endif %}
+          <option value="prompts-tab-btn">Your Prompts</option>
           {% if workspace_identities_enabled %}
             <option value="identities-tab-btn">Identities</option>
           {% endif %}
-          <option value="prompts-tab-btn">Your Prompts</option>
+          {% if file_sync_enabled %}
+            <option value="sync-tab-btn">Sync</option>
+          {% endif %}
+          {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+            <option value="endpoints-tab-btn">Your Endpoints</option>
+          {% endif %}
           {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
             {% if settings.allow_user_agents %}
-              <option value="agents-tab-btn">Your Agents</option>
               {% if settings.allow_user_plugins %}
                 <option value="plugins-tab-btn">Your Actions</option>
               {% endif %}
+              <option value="agents-tab-btn">Your Agents</option>
             {% endif %}
           {% endif %}
           {% if settings.allow_user_workflows %}
             <option value="workflows-tab-btn">Workflows</option>
-          {% endif %}
-          {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
-            <option value="endpoints-tab-btn">Your Endpoints</option>
           {% endif %}
         </select>
       </div>
@@ -646,23 +646,21 @@
           Documents
         </button>
       </li>
-      {% if file_sync_enabled %}
       <li class="nav-item" role="presentation">
         <button
           class="nav-link"
-          id="sync-tab-btn"
+          id="prompts-tab-btn"
           data-bs-toggle="tab"
-          data-bs-target="#sync-tab"
-          title="Configure external file sources that bring approved files into this workspace and run them through the document processing pipeline."
+          data-bs-target="#prompts-tab"
+          title="Create, search, view, and reuse prompt templates for consistent chat instructions."
           type="button"
           role="tab"
-          aria-controls="sync-tab"
+          aria-controls="prompts-tab"
           aria-selected="false"
         >
-          Sync
+          Prompts
         </button>
       </li>
-      {% endif %}
       {% if workspace_identities_enabled %}
       <li class="nav-item" role="presentation">
         <button
@@ -680,39 +678,42 @@
         </button>
       </li>
       {% endif %}
+      {% if file_sync_enabled %}
       <li class="nav-item" role="presentation">
         <button
           class="nav-link"
-          id="prompts-tab-btn"
+          id="sync-tab-btn"
           data-bs-toggle="tab"
-          data-bs-target="#prompts-tab"
-          title="Create, search, view, and reuse prompt templates for consistent chat instructions."
+          data-bs-target="#sync-tab"
+          title="Configure external file sources that bring approved files into this workspace and run them through the document processing pipeline."
           type="button"
           role="tab"
-          aria-controls="prompts-tab"
+          aria-controls="sync-tab"
           aria-selected="false"
         >
-          Prompts
+          Sync
         </button>
       </li>
+      {% endif %}
+      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="endpoints-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#endpoints-tab"
+            title="Manage model endpoints available to personal agents and workflows alongside admin-managed global endpoints."
+            type="button"
+            role="tab"
+            aria-controls="endpoints-tab"
+            aria-selected="false"
+          >
+            Endpoints
+          </button>
+        </li>
+      {% endif %}
       {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
         {% if settings.allow_user_agents %}
-          <li class="nav-item" role="presentation">
-            <button
-              class="nav-link"
-              id="agents-tab-btn"
-              data-bs-toggle="tab"
-              data-bs-target="#agents-tab"
-              title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
-              type="button"
-              role="tab"
-              aria-controls="agents-tab"
-              aria-selected="false"
-            >
-              Agents
-            </button>
-          </li>
-      
           {% if settings.allow_user_plugins %}
             <li class="nav-item" role="presentation">
               <button
@@ -730,6 +731,22 @@
               </button>
             </li>
           {% endif %}
+
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="agents-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#agents-tab"
+              title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
+              type="button"
+              role="tab"
+              aria-controls="agents-tab"
+              aria-selected="false"
+            >
+              Agents
+            </button>
+          </li>
         {% endif %}
       {% endif %}
       {% if settings.allow_user_workflows %}
@@ -746,23 +763,6 @@
             aria-selected="false"
           >
             Workflows
-          </button>
-        </li>
-      {% endif %}
-      {% if settings.allow_user_custom_endpoints and settings.enable_multi_model_endpoints %}
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            id="endpoints-tab-btn"
-            data-bs-toggle="tab"
-            data-bs-target="#endpoints-tab"
-            title="Manage model endpoints available to personal agents and workflows alongside admin-managed global endpoints."
-            type="button"
-            role="tab"
-            aria-controls="endpoints-tab"
-            aria-selected="false"
-          >
-            Endpoints
           </button>
         </li>
       {% endif %}
@@ -1542,7 +1542,7 @@
 
           <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="tasks">
             <h6 class="mb-1">Workspace documents</h6>
-            <div class="form-text mb-3">Optional. Use a document action only when this workflow needs workspace document context.</div>
+            <div class="form-text mb-3">Optional and saved with the selected task. Use a document action only when this task needs workspace document context.</div>
             <div class="row g-3 mb-2">
               <div class="col-md-6">
                 <label for="workflow-document-action-type" class="form-label">Document action</label>
@@ -1596,7 +1596,7 @@
               <div id="workflow-document-picker-card" class="border rounded-3 p-3 mb-3">
                 <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
                   <div class="form-text mb-0" id="workflow-selected-documents-summary">No workspace documents selected in the picker.</div>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh selected documents</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh documents</button>
                 </div>
                 <div id="workflow-document-picker-loading" class="text-muted small mb-2 d-none">
                   <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading documents...
@@ -1775,8 +1775,18 @@
           </div>
 
           <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="review">
-            <div class="row g-3 align-items-end">
+            <h6 class="mb-1">Alerts</h6>
+            <div class="form-text mb-3">Alerts notify you when a run meets a condition you define. A run that matches nothing stays silent.</div>
+            <div class="row g-3">
               <div class="col-md-5">
+                <label for="workflow-alert-mode" class="form-label">When to alert</label>
+                <select class="form-select" id="workflow-alert-mode">
+                  <option value="off">Never notify me</option>
+                  <option value="rules">Only when a condition is met</option>
+                  <option value="every_run">On every run</option>
+                </select>
+              </div>
+              <div class="col-md-5 d-none" id="workflow-alert-priority-group">
                 <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
                 <select class="form-select" id="workflow-alert-priority">
                   <option value="none">No notification</option>
@@ -1785,8 +1795,23 @@
                   <option value="high">High priority</option>
                 </select>
               </div>
-              <div class="col-md-7">
-                <div class="form-text mt-0">When enabled, workflow runs create a pop-up alert modal with direct links to the workflow conversation and any conversation the agent created during the run.</div>
+            </div>
+            <div class="mt-3 d-none" id="workflow-alert-rules-group">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="form-label mb-0">Alert rules</span>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-alert-rule-add-btn"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add rule</button>
+              </div>
+              <div id="workflow-alert-rules-list" class="workflow-alert-rules-list"></div>
+              <div class="form-text mt-2">When several rules match the same run, the highest severity wins and every matched rule is listed in the alert.</div>
+              <div class="form-text">Info and low severities go to the notification bell only. Medium and above open the pop-up alert.</div>
+              <div class="row g-3 mt-1">
+                <div class="col-md-6">
+                  <label for="workflow-alert-evaluation-on-error" class="form-label">If a model evaluated condition cannot be judged</label>
+                  <select class="form-select" id="workflow-alert-evaluation-on-error">
+                    <option value="skip">Skip the rule and stay silent</option>
+                    <option value="alert">Alert anyway so it is not missed</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>

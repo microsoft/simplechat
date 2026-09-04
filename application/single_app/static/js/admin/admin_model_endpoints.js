@@ -85,6 +85,9 @@ const tenantIdInput = document.getElementById("model-endpoint-tenant-id");
 const clientIdInput = document.getElementById("model-endpoint-client-id");
 const clientSecretInput = document.getElementById("model-endpoint-client-secret");
 const apiKeyInput = document.getElementById("model-endpoint-api-key");
+const endpointIdentityModeSelect = document.getElementById("model-endpoint-identity-mode");
+const endpointIdentityHeaderNameInput = document.getElementById("model-endpoint-identity-header-name");
+const endpointIdentityValueTypeSelect = document.getElementById("model-endpoint-identity-value-type");
 
 const fetchBtn = document.getElementById("model-endpoint-fetch-btn");
 const saveBtn = document.getElementById("model-endpoint-save-btn");
@@ -112,6 +115,8 @@ const DEFAULT_FOUNDRY_OPENAI_API_VERSION = "v1";
 const DEFAULT_FOUNDRY_PROJECT_API_VERSION = "v1";
 const DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
 const CUSTOM_VERSION_VALUE = "custom";
+const IDENTITY_HEADER_MODES = new Set(["inherit", "enabled", "disabled"]);
+const IDENTITY_HEADER_VALUE_TYPES = new Set(["", "user_oid_tenant_id", "user_oid", "user_upn_tenant_id", "user_upn"]);
 const MODEL_ICON_CLASS_PATTERN = /^bi-[a-z0-9][a-z0-9-]{0,80}$/;
 const MODEL_ICON_CONTROL_CONFIG = Object.freeze({
     editor: ".model-icon-editor",
@@ -282,6 +287,22 @@ function setSelectedVersionValue(versionInput, customInput, value, fallbackValue
     }
 
     syncVersionCustomVisibility();
+}
+
+function normalizeEndpointIdentityHeaderOverride(identityHeader) {
+    const source = identityHeader && typeof identityHeader === "object" ? identityHeader : {};
+    const mode = IDENTITY_HEADER_MODES.has(String(source.mode || "").trim().toLowerCase())
+        ? String(source.mode || "").trim().toLowerCase()
+        : "inherit";
+    const valueType = IDENTITY_HEADER_VALUE_TYPES.has(String(source.value_type || "").trim().toLowerCase())
+        ? String(source.value_type || "").trim().toLowerCase()
+        : "";
+
+    return {
+        mode,
+        header_name: String(source.header_name || source.name || "").trim(),
+        value_type: valueType
+    };
 }
 
 function updateHiddenInput() {
@@ -895,6 +916,9 @@ function resetModal() {
     if (apiKeyInput) apiKeyInput.value = "";
     if (clientSecretInput) clientSecretInput.placeholder = "";
     if (apiKeyInput) apiKeyInput.placeholder = "";
+    if (endpointIdentityModeSelect) endpointIdentityModeSelect.value = "inherit";
+    if (endpointIdentityHeaderNameInput) endpointIdentityHeaderNameInput.value = "";
+    if (endpointIdentityValueTypeSelect) endpointIdentityValueTypeSelect.value = "";
 
     modalModels = [];
     if (modelsListEl) modelsListEl.innerHTML = "<p class=\"text-muted\" id=\"model-endpoint-models-placeholder\">Fetch models to begin selection.</p>";
@@ -951,6 +975,10 @@ function openModalForEndpoint(endpoint) {
                 apiKeyInput.placeholder = "Stored";
             }
         }
+        const identityHeader = normalizeEndpointIdentityHeaderOverride(endpoint.identity_header);
+        if (endpointIdentityModeSelect) endpointIdentityModeSelect.value = identityHeader.mode;
+        if (endpointIdentityHeaderNameInput) endpointIdentityHeaderNameInput.value = identityHeader.header_name;
+        if (endpointIdentityValueTypeSelect) endpointIdentityValueTypeSelect.value = identityHeader.value_type;
         modalModels = Array.isArray(endpoint.models) ? [...endpoint.models] : [];
         renderModalModels(modalModels);
     }
@@ -1501,6 +1529,11 @@ function buildEndpointPayload() {
     const resourceGroup = endpointResourceGroupInput?.value.trim() || "";
     const authType = customProvider ? "api_key" : (endpointAuthTypeSelect?.value || "managed_identity");
     const existingEndpoint = modelEndpoints.find((savedEndpoint) => savedEndpoint.id === endpointId);
+    const identityHeader = normalizeEndpointIdentityHeaderOverride({
+        mode: endpointIdentityModeSelect?.value || "inherit",
+        header_name: endpointIdentityHeaderNameInput?.value || "",
+        value_type: endpointIdentityValueTypeSelect?.value || ""
+    });
 
     if (!name || !endpoint) {
         showToast("Endpoint name and URL are required.", "warning");
@@ -1603,7 +1636,8 @@ function buildEndpointPayload() {
         name,
         connection,
         management,
-        auth
+        auth,
+        identity_header: identityHeader
     };
 }
 
@@ -1632,6 +1666,7 @@ function saveEndpoint() {
             auth: payload.auth,
             connection: payload.connection,
             management: payload.management,
+            identity_header: payload.identity_header,
             models,
             has_api_key: hasApiKey,
             has_client_secret: hasClientSecret

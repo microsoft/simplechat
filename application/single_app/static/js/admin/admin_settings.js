@@ -12,10 +12,8 @@ let imageSelected = window.imageSelected || [];
 let imageAll      = window.imageAll || [];
 
 let classificationCategories = window.classificationCategories || [];
-let enableDocumentClassification = window.enableDocumentClassification || false;
 
 let externalLinks = window.externalLinks || [];
-let enableExternalLinks = window.enableExternalLinks || false;
 let externalLinksMenuName = window.externalLinksMenuName || 'External Links';
 let agentsPagePromotedPopularAgents = Array.isArray(window.agentsPagePromotedPopularAgents)
     ? window.agentsPagePromotedPopularAgents
@@ -1508,7 +1506,12 @@ function validateCosmosThroughputSettings(options = {}) {
 
     setCosmosThroughputValidationMessage(errors);
     if (options.report && invalidFields.length > 0) {
-        document.getElementById('scale-tab')?.click();
+        // Navigate to wherever the invalid field actually lives rather than to
+        // a named tab, so this keeps working when settings are regrouped.
+        const owningCard = invalidFields[0].closest('.card[id]');
+        if (owningCard && typeof window.openAdminCard === 'function') {
+            window.openAdminCard(owningCard.id);
+        }
         invalidFields[0].focus({ preventScroll: false });
         invalidFields[0].reportValidity();
     }
@@ -6386,25 +6389,30 @@ function setupChunkSizeControls() {
         return;
     }
 
-    const capValue = capInput ? parseInt(capInput.value, 10) : null;
+    const fallbackCap = capInput ? parseInt(capInput.value, 10) : NaN;
+
+    // Each field has its own cap because word, character, and page counts cannot share one limit.
+    const capForInput = input => {
+        const perFieldCap = parseInt(input.dataset.cap || '', 10);
+        return Number.isNaN(perFieldCap) ? fallbackCap : perFieldCap;
+    };
 
     const updateCapWarning = () => {
-        if (!capValue || Number.isNaN(capValue)) {
-            if (capWarning) capWarning.classList.add('d-none');
-            return;
-        }
-
         const exceeding = [];
         chunkInputs.forEach(input => {
+            const cap = capForInput(input);
+            if (Number.isNaN(cap)) {
+                return;
+            }
             const raw = parseInt(input.value || '0', 10);
-            if (!Number.isNaN(raw) && raw > capValue) {
-                exceeding.push(input.dataset.label || input.name || 'A chunk size');
+            if (!Number.isNaN(raw) && raw > cap) {
+                exceeding.push(`${input.dataset.label || input.name || 'A chunk size'} (max ${cap})`);
             }
         });
 
         if (capWarning && capWarningText) {
             if (exceeding.length > 0 && overrideToggle.checked) {
-                capWarningText.textContent = `${exceeding.join(', ')} will be reduced to ${capValue} because of the cap.`;
+                capWarningText.textContent = `${exceeding.join(', ')} will be reduced to what a single chunk can embed.`;
                 capWarning.classList.remove('d-none');
             } else {
                 capWarning.classList.add('d-none');
@@ -6462,11 +6470,10 @@ function setupToggles() {
         const waitToggle = document.getElementById('toggle-wait-plugin');
         const mathToggle = document.getElementById('toggle-math-plugin');
         const textToggle = document.getElementById('toggle-text-plugin');
-        const factMemoryToggle = document.getElementById('toggle-fact-memory-plugin');
         const embeddingToggle = document.getElementById('toggle-default-embedding-model-plugin');
         const allowUserPluginsToggle = document.getElementById('toggle-allow-user-plugins');
         const allowGroupPluginsToggle = document.getElementById('toggle-allow-group-plugins');
-        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, factMemoryToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
+        const toggles = [timeToggle, httpToggle, waitToggle, mathToggle, textToggle, embeddingToggle, allowUserPluginsToggle, allowGroupPluginsToggle];
         // Feedback area
         let feedbackDiv = document.getElementById('core-plugin-toggles-feedback');
         if (!feedbackDiv) {
@@ -6495,7 +6502,14 @@ function setupToggles() {
                 if (mathToggle) mathToggle.checked = !!settings.enable_math_plugin;
                 if (textToggle) textToggle.checked = !!settings.enable_text_plugin;
                 if (embeddingToggle) embeddingToggle.checked = !!settings.enable_default_embedding_model_plugin;
-                if (factMemoryToggle) factMemoryToggle.checked = !!settings.enable_fact_memory_plugin;
+                const factMemoryNote = document.getElementById('fact-memory-dependency-note');
+                if (factMemoryNote) {
+                    const factMemoryEnabled = !!settings.enable_fact_memory_plugin;
+                    factMemoryNote.textContent = factMemoryEnabled
+                        ? 'Enabled in Chat > Chat Experience > Fact Memory'
+                        : 'Disabled. Enable it in Chat > Chat Experience > Fact Memory';
+                    factMemoryNote.className = factMemoryEnabled ? 'text-muted d-block ms-4' : 'text-danger d-block ms-4';
+                }
                 const depNote = document.getElementById('tabular-processing-dependency-note');
                 if (depNote) {
                     const tabularEnabled = !!settings.enable_tabular_processing_plugin;
@@ -6524,7 +6538,6 @@ function setupToggles() {
                 enable_math_plugin: mathToggle ? mathToggle.checked : false,
                 enable_text_plugin: textToggle ? textToggle.checked : false,
                 enable_default_embedding_model_plugin: embeddingToggle ? embeddingToggle.checked : false,
-                enable_fact_memory_plugin: factMemoryToggle ? factMemoryToggle.checked : false,
                 allow_user_plugins: allowUserPluginsToggle ? allowUserPluginsToggle.checked : false,
                 allow_group_plugins: allowGroupPluginsToggle ? allowGroupPluginsToggle.checked : false
             };
@@ -6782,6 +6795,16 @@ function setupToggles() {
         });
     }
 
+    const enableCustomRateLimitMessage = document.getElementById('enable_custom_rate_limit_message');
+    const rateLimitMessageSettingsDiv = document.getElementById('rate_limit_message_settings');
+    if (enableCustomRateLimitMessage && rateLimitMessageSettingsDiv) {
+        rateLimitMessageSettingsDiv.classList.toggle('d-none', !enableCustomRateLimitMessage.checked);
+        enableCustomRateLimitMessage.addEventListener('change', function () {
+            rateLimitMessageSettingsDiv.classList.toggle('d-none', !this.checked);
+            markFormAsModified();
+        });
+    }
+
     const enableEnhancedCitation = document.getElementById('enable_enhanced_citations');
     if (enableEnhancedCitation) {
         toggleEnhancedCitation(enableEnhancedCitation.checked);
@@ -6809,6 +6832,59 @@ function setupToggles() {
     }
     if (documentIntelligenceAutoSamplePages) {
         documentIntelligenceAutoSamplePages.addEventListener('input', markFormAsModified);
+    }
+
+    const enableEnhancedExtraction = document.getElementById('enable_enhanced_extraction');
+    const enhancedExtractionSettings = document.getElementById('enhanced_extraction_settings');
+    const updateEnhancedExtractionControls = () => {
+        if (!enableEnhancedExtraction || !enhancedExtractionSettings) {
+            return;
+        }
+        enhancedExtractionSettings.classList.toggle('d-none', !enableEnhancedExtraction.checked);
+    };
+    if (enableEnhancedExtraction) {
+        updateEnhancedExtractionControls();
+        enableEnhancedExtraction.addEventListener('change', function () {
+            updateEnhancedExtractionControls();
+            // Turning Enhanced on defaults to Auto so it upgrades only when structure is detected.
+            if (this.checked && documentIntelligenceExtractionMode && documentIntelligenceExtractionMode.value === 'read') {
+                documentIntelligenceExtractionMode.value = 'auto';
+                updateDocumentIntelligenceAutoControls();
+            }
+            markFormAsModified();
+        });
+    }
+
+    const contentUnderstandingAuthType = document.getElementById('azure_content_understanding_authentication_type');
+    const contentUnderstandingKeyContainer = document.getElementById('azure_content_understanding_key_container');
+    const updateContentUnderstandingAuthControls = () => {
+        if (!contentUnderstandingAuthType || !contentUnderstandingKeyContainer) {
+            return;
+        }
+        contentUnderstandingKeyContainer.classList.toggle('d-none', contentUnderstandingAuthType.value === 'managed_identity');
+    };
+    if (contentUnderstandingAuthType) {
+        updateContentUnderstandingAuthControls();
+        contentUnderstandingAuthType.addEventListener('change', function () {
+            updateContentUnderstandingAuthControls();
+            markFormAsModified();
+        });
+    }
+
+    const enableOfficeEmbeddedImageAnalysis = document.getElementById('enable_office_embedded_image_analysis');
+    const officeEmbeddedImageOptions = document.getElementById('office_embedded_image_options');
+    const updateOfficeEmbeddedImageControls = () => {
+        if (!enableOfficeEmbeddedImageAnalysis || !officeEmbeddedImageOptions) {
+            return;
+        }
+        officeEmbeddedImageOptions.classList.toggle('d-none', !enableOfficeEmbeddedImageAnalysis.checked);
+    };
+    if (enableOfficeEmbeddedImageAnalysis) {
+        updateOfficeEmbeddedImageControls();
+        enableOfficeEmbeddedImageAnalysis.addEventListener('change', function () {
+            updateOfficeEmbeddedImageControls();
+            markFormAsModified();
+        });
     }
 
     const enableContentSafetyCheckbox = document.getElementById('enable_content_safety');
@@ -8363,6 +8439,44 @@ function setupTestButtons() {
         });
     }
 
+    const testContentUnderstandingBtn = document.getElementById('test_content_understanding_button');
+    if (testContentUnderstandingBtn) {
+        testContentUnderstandingBtn.addEventListener('click', async () => {
+            const resultDiv = document.getElementById('test_content_understanding_result');
+            resultDiv.className = 'mt-2';
+            resultDiv.textContent = 'Testing Content Understanding...';
+
+            const payload = {
+                test_type: 'content_understanding',
+                endpoint: document.getElementById('azure_content_understanding_endpoint')?.value || '',
+                authentication_type: document.getElementById('azure_content_understanding_authentication_type')?.value || 'key',
+                key: document.getElementById('azure_content_understanding_key')?.value || '',
+                api_version: document.getElementById('azure_content_understanding_api_version')?.value || '',
+                analyzer_id: document.getElementById('azure_content_understanding_analyzer_id')?.value || '',
+                image_analyzer_id: document.getElementById('azure_content_understanding_image_analyzer_id')?.value || ''
+            };
+
+            try {
+                const resp = await fetch('/api/admin/settings/test_connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (resp.ok) {
+                    resultDiv.className = 'mt-2 text-success';
+                    resultDiv.textContent = data.message;
+                } else {
+                    resultDiv.className = 'mt-2 text-danger';
+                    resultDiv.textContent = data.error || 'Error testing Content Understanding';
+                }
+            } catch (err) {
+                resultDiv.className = 'mt-2 text-danger';
+                resultDiv.textContent = `Error: ${err.message}`;
+            }
+        });
+    }
+
     const testKeyVaultBtn = document.getElementById('test_key_vault_button');
     if (testKeyVaultBtn) {
         testKeyVaultBtn.addEventListener('click', async () => {
@@ -9136,31 +9250,6 @@ function clearStatusAlert(statusAlert) {
 }
 
 
-function switchTab(event, tabButtonId) {
-    event.preventDefault();
-    const triggerEl = document.getElementById(tabButtonId);
-    if (triggerEl) {
-        const tabObj = new bootstrap.Tab(triggerEl);
-        tabObj.show();
-        return;
-    }
-
-    const inferredTabId = tabButtonId.replace(/-tab$/, '');
-    if (typeof window.showAdminTab === 'function') {
-        window.showAdminTab(inferredTabId);
-
-        const navLink = document.querySelector(`.admin-nav-tab[data-tab="${inferredTabId}"]`);
-        if (navLink) {
-            document.querySelectorAll('.admin-nav-tab, .admin-nav-section').forEach(link => {
-                link.classList.remove('active');
-            });
-            navLink.classList.add('active');
-        }
-    }
-}
-
-window.switchTab = switchTab;
-
 function togglePassword(btnId, inputId) {
     const btn = document.getElementById(btnId);
     const inp = document.getElementById(inputId);
@@ -9561,6 +9650,7 @@ togglePassword('toggle_image_gen_key', 'azure_openai_image_gen_key');
 togglePassword('toggle_content_safety_key', 'content_safety_key');
 togglePassword('toggle_search_key', 'azure_ai_search_key');
 togglePassword('toggle_docintel_key', 'azure_document_intelligence_key');
+togglePassword('toggle_content_understanding_key', 'azure_content_understanding_key');
 togglePassword('toggle_azure_apim_gpt_subscription_key', 'azure_apim_gpt_subscription_key');
 togglePassword('toggle_azure_apim_embedding_subscription_key', 'azure_apim_embedding_subscription_key');
 togglePassword('toggle_azure_apim_image_gen_subscription_key', 'azure_apim_image_gen_subscription_key');
@@ -9981,111 +10071,55 @@ function findPreviousApplicableStep(currentStep) {
 }
 
 /**
- * Navigate to the appropriate tab based on the walkthrough step
+ * Navigate to the setting a walkthrough step is about.
+ *
+ * Steps used to name a tab id directly, which meant the same knowledge was
+ * recorded twice and went stale the moment a setting moved to another tab.
+ * Steps now name the card they are about, and openAdminCard finds the owning
+ * tab from the page itself, so this cannot drift again.
+ *
  * @param {number} stepNumber - The current step number
  */
 function handleTabNavigation(stepNumber) {
-    // Map steps to tabs that need to be activated
-    const stepToTab = {
-        1: 'general-tab',     // App title and logo (General tab)
-        2: 'ai-models-tab',   // GPT settings (now in AI Models tab)
-        3: 'ai-models-tab',   // GPT model selection (now in AI Models tab)
-        4: 'workspaces-tab',  // Workspace and groups settings
-        5: 'ai-models-tab',   // Embedding settings (now in AI Models tab)
-        6: 'search-extract-tab', // AI Search settings
-        7: 'search-extract-tab', // Document Intelligence settings
-        8: 'search-extract-tab',  // Video support
-        9: 'search-extract-tab',  // Audio support
-        10: 'safety-tab',     // Content safety
-        11: 'safety-tab',     // User feedback and archiving (changed from system-tab)
-        12: 'citation-tab'    // Enhanced Citations and Image Generation
+    // card: the setting this step is about.
+    // focus: an optional finer scroll target inside that card.
+    const stepToCard = {
+        1:  { card: 'branding-section' },
+        2:  { card: 'multi-endpoint-configuration' },
+        3:  { card: 'multi-endpoint-configuration' },
+        4:  { card: 'personal-workspaces-section' },
+        5:  { card: 'embeddings-configuration' },
+        6:  { card: 'azure-ai-search-section' },
+        7:  { card: 'document-intelligence-section' },
+        8:  { card: 'video-intelligence-section', focus: 'enable_video_file_support' },
+        9:  { card: 'ai-voice-chat-section', focus: 'enable_audio_file_support' },
+        10: { card: 'content-safety-section' },
+        11: { card: 'user-feedback-section' },
+        12: { card: 'enhanced-citations-section' },
     };
-    
-    // Activate the appropriate tab
-    const tabId = stepToTab[stepNumber];
-    if (tabId) {
-        // Check if we're using sidebar navigation or tab navigation
-        const sidebarToggle = document.getElementById('admin-settings-toggle');
-        
-        if (sidebarToggle) {
-            // Using sidebar navigation - call showAdminTab function
-            const tabName = tabId.replace('-tab', ''); // Remove '-tab' suffix
-            if (typeof showAdminTab === 'function') {
-                showAdminTab(tabName);
-            } else if (typeof window.showAdminTab === 'function') {
-                window.showAdminTab(tabName);
-            }
-        } else {
-            // Using Bootstrap tabs
-            const tab = document.getElementById(tabId);
-            if (tab) {
-                // Use bootstrap Tab to show the tab
-                const bootstrapTab = new bootstrap.Tab(tab);
-                bootstrapTab.show();
-            }
-        }
-        
-        // Scroll to the relevant section after a small delay to allow tab to switch
-        setTimeout(() => {
-            scrollToRelevantSection(stepNumber, tabId);
-        }, 300);
-    }
-}
 
-/**
- * Scroll to relevant section within a tab based on the step
- * @param {number} stepNumber - The current step number
- * @param {string} tabId - The ID of the tab that was activated
- */
-function scrollToRelevantSection(stepNumber, tabId) {
-    // Define which sections to scroll to for each step
-    let targetElement = null;
-    
-    switch (stepNumber) {
-        case 1: // App title and logo
-            targetElement = document.getElementById('branding-section');
-            break;
-        case 2: // GPT settings
-            targetElement = document.getElementById('gpt-configuration');
-            break;
-        case 3: // GPT model selection
-            targetElement = document.getElementById('gpt_models_list')?.closest('.mb-3');
-            break;
-        case 4: // Workspaces toggle section
-            targetElement = document.getElementById('personal-workspaces-section');
-            break;
-        case 5: // Embedding settings
-            targetElement = document.getElementById('embeddings-configuration');
-            break;
-        case 6: // AI Search settings
-            targetElement = document.getElementById('azure-ai-search-section');
-            break;
-        case 7: // Document Intelligence settings
-            targetElement = document.getElementById('document-intelligence-section');
-            break;
-        case 8: // Video file support
-            targetElement = document.getElementById('enable_video_file_support')?.closest('.form-group');
-            break;
-        case 9: // Audio file support
-            targetElement = document.getElementById('enable_audio_file_support')?.closest('.form-group');
-            break;
-        case 10: // Content safety
-            targetElement = document.getElementById('content-safety-section');
-            break;
-        case 11: // User feedback and archiving
-            targetElement = document.getElementById('user-feedback-section');
-            break;
-        case 12: // Enhanced citations and image generation
-            targetElement = document.getElementById('enhanced-citations-section');
-            break;
-        default:
-            // For other steps, no specific scrolling
-            break;
+    const target = stepToCard[stepNumber];
+    if (!target) {
+        return;
     }
-    
-    // If we found a target element, scroll to it
-    if (targetElement) {
-        targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const opened = typeof window.openAdminCard === 'function'
+        ? window.openAdminCard(target.card)
+        : false;
+
+    if (!opened) {
+        console.warn(`handleTabNavigation: could not open card "${target.card}" for step ${stepNumber}`);
+        return;
+    }
+
+    if (target.focus) {
+        // openAdminCard scrolls to the card first, so refine afterwards.
+        window.setTimeout(() => {
+            const element = document.getElementById(target.focus);
+            if (element) {
+                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }, 400);
     }
 }
 
@@ -10451,7 +10485,18 @@ function setupWalkthroughFieldListeners() {
             {selector: '#document_intelligence_auto_sample_pages', event: 'input'},
             {selector: '#azure_apim_document_intelligence_endpoint', event: 'input'},
             {selector: '#azure_apim_document_intelligence_subscription_key', event: 'input'},
-            {selector: '#enable_document_intelligence_apim', event: 'change'}
+            {selector: '#enable_document_intelligence_apim', event: 'change'},
+            {selector: '#enable_enhanced_extraction', event: 'change'},
+            {selector: '#azure_content_understanding_endpoint', event: 'input'},
+            {selector: '#azure_content_understanding_key', event: 'input'},
+            {selector: '#azure_content_understanding_authentication_type', event: 'change'},
+            {selector: '#azure_content_understanding_api_version', event: 'input'},
+            {selector: '#azure_content_understanding_analyzer_id', event: 'input'},
+            {selector: '#azure_content_understanding_image_analyzer_id', event: 'input'},
+            {selector: '#enable_office_embedded_image_analysis', event: 'change'},
+            {selector: '#enable_document_intelligence_formula_extraction', event: 'change'},
+            {selector: '#office_embedded_image_min_pixels', event: 'input'},
+            {selector: '#office_embedded_image_max_per_document', event: 'input'}
         ],
         8: [ // Video settings
             {selector: '#enable_video_file_support', event: 'change'},
@@ -10790,10 +10835,11 @@ window.isAdminSettingsFormModified = () => formModified;
 function updateSaveButtonState() {
     if (!saveButton) return;
 
-    const dataManagementPane = document.getElementById('data-management');
-    const isDataManagementActive = Boolean(dataManagementPane?.classList.contains('active'));
-    saveButton.classList.toggle('d-none', isDataManagementActive);
-    if (isDataManagementActive) {
+    // Backup & Recovery panes carry their own save button in a group-shared
+    // region, so the global one is hidden while any of those tabs is active.
+    const isBackupRecoveryActive = Boolean(document.querySelector('[data-admin-group-pane="backup-recovery"].active'));
+    saveButton.classList.toggle('d-none', isBackupRecoveryActive);
+    if (isBackupRecoveryActive) {
         return;
     }
     

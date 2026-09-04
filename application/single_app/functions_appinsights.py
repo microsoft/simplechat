@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+import sys
 import threading
 from datetime import date, datetime
 from typing import Any, Dict, Optional, Tuple
@@ -14,24 +15,47 @@ import app_settings_cache
 _appinsights_logger = None
 _azure_monitor_configured = False
 _logging_settings_load_state = threading.local()
+CONSOLE_ERROR_HANDLER_ATTRIBUTE = "_simplechat_console_error_handler"
+CONSOLE_ERROR_LOG_FORMAT = "[%(asctime)s] %(levelname)s in %(name)s: %(message)s"
 REDACTED_LOG_VALUE = "***REDACTED***"
 MAX_LOG_STRING_LENGTH = 8192
 SENSITIVE_LOG_KEY_FRAGMENTS = (
     "accesstoken",
     "accountkey",
     "apikey",
+    "authkey",
     "authorization",
     "clientsecret",
     "connectionstring",
     "cookie",
     "credential",
+    "encryptionkey",
+    "keypair",
+    "masterkey",
     "password",
+    "primarykey",
     "privatekey",
     "sas",
+    "secondarykey",
     "secret",
+    "sessionkey",
     "sharedaccesssignature",
+    "signingkey",
+    "storagekey",
     "subscriptionkey",
     "token",
+)
+# Names that carry a credential only when they are the whole key. Matching these as
+# substrings would redact benign configuration such as key_encoding or partition_key_path,
+# so they are compared against the fully normalized key instead.
+SENSITIVE_LOG_KEY_EXACT = (
+    "key",
+    "keys",
+    "pass",
+    "passphrase",
+    "pwd",
+    "sig",
+    "signature",
 )
 EXTERNAL_EVENT_SENSITIVE_KEY_FRAGMENTS = (
     "email",
@@ -75,6 +99,28 @@ LOGGER_DEBUG_MESSAGE = "[SIMPLE_CHAT_DEBUG_TRACE]"
 LOGGER_FALLBACK_MESSAGE = "[SIMPLE_CHAT_LOG_FALLBACK]"
 LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
+LOGGER_SAFE_TEXT_MAX_LENGTH = 1024
+# Diagnostic keys whose sanitized text may be retained; everything else stays a length.
+LOGGER_SAFE_TEXT_KEYS = frozenset({
+    "attempt",
+    "container",
+    "containername",
+    "error",
+    "errortype",
+    "failurereasons",
+    "failuresummary",
+    "indexname",
+    "jobid",
+    "operation",
+    "reason",
+    "resource",
+    "resourcename",
+    "service",
+    "stage",
+    "status",
+    "step",
+    "taskname",
+})
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -98,6 +144,8 @@ def _is_sensitive_log_key(key: Any) -> bool:
     normalized_key = _normalize_log_key(key)
     if not normalized_key:
         return False
+    if normalized_key in SENSITIVE_LOG_KEY_EXACT:
+        return True
     return any(fragment in normalized_key for fragment in SENSITIVE_LOG_KEY_FRAGMENTS)
 
 
@@ -111,6 +159,10 @@ def _is_sensitive_external_event_key(key: Any) -> bool:
         _is_sensitive_log_key(key)
         or any(fragment in normalized_key for fragment in EXTERNAL_EVENT_SENSITIVE_KEY_FRAGMENTS)
     )
+
+
+def _is_safe_log_text_key(key: Any) -> bool:
+    return _normalize_log_key(key) in LOGGER_SAFE_TEXT_KEYS
 
 
 def sanitize_log_message(message: Any) -> str:
@@ -176,8 +228,9 @@ def _build_logger_extra(
     message: Any,
     extra: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Build log-record properties without clear-text user-controlled values."""
+    """Build log-record properties, keeping only sanitized allowlisted diagnostic text."""
     logger_extra: Dict[str, Any] = {
+        "sc_message": sanitize_log_message(message or "")[:MAX_LOG_STRING_LENGTH],
         "sc_message_length": len(str(message or "")),
     }
 
@@ -193,6 +246,10 @@ def _build_logger_extra(
                 logger_extra[f"{normalized_key}_count"] = len(value)
             elif isinstance(value, str):
                 logger_extra[f"{normalized_key}_length"] = len(value)
+                if _is_safe_log_text_key(key):
+                    logger_extra[normalized_key] = (
+                        sanitize_log_message(value)[:LOGGER_SAFE_TEXT_MAX_LENGTH]
+                    )
             else:
                 logger_extra[normalized_key] = _logger_safe_scalar(value)
 
@@ -575,3 +632,54 @@ def setup_appinsights_logging(settings):
         print(f"[AZURE_MONITOR] Failed to setup Application Insights: {e}")
         _azure_monitor_configured = False
         # Don't re-raise the exception, just continue without Application Insights
+
+
+def ensure_console_error_logging(logger):
+    """
+    Guarantee that a logger writes ERROR records to stderr.
+
+    Flask only attaches its own stderr handler when ``logging.Logger`` finds no
+    level handler anywhere up the hierarchy. ``configure_azure_monitor`` attaches
+    a handler to the root logger, which also turns ``logging.basicConfig`` into a
+    no-op, so unhandled request tracebacks are delivered to Application Insights
+    and never printed. On App Service that leaves nothing but the access-log line
+    in the container log, which makes 500s effectively invisible.
+
+    The handler is attached to the supplied logger rather than to root, and is
+    pinned at ERROR, so library DEBUG output is never echoed to the console.
+
+    Args:
+        logger (logging.Logger): Logger to attach the stderr handler to,
+            typically ``app.logger``.
+
+    Returns:
+        logging.Handler: The console handler now attached to the logger, or
+        ``None`` when no logger was supplied.
+
+    Raises:
+        None: Handler setup failures are reported and swallowed so that logging
+        configuration can never prevent the application from starting.
+    """
+    if logger is None:
+        return None
+
+    try:
+        for existing_handler in logger.handlers:
+            if getattr(existing_handler, CONSOLE_ERROR_HANDLER_ATTRIBUTE, False):
+                return existing_handler
+
+        console_handler = logging.StreamHandler(sys.stderr)
+        console_handler.setLevel(logging.ERROR)
+        console_handler.setFormatter(logging.Formatter(CONSOLE_ERROR_LOG_FORMAT))
+        setattr(console_handler, CONSOLE_ERROR_HANDLER_ATTRIBUTE, True)
+        logger.addHandler(console_handler)
+
+        # A logger left at NOTSET defers to the root level, which Azure Monitor
+        # may have raised above ERROR, so pin it low enough to emit tracebacks.
+        if logger.level == logging.NOTSET or logger.level > logging.ERROR:
+            logger.setLevel(logging.ERROR)
+
+        return console_handler
+    except Exception as handler_error:
+        print(f"[AZURE_MONITOR] Failed to attach console error handler: {handler_error}")
+        return None

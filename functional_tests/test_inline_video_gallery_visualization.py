@@ -2,7 +2,7 @@
 # test_inline_video_gallery_visualization.py
 """
 Functional test for inline video gallery visualization support.
-Version: 0.241.066
+Version: 0.260.024
 Implemented in: 0.241.066
 
 This test ensures assistant agent citations can expose inline video galleries,
@@ -107,6 +107,16 @@ def test_chat_renderer_wires_inline_video_galleries():
     assert "max-height: 400px;" in chats_css
     assert "_contains_inline_video_result(function_result)" in workflow_runner_source
     assert "mime_type.startswith('video/')" in workflow_runner_source
+    assert (
+        "const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);"
+        in messages_js
+    )
+    assert (
+        "const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);"
+        in messages_js
+    )
+    assert "function extractWorkspaceCitationVideoItems(citedHybridCitations = []" in videos_js
+    assert "function extractLinkedVideoItems(citedWebCitations = []" in videos_js
 
 
 if __name__ == "__main__":

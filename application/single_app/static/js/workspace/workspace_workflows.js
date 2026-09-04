@@ -127,6 +127,12 @@ const workflowFileSyncContinueModeSelect = document.getElementById("workflow-fil
 const workflowFileSyncUseChangedDocumentsToggle = document.getElementById("workflow-file-sync-use-changed-documents");
 const workflowFileSyncHelp = document.getElementById("workflow-file-sync-help");
 const workflowAlertPrioritySelect = document.getElementById("workflow-alert-priority");
+const workflowAlertModeSelect = document.getElementById("workflow-alert-mode");
+const workflowAlertPriorityGroup = document.getElementById("workflow-alert-priority-group");
+const workflowAlertRulesGroup = document.getElementById("workflow-alert-rules-group");
+const workflowAlertRulesList = document.getElementById("workflow-alert-rules-list");
+const workflowAlertRuleAddBtn = document.getElementById("workflow-alert-rule-add-btn");
+const workflowAlertEvaluationOnErrorSelect = document.getElementById("workflow-alert-evaluation-on-error");
 const workflowErrorStrategyInputs = Array.from(document.querySelectorAll('input[name="workflow-error-strategy"]'));
 const workflowTaskRetryCountInput = document.getElementById("workflow-task-retry-count");
 const workflowReviewSummary = document.getElementById("workflow-review-summary");
@@ -152,6 +158,56 @@ function getWorkflowMaxTasks() {
     return Math.min(WORKFLOW_TASK_LIMIT_MAX, Math.max(WORKFLOW_TASK_LIMIT_MIN, configuredLimit));
 }
 const WORKFLOW_MAX_TASKS = getWorkflowMaxTasks();
+const WORKFLOW_ALERT_MAX_RULES = 20;
+const WORKFLOW_ALERT_SEVERITIES = [
+    { value: "info", label: "Info" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "critical", label: "Critical" },
+];
+const WORKFLOW_ALERT_DELIVERIES = [
+    { value: "default", label: "Default for severity" },
+    { value: "notify_only", label: "Notification bell only" },
+    { value: "popup", label: "Pop-up alert" },
+];
+const WORKFLOW_ALERT_CONDITION_TYPES = [
+    { value: "run_status", label: "Run finished with a status" },
+    { value: "task_status", label: "A task finished with a status" },
+    { value: "text_match", label: "Output text matches" },
+    { value: "file_sync", label: "File Sync result" },
+    { value: "no_output", label: "The run produced no output" },
+    { value: "model_evaluation", label: "A model judges a condition" },
+    { value: "agent_signal", label: "The agent raised an alert" },
+];
+const WORKFLOW_ALERT_RUN_STATUSES = [
+    { value: "failed", label: "Failed" },
+    { value: "completed", label: "Completed" },
+    { value: "completed_with_task_errors", label: "Completed with task errors" },
+    { value: "cancelled", label: "Cancelled" },
+];
+const WORKFLOW_ALERT_TASK_STATUSES = [
+    { value: "failed", label: "Failed" },
+    { value: "succeeded", label: "Succeeded" },
+];
+const WORKFLOW_ALERT_TEXT_MATCH_MODES = [
+    { value: "contains_any", label: "Contains any of" },
+    { value: "contains_all", label: "Contains all of" },
+    { value: "not_contains", label: "Does not contain" },
+    { value: "regex", label: "Matches regex" },
+];
+const WORKFLOW_ALERT_FILE_SYNC_OUTCOMES = [
+    { value: "changes_found", label: "Changed documents were found" },
+    { value: "no_changes", label: "No changed documents were found" },
+    { value: "sync_failed", label: "File Sync failed" },
+];
+const WORKFLOW_ALERT_SCOPE_TYPES = [
+    { value: "final", label: "Final output" },
+    { value: "any_task", label: "Any task output" },
+    { value: "task", label: "A specific task" },
+];
+// Conditions that read run-level facts rather than a particular output.
+const WORKFLOW_ALERT_SCOPELESS_CONDITIONS = new Set(["run_status", "file_sync", "agent_signal"]);
 const DOCUMENT_ACTION_NONE = "none";
 const DOCUMENT_ACTION_SEARCH = "search";
 const DOCUMENT_ACTION_ANALYZE = "analyze";
@@ -335,10 +391,12 @@ let workflowPendingDelete = null;
 let currentHistoryWorkflowId = "";
 let currentEditingWorkflow = null;
 let workflowComparisonVersionLoadToken = 0;
+let workflowDocumentPickerLoadToken = 0;
 let workflowPickerDocumentIds = [];
 let workflowSavedComparisonTargetIds = [];
 let workflowSavedComparisonPreferredLeftId = "";
 let workflowTasks = [];
+let workflowAlertRules = [];
 let activeWorkflowTaskId = "";
 let currentWorkflowStepIndex = 0;
 
@@ -433,6 +491,145 @@ function getAgentScopeLabel(agent) {
         return "Group Agent";
     }
     return "Personal Agent";
+}
+
+function normalizeWorkflowDocumentActionType(value) {
+    const normalizedValue = normalizeText(value).toLowerCase();
+    return [DOCUMENT_ACTION_SEARCH, DOCUMENT_ACTION_ANALYZE, DOCUMENT_ACTION_COMPARISON].includes(normalizedValue)
+        ? normalizedValue
+        : DOCUMENT_ACTION_NONE;
+}
+
+function createDefaultWorkflowTaskDocumentAction() {
+    return {
+        type: DOCUMENT_ACTION_NONE,
+        document_ids: [],
+        left_document_id: "",
+        right_document_ids: [],
+        analysis_mode: DOCUMENT_ANALYSIS_MODE_COMBINED,
+        doc_scope: workflowWorkspaceConfig.scope === "group" ? "group" : "all",
+        active_group_ids: [],
+        active_public_workspace_id: [],
+        window_unit: "pages",
+        window_size: "",
+        window_percent: "",
+        max_retries_per_window: 1,
+        target_mode: DOCUMENT_ANALYSIS_TARGET_SELECTED,
+        recent_window_minutes: DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES,
+    };
+}
+
+function normalizeWorkflowTaskDocumentAction(rawAction) {
+    const source = rawAction && typeof rawAction === "object" ? rawAction : {};
+    if (normalizeWorkflowDocumentActionType(source.type) === DOCUMENT_ACTION_NONE) {
+        return createDefaultWorkflowTaskDocumentAction();
+    }
+
+    const normalizedAction = getDocumentActionConfig({ document_action: source });
+    return {
+        ...normalizedAction,
+        document_ids: normalizeIdList(normalizedAction.document_ids),
+        right_document_ids: normalizeIdList(normalizedAction.right_document_ids),
+        active_group_ids: normalizeIdList(normalizedAction.active_group_ids),
+        active_public_workspace_id: normalizeIdList(normalizedAction.active_public_workspace_id),
+    };
+}
+
+function readWorkflowDocumentActionFromForm() {
+    const actionType = normalizeWorkflowDocumentActionType(workflowDocumentActionTypeSelect?.value);
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return createDefaultWorkflowTaskDocumentAction();
+    }
+
+    const targetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) === DOCUMENT_ANALYSIS_TARGET_RECENT
+        ? DOCUMENT_ANALYSIS_TARGET_RECENT
+        : DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
+    const pickerDocumentIds = isRecentMode ? [] : getWorkflowPickerSelectedDocumentIds();
+    const comparisonLeftDocumentId = isRecentMode ? "" : normalizeText(workflowComparisonLeftDocumentIdInput?.value);
+    const comparisonTargetDocumentIds = isRecentMode ? [] : getSelectedWorkflowComparisonTargetIds();
+    const activeGroupId = getWorkflowActiveGroupId();
+
+    return {
+        type: actionType,
+        document_ids: actionType === DOCUMENT_ACTION_COMPARISON ? comparisonTargetDocumentIds : pickerDocumentIds,
+        left_document_id: actionType === DOCUMENT_ACTION_COMPARISON ? comparisonLeftDocumentId : "",
+        right_document_ids: actionType === DOCUMENT_ACTION_COMPARISON
+            ? comparisonTargetDocumentIds.filter((documentId) => documentId !== comparisonLeftDocumentId)
+            : [],
+        analysis_mode: actionType === DOCUMENT_ACTION_ANALYZE && workflowAnalysisPerDocumentToggle?.checked
+            ? DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT
+            : DOCUMENT_ANALYSIS_MODE_COMBINED,
+        doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
+        active_group_ids: workflowWorkspaceConfig.scope === "group" && activeGroupId
+            ? [activeGroupId]
+            : parseCsvList(workflowAnalysisGroupIdsInput?.value),
+        active_public_workspace_id: parseCsvList(workflowAnalysisPublicWorkspaceIdsInput?.value),
+        window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
+        window_size: normalizeText(workflowAnalysisWindowSizeInput?.value),
+        window_percent: normalizeText(workflowAnalysisWindowPercentInput?.value),
+        max_retries_per_window: normalizeWorkflowNumericField(workflowAnalysisRetriesInput?.value, "1"),
+        target_mode: targetMode,
+        recent_window_minutes: normalizeWorkflowNumericField(
+            workflowAnalysisRecentMinutesInput?.value,
+            String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES),
+        ),
+    };
+}
+
+function applyWorkflowDocumentActionToForm(rawAction) {
+    const action = normalizeWorkflowTaskDocumentAction(rawAction);
+
+    if (workflowDocumentActionTypeSelect) {
+        workflowDocumentActionTypeSelect.value = action.type;
+    }
+    if (workflowAnalysisDocScopeSelect) {
+        workflowAnalysisDocScopeSelect.value = action.doc_scope;
+    }
+    if (workflowAnalysisTargetModeSelect) {
+        workflowAnalysisTargetModeSelect.value = action.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT
+            ? DOCUMENT_ANALYSIS_TARGET_RECENT
+            : DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    }
+    if (workflowAnalysisRecentMinutesInput) {
+        workflowAnalysisRecentMinutesInput.value = String(action.recent_window_minutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
+    }
+    if (workflowAnalysisPerDocumentToggle) {
+        workflowAnalysisPerDocumentToggle.checked = action.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT;
+    }
+    if (workflowAnalysisGroupIdsInput) {
+        workflowAnalysisGroupIdsInput.value = joinCsvList(action.active_group_ids);
+    }
+    if (workflowAnalysisPublicWorkspaceIdsInput) {
+        workflowAnalysisPublicWorkspaceIdsInput.value = joinCsvList(action.active_public_workspace_id);
+    }
+    if (workflowAnalysisWindowUnitSelect) {
+        workflowAnalysisWindowUnitSelect.value = action.window_unit;
+    }
+    if (workflowAnalysisWindowSizeInput) {
+        workflowAnalysisWindowSizeInput.value = action.window_size ?? "";
+    }
+    if (workflowAnalysisWindowPercentInput) {
+        workflowAnalysisWindowPercentInput.value = action.window_percent ?? "";
+    }
+    if (workflowAnalysisRetriesInput) {
+        workflowAnalysisRetriesInput.value = String(action.max_retries_per_window ?? 1);
+    }
+
+    applyWorkflowPickerSelection(action.type === DOCUMENT_ACTION_COMPARISON ? [] : action.document_ids);
+
+    if (action.type === DOCUMENT_ACTION_COMPARISON) {
+        const savedTargetIds = normalizeIdList([action.left_document_id, ...action.right_document_ids]);
+        workflowSavedComparisonTargetIds = savedTargetIds;
+        workflowSavedComparisonPreferredLeftId = action.left_document_id;
+        setWorkflowComparisonSavedTargets(savedTargetIds, action.left_document_id);
+    } else {
+        workflowSavedComparisonTargetIds = [];
+        workflowSavedComparisonPreferredLeftId = "";
+        setWorkflowComparisonSavedTargets([], "");
+    }
+
+    updateDocumentActionFields();
 }
 
 function getWorkflowDefaultRunnerSummary() {
@@ -670,6 +867,7 @@ function syncActiveWorkflowTaskFromEditor() {
     } else {
         activeTask.runner = { type: "inherit" };
     }
+    activeTask.document_action = readWorkflowDocumentActionFromForm();
 }
 
 function populateWorkflowTaskEditor() {
@@ -685,6 +883,10 @@ function populateWorkflowTaskEditor() {
         workflowTaskRunnerTypeSelect.value = runner.type;
     }
     updateWorkflowTaskRunnerFields(runner);
+    applyWorkflowDocumentActionToForm(activeTask?.document_action);
+    ensureWorkflowDocumentPickerLoaded().catch((error) => {
+        setWorkflowPickerError(error.message || "Unable to load documents for this workflow.");
+    });
     if (workflowTaskBriefInput) {
         workflowTaskBriefInput.value = "";
     }
@@ -735,7 +937,10 @@ function renderWorkflowTasks() {
         const runner = document.createElement("div");
         runner.className = "workflow-task-item__runner small text-muted mt-1";
         runner.textContent = getWorkflowTaskRunnerSummary(task);
-        content.append(name, preview, runner);
+        const documents = document.createElement("div");
+        documents.className = "workflow-task-item__documents small text-muted";
+        documents.textContent = `Documents: ${getWorkflowDocumentActionSummary({ document_action: task.document_action })}`;
+        content.append(name, preview, runner, documents);
 
         const actions = document.createElement("div");
         actions.className = "workflow-task-item__actions";
@@ -774,6 +979,7 @@ function addWorkflowTask() {
         instructions: "",
         order: workflowTasks.length + 1,
         runner: { type: "inherit" },
+        document_action: createDefaultWorkflowTaskDocumentAction(),
     };
     workflowTasks.push(task);
     activeWorkflowTaskId = task.id;
@@ -799,6 +1005,7 @@ function removeWorkflowTask(taskId) {
         showToast("A workflow requires at least one task.", "warning");
         return;
     }
+    syncActiveWorkflowTaskFromEditor();
     const taskIndex = workflowTasks.findIndex((task) => task.id === taskId);
     if (taskIndex < 0) {
         return;
@@ -812,6 +1019,15 @@ function removeWorkflowTask(taskId) {
 
 function initializeWorkflowTasks(workflow = null) {
     const storedTasks = Array.isArray(workflow?.tasks) ? workflow.tasks : [];
+    const workflowDocumentAction = workflow ? getDocumentActionConfig(workflow) : null;
+    const resolveTaskDocumentAction = (task, index) => {
+        // Legacy workflows stored a single workflow-level action that only ever ran on task 1.
+        if (index === 0 && !(task?.document_action && typeof task.document_action === "object") && workflowDocumentAction) {
+            return normalizeWorkflowTaskDocumentAction(workflowDocumentAction);
+        }
+        return normalizeWorkflowTaskDocumentAction(task?.document_action);
+    };
+
     workflowTasks = storedTasks.length
         ? storedTasks.map((task, index) => ({
             id: normalizeText(task.id) || createWorkflowTaskId(),
@@ -820,6 +1036,7 @@ function initializeWorkflowTasks(workflow = null) {
             instructions: normalizeText(task.instructions),
             order: index + 1,
             runner: normalizeWorkflowTaskRunner(task.runner),
+            document_action: resolveTaskDocumentAction(task, index),
         }))
         : [{
             id: createWorkflowTaskId(),
@@ -828,6 +1045,7 @@ function initializeWorkflowTasks(workflow = null) {
             instructions: normalizeText(workflow?.task_prompt),
             order: 1,
             runner: { type: "inherit" },
+            document_action: resolveTaskDocumentAction(null, 0),
         }];
     activeWorkflowTaskId = workflowTasks[0].id;
     populateWorkflowTaskEditor();
@@ -836,6 +1054,28 @@ function initializeWorkflowTasks(workflow = null) {
 
 function getWorkflowErrorStrategy() {
     return normalizeText(workflowErrorStrategyInputs.find((input) => input.checked)?.value) || "halt";
+}
+
+function getWorkflowAlertReviewSummary(legacyAlertLabel) {
+    const mode = getWorkflowAlertMode();
+    if (mode === "every_run") {
+        return `Every run - ${normalizeText(legacyAlertLabel)}`;
+    }
+    if (mode !== "rules") {
+        return "Never notify me";
+    }
+
+    const enabledRules = workflowAlertRules.filter((rule) => rule.enabled !== false);
+    if (!enabledRules.length) {
+        return "No alert rules yet";
+    }
+
+    const ruleNames = enabledRules
+        .map((rule, index) => normalizeText(rule.name) || `Alert rule ${index + 1}`)
+        .slice(0, 3)
+        .join(", ");
+    const suffix = enabledRules.length > 3 ? `, +${enabledRules.length - 3} more` : "";
+    return `${enabledRules.length} ${enabledRules.length === 1 ? "rule" : "rules"}: ${ruleNames}${suffix}`;
 }
 
 function addWorkflowReviewItem(labelText, valueText) {
@@ -862,23 +1102,30 @@ function renderWorkflowReview() {
     clearElementChildren(workflowReviewSummary);
     const runnerLabel = workflowRunnerTypeSelect?.selectedOptions?.[0]?.textContent || "Direct Model";
     const triggerLabel = workflowTriggerTypeSelect?.selectedOptions?.[0]?.textContent || "Manual";
-    const documentActionLabel = workflowDocumentActionTypeSelect?.selectedOptions?.[0]?.textContent || "No document action";
     const alertLabel = workflowAlertPrioritySelect?.selectedOptions?.[0]?.textContent || "No notification";
     const retryCount = Number(workflowTaskRetryCountInput?.value || 0);
     const strategyLabel = getWorkflowErrorStrategy() === "continue" ? "Continue after failure" : "Stop after failure";
+    const documentTaskCount = workflowTasks.filter(
+        (task) => normalizeWorkflowDocumentActionType(task.document_action?.type) !== DOCUMENT_ACTION_NONE
+    ).length;
 
     addWorkflowReviewItem("Workflow", normalizeText(workflowNameInput?.value) || "Untitled workflow");
     addWorkflowReviewItem("Default Runner", normalizeText(runnerLabel));
     addWorkflowReviewItem("Trigger", normalizeText(triggerLabel));
     addWorkflowReviewItem("Tasks", `${workflowTasks.length} ordered ${workflowTasks.length === 1 ? "task" : "tasks"}`);
-    addWorkflowReviewItem("Workspace documents", normalizeText(documentActionLabel));
+    addWorkflowReviewItem(
+        "Workspace documents",
+        documentTaskCount
+            ? `${documentTaskCount} of ${workflowTasks.length} ${workflowTasks.length === 1 ? "task uses" : "tasks use"} workspace documents`
+            : "No document action",
+    );
     addWorkflowReviewItem("File Sync", workflowFileSyncEnabledToggle?.checked ? "Before each run" : "Not used");
     addWorkflowReviewItem("Failure handling", `${strategyLabel}; ${retryCount} ${retryCount === 1 ? "retry" : "retries"}`);
-    addWorkflowReviewItem("Completion alert", normalizeText(alertLabel));
+    addWorkflowReviewItem("Alerts", getWorkflowAlertReviewSummary(alertLabel));
     workflowTasks.forEach((task, index) => {
         addWorkflowReviewItem(
             `Task ${index + 1}`,
-            `${normalizeText(task.name) || `Task ${index + 1}`} - ${getWorkflowTaskRunnerSummary(task)}`,
+            `${normalizeText(task.name) || `Task ${index + 1}`} - ${getWorkflowTaskRunnerSummary(task)} - ${getWorkflowDocumentActionSummary({ document_action: task.document_action })}`,
         );
     });
 }
@@ -918,6 +1165,20 @@ function validateWorkflowTasks() {
             renderWorkflowTasks();
             showToast(`Select an available agent for task ${index + 1}.`, "warning");
             workflowTaskAgentSelect?.focus();
+            return false;
+        }
+        try {
+            validateWorkflowTaskDocumentAction(
+                serializeWorkflowDocumentAction(task.document_action),
+                getWorkflowTaskLabel(task, index),
+                Boolean(workflowFileSyncEnabledToggle?.checked) && workflowFileSyncUseChangedDocumentsToggle?.checked !== false,
+            );
+        } catch (error) {
+            activeWorkflowTaskId = task.id;
+            populateWorkflowTaskEditor();
+            renderWorkflowTasks();
+            showToast(escapeHtml(error.message || `Complete the workspace document setup for task ${index + 1}.`), "warning");
+            workflowDocumentActionTypeSelect?.focus();
             return false;
         }
     }
@@ -964,6 +1225,9 @@ function validateWorkflowStep(stepName) {
             workflowTaskRetryCountInput?.focus();
             return false;
         }
+    }
+    if (stepName === "review" && !validateWorkflowAlertRules()) {
+        return false;
     }
     return true;
 }
@@ -1141,12 +1405,500 @@ function getWorkflowTriggerLabel(workflow) {
 }
 
 function getWorkflowAlertLabel(workflow) {
+    const mode = normalizeText(workflow?.alert_mode).toLowerCase();
+    const rules = Array.isArray(workflow?.alert_rules) ? workflow.alert_rules : [];
     const priority = normalizeText(workflow?.alert_priority).toLowerCase();
-    if (!priority || priority === "none") {
-        return "Off";
+
+    if (mode === "rules" || (!mode && rules.length)) {
+        const enabledCount = rules.filter((rule) => rule?.enabled !== false).length;
+        if (!enabledCount) {
+            return "Off";
+        }
+        return `${enabledCount} ${enabledCount === 1 ? "rule" : "rules"}`;
     }
 
-    return `${priority.charAt(0).toUpperCase()}${priority.slice(1)} priority`;
+    if (mode === "every_run" || (!mode && priority && priority !== "none")) {
+        if (!priority || priority === "none") {
+            return "Off";
+        }
+        return `Every run (${priority})`;
+    }
+
+    return "Off";
+}
+
+function createWorkflowAlertRuleId() {
+    if (window.crypto?.randomUUID) {
+        return window.crypto.randomUUID();
+    }
+    return `alert-rule-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function normalizeWorkflowAlertRule(rawRule) {
+    const rule = rawRule && typeof rawRule === "object" ? rawRule : {};
+    const condition = rule.condition && typeof rule.condition === "object" ? rule.condition : {};
+    const scope = rule.scope && typeof rule.scope === "object" ? rule.scope : {};
+    const conditionType = normalizeText(condition.type).toLowerCase() || "run_status";
+    const statuses = Array.isArray(condition.statuses) ? condition.statuses.map(normalizeText).filter(Boolean) : [];
+
+    return {
+        id: normalizeText(rule.id) || createWorkflowAlertRuleId(),
+        name: normalizeText(rule.name),
+        enabled: rule.enabled !== false,
+        severity: normalizeText(rule.severity).toLowerCase() || "medium",
+        delivery: normalizeText(rule.delivery).toLowerCase() || "default",
+        scopeType: normalizeText(scope.type).toLowerCase() || "final",
+        scopeTaskId: normalizeText(scope.task_id),
+        conditionType,
+        status: statuses[0] || (conditionType === "task_status" ? "failed" : "failed"),
+        matchMode: normalizeText(condition.mode).toLowerCase() || "contains_any",
+        matchValues: Array.isArray(condition.values) ? joinCsvList(condition.values) : "",
+        matchPattern: normalizeText(condition.pattern),
+        caseSensitive: Boolean(condition.case_sensitive),
+        fileSyncOutcome: normalizeText(condition.outcome).toLowerCase() || "changes_found",
+        evaluationPrompt: normalizeText(condition.prompt),
+        signalName: normalizeText(condition.signal_name),
+        minSeverity: normalizeText(condition.min_severity).toLowerCase() || "info",
+    };
+}
+
+function createDefaultWorkflowAlertRule() {
+    return normalizeWorkflowAlertRule({
+        name: "Run failed",
+        severity: "high",
+        condition: { type: "run_status", statuses: ["failed"] },
+    });
+}
+
+function createWorkflowAlertSelect(options, selectedValue, onChange) {
+    const select = document.createElement("select");
+    select.className = "form-select form-select-sm";
+    options.forEach((option) => {
+        const optionElement = document.createElement("option");
+        optionElement.value = option.value;
+        optionElement.textContent = option.label;
+        select.appendChild(optionElement);
+    });
+    select.value = selectedValue;
+    select.addEventListener("change", (event) => onChange(normalizeText(event.target.value)));
+    return select;
+}
+
+function createWorkflowAlertInput(value, placeholder, onChange, multiline = false) {
+    const input = document.createElement(multiline ? "textarea" : "input");
+    input.className = "form-control form-control-sm";
+    if (multiline) {
+        input.rows = 2;
+    } else {
+        input.type = "text";
+    }
+    input.value = value;
+    input.placeholder = placeholder;
+    input.addEventListener("input", (event) => onChange(event.target.value));
+    return input;
+}
+
+function createWorkflowAlertField(labelText, controlElement, columnClass = "col-md-4") {
+    const column = document.createElement("div");
+    column.className = columnClass;
+    const label = document.createElement("label");
+    label.className = "form-label small mb-1";
+    label.textContent = labelText;
+    const controlId = `alert-field-${Math.random().toString(16).slice(2)}`;
+    label.setAttribute("for", controlId);
+    controlElement.id = controlId;
+    column.append(label, controlElement);
+    return column;
+}
+
+function getWorkflowAlertTaskOptions() {
+    return workflowTasks.map((task, index) => ({
+        value: task.id,
+        label: normalizeText(task.name) || `Task ${index + 1}`,
+    }));
+}
+
+function buildWorkflowAlertConditionFields(rule) {
+    const fields = [];
+
+    if (rule.conditionType === "run_status") {
+        fields.push(createWorkflowAlertField(
+            "Run status",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_RUN_STATUSES, rule.status, (value) => {
+                rule.status = value;
+            }),
+        ));
+    } else if (rule.conditionType === "task_status") {
+        fields.push(createWorkflowAlertField(
+            "Task status",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_TASK_STATUSES, rule.status, (value) => {
+                rule.status = value;
+            }),
+        ));
+    } else if (rule.conditionType === "text_match") {
+        fields.push(createWorkflowAlertField(
+            "Match type",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_TEXT_MATCH_MODES, rule.matchMode, (value) => {
+                rule.matchMode = value;
+                renderWorkflowAlertRules();
+            }),
+        ));
+        if (rule.matchMode === "regex") {
+            fields.push(createWorkflowAlertField(
+                "Regex pattern",
+                createWorkflowAlertInput(rule.matchPattern, "expires in \\d+ days", (value) => {
+                    rule.matchPattern = value;
+                }),
+                "col-md-5",
+            ));
+        } else {
+            fields.push(createWorkflowAlertField(
+                "Text values (comma separated)",
+                createWorkflowAlertInput(rule.matchValues, "EXPIRING, CRITICAL", (value) => {
+                    rule.matchValues = value;
+                }),
+                "col-md-5",
+            ));
+        }
+    } else if (rule.conditionType === "file_sync") {
+        fields.push(createWorkflowAlertField(
+            "File Sync result",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_FILE_SYNC_OUTCOMES, rule.fileSyncOutcome, (value) => {
+                rule.fileSyncOutcome = value;
+            }),
+            "col-md-5",
+        ));
+    } else if (rule.conditionType === "model_evaluation") {
+        fields.push(createWorkflowAlertField(
+            "Condition to judge",
+            createWorkflowAlertInput(
+                rule.evaluationPrompt,
+                "any certificate expires within 14 days",
+                (value) => {
+                    rule.evaluationPrompt = value;
+                },
+                true,
+            ),
+            "col-md-8",
+        ));
+    } else if (rule.conditionType === "agent_signal") {
+        fields.push(createWorkflowAlertField(
+            "Signal name (optional)",
+            createWorkflowAlertInput(rule.signalName, "expiring-certificates", (value) => {
+                rule.signalName = value;
+            }),
+        ));
+        fields.push(createWorkflowAlertField(
+            "Minimum signal severity",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_SEVERITIES, rule.minSeverity, (value) => {
+                rule.minSeverity = value;
+            }),
+        ));
+    }
+
+    return fields;
+}
+
+function buildWorkflowAlertRuleRow(rule, index) {
+    const card = document.createElement("div");
+    card.className = "card p-2 mb-2 workflow-alert-rule";
+    card.dataset.ruleId = rule.id;
+
+    const primaryRow = document.createElement("div");
+    primaryRow.className = "row g-2";
+    primaryRow.append(
+        createWorkflowAlertField(
+            "Rule name",
+            createWorkflowAlertInput(rule.name, `Alert rule ${index + 1}`, (value) => {
+                rule.name = value;
+            }),
+        ),
+        createWorkflowAlertField(
+            "Condition",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_CONDITION_TYPES, rule.conditionType, (value) => {
+                rule.conditionType = value;
+                renderWorkflowAlertRules();
+            }),
+        ),
+        createWorkflowAlertField(
+            "Severity",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_SEVERITIES, rule.severity, (value) => {
+                rule.severity = value;
+            }),
+            "col-md-2",
+        ),
+        createWorkflowAlertField(
+            "Delivery",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_DELIVERIES, rule.delivery, (value) => {
+                rule.delivery = value;
+            }),
+            "col-md-2",
+        ),
+    );
+    card.appendChild(primaryRow);
+
+    const conditionFields = buildWorkflowAlertConditionFields(rule);
+    if (!WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType)) {
+        conditionFields.push(createWorkflowAlertField(
+            "Look at",
+            createWorkflowAlertSelect(WORKFLOW_ALERT_SCOPE_TYPES, rule.scopeType, (value) => {
+                rule.scopeType = value;
+                renderWorkflowAlertRules();
+            }),
+            "col-md-3",
+        ));
+        if (rule.scopeType === "task") {
+            const taskOptions = getWorkflowAlertTaskOptions();
+            conditionFields.push(createWorkflowAlertField(
+                "Task",
+                createWorkflowAlertSelect(
+                    taskOptions.length ? taskOptions : [{ value: "", label: "Add a task first" }],
+                    rule.scopeTaskId,
+                    (value) => {
+                        rule.scopeTaskId = value;
+                    },
+                ),
+                "col-md-3",
+            ));
+        }
+    }
+
+    if (conditionFields.length) {
+        const conditionRow = document.createElement("div");
+        conditionRow.className = "row g-2 mt-1";
+        conditionFields.forEach((field) => conditionRow.appendChild(field));
+        card.appendChild(conditionRow);
+    }
+
+    if (rule.conditionType === "text_match" && rule.matchMode !== "regex") {
+        const caseWrapper = document.createElement("div");
+        caseWrapper.className = "form-check mt-2";
+        const caseInput = document.createElement("input");
+        caseInput.className = "form-check-input";
+        caseInput.type = "checkbox";
+        caseInput.id = `alert-case-${rule.id}`;
+        caseInput.checked = Boolean(rule.caseSensitive);
+        caseInput.addEventListener("change", (event) => {
+            rule.caseSensitive = Boolean(event.target.checked);
+        });
+        const caseLabel = document.createElement("label");
+        caseLabel.className = "form-check-label small";
+        caseLabel.setAttribute("for", caseInput.id);
+        caseLabel.textContent = "Match upper and lower case exactly";
+        caseWrapper.append(caseInput, caseLabel);
+        card.appendChild(caseWrapper);
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "d-flex justify-content-between align-items-center mt-2";
+
+    const enabledWrapper = document.createElement("div");
+    enabledWrapper.className = "form-check form-switch";
+    const enabledInput = document.createElement("input");
+    enabledInput.className = "form-check-input";
+    enabledInput.type = "checkbox";
+    enabledInput.id = `alert-enabled-${rule.id}`;
+    enabledInput.checked = rule.enabled !== false;
+    enabledInput.addEventListener("change", (event) => {
+        rule.enabled = Boolean(event.target.checked);
+    });
+    const enabledLabel = document.createElement("label");
+    enabledLabel.className = "form-check-label small ms-2";
+    enabledLabel.setAttribute("for", enabledInput.id);
+    enabledLabel.textContent = "Rule enabled";
+    enabledWrapper.append(enabledInput, enabledLabel);
+
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "btn btn-sm btn-outline-danger";
+    removeButton.textContent = "Remove";
+    removeButton.addEventListener("click", () => {
+        workflowAlertRules = workflowAlertRules.filter((item) => item.id !== rule.id);
+        renderWorkflowAlertRules();
+        renderWorkflowReview();
+    });
+
+    footer.append(enabledWrapper, removeButton);
+    card.appendChild(footer);
+    return card;
+}
+
+function renderWorkflowAlertRules() {
+    if (!workflowAlertRulesList) {
+        return;
+    }
+
+    clearElementChildren(workflowAlertRulesList);
+    if (!workflowAlertRules.length) {
+        const emptyState = document.createElement("div");
+        emptyState.className = "text-muted small";
+        emptyState.textContent = "No alert rules yet. Add a rule to choose what should notify you.";
+        workflowAlertRulesList.appendChild(emptyState);
+        return;
+    }
+
+    workflowAlertRules.forEach((rule, index) => {
+        workflowAlertRulesList.appendChild(buildWorkflowAlertRuleRow(rule, index));
+    });
+}
+
+function getWorkflowAlertMode() {
+    return normalizeText(workflowAlertModeSelect?.value).toLowerCase() || "off";
+}
+
+function updateWorkflowAlertModeVisibility() {
+    const mode = getWorkflowAlertMode();
+    setElementVisibility(workflowAlertPriorityGroup, mode === "every_run");
+    setElementVisibility(workflowAlertRulesGroup, mode === "rules");
+}
+
+function buildWorkflowAlertRulePayload(rule) {
+    const condition = { type: rule.conditionType };
+    if (rule.conditionType === "run_status" || rule.conditionType === "task_status") {
+        condition.statuses = [rule.status];
+    } else if (rule.conditionType === "text_match") {
+        condition.mode = rule.matchMode;
+        if (rule.matchMode === "regex") {
+            condition.pattern = normalizeText(rule.matchPattern);
+        } else {
+            condition.values = parseCsvList(rule.matchValues);
+            condition.case_sensitive = Boolean(rule.caseSensitive);
+        }
+    } else if (rule.conditionType === "file_sync") {
+        condition.outcome = rule.fileSyncOutcome;
+    } else if (rule.conditionType === "model_evaluation") {
+        condition.prompt = normalizeText(rule.evaluationPrompt);
+    } else if (rule.conditionType === "agent_signal") {
+        condition.signal_name = normalizeText(rule.signalName);
+        condition.min_severity = rule.minSeverity;
+    }
+
+    const scopeType = WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType) ? "final" : rule.scopeType;
+    return {
+        id: rule.id,
+        name: normalizeText(rule.name),
+        enabled: rule.enabled !== false,
+        severity: rule.severity,
+        delivery: rule.delivery,
+        scope: {
+            type: scopeType,
+            task_id: scopeType === "task" ? normalizeText(rule.scopeTaskId) : "",
+        },
+        condition,
+    };
+}
+
+function collectWorkflowAlertRulesPayload() {
+    return workflowAlertRules.map((rule) => buildWorkflowAlertRulePayload(rule));
+}
+
+function buildLegacyWorkflowAlertRules(priority) {
+    if (!priority || priority === "none") {
+        return [];
+    }
+
+    // Mirrors build_legacy_alert_rules in functions_workflow_alerts.py so an
+    // unmigrated workflow shows the same rules the runner would apply.
+    return [
+        {
+            id: "legacy-run-failed",
+            name: "Run failed",
+            enabled: true,
+            severity: "high",
+            delivery: "popup",
+            scope: { type: "final", task_id: "" },
+            condition: { type: "run_status", statuses: ["failed"] },
+        },
+        {
+            id: "legacy-run-completed",
+            name: "Run completed",
+            enabled: true,
+            severity: priority,
+            delivery: "popup",
+            scope: { type: "final", task_id: "" },
+            condition: { type: "run_status", statuses: ["completed"] },
+        },
+    ];
+}
+
+function loadWorkflowAlertSettings(workflow) {
+    const source = workflow && typeof workflow === "object" ? workflow : {};
+    const storedRules = Array.isArray(source.alert_rules) ? source.alert_rules : [];
+    const storedMode = normalizeText(source.alert_mode).toLowerCase();
+    const priority = normalizeText(source.alert_priority).toLowerCase() || "none";
+
+    let mode = storedMode;
+    let rules = storedRules;
+    if (!mode) {
+        if (storedRules.length) {
+            mode = "rules";
+        } else if (priority !== "none") {
+            mode = "rules";
+            rules = buildLegacyWorkflowAlertRules(priority);
+        } else {
+            mode = "off";
+        }
+    }
+
+    workflowAlertRules = rules.map((rule) => normalizeWorkflowAlertRule(rule));
+    if (workflowAlertModeSelect) {
+        workflowAlertModeSelect.value = mode;
+    }
+
+    const evaluation = source.alert_evaluation && typeof source.alert_evaluation === "object"
+        ? source.alert_evaluation
+        : {};
+    if (workflowAlertEvaluationOnErrorSelect) {
+        workflowAlertEvaluationOnErrorSelect.value = normalizeText(evaluation.on_error).toLowerCase() || "skip";
+    }
+
+    renderWorkflowAlertRules();
+    updateWorkflowAlertModeVisibility();
+}
+
+function validateWorkflowAlertRules() {
+    if (getWorkflowAlertMode() !== "rules") {
+        return true;
+    }
+
+    if (!workflowAlertRules.length) {
+        showToast("Add at least one alert rule or choose a different alert mode.", "warning");
+        return false;
+    }
+
+    if (workflowAlertRules.length > WORKFLOW_ALERT_MAX_RULES) {
+        showToast(`Workflows support up to ${WORKFLOW_ALERT_MAX_RULES} alert rules.`, "warning");
+        return false;
+    }
+
+    for (let index = 0; index < workflowAlertRules.length; index += 1) {
+        const rule = workflowAlertRules[index];
+        const ruleLabel = normalizeText(rule.name) || `Alert rule ${index + 1}`;
+
+        if (rule.conditionType === "text_match") {
+            if (rule.matchMode === "regex" && !normalizeText(rule.matchPattern)) {
+                showToast(`Add a regex pattern for "${ruleLabel}".`, "warning");
+                return false;
+            }
+            if (rule.matchMode !== "regex" && !parseCsvList(rule.matchValues).length) {
+                showToast(`Add at least one text value for "${ruleLabel}".`, "warning");
+                return false;
+            }
+        }
+
+        if (rule.conditionType === "model_evaluation" && !normalizeText(rule.evaluationPrompt)) {
+            showToast(`Describe the condition a model should judge for "${ruleLabel}".`, "warning");
+            return false;
+        }
+
+        const usesScope = !WORKFLOW_ALERT_SCOPELESS_CONDITIONS.has(rule.conditionType);
+        if (usesScope && rule.scopeType === "task" && !normalizeText(rule.scopeTaskId)) {
+            showToast(`Select the task that "${ruleLabel}" should watch.`, "warning");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function parseCsvList(value) {
@@ -1428,12 +2180,17 @@ function setWorkflowPickerError(message = "") {
     workflowDocumentPickerError.classList.toggle("d-none", !message);
 }
 
-async function initializeWorkflowDocumentPicker(documentAction = {}) {
+async function initializeWorkflowDocumentPicker(documentAction = {}, options = {}) {
     if (!workflowDocumentPickerCard) {
         return;
     }
 
     const actionType = normalizeText(documentAction.type || workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
+    // Bump first so any in-flight load for a previous task cannot apply its scopes or
+    // selection to the picker after this call resolves.
+    const requestToken = workflowDocumentPickerLoadToken + 1;
+    workflowDocumentPickerLoadToken = requestToken;
+
     if (actionType === DOCUMENT_ACTION_NONE) {
         setWorkflowPickerError("");
         setWorkflowPickerLoadingState(false);
@@ -1445,6 +2202,11 @@ async function initializeWorkflowDocumentPicker(documentAction = {}) {
     syncWorkflowPickerActionType();
 
     const pickerScopes = getWorkflowPickerScopesFromAction(documentAction);
+    const pickerSelectionIds = Array.isArray(options.pickerDocumentIds)
+        ? options.pickerDocumentIds
+        : actionType === DOCUMENT_ACTION_COMPARISON
+            ? []
+            : documentAction.document_ids || [];
     try {
         await setEffectiveScopes(pickerScopes, {
             force: workflowWorkspaceConfig.scope === "group",
@@ -1452,17 +2214,39 @@ async function initializeWorkflowDocumentPicker(documentAction = {}) {
             reload: true,
         });
         await ensureDocumentPickerReady({ reload: false, showLoading: false });
+        if (requestToken !== workflowDocumentPickerLoadToken) {
+            return;
+        }
         syncWorkflowScopeFieldsFromPicker(pickerScopes);
-        applyWorkflowPickerSelection(
-            documentAction.type === DOCUMENT_ACTION_COMPARISON
-                ? []
-                : documentAction.document_ids || []
-        );
+        applyWorkflowPickerSelection(pickerSelectionIds);
     } catch (error) {
-        setWorkflowPickerError(error.message || "Unable to load documents for this workflow.");
+        if (requestToken === workflowDocumentPickerLoadToken) {
+            setWorkflowPickerError(error.message || "Unable to load documents for this workflow.");
+        }
     } finally {
-        setWorkflowPickerLoadingState(false);
+        if (requestToken === workflowDocumentPickerLoadToken) {
+            setWorkflowPickerLoadingState(false);
+        }
     }
+}
+
+function getWorkflowPickerAvailableDocumentCount() {
+    return document.querySelectorAll("#document-dropdown-items .dropdown-item[data-document-id]").length;
+}
+
+function ensureWorkflowDocumentPickerLoaded(options = {}) {
+    const formAction = readWorkflowDocumentActionFromForm();
+    return initializeWorkflowDocumentPicker(
+        formAction,
+        options.preserveSelection ? { pickerDocumentIds: getWorkflowPickerSelectedDocumentIds() } : {},
+    );
+}
+
+function handleWorkflowDocumentActionSelectionChanged() {
+    updateDocumentActionFields();
+    ensureWorkflowDocumentPickerLoaded().catch((error) => {
+        setWorkflowPickerError(error.message || "Unable to load documents for this workflow.");
+    });
 }
 
 async function refreshWorkflowComparisonTargetsFromPicker() {
@@ -2269,17 +3053,25 @@ function updateDocumentActionFields() {
 }
 
 async function applySelectedWorkspaceDocumentsToWorkflow() {
-    const selectedIds = getWorkflowPickerSelectedDocumentIds();
-    if (!selectedIds.length) {
-        const selectedLabel = normalizeText(workflowWorkspaceConfig.selectedDocumentsLabel) || "workspace";
-        showToast(`Select one or more ${selectedLabel} documents in the picker first.`, "warning");
-        return;
-    }
-
     const actionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
     if (actionType === DOCUMENT_ACTION_NONE) {
         return;
     }
+
+    await ensureWorkflowDocumentPickerLoaded({ preserveSelection: true });
+
+    const selectedIds = getWorkflowPickerSelectedDocumentIds();
+    const selectedLabel = normalizeText(workflowWorkspaceConfig.selectedDocumentsLabel) || "workspace";
+    if (!selectedIds.length) {
+        showToast(
+            getWorkflowPickerAvailableDocumentCount()
+                ? `Document list refreshed. Select one or more ${selectedLabel} documents in the picker for this task.`
+                : `Document list refreshed. No ${selectedLabel} documents are available in the selected scope.`,
+            "info",
+        );
+        return;
+    }
+
     const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(actionType);
 
     const limitedSelectedIds = selectedIds.slice(0, workflowMaxDocuments);
@@ -3027,6 +3819,15 @@ function resetWorkflowForm() {
     if (workflowAlertPrioritySelect) {
         workflowAlertPrioritySelect.value = "none";
     }
+    if (workflowAlertModeSelect) {
+        workflowAlertModeSelect.value = "off";
+    }
+    if (workflowAlertEvaluationOnErrorSelect) {
+        workflowAlertEvaluationOnErrorSelect.value = "skip";
+    }
+    workflowAlertRules = [];
+    renderWorkflowAlertRules();
+    updateWorkflowAlertModeVisibility();
     workflowErrorStrategyInputs.forEach((input) => {
         input.checked = input.value === "halt";
     });
@@ -3141,6 +3942,7 @@ async function openWorkflowModal(workflow = null) {
         if (workflowAlertPrioritySelect) {
             workflowAlertPrioritySelect.value = normalizeText(workflow.alert_priority).toLowerCase() || "none";
         }
+        loadWorkflowAlertSettings(workflow);
         const errorHandling = workflow.error_handling && typeof workflow.error_handling === "object"
             ? workflow.error_handling
             : {};
@@ -3164,45 +3966,6 @@ async function openWorkflowModal(workflow = null) {
             workflowFileSyncUseChangedDocumentsToggle.checked = fileSyncConfig.use_changed_documents !== false;
         }
         populateFileSyncSourceSelect(Array.isArray(fileSyncConfig.sources) ? fileSyncConfig.sources : []);
-        const documentAction = getDocumentActionConfig(workflow);
-        if (workflowDocumentActionTypeSelect) {
-            workflowDocumentActionTypeSelect.value = documentAction.type;
-        }
-        if (workflowAnalysisDocScopeSelect) {
-            workflowAnalysisDocScopeSelect.value = documentAction.doc_scope;
-        }
-        if (workflowAnalysisTargetModeSelect) {
-            workflowAnalysisTargetModeSelect.value = documentAction.target_mode === DOCUMENT_ANALYSIS_TARGET_RECENT
-                ? DOCUMENT_ANALYSIS_TARGET_RECENT
-                : DOCUMENT_ANALYSIS_TARGET_SELECTED;
-        }
-        if (workflowAnalysisRecentMinutesInput) {
-            workflowAnalysisRecentMinutesInput.value = String(documentAction.recent_window_minutes || DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
-        }
-        if (workflowAnalysisDocumentIdsInput) {
-            workflowAnalysisDocumentIdsInput.value = joinCsvList(documentAction.document_ids);
-        }
-        if (workflowAnalysisPerDocumentToggle) {
-            workflowAnalysisPerDocumentToggle.checked = documentAction.analysis_mode === DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT;
-        }
-        if (workflowAnalysisGroupIdsInput) {
-            workflowAnalysisGroupIdsInput.value = joinCsvList(documentAction.active_group_ids);
-        }
-        if (workflowAnalysisPublicWorkspaceIdsInput) {
-            workflowAnalysisPublicWorkspaceIdsInput.value = joinCsvList(documentAction.active_public_workspace_id);
-        }
-        if (workflowAnalysisWindowUnitSelect) {
-            workflowAnalysisWindowUnitSelect.value = documentAction.window_unit;
-        }
-        if (workflowAnalysisWindowSizeInput) {
-            workflowAnalysisWindowSizeInput.value = documentAction.window_size;
-        }
-        if (workflowAnalysisWindowPercentInput) {
-            workflowAnalysisWindowPercentInput.value = documentAction.window_percent;
-        }
-        if (workflowAnalysisRetriesInput) {
-            workflowAnalysisRetriesInput.value = String(documentAction.max_retries_per_window);
-        }
         if (workflowScheduleValueInput) {
             workflowScheduleValueInput.value = String(workflow.schedule?.value || 10);
         }
@@ -3227,17 +3990,6 @@ async function openWorkflowModal(workflow = null) {
     }
 
     initializeWorkflowTasks(workflow);
-    const documentAction = workflow ? getDocumentActionConfig(workflow) : null;
-    if (documentAction?.type === DOCUMENT_ACTION_COMPARISON) {
-        const savedTargetIds = [documentAction.left_document_id, ...documentAction.right_document_ids].filter(Boolean);
-        workflowSavedComparisonTargetIds = savedTargetIds;
-        workflowSavedComparisonPreferredLeftId = documentAction.left_document_id;
-        setWorkflowComparisonSavedTargets(savedTargetIds, documentAction.left_document_id);
-    } else {
-        workflowSavedComparisonTargetIds = [];
-        workflowSavedComparisonPreferredLeftId = "";
-        setWorkflowComparisonSavedTargets([], "");
-    }
 
     updateRunnerFields();
     updateTriggerFields();
@@ -3245,7 +3997,152 @@ async function openWorkflowModal(workflow = null) {
     updateDocumentActionFields();
     showWorkflowStep(0);
     workflowModal.show();
-    await initializeWorkflowDocumentPicker(documentAction || {});
+    await ensureWorkflowDocumentPickerLoaded();
+}
+
+function normalizeWorkflowNumericField(value, fallback) {
+    // normalizeText() coerces a numeric 0 to "", so truthiness cannot be used here:
+    // 0 is a valid retries-per-window value and must survive serialization.
+    if (value === null || value === undefined) {
+        return fallback;
+    }
+    const normalizedValue = normalizeText(value);
+    return normalizedValue === "" ? fallback : normalizedValue;
+}
+
+function serializeWorkflowDocumentAction(rawAction) {
+    const source = rawAction && typeof rawAction === "object" ? rawAction : createDefaultWorkflowTaskDocumentAction();
+    const actionType = normalizeWorkflowDocumentActionType(source.type);
+    const hasAction = actionType !== DOCUMENT_ACTION_NONE;
+    const targetMode = hasAction && normalizeText(source.target_mode) === DOCUMENT_ANALYSIS_TARGET_RECENT
+        ? DOCUMENT_ANALYSIS_TARGET_RECENT
+        : DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;
+    const rawWindowSize = normalizeText(source.window_size);
+    const rawWindowPercent = normalizeText(source.window_percent);
+    const rawRetries = normalizeWorkflowNumericField(source.max_retries_per_window, "1");
+    const rawRecentMinutes = normalizeWorkflowNumericField(
+        source.recent_window_minutes,
+        String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES),
+    );
+    const activeGroupId = getWorkflowActiveGroupId();
+    const comparisonLeftDocumentId = actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode
+        ? normalizeText(source.left_document_id)
+        : "";
+
+    return {
+        type: actionType,
+        document_ids: hasAction && !isRecentMode ? normalizeIdList(source.document_ids) : [],
+        left_document_id: comparisonLeftDocumentId,
+        right_document_ids: actionType === DOCUMENT_ACTION_COMPARISON && !isRecentMode
+            ? normalizeIdList(source.right_document_ids).filter((documentId) => documentId !== comparisonLeftDocumentId)
+            : [],
+        analysis_mode: actionType === DOCUMENT_ACTION_ANALYZE
+            ? normalizeWorkflowAnalysisMode(source.analysis_mode)
+            : DOCUMENT_ANALYSIS_MODE_COMBINED,
+        doc_scope: normalizeText(source.doc_scope) || getWorkflowDocumentScope(),
+        active_group_ids: hasAction
+            ? workflowWorkspaceConfig.scope === "group" && activeGroupId
+                ? [activeGroupId]
+                : normalizeIdList(source.active_group_ids)
+            : [],
+        active_public_workspace_id: hasAction ? normalizeIdList(source.active_public_workspace_id) : [],
+        window_unit: normalizeText(source.window_unit) || "pages",
+        window_size: rawWindowSize ? Number(rawWindowSize) : null,
+        window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
+        max_retries_per_window: Number(rawRetries),
+        target_mode: targetMode,
+        recent_window_minutes: Number(rawRecentMinutes),
+    };
+}
+
+function buildWorkflowAnalyzeConfig(actionPayload) {
+    const action = actionPayload && typeof actionPayload === "object" ? actionPayload : serializeWorkflowDocumentAction();
+    const isAnalyze = action.type === DOCUMENT_ACTION_ANALYZE;
+
+    return {
+        enabled: isAnalyze,
+        document_ids: isAnalyze ? action.document_ids : [],
+        doc_scope: action.doc_scope,
+        active_group_ids: isAnalyze ? action.active_group_ids : [],
+        active_public_workspace_id: isAnalyze ? action.active_public_workspace_id : [],
+        analysis_mode: isAnalyze ? action.analysis_mode : DOCUMENT_ANALYSIS_MODE_COMBINED,
+        window_unit: action.window_unit,
+        window_size: action.window_size,
+        window_percent: action.window_percent,
+        max_retries_per_window: action.max_retries_per_window,
+        target_mode: isAnalyze ? action.target_mode : DOCUMENT_ANALYSIS_TARGET_SELECTED,
+        recent_window_minutes: action.recent_window_minutes,
+    };
+}
+
+function validateWorkflowTaskDocumentAction(actionPayload, taskLabel, usesDynamicFileSyncTargets = false) {
+    const actionType = actionPayload.type;
+    if (actionType === DOCUMENT_ACTION_NONE) {
+        return;
+    }
+
+    const isSelectedMode = actionPayload.target_mode === DOCUMENT_ANALYSIS_TARGET_SELECTED;
+    const prefix = `${taskLabel}: `;
+
+    if (!isDocumentActionEnabled(actionType)) {
+        throw new Error(`${prefix}${getDocumentActionDisplayLabel(actionType)} is currently disabled by an administrator.`);
+    }
+    if (actionType === DOCUMENT_ACTION_SEARCH && isSelectedMode && !actionPayload.document_ids.length) {
+        throw new Error(`${prefix}Select one or more documents for search.`);
+    }
+    if (actionType === DOCUMENT_ACTION_ANALYZE && isSelectedMode && !actionPayload.document_ids.length && !usesDynamicFileSyncTargets) {
+        throw new Error(`${prefix}Select one or more documents for analysis.`);
+    }
+    if (!isSelectedMode && (
+        !Number.isInteger(actionPayload.recent_window_minutes)
+        || actionPayload.recent_window_minutes < 1
+        || actionPayload.recent_window_minutes > 1440
+    )) {
+        throw new Error(`${prefix}Recent document window must be between 1 and 1440 minutes.`);
+    }
+    if (actionType === DOCUMENT_ACTION_COMPARISON && isSelectedMode) {
+        if (actionPayload.document_ids.length < 2) {
+            throw new Error(`${prefix}Select at least two document versions for compare.`);
+        }
+        if (!actionPayload.left_document_id) {
+            throw new Error(`${prefix}Add one Source document id for compare.`);
+        }
+        if (!actionPayload.right_document_ids.length) {
+            throw new Error(`${prefix}Add one or more Target document ids for compare.`);
+        }
+    }
+
+    const documentActionCount = actionType === DOCUMENT_ACTION_COMPARISON
+        ? 1 + actionPayload.right_document_ids.length
+        : actionPayload.document_ids.length;
+    const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(actionType);
+    if (documentActionCount > workflowMaxDocuments) {
+        throw new Error(`${prefix}${getDocumentActionDisplayLabel(actionType)} workflows support up to ${workflowMaxDocuments} documents per run.`);
+    }
+    if (actionPayload.window_size !== null && (!Number.isInteger(actionPayload.window_size) || actionPayload.window_size < 1)) {
+        throw new Error(`${prefix}Window size must be a whole number greater than zero.`);
+    }
+    if (actionPayload.window_percent !== null && (
+        !Number.isInteger(actionPayload.window_percent)
+        || actionPayload.window_percent < 1
+        || actionPayload.window_percent > 100
+    )) {
+        throw new Error(`${prefix}Window percent must be a whole number between 1 and 100.`);
+    }
+    if (actionPayload.window_size !== null && actionPayload.window_percent !== null) {
+        throw new Error(`${prefix}Choose either a fixed window size or a window percent, not both.`);
+    }
+    if (!Number.isInteger(actionPayload.max_retries_per_window)
+        || actionPayload.max_retries_per_window < 0
+        || actionPayload.max_retries_per_window > 5) {
+        throw new Error(`${prefix}Retries per window must be between 0 and 5.`);
+    }
+}
+
+function getWorkflowTaskLabel(task, index) {
+    const taskName = normalizeText(task?.name);
+    return taskName ? `Task ${index + 1} (${taskName})` : `Task ${index + 1}`;
 }
 
 function buildWorkflowPayload() {
@@ -3257,35 +4154,13 @@ function buildWorkflowPayload() {
         instructions: normalizeText(task.instructions),
         order: index + 1,
         runner: serializeWorkflowTaskRunner(task.runner),
+        document_action: serializeWorkflowDocumentAction(task.document_action),
     }));
     const runnerType = normalizeText(workflowRunnerTypeSelect?.value) || "model";
     const triggerType = normalizeText(workflowTriggerTypeSelect?.value) || "manual";
-    const documentActionType = normalizeText(workflowDocumentActionTypeSelect?.value) || DOCUMENT_ACTION_NONE;
-    const analysisTargetMode = normalizeText(workflowAnalysisTargetModeSelect?.value) === DOCUMENT_ANALYSIS_TARGET_RECENT
-        ? DOCUMENT_ANALYSIS_TARGET_RECENT
-        : DOCUMENT_ANALYSIS_TARGET_SELECTED;
-    const targetDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT
-        ? []
-        : getWorkflowPickerSelectedDocumentIds();
-    const comparisonLeftDocumentId = normalizeText(workflowComparisonLeftDocumentIdInput?.value);
-    const comparisonTargetDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT
-        ? []
-        : getSelectedWorkflowComparisonTargetIds();
-    const selectedDocumentActionIds = documentActionType === DOCUMENT_ACTION_COMPARISON
-        ? comparisonTargetDocumentIds
-        : targetDocumentIds;
-    const comparisonRightDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT
-        ? []
-        : comparisonTargetDocumentIds.filter((documentId) => documentId !== comparisonLeftDocumentId);
-    const analysisGroupIds = parseCsvList(workflowAnalysisGroupIdsInput?.value);
-    const analysisPublicWorkspaceIds = parseCsvList(workflowAnalysisPublicWorkspaceIdsInput?.value);
-    const rawWindowSize = normalizeText(workflowAnalysisWindowSizeInput?.value);
-    const rawWindowPercent = normalizeText(workflowAnalysisWindowPercentInput?.value);
-    const rawRetries = normalizeText(workflowAnalysisRetriesInput?.value) || "1";
-    const rawRecentMinutes = normalizeText(workflowAnalysisRecentMinutesInput?.value) || String(DEFAULT_RECENT_DOCUMENT_WINDOW_MINUTES);
-    const analysisMode = workflowAnalysisPerDocumentToggle?.checked
-        ? DOCUMENT_ANALYSIS_MODE_PER_DOCUMENT
-        : DOCUMENT_ANALYSIS_MODE_COMBINED;
+    const primaryDocumentAction = tasks.find((task) => task.document_action.type !== DOCUMENT_ACTION_NONE)?.document_action
+        || tasks[0]?.document_action
+        || serializeWorkflowDocumentAction();
     const fileSyncEnabled = Boolean(workflowFileSyncEnabledToggle?.checked) || triggerType === "file_sync";
     const payload = {
         id: normalizeText(workflowIdInput?.value),
@@ -3304,6 +4179,11 @@ function buildWorkflowPayload() {
             : true,
         trigger_type: triggerType,
         alert_priority: normalizeText(workflowAlertPrioritySelect?.value).toLowerCase() || "none",
+        alert_mode: getWorkflowAlertMode(),
+        alert_rules: collectWorkflowAlertRulesPayload(),
+        alert_evaluation: {
+            on_error: normalizeText(workflowAlertEvaluationOnErrorSelect?.value).toLowerCase() || "skip",
+        },
         is_enabled: ["interval", "file_sync"].includes(triggerType) ? Boolean(workflowEnabledToggle?.checked) : true,
         schedule: {},
         file_sync: {
@@ -3316,44 +4196,8 @@ function buildWorkflowPayload() {
         selected_agent: {},
         model_endpoint_id: "",
         model_id: "",
-        document_action: {
-            type: documentActionType,
-            document_ids: documentActionType !== DOCUMENT_ACTION_NONE ? selectedDocumentActionIds : [],
-            left_document_id: documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode !== DOCUMENT_ANALYSIS_TARGET_RECENT ? comparisonLeftDocumentId : "",
-            right_document_ids: documentActionType === DOCUMENT_ACTION_COMPARISON ? comparisonRightDocumentIds : [],
-            analysis_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisMode : DOCUMENT_ANALYSIS_MODE_COMBINED,
-            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
-            active_group_ids: documentActionType !== DOCUMENT_ACTION_NONE
-                ? workflowWorkspaceConfig.scope === "group" && getWorkflowActiveGroupId()
-                    ? [getWorkflowActiveGroupId()]
-                    : analysisGroupIds
-                : [],
-            active_public_workspace_id: documentActionType !== DOCUMENT_ACTION_NONE ? analysisPublicWorkspaceIds : [],
-            window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
-            window_size: rawWindowSize ? Number(rawWindowSize) : null,
-            window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
-            max_retries_per_window: Number(rawRetries),
-            target_mode: documentActionType !== DOCUMENT_ACTION_NONE ? analysisTargetMode : DOCUMENT_ANALYSIS_TARGET_SELECTED,
-            recent_window_minutes: Number(rawRecentMinutes),
-        },
-        analyze: {
-            enabled: documentActionType === DOCUMENT_ACTION_ANALYZE,
-            document_ids: documentActionType === DOCUMENT_ACTION_ANALYZE ? targetDocumentIds : [],
-            doc_scope: normalizeText(workflowAnalysisDocScopeSelect?.value) || getWorkflowDocumentScope(),
-            active_group_ids: documentActionType === DOCUMENT_ACTION_ANALYZE
-                ? workflowWorkspaceConfig.scope === "group" && getWorkflowActiveGroupId()
-                    ? [getWorkflowActiveGroupId()]
-                    : analysisGroupIds
-                : [],
-            active_public_workspace_id: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisPublicWorkspaceIds : [],
-            analysis_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisMode : DOCUMENT_ANALYSIS_MODE_COMBINED,
-            window_unit: normalizeText(workflowAnalysisWindowUnitSelect?.value) || "pages",
-            window_size: rawWindowSize ? Number(rawWindowSize) : null,
-            window_percent: rawWindowPercent ? Number(rawWindowPercent) : null,
-            max_retries_per_window: Number(rawRetries),
-            target_mode: documentActionType === DOCUMENT_ACTION_ANALYZE ? analysisTargetMode : DOCUMENT_ANALYSIS_TARGET_SELECTED,
-            recent_window_minutes: Number(rawRecentMinutes),
-        },
+        document_action: primaryDocumentAction,
+        analyze: buildWorkflowAnalyzeConfig(primaryDocumentAction),
     };
 
     if (!payload.name) {
@@ -3377,46 +4221,13 @@ function buildWorkflowPayload() {
         }
     }
     const usesDynamicFileSyncTargets = payload.file_sync.enabled && payload.file_sync.use_changed_documents;
-    if (documentActionType === DOCUMENT_ACTION_SEARCH && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.document_ids.length) {
-        throw new Error("Select one or more documents for search.");
-    }
-    if (documentActionType === DOCUMENT_ACTION_ANALYZE && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.document_ids.length && !usesDynamicFileSyncTargets) {
-        throw new Error("Select one or more documents for analysis.");
-    }
-    if (documentActionType !== DOCUMENT_ACTION_NONE && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT && (!Number.isInteger(payload.document_action.recent_window_minutes) || payload.document_action.recent_window_minutes < 1 || payload.document_action.recent_window_minutes > 1440)) {
-        throw new Error("Recent document window must be between 1 and 1440 minutes.");
-    }
-    if (documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && payload.document_action.document_ids.length < 2) {
-        throw new Error("Select at least two document versions for compare.");
-    }
-    if (documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.left_document_id) {
-        throw new Error("Add one Source document id for compare.");
-    }
-    if (documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED && !payload.document_action.right_document_ids.length) {
-        throw new Error("Add one or more Target document ids for compare.");
-    }
-    if (documentActionType !== DOCUMENT_ACTION_NONE && !isDocumentActionEnabled(documentActionType)) {
-        throw new Error(`${getDocumentActionDisplayLabel(documentActionType)} is currently disabled by an administrator.`);
-    }
-    const documentActionCount = documentActionType === DOCUMENT_ACTION_COMPARISON
-        ? 1 + payload.document_action.right_document_ids.length
-        : payload.document_action.document_ids.length;
-    const workflowMaxDocuments = getWorkflowDocumentActionMaxDocuments(documentActionType);
-    if (documentActionCount > workflowMaxDocuments) {
-        throw new Error(`${getDocumentActionDisplayLabel(documentActionType)} workflows support up to ${workflowMaxDocuments} documents per run.`);
-    }
-    if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowSize && (!Number.isInteger(payload.document_action.window_size) || payload.document_action.window_size < 1)) {
-        throw new Error("Window size must be a whole number greater than zero.");
-    }
-    if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowPercent && (!Number.isInteger(payload.document_action.window_percent) || payload.document_action.window_percent < 1 || payload.document_action.window_percent > 100)) {
-        throw new Error("Window percent must be a whole number between 1 and 100.");
-    }
-    if (documentActionType !== DOCUMENT_ACTION_NONE && rawWindowSize && rawWindowPercent) {
-        throw new Error("Choose either a fixed window size or a window percent, not both.");
-    }
-    if (documentActionType !== DOCUMENT_ACTION_NONE && (!Number.isInteger(payload.document_action.max_retries_per_window) || payload.document_action.max_retries_per_window < 0 || payload.document_action.max_retries_per_window > 5)) {
-        throw new Error("Retries per window must be between 0 and 5.");
-    }
+    payload.tasks.forEach((task, index) => {
+        validateWorkflowTaskDocumentAction(
+            task.document_action,
+            getWorkflowTaskLabel(task, index),
+            usesDynamicFileSyncTargets,
+        );
+    });
     if (payload.file_sync.enabled && !payload.file_sync.sources.length) {
         throw new Error("Select at least one File Sync source for this workflow.");
     }
@@ -3544,6 +4355,10 @@ async function saveWorkflow(event) {
     }
 
     if (!workflowSaveBtn) {
+        return;
+    }
+
+    if (!validateWorkflowAlertRules()) {
         return;
     }
 
@@ -4100,13 +4915,30 @@ function initializeWorkflowEvents() {
         renderWorkflowTasks();
     });
     workflowAlertPrioritySelect?.addEventListener("change", renderWorkflowReview);
+    workflowAlertModeSelect?.addEventListener("change", () => {
+        updateWorkflowAlertModeVisibility();
+        if (getWorkflowAlertMode() === "rules" && !workflowAlertRules.length) {
+            workflowAlertRules.push(createDefaultWorkflowAlertRule());
+            renderWorkflowAlertRules();
+        }
+        renderWorkflowReview();
+    });
+    workflowAlertRuleAddBtn?.addEventListener("click", () => {
+        if (workflowAlertRules.length >= WORKFLOW_ALERT_MAX_RULES) {
+            showToast(`Workflows support up to ${WORKFLOW_ALERT_MAX_RULES} alert rules.`, "warning");
+            return;
+        }
+        workflowAlertRules.push(createDefaultWorkflowAlertRule());
+        renderWorkflowAlertRules();
+        renderWorkflowReview();
+    });
     workflowTriggerTypeSelect?.addEventListener("change", updateTriggerFields);
     workflowScheduleUnitSelect?.addEventListener("change", updateScheduleConstraints);
     workflowFileSyncEnabledToggle?.addEventListener("change", updateFileSyncFields);
     workflowFileSyncWaitModeSelect?.addEventListener("change", updateFileSyncFields);
     workflowFileSyncContinueModeSelect?.addEventListener("change", updateFileSyncFields);
-    workflowDocumentActionTypeSelect?.addEventListener("change", updateDocumentActionFields);
-    workflowAnalysisTargetModeSelect?.addEventListener("change", updateDocumentActionFields);
+    workflowDocumentActionTypeSelect?.addEventListener("change", handleWorkflowDocumentActionSelectionChanged);
+    workflowAnalysisTargetModeSelect?.addEventListener("change", handleWorkflowDocumentActionSelectionChanged);
     workflowComparisonRightDocumentIdsInput?.addEventListener("change", () => {
         syncWorkflowComparisonLeftOptions();
     });

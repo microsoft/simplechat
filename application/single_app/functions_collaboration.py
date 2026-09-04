@@ -8,6 +8,7 @@ import uuid
 from config import *
 from collaboration_models import (
     COLLABORATION_KIND,
+    COLLABORATION_SOURCE_KIND,
     GROUP_MULTI_USER_CHAT_TYPE,
     MEMBERSHIP_ROLE_ADMIN,
     MEMBERSHIP_ROLE_MEMBER,
@@ -40,6 +41,11 @@ from functions_activity_logging import (
     log_conversation_deletion,
 )
 from functions_appinsights import log_event
+from functions_citation_tracking import (
+    initialize_conversation_used_document_tracking,
+    merge_cited_documents_into_conversation,
+    rebuild_conversation_used_documents,
+)
 from functions_conversation_cache import bump_conversation_cache_version, invalidate_conversation_cache_for_item
 from functions_documents import sync_chat_upload_workspace_document_sharing_for_collaboration
 from functions_group import (
@@ -63,6 +69,21 @@ PERSONAL_COLLABORATION_MANAGER_ROLES = {
 }
 
 COLLABORATION_EVENT_PUBLISHERS = []
+
+CITATION_TRACKING_CONVERSATION_FIELDS = (
+    'used_documents_tracking_version',
+    'legacy_used_documents',
+    'used_documents',
+)
+
+
+def _copy_citation_tracking_conversation_fields(target, source):
+    if not isinstance(target, dict) or not isinstance(source, dict):
+        return target
+    for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+        if field_name in source:
+            target[field_name] = deepcopy(source.get(field_name))
+    return target
 
 
 def register_collaboration_event_publisher(event_publisher):
@@ -355,7 +376,7 @@ def serialize_collaboration_message(message_doc):
             message_doc.get('id'),
         ) or serialized_content
 
-    return {
+    payload = {
         'id': message_doc.get('id'),
         'conversation_id': message_doc.get('conversation_id'),
         'role': serialized_role,
@@ -382,6 +403,14 @@ def serialize_collaboration_message(message_doc):
         'extracted_text': message_doc.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis'),
     }
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in message_doc:
+            payload[field_name] = deepcopy(message_doc.get(field_name))
+    return payload
 
 
 def _get_collaboration_source_message(message_doc):
@@ -729,6 +758,15 @@ def build_collaboration_message_metadata_payload(message_doc, conversation_doc):
         'extracted_text': message_doc.get('extracted_text') or payload.get('extracted_text'),
         'vision_analysis': message_doc.get('vision_analysis') or payload.get('vision_analysis'),
     })
+    for field_name in (
+        'citation_tracking_version',
+        'cited_hybrid_citations',
+        'cited_web_search_citations',
+    ):
+        if field_name in message_doc:
+            payload[field_name] = deepcopy(message_doc.get(field_name))
+        elif field_name in (source_message_doc or {}):
+            payload[field_name] = deepcopy(source_message_doc.get(field_name))
     payload['metadata'] = merged_metadata
     return payload
 
@@ -820,6 +858,9 @@ def serialize_collaboration_conversation(conversation_doc, current_user_id, user
         'is_hidden': bool((user_state or {}).get('is_hidden', False)),
         'classification': list(conversation_doc.get('classification', []) or []),
         'tags': list(conversation_doc.get('tags', []) or []),
+        'used_documents_tracking_version': conversation_doc.get('used_documents_tracking_version'),
+        'legacy_used_documents': deepcopy(list(conversation_doc.get('legacy_used_documents', []) or [])),
+        'used_documents': deepcopy(list(conversation_doc.get('used_documents', []) or [])),
         'strict': bool(conversation_doc.get('strict', False)),
         'summary': conversation_doc.get('summary'),
         'has_unread_assistant_response': False,
@@ -959,6 +1000,10 @@ def ensure_personal_collaboration_for_legacy_conversation(source_conversation_id
     collaboration_conversation_doc['source_conversation_id'] = source_conversation_id
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    _copy_citation_tracking_conversation_fields(
+        collaboration_conversation_doc,
+        source_conversation_doc,
+    )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
 
@@ -1145,6 +1190,10 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
 
     collaboration_conversation_doc['classification'] = list(source_conversation_doc.get('classification', []) or [])
     collaboration_conversation_doc['tags'] = list(source_conversation_doc.get('tags', []) or [])
+    _copy_citation_tracking_conversation_fields(
+        collaboration_conversation_doc,
+        source_conversation_doc,
+    )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
     collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
@@ -1520,6 +1569,91 @@ def assert_user_can_participate_in_collaboration_conversation(user_id, conversat
     return access_context
 
 
+def is_collaboration_source_conversation(conversation_item):
+    """Return True when a personal conversation is the hidden backing store of a shared one."""
+    normalized_item = conversation_item or {}
+    return bool(
+        str(normalized_item.get('conversation_kind') or '').strip() == COLLABORATION_SOURCE_KIND
+        or str(normalized_item.get('collaboration_conversation_id') or '').strip()
+    )
+
+
+def get_collaboration_conversation_for_source(conversation_item):
+    """Load the shared conversation that owns a collaboration source conversation."""
+    collaboration_conversation_id = str(
+        (conversation_item or {}).get('collaboration_conversation_id') or ''
+    ).strip()
+    if not collaboration_conversation_id:
+        return None
+
+    try:
+        return get_collaboration_conversation(collaboration_conversation_id)
+    except CosmosResourceNotFoundError:
+        return None
+
+
+def build_conversation_participation_context(user_id, conversation_item):
+    """Authorize one caller against a personal conversation or its linked shared conversation.
+
+    Ordinary personal conversations stay owner-only. Collaboration source conversations are
+    always owned by the shared conversation creator, so every other participant fails a plain
+    ownership comparison even though they are legitimate members. Those callers are authorized
+    against the linked collaboration conversation instead, mirroring the chat upload path in
+    ``route_frontend_chats._resolve_chat_upload_context``.
+
+    Returns a context describing how access was granted so callers can distinguish an owner
+    acting on their own conversation from a participant acting inside a shared one.
+    """
+    normalized_user_id = str(user_id or '').strip()
+    normalized_item = conversation_item or {}
+    owner_user_id = str(normalized_item.get('user_id') or '').strip()
+    conversation_id = str(normalized_item.get('id') or '').strip()
+
+    if normalized_user_id and owner_user_id == normalized_user_id:
+        return {
+            'user_id': normalized_user_id,
+            'conversation_id': conversation_id,
+            'owner_user_id': owner_user_id,
+            'is_owner': True,
+            'is_collaboration_source': is_collaboration_source_conversation(normalized_item),
+            'collaboration_conversation': None,
+            'collaboration_conversation_id': str(
+                normalized_item.get('collaboration_conversation_id') or ''
+            ).strip(),
+            'collaboration_access': None,
+            'group_id': '',
+            'group_role': '',
+        }
+
+    collaboration_conversation = get_collaboration_conversation_for_source(normalized_item)
+    if not collaboration_conversation:
+        raise PermissionError('You can only access your own conversations')
+
+    collaboration_access = assert_user_can_participate_in_collaboration_conversation(
+        normalized_user_id,
+        collaboration_conversation,
+    )
+
+    group_id = ''
+    if is_group_collaboration_conversation(collaboration_conversation):
+        group_id = str(
+            (collaboration_conversation.get('scope') or {}).get('group_id') or ''
+        ).strip()
+
+    return {
+        'user_id': normalized_user_id,
+        'conversation_id': conversation_id,
+        'owner_user_id': owner_user_id,
+        'is_owner': False,
+        'is_collaboration_source': True,
+        'collaboration_conversation': collaboration_conversation,
+        'collaboration_conversation_id': str(collaboration_conversation.get('id') or '').strip(),
+        'collaboration_access': collaboration_access,
+        'group_id': group_id,
+        'group_role': str((collaboration_access or {}).get('group_role') or '').strip(),
+    }
+
+
 def record_personal_invite_response(conversation_id, user_id, action):
     conversation_doc = get_collaboration_conversation(conversation_id)
     if not is_explicit_membership_collaboration(conversation_doc):
@@ -1749,6 +1883,19 @@ def _save_collaboration_message_doc(conversation_doc, message_doc):
 
     cosmos_collaboration_messages_container.upsert_item(message_doc)
 
+    if (
+        str(message_doc.get('role') or '').strip().lower() == 'assistant'
+        and (
+            message_doc.get('citation_tracking_version') is not None
+            or 'cited_hybrid_citations' in message_doc
+        )
+    ):
+        initialize_conversation_used_document_tracking(conversation_doc)
+        merge_cited_documents_into_conversation(
+            conversation_doc,
+            message_doc.get('cited_hybrid_citations'),
+        )
+
     conversation_doc['last_message_at'] = message_doc.get('timestamp')
     conversation_doc['last_message_preview'] = (
         message_doc.get('metadata', {}).get('last_message_preview', '')
@@ -1814,6 +1961,11 @@ def sync_collaboration_conversation_metadata_from_source(conversation_doc, sourc
         'classification': deepcopy(list(source_conversation_doc.get('classification', []) or [])),
         'summary': deepcopy(source_conversation_doc.get('summary')),
     }
+    for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+        if field_name in source_conversation_doc:
+            metadata_fields[field_name] = deepcopy(
+                source_conversation_doc.get(field_name)
+            )
 
     updated = False
     for field_name, field_value in metadata_fields.items():
@@ -1864,10 +2016,14 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or []),
             'summary': (conversation_doc or {}).get('summary'),
-            'conversation_kind': 'collaboration_source',
+            'conversation_kind': COLLABORATION_SOURCE_KIND,
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
+        _copy_citation_tracking_conversation_fields(
+            source_conversation_doc,
+            conversation_doc,
+        )
         source_updated = True
     else:
         synchronized_values = {
@@ -1880,10 +2036,15 @@ def ensure_collaboration_source_conversation(conversation_doc, current_user):
             'locked_contexts': list((conversation_doc or {}).get('locked_contexts', []) or source_conversation_doc.get('locked_contexts', []) or []),
             'classification': list((conversation_doc or {}).get('classification', []) or source_conversation_doc.get('classification', []) or []),
             'summary': (conversation_doc or {}).get('summary', source_conversation_doc.get('summary')),
-            'conversation_kind': 'collaboration_source',
+            'conversation_kind': COLLABORATION_SOURCE_KIND,
             'collaboration_conversation_id': (conversation_doc or {}).get('id'),
             'is_hidden': True,
         }
+        for field_name in CITATION_TRACKING_CONVERSATION_FIELDS:
+            if field_name in (conversation_doc or {}):
+                synchronized_values[field_name] = deepcopy(
+                    conversation_doc.get(field_name)
+                )
         for field_name, field_value in synchronized_values.items():
             if source_conversation_doc.get(field_name) != field_value:
                 source_conversation_doc[field_name] = field_value
@@ -1952,6 +2113,7 @@ def _refresh_collaboration_conversation_message_summary(conversation_doc):
         raise ValueError('conversation_id is required')
 
     remaining_messages = list_collaboration_messages(conversation_id)
+    rebuild_conversation_used_documents(conversation_doc, remaining_messages)
     conversation_doc['message_count'] = len(remaining_messages)
 
     if remaining_messages:

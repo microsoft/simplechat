@@ -14,6 +14,13 @@ from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
+from functions_model_endpoint_identity_header import (
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+    normalize_model_endpoint_identity_header_name,
+    normalize_model_endpoint_identity_header_override,
+    normalize_model_endpoint_identity_header_value_type,
+)
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
@@ -23,11 +30,18 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     normalize_model_endpoint_api_type,
 )
+from functions_rate_limit import (
+    RATE_LIMIT_MESSAGE_DEFAULT,
+    build_rate_limit_error_payload,
+    build_rate_limit_message,
+)
 from functions_service_health import get_default_service_health
 import app_settings_cache
 import inspect
 import copy
+import os
 import json
+import secrets
 import uuid
 from support_menu_config import (
     get_default_support_latest_features_visibility,
@@ -90,12 +104,16 @@ ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
     "azure_apim_ai_search_subscription_key",
     "azure_document_intelligence_key",
     "azure_apim_document_intelligence_subscription_key",
+    "azure_content_understanding_key",
     "speech_service_key",
+    "model_endpoint_identity_header_hmac_secret",
 )
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
+    'enable_analysis_deliverable_contract_telemetry',
+    'analysis_deliverable_contract_mode',
     'enable_tabular_hierarchical_analysis',
     'enable_tabular_parity_contract_telemetry',
     'tabular_parity_contract_mode',
@@ -105,6 +123,7 @@ TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'tabular_generated_output_model_validation_auto_retries',
     'tabular_generation_rollout_percentage',
     'tabular_analyze_parity_rollout_percent',
+    'tabular_analyze_parity_rollout_state',
     'tabular_background_handoff_mode',
     'tabular_request_planner_mode',
     'enable_tabular_search_shared_preflight',
@@ -114,6 +133,9 @@ TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'tabular_legacy_post_tool_fallback_mode',
     'enable_tabular_generation_plan',
     'tabular_generation_plan_mode',
+    'tabular_semantic_validation_mode',
+    'tabular_semantic_repair_max_attempts',
+    'tabular_semantic_repair_max_rows',
     'enable_tabular_compact_response_protocol',
     'enable_tabular_completion_driven_checkpointing',
     'enable_tabular_rolling_worker_pool',
@@ -307,6 +329,36 @@ def normalize_key_vault_reminder_settings(settings):
     return changed
 
 
+def normalize_model_endpoint_identity_header_settings(settings):
+    """Normalize model endpoint identity header settings in-place."""
+    if not isinstance(settings, dict):
+        return False
+
+    hmac_secret = str(settings.get("model_endpoint_identity_header_hmac_secret") or "").strip()
+    if not hmac_secret:
+        hmac_secret = secrets.token_urlsafe(48)
+
+    normalized_values = {
+        "model_endpoint_identity_header_enabled": settings.get("model_endpoint_identity_header_enabled") is True,
+        "model_endpoint_identity_header_name": normalize_model_endpoint_identity_header_name(
+            settings.get("model_endpoint_identity_header_name"),
+            fallback=DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+        ),
+        "model_endpoint_identity_header_value_type": normalize_model_endpoint_identity_header_value_type(
+            settings.get("model_endpoint_identity_header_value_type")
+            or DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+        ),
+        "model_endpoint_identity_header_hmac_secret": hmac_secret,
+    }
+
+    changed = False
+    for key, normalized_value in normalized_values.items():
+        if settings.get(key) != normalized_value:
+            settings[key] = normalized_value
+            changed = True
+    return changed
+
+
 def redact_admin_settings_secrets_for_form(settings):
     redacted_settings = copy.deepcopy(settings or {})
     for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
@@ -443,6 +495,11 @@ def is_tabular_processing_enabled(settings):
     return bool((settings or {}).get('enable_enhanced_citations', False))
 
 
+def is_fact_memory_enabled(settings):
+    """Fact memory is a Chat capability and never requires agents or actions."""
+    return bool((settings or {}).get('enable_fact_memory_plugin', False))
+
+
 def is_mixed_source_manifest_enabled(settings):
     """Return whether Phase 1 mixed-source manifest diagnostics are enabled."""
     return bool((settings or {}).get('enable_mixed_source_manifest', False))
@@ -493,6 +550,23 @@ DOCUMENT_INTELLIGENCE_PDF_IMAGE_EXTRACTION_MODES = {"read", "layout", "auto"}
 DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES = {"read", "layout"}
 DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT = 3
 DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_MAX = 20
+
+# Enhanced extraction engines. Standard extraction is always Document Intelligence prebuilt-read.
+EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE = "document_intelligence"
+EXTRACTION_ENGINE_CONTENT_UNDERSTANDING = "content_understanding"
+EXTRACTION_ENGINES = {EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE, EXTRACTION_ENGINE_CONTENT_UNDERSTANDING}
+
+CONTENT_UNDERSTANDING_AUTHENTICATION_TYPES = {"key", "managed_identity"}
+CONTENT_UNDERSTANDING_API_VERSION_DEFAULT = "2025-11-01"
+CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT = "prebuilt-documentSearch"
+CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT = "prebuilt-imageSearch"
+# Azure AI Content Understanding is only offered in Azure commercial regions today.
+CONTENT_UNDERSTANDING_SUPPORTED_AZURE_ENVIRONMENTS = {"public"}
+
+OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_DEFAULT = 150
+OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_MAX = 2000
+OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_DEFAULT = 25
+OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_MAX = 200
 AGENTS_PAGE_PROMOTED_POPULAR_ORDER_OPTIONS = {"before", "after", "mixed"}
 AGENTS_PAGE_PROMOTED_POPULAR_WINDOW_OPTIONS = {"all_time", "30_days", "both"}
 AGENTS_PAGE_PROMOTED_POPULAR_TAG_LABEL_DEFAULT = "Promoted"
@@ -662,6 +736,162 @@ def normalize_document_intelligence_manual_extraction_mode(value):
     if normalized_value not in DOCUMENT_INTELLIGENCE_MANUAL_EXTRACTION_MODES:
         return "read"
     return normalized_value
+
+
+def normalize_enhanced_extraction_enabled(value):
+    """Normalize the Enhanced extraction master toggle into a strict boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized_value = value.strip().lower()
+        if normalized_value in {"false", "0", "no", "off", ""}:
+            return False
+        if normalized_value in {"true", "1", "yes", "on"}:
+            return True
+    return bool(value)
+
+
+def is_enhanced_extraction_enabled(settings):
+    """Return whether admins have enabled Enhanced extraction beyond Document Intelligence Standard."""
+    return normalize_enhanced_extraction_enabled((settings or {}).get('enable_enhanced_extraction'))
+
+
+def get_effective_document_intelligence_pdf_image_extraction_mode(settings):
+    """Return the extraction mode actually used, forcing Standard when Enhanced is disabled."""
+    if not is_enhanced_extraction_enabled(settings):
+        return "read"
+    return get_document_intelligence_pdf_image_extraction_mode(settings)
+
+
+def normalize_content_understanding_authentication_type(value):
+    """Normalize the Content Understanding authentication type to key or managed identity."""
+    normalized_value = str(value or "key").strip().lower()
+    if normalized_value not in CONTENT_UNDERSTANDING_AUTHENTICATION_TYPES:
+        return "key"
+    return normalized_value
+
+
+def normalize_content_understanding_endpoint(value):
+    """Normalize the Content Understanding endpoint by trimming whitespace and trailing slashes."""
+    return str(value or "").strip().rstrip("/")
+
+
+def normalize_content_understanding_api_version(value):
+    """Normalize the Content Understanding API version, falling back to the GA version."""
+    normalized_value = str(value or "").strip()
+    return normalized_value or CONTENT_UNDERSTANDING_API_VERSION_DEFAULT
+
+
+def normalize_content_understanding_analyzer_id(value, default_analyzer_id=None):
+    """Normalize a Content Understanding analyzer id, falling back to the supplied prebuilt default."""
+    fallback_analyzer_id = default_analyzer_id or CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT
+    normalized_value = str(value or "").strip()
+    return normalized_value or fallback_analyzer_id
+
+
+def normalize_office_embedded_image_min_pixels(value):
+    """Normalize the minimum width/height an embedded Office image must have to be analyzed."""
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_DEFAULT
+
+    return max(1, min(normalized_value, OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_MAX))
+
+
+def normalize_office_embedded_image_max_per_document(value):
+    """Normalize how many embedded Office images may be analyzed for a single document."""
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError):
+        normalized_value = OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_DEFAULT
+
+    return max(0, min(normalized_value, OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_MAX))
+
+
+def is_content_understanding_supported_environment(azure_environment=None):
+    """Return whether the running Azure cloud offers Azure AI Content Understanding."""
+    resolved_environment = str(
+        azure_environment if azure_environment is not None else AZURE_ENVIRONMENT
+    ).strip().lower()
+    return resolved_environment in CONTENT_UNDERSTANDING_SUPPORTED_AZURE_ENVIRONMENTS
+
+
+def get_content_understanding_config(settings):
+    """Return the normalized Content Understanding connection settings."""
+    resolved_settings = settings or {}
+    return {
+        'endpoint': normalize_content_understanding_endpoint(
+            resolved_settings.get('azure_content_understanding_endpoint')
+        ),
+        'key': str(resolved_settings.get('azure_content_understanding_key') or '').strip(),
+        'authentication_type': normalize_content_understanding_authentication_type(
+            resolved_settings.get('azure_content_understanding_authentication_type')
+        ),
+        'api_version': normalize_content_understanding_api_version(
+            resolved_settings.get('azure_content_understanding_api_version')
+        ),
+        'analyzer_id': normalize_content_understanding_analyzer_id(
+            resolved_settings.get('azure_content_understanding_analyzer_id'),
+            CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+        ),
+        'image_analyzer_id': normalize_content_understanding_analyzer_id(
+            resolved_settings.get('azure_content_understanding_image_analyzer_id'),
+            CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
+        ),
+    }
+
+
+def is_content_understanding_configured(settings):
+    """Return whether Content Understanding has enough configuration to be called."""
+    config = get_content_understanding_config(settings)
+    if not config['endpoint']:
+        return False
+    if config['authentication_type'] == 'key' and not config['key']:
+        return False
+    return True
+
+
+def resolve_enhanced_extraction_engine(settings, azure_environment=None):
+    """Resolve which engine backs Enhanced extraction, plus a human-readable reason.
+
+    Enhanced always falls back to Document Intelligence Layout so Enhanced stays usable in
+    clouds where Content Understanding is unavailable, or before it has been configured.
+    """
+    if not is_content_understanding_supported_environment(azure_environment):
+        resolved_environment = str(
+            azure_environment if azure_environment is not None else AZURE_ENVIRONMENT
+        ).strip().lower()
+        return (
+            EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE,
+            f"Content Understanding is not available in the {resolved_environment} cloud, "
+            "so Enhanced used Document Intelligence Layout",
+        )
+
+    if not is_content_understanding_configured(settings):
+        return (
+            EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE,
+            "Content Understanding is not configured, so Enhanced used Document Intelligence Layout",
+        )
+
+    return (EXTRACTION_ENGINE_CONTENT_UNDERSTANDING, '')
+
+
+def normalize_extraction_engine(value):
+    """Normalize a persisted extraction engine value, defaulting to Document Intelligence."""
+    normalized_value = str(value or "").strip().lower()
+    if normalized_value not in EXTRACTION_ENGINES:
+        return EXTRACTION_ENGINE_DOCUMENT_INTELLIGENCE
+    return normalized_value
+
+
+def is_document_intelligence_formula_extraction_enabled(settings=None):
+    """Return whether the Document Intelligence formula add-on should be requested.
+
+    Formula extraction is a billed add-on, so it defaults to off and must be enabled explicitly.
+    """
+    resolved_settings = settings if settings is not None else get_settings()
+    return bool((resolved_settings or {}).get('enable_document_intelligence_formula_extraction', False))
 
 
 def normalize_app_role_claims(user_roles):
@@ -1013,8 +1243,68 @@ def _refresh_app_settings_cache_after_write(settings_payload, context="app_setti
     _update_cache("after_version_bump")
 
 
+def _env_flag_enabled(name):
+    return str(os.environ.get(name, '')).strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def _apply_tabular_parity_env_kill_switch(settings_payload):
+    """Force tabular durable-preflight parity off when the emergency env kill switch is set.
+
+    These parity controls ship active by default with no admin UI toggle; this
+    environment variable is the only rollback path for an operator incident.
+    """
+    if not isinstance(settings_payload, dict):
+        return settings_payload
+    if _env_flag_enabled('SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT'):
+        settings_payload['tabular_request_planner_mode'] = 'off'
+        settings_payload['enable_tabular_search_shared_preflight'] = False
+        settings_payload['enable_tabular_analyze_durable_preflight'] = False
+        settings_payload['enable_tabular_hierarchical_analysis'] = False
+    return settings_payload
+
+
+# Backend-only tabular durable-preflight parity flags that ship "active" by default with no
+# admin UI toggle. The only sanctioned way to disable them is the
+# SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT environment kill switch (applied later,
+# dynamically, in _apply_tabular_parity_env_kill_switch()) -- never a persisted settings value.
+TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS = {
+    'tabular_request_planner_mode': 'active',
+    'enable_tabular_search_shared_preflight': True,
+    'enable_tabular_analyze_durable_preflight': True,
+    'enable_tabular_hierarchical_analysis': True,
+}
+
+
+def normalize_tabular_parity_durable_preflight_defaults(settings):
+    """Upgrade stale persisted tabular durable-preflight parity flags to their active defaults.
+
+    deep_merge_dicts() only fills in keys that are *missing* from a persisted settings
+    document; it never overwrites a key that already exists. These four flags were
+    originally introduced with off/False defaults, so the first settings load in any
+    existing deployment permanently persisted the old off/False values to Cosmos DB.
+    Later raising the code-level default to active/True (see
+    TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS) therefore had no effect for any
+    deployment whose settings document already had these keys -- every tabular Analyze/
+    Search request kept silently falling back to the legacy bounded foreground path.
+
+    Because these settings have no admin UI, any stored value that differs from the
+    active default can only be stale drift (never an intentional admin choice), so it is
+    safe to unconditionally correct it here on every load. This runs independently of the
+    env kill switch, which is still applied afterwards in _apply_tabular_parity_env_kill_switch()
+    and continues to work exactly as before.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    changed = False
+    for key, active_value in TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS.items():
+        if settings.get(key) != active_value:
+            settings[key] = active_value
+            changed = True
+    return changed
+
+
 def get_settings(use_cosmos=False, include_source=False):
-    import secrets
     default_settings = {
         # External health check
         'enable_external_healthcheck': False,
@@ -1035,7 +1325,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_default_embedding_model_plugin': False,
         'enable_fact_memory_plugin': True,
         'enable_tabular_processing_plugin': False,
-        'enable_tabular_hierarchical_analysis': False,
+        'enable_analysis_deliverable_contract_telemetry': False,
+        'analysis_deliverable_contract_mode': 'off',
+        'enable_tabular_hierarchical_analysis': True,
         'enable_tabular_parity_contract_telemetry': False,
         'tabular_parity_contract_mode': 'off',
         'tabular_hierarchical_analysis_reduce_fan_in': 25,
@@ -1047,15 +1339,19 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_generated_output_model_validation_auto_retries': 3,
         'tabular_generation_rollout_percentage': 100,
         'tabular_analyze_parity_rollout_percent': 100,
+        'tabular_analyze_parity_rollout_state': 'active',
         'tabular_background_handoff_mode': 'legacy',
-        'tabular_request_planner_mode': 'off',
-        'enable_tabular_search_shared_preflight': False,
-        'enable_tabular_analyze_durable_preflight': False,
+        'tabular_request_planner_mode': 'active',
+        'enable_tabular_search_shared_preflight': True,
+        'enable_tabular_analyze_durable_preflight': True,
         'enable_tabular_mixed_deferred_composition_planning': False,
         'enable_tabular_multifile_execution_unit_planning': False,
         'tabular_legacy_post_tool_fallback_mode': 'enabled',
         'enable_tabular_generation_plan': True,
         'tabular_generation_plan_mode': 'shadow',
+        'tabular_semantic_validation_mode': 'off',
+        'tabular_semantic_repair_max_attempts': 2,
+        'tabular_semantic_repair_max_rows': 100,
         'enable_tabular_compact_response_protocol': False,
         'enable_tabular_completion_driven_checkpointing': True,
         'enable_tabular_rolling_worker_pool': False,
@@ -1188,6 +1484,10 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'model_endpoint_identity_header_enabled': False,
+        'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+        'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+        'model_endpoint_identity_header_hmac_secret': secrets.token_urlsafe(48),
         'default_model_selection': {
             'endpoint_id': '',
             'model_id': '',
@@ -1414,6 +1714,8 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Collaborative Conversations
         'enable_collaborative_conversations': True,
+        # Stage files generated by non-owner participants until an approver releases them.
+        'require_shared_conversation_file_approval': True,
 
         # Search and Extract
         'azure_ai_search_endpoint': '',
@@ -1456,9 +1758,25 @@ def get_settings(use_cosmos=False, include_source=False):
         'azure_document_intelligence_authentication_type': 'key',
         'document_intelligence_pdf_image_extraction_mode': 'read',
         'document_intelligence_auto_sample_pages': DOCUMENT_INTELLIGENCE_AUTO_SAMPLE_PAGES_DEFAULT,
+        # Formula extraction is a billed Document Intelligence add-on, so it stays off by default.
+        'enable_document_intelligence_formula_extraction': False,
         'enable_document_intelligence_apim': False,
         'azure_apim_document_intelligence_endpoint': '',
         'azure_apim_document_intelligence_subscription_key': '',
+
+        # Enhanced extraction. Standard is always Document Intelligence prebuilt-read; Enhanced uses
+        # Azure AI Content Understanding in Azure commercial clouds and falls back to Document
+        # Intelligence prebuilt-layout everywhere else.
+        'enable_enhanced_extraction': False,
+        'azure_content_understanding_endpoint': '',
+        'azure_content_understanding_key': '',
+        'azure_content_understanding_authentication_type': 'key',
+        'azure_content_understanding_api_version': CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
+        'azure_content_understanding_analyzer_id': CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+        'azure_content_understanding_image_analyzer_id': CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
+        'enable_office_embedded_image_analysis': True,
+        'office_embedded_image_min_pixels': OFFICE_EMBEDDED_IMAGE_MIN_PIXELS_DEFAULT,
+        'office_embedded_image_max_per_document': OFFICE_EMBEDDED_IMAGE_MAX_PER_DOCUMENT_DEFAULT,
 
         # Web search (via Azure AI Foundry agent)
         'enable_web_search': False,
@@ -1537,6 +1855,11 @@ def get_settings(use_cosmos=False, include_source=False):
         # Access denied message shown on the home page for signed-in users who lack required roles.
         # Default is hard-coded; admins can override via Admin Settings (persisted in Cosmos DB).
         'access_denied_message': 'You are logged in but do not have the required permissions to access this application.\nPlease contact an administrator for access.',
+        # Markdown message shown whenever a request is rate limited (HTTP 429).
+        # Leaving the toggle off keeps the built-in default, so a throttled user
+        # always gets a usable explanation.
+        'enable_custom_rate_limit_message': False,
+        'rate_limit_message': RATE_LIMIT_MESSAGE_DEFAULT,
         'access_request_button_enabled': False,
         'access_request_button_text': 'Request Access',
         'access_request_page_url': '/custom/request-access',
@@ -1613,6 +1936,8 @@ def get_settings(use_cosmos=False, include_source=False):
     }
 
     def _format_result(settings_payload, source):
+        if isinstance(settings_payload, dict):
+            settings_payload = _apply_tabular_parity_env_kill_switch(settings_payload)
         if include_source:
             return settings_payload, source
         return settings_payload
@@ -1690,6 +2015,13 @@ def get_settings(use_cosmos=False, include_source=False):
         legacy_control_center_schedule = (
             'control_center_auto_refresh_timezone' not in settings_item
         )
+        # Enhanced extraction gained an explicit enable toggle. Deployments that already selected
+        # Enhanced or Auto must keep it, otherwise they would silently downgrade to Standard and
+        # then lose the stored mode on the next admin settings save.
+        legacy_enhanced_extraction = 'enable_enhanced_extraction' not in settings_item
+        legacy_enhanced_extraction_mode = normalize_document_intelligence_pdf_image_extraction_mode(
+            settings_item.get('document_intelligence_pdf_image_extraction_mode')
+        )
         legacy_control_center_time = settings_item.get('control_center_auto_refresh_time')
         if not isinstance(legacy_control_center_time, str):
             legacy_hour = settings_item.get('control_center_auto_refresh_hour', 6)
@@ -1714,6 +2046,10 @@ def get_settings(use_cosmos=False, include_source=False):
                 merged['control_center_auto_refresh_timezone'] = 'UTC'
             merged['control_center_auto_refresh_next_run'] = None
             control_center_schedule_migration_updated = True
+        enhanced_extraction_migration_updated = False
+        if legacy_enhanced_extraction and legacy_enhanced_extraction_mode in ('layout', 'auto'):
+            merged['enable_enhanced_extraction'] = True
+            enhanced_extraction_migration_updated = True
         migration_updated = apply_custom_endpoint_setting_migration(merged)
         assignment_settings_updated = normalize_group_workflow_assignment_settings(merged)
         promoted_popular_settings_updated = normalize_agents_page_promoted_popular_settings(merged)
@@ -1721,6 +2057,8 @@ def get_settings(use_cosmos=False, include_source=False):
         inbound_mcp_settings_updated = normalize_inbound_mcp_settings(merged)
         public_workspace_display_settings_updated = normalize_public_workspace_display_settings(merged)
         key_vault_reminder_settings_updated = normalize_key_vault_reminder_settings(merged)
+        model_endpoint_identity_header_settings_updated = normalize_model_endpoint_identity_header_settings(merged)
+        tabular_parity_durable_preflight_settings_updated = normalize_tabular_parity_durable_preflight_defaults(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
 
@@ -1728,6 +2066,7 @@ def get_settings(use_cosmos=False, include_source=False):
         if (
             merge_changed
             or control_center_schedule_migration_updated
+            or enhanced_extraction_migration_updated
             or migration_updated
             or assignment_settings_updated
             or promoted_popular_settings_updated
@@ -1735,6 +2074,8 @@ def get_settings(use_cosmos=False, include_source=False):
             or inbound_mcp_settings_updated
             or public_workspace_display_settings_updated
             or key_vault_reminder_settings_updated
+            or model_endpoint_identity_header_settings_updated
+            or tabular_parity_durable_preflight_settings_updated
         ):
             cosmos_settings_container.upsert_item(merged)
             _refresh_app_settings_cache_after_write(merged, context="merge_upsert")
@@ -1776,6 +2117,17 @@ def get_settings(use_cosmos=False, include_source=False):
         )
         return _format_result(None, "error")
 
+
+def get_rate_limit_message(settings=None):
+    """Return the configured Markdown message for a rate limited (429) response.
+
+    Callers that already hold a settings dict should pass it in; the rest can
+    rely on the lookup here so no 429 surface has to reach for settings itself.
+    """
+    resolved_settings = settings if isinstance(settings, dict) else get_settings()
+    return build_rate_limit_message(resolved_settings)
+
+
 def update_settings(new_settings):
     try:
         # always fetch the latest settings doc, which includes your merges
@@ -1788,6 +2140,7 @@ def update_settings(new_settings):
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
         normalize_key_vault_reminder_settings(settings_item)
+        normalize_model_endpoint_identity_header_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
             existing_multi_endpoint_enabled,
             settings_item.get('enable_multi_model_endpoints', False),
@@ -1818,6 +2171,19 @@ def coerce_multi_model_endpoint_enablement(existing_enabled, requested_enabled):
     return bool(existing_enabled) or bool(requested_enabled)
 
 
+# Embedding chunk budget. Chunk sizes are configured in words, characters, or structural units,
+# but the embedding endpoint rejects any single input past its token context window, so configured
+# units must be converted before they can act as a bound. These ratios are deliberately more
+# conservative than typical English prose (~4 characters and ~0.75 tokens per word) because
+# markdown tables, code fences, and long URLs tokenize far worse than prose.
+EMBEDDING_CONTEXT_FALLBACK_TOKENS = 8192
+EMBEDDING_CHUNK_UTILIZATION = 0.85
+EMBEDDING_CHARS_PER_TOKEN = 3
+EMBEDDING_TOKENS_PER_WORD = 2
+# Retained for structural units (pages, slides) whose token size is unknowable before extraction.
+CHUNK_SIZE_STRUCTURAL_FALLBACK_CAP = 16384
+
+
 def get_chunk_size_defaults():
     """Return the baseline chunk size configuration used when overrides are disabled."""
     return {
@@ -1842,37 +2208,95 @@ def get_chunk_size_defaults():
     }
 
 
-def get_chunk_size_cap(settings=None):
-    """Return the maximum allowed chunk size (2x embedding context window, fallback 16,384)."""
-    fallback_cap = 16384
+def get_embedding_context_tokens(settings=None):
+    """Return the selected embedding model's context window in tokens."""
     try:
-        settings = settings or get_settings()
+        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
-        base_context = None
         for model in selected_models:
             if not isinstance(model, dict):
                 continue
             for key in ['context_window', 'contextWindow', 'maxContextTokens', 'context_length', 'contextLength', 'maxTokens']:
                 value = model.get(key)
-                if value is not None:
-                    try:
-                        parsed_value = int(value)
-                        if parsed_value > 0:
-                            base_context = parsed_value
-                            break
-                    except Exception:
-                        continue
-            if base_context:
-                break
+                if value is None:
+                    continue
+                try:
+                    parsed_value = int(value)
+                except Exception:
+                    continue
+                if parsed_value > 0:
+                    return parsed_value
+    except Exception as exc:
+        log_event("get_embedding_context_tokens_failed", {"error": str(exc)})
 
+    return EMBEDDING_CONTEXT_FALLBACK_TOKENS
+
+
+def get_embedding_usable_tokens(settings=None):
+    """Return the token budget one chunk may occupy, leaving headroom for tokenizer variance."""
+    return max(1, int(get_embedding_context_tokens(settings) * EMBEDDING_CHUNK_UTILIZATION))
+
+
+def get_embedding_safe_chunk_characters(settings=None):
+    """Return the largest chunk length in characters expected to embed successfully."""
+    return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
+
+
+def get_embedding_safe_chunk_words(settings=None):
+    """Return the largest chunk length in words expected to embed successfully."""
+    return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
+
+
+def get_chunk_size_cap(settings=None, unit=None):
+    """Return the maximum allowed chunk size for a unit.
+
+    Chunk sizes are configured per file type in different units, so a single numeric cap cannot be
+    correct for all of them. Word and character caps come from the embedding token budget, because
+    a value above that can never embed successfully no matter what an admin saves. Structural units
+    such as pages and slides have no knowable token size before extraction, so they keep the
+    historical cap and are bounded at embed time instead.
+    """
+    try:
+        settings = settings if settings is not None else get_settings()
+    except Exception:
+        settings = None
+
+    normalized_unit = str(unit).strip().lower() if unit else None
+
+    try:
+        if normalized_unit == 'words':
+            return get_embedding_safe_chunk_words(settings)
+        if normalized_unit == 'characters':
+            return get_embedding_safe_chunk_characters(settings)
+
+        base_context = get_embedding_context_tokens(settings)
         if base_context and base_context > 0:
             return base_context * 2
     except Exception:
         pass
 
-    return fallback_cap
+    return CHUNK_SIZE_STRUCTURAL_FALLBACK_CAP
+
+
+def get_chunk_size_caps_by_key(settings=None):
+    """Return the effective cap for every configurable chunk size key, keyed by file type."""
+    try:
+        settings = settings if settings is not None else get_settings()
+    except Exception:
+        settings = None
+
+    defaults = get_chunk_size_defaults()
+    stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
+
+    caps = {}
+    for key, default_meta in defaults.items():
+        incoming_meta = stored.get(key, {}) if isinstance(stored, dict) else {}
+        unit = incoming_meta.get('unit', default_meta['unit']) if isinstance(incoming_meta, dict) else default_meta['unit']
+        caps[key] = get_chunk_size_cap(settings, unit)
+
+    return caps
 
 
 def get_chunk_size_config(settings=None):
@@ -1884,7 +2308,6 @@ def get_chunk_size_config(settings=None):
     defaults = get_chunk_size_defaults()
     use_custom = isinstance(settings, dict) and settings.get('enable_chunk_size_override', False)
     stored = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
-    cap = get_chunk_size_cap(settings)
 
     normalized = {}
     for key, default_meta in defaults.items():
@@ -1896,7 +2319,7 @@ def get_chunk_size_config(settings=None):
             raw_value = default_meta['value']
 
         value = max(1, raw_value)
-        value = min(value, cap)
+        value = min(value, get_chunk_size_cap(settings, unit))
 
         normalized[key] = {
             'value': value,
@@ -2318,6 +2741,10 @@ def normalize_model_endpoints(endpoints):
                         connection.pop(field_name, None)
                         changed = True
             endpoint_copy["connection"] = connection
+        identity_header = normalize_model_endpoint_identity_header_override(endpoint_copy.get("identity_header"))
+        if endpoint_copy.get("identity_header") != identity_header:
+            endpoint_copy["identity_header"] = identity_header
+            changed = True
 
         if not endpoint_copy.get("id"):
             fallback_id = endpoint_copy.get("name") or connection.get("endpoint")

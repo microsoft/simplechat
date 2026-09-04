@@ -2,8 +2,8 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.250.167
-Implemented in: 0.250.160; updated in 0.250.161
+Version: 0.250.199
+Implemented in: 0.250.160; updated in 0.250.161 and 0.250.199
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
 work through the shared planner before foreground tabular tools or immediate
@@ -12,6 +12,7 @@ is disabled, shadow-only, or classified as bounded foreground work.
 """
 
 import ast
+import json
 import logging
 import sys
 import time
@@ -132,6 +133,12 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "SELECTION_MODE_SELECTED": "selected",
         "_get_document_action_source_ids": lambda config: (list(config.get("document_ids") or []), {}),
         "_resolve_tabular_document_action_model_name": lambda workflow, settings: "gpt-4o",
+        "_build_workflow_model_context": lambda workflow, deployment_name, provider: {
+            "endpoint_id": workflow.get("model_endpoint_id"),
+            "model_id": workflow.get("model_id"),
+            "model_deployment": deployment_name,
+            "provider": provider,
+        },
         "_resolve_analyze_all_document_ids": lambda *args, **kwargs: {},
         "_shared_orchestrate_tabular_request": fake_orchestrate_tabular_request,
         "_shared_queue_direct_tabular_generated_output_from_plan": object(),
@@ -148,6 +155,8 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "emit_mixed_source_telemetry": lambda *args, **kwargs: False,
         "_build_mixed_source_analyze_reduction_prompt": lambda prompt, handoff: handoff["content"],
         "log_event": lambda *args, **kwargs: log_events.append({"args": args, "kwargs": kwargs}),
+        "debug_print": lambda *args, **kwargs: None,
+        "json": json,
         "logging": logging,
         "time": time,
     }
@@ -164,7 +173,13 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
 
 def call_analyze(namespace, settings=None, document_ids=None):
     return namespace["_execute_mixed_source_analyze_workflow"](
-        {"user_id": "user-1", "task_prompt": "Analyze every row and create a CSV file."},
+        {
+            "user_id": "user-1",
+            "task_prompt": "Analyze every row and create a CSV file.",
+            "model_endpoint_id": "endpoint-1",
+            "model_id": "model-1",
+            "model_provider": "aoai",
+        },
         {"type": "analyze", "document_ids": document_ids or ["table-1"]},
         settings or {
             "enable_tabular_analyze_durable_preflight": True,
@@ -211,6 +226,16 @@ def test_active_durable_preflight_short_circuits_foreground_and_synthesis():
     assert_equal(file_context["storage_locator"]["blob_path"], "user-1/survey.csv", "authorized storage locator")
     assert_equal(orchestrator_call["kwargs"]["action_mode"], "analyze", "shared action mode")
     assert_equal(orchestrator_call["kwargs"]["planner_mode"], "active", "shared planner mode")
+    assert_equal(
+        orchestrator_call["kwargs"]["model_context"],
+        {
+            "endpoint_id": "endpoint-1",
+            "model_id": "model-1",
+            "model_deployment": "gpt-4o",
+            "provider": "aoai",
+        },
+        "selected model context",
+    )
     assert_true("token_usage_callback" not in orchestrator_call["kwargs"], "durable callback keyword compatibility")
 
 

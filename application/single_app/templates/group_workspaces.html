@@ -491,26 +491,26 @@ app_settings.app_title }} {% endblock %} {% block head %}
       <label class="form-label" for="group-workspace-section-select">Section</label>
       <select class="form-select" id="group-workspace-section-select" data-workspace-section-select aria-label="Select group workspace section">
         <option value="documents-tab-btn">Group Documents</option>
-        {% if file_sync_enabled %}
-          <option value="sync-tab-btn">Sync</option>
-        {% endif %}
+        <option value="prompts-tab-btn">Group Prompts</option>
         {% if group_workspace_identities_enabled %}
           <option value="identities-tab-btn" data-group-identities-section-option hidden disabled>Identities</option>
         {% endif %}
-        <option value="prompts-tab-btn">Group Prompts</option>
-        {% if settings.allow_group_workflows %}
-          <option value="workflows-tab-btn">Workflows</option>
+        {% if file_sync_enabled %}
+          <option value="sync-tab-btn">Sync</option>
         {% endif %}
         {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-          {% if settings.allow_group_agents %}
-            <option value="group-agents-tab-btn">Group Agents</option>
-            {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-              <option value="group-plugins-tab-btn">Group Actions</option>
-            {% endif %}
-          {% endif %}
           {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
             <option value="group-endpoints-tab-btn">Group Endpoints</option>
           {% endif %}
+          {% if settings.allow_group_agents %}
+            {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+              <option value="group-plugins-tab-btn">Group Actions</option>
+            {% endif %}
+            <option value="group-agents-tab-btn">Group Agents</option>
+          {% endif %}
+        {% endif %}
+        {% if settings.allow_group_workflows %}
+          <option value="workflows-tab-btn">Workflows</option>
         {% endif %}
       </select>
     </div>
@@ -533,23 +533,21 @@ app_settings.app_title }} {% endblock %} {% block head %}
         Documents
       </button>
     </li>
-    {% if file_sync_enabled %}
     <li class="nav-item" role="presentation">
       <button
         class="nav-link"
-        id="sync-tab-btn"
+        id="prompts-tab-btn"
         data-bs-toggle="tab"
-        data-bs-target="#sync-tab"
-        title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline."
+        data-bs-target="#prompts-tab"
+        title="Create and manage reusable prompts shared within the active group, with role-based editing."
         type="button"
         role="tab"
-        aria-controls="sync-tab"
+        aria-controls="prompts-tab"
         aria-selected="false"
       >
-        Sync
+        Prompts
       </button>
     </li>
-    {% endif %}
     {% if group_workspace_identities_enabled %}
     <li class="nav-item d-none" role="presentation" data-group-identities-tab-nav>
       <button
@@ -567,74 +565,24 @@ app_settings.app_title }} {% endblock %} {% block head %}
       </button>
     </li>
     {% endif %}
+    {% if file_sync_enabled %}
     <li class="nav-item" role="presentation">
       <button
         class="nav-link"
-        id="prompts-tab-btn"
+        id="sync-tab-btn"
         data-bs-toggle="tab"
-        data-bs-target="#prompts-tab"
-        title="Create and manage reusable prompts shared within the active group, with role-based editing."
+        data-bs-target="#sync-tab"
+        title="Configure group-scoped file sources that bring approved files into this workspace and run them through the document processing pipeline."
         type="button"
         role="tab"
-        aria-controls="prompts-tab"
+        aria-controls="sync-tab"
         aria-selected="false"
       >
-        Prompts
-      </button>
-    </li>
-    {% if settings.allow_group_workflows %}
-    <li class="nav-item" role="presentation">
-      <button
-        class="nav-link"
-        id="workflows-tab-btn"
-        data-bs-toggle="tab"
-        data-bs-target="#workflows-tab"
-        title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models."
-        type="button"
-        role="tab"
-        aria-controls="workflows-tab"
-        aria-selected="false"
-      >
-        Workflows
+        Sync
       </button>
     </li>
     {% endif %}
     {% if settings.per_user_semantic_kernel and settings.enable_semantic_kernel %}
-      {% if settings.allow_group_agents %}
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            id="group-agents-tab-btn"
-            data-bs-toggle="tab"
-            data-bs-target="#group-agents-tab"
-            title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
-            type="button"
-            role="tab"
-            aria-controls="group-agents-tab"
-            aria-selected="false"
-          >
-            Agents
-          </button>
-        </li>
-
-        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
-          <li class="nav-item" role="presentation">
-            <button
-              class="nav-link"
-              id="group-plugins-tab-btn"
-              data-bs-toggle="tab"
-              data-bs-target="#group-plugins-tab"
-              title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems."
-              type="button"
-              role="tab"
-              aria-controls="group-plugins-tab"
-              aria-selected="false"
-            >
-              Actions
-            </button>
-          </li>
-        {% endif %}
-      {% endif %}
       {% if settings.enable_semantic_kernel and settings.allow_group_custom_endpoints and settings.enable_multi_model_endpoints %}
         <li class="nav-item" role="presentation">
           <button
@@ -652,6 +600,58 @@ app_settings.app_title }} {% endblock %} {% block head %}
           </button>
         </li>
       {% endif %}
+      {% if settings.allow_group_agents %}
+        {% if settings.enable_semantic_kernel and settings.allow_group_plugins %}
+          <li class="nav-item" role="presentation">
+            <button
+              class="nav-link"
+              id="group-plugins-tab-btn"
+              data-bs-toggle="tab"
+              data-bs-target="#group-plugins-tab"
+              title="Configure governed group tools that agents can call, such as APIs, databases, or other connected systems."
+              type="button"
+              role="tab"
+              aria-controls="group-plugins-tab"
+              aria-selected="false"
+            >
+              Actions
+            </button>
+          </li>
+        {% endif %}
+
+        <li class="nav-item" role="presentation">
+          <button
+            class="nav-link"
+            id="group-agents-tab-btn"
+            data-bs-toggle="tab"
+            data-bs-target="#group-agents-tab"
+            title="Reusable, specialized AI assistants that combine instructions, approved knowledge, and optional actions. Actions are tasks an agent is allowed to perform."
+            type="button"
+            role="tab"
+            aria-controls="group-agents-tab"
+            aria-selected="false"
+          >
+            Agents
+          </button>
+        </li>
+      {% endif %}
+    {% endif %}
+    {% if settings.allow_group_workflows %}
+    <li class="nav-item" role="presentation">
+      <button
+        class="nav-link"
+        id="workflows-tab-btn"
+        data-bs-toggle="tab"
+        data-bs-target="#workflows-tab"
+        title="Create repeatable group tasks that run manually, on a schedule, or after File Sync changes using group agents, documents, or models."
+        type="button"
+        role="tab"
+        aria-controls="workflows-tab"
+        aria-selected="false"
+      >
+        Workflows
+      </button>
+    </li>
     {% endif %}
   </ul>
 
@@ -2146,7 +2146,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
         <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="tasks">
           <h6 class="mb-1">Workspace documents</h6>
-          <div class="form-text mb-3">Optional. Use a document action only when this workflow needs workspace document context.</div>
+          <div class="form-text mb-3">Optional and saved with the selected task. Use a document action only when this task needs workspace document context.</div>
           <div class="row g-3 mb-2">
             <div class="col-md-6">
               <label for="workflow-document-action-type" class="form-label">Document action</label>
@@ -2200,7 +2200,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             <div id="workflow-document-picker-card" class="border rounded-3 p-3 mb-3">
               <div class="d-flex flex-wrap gap-2 justify-content-between align-items-center mb-3">
                 <div class="form-text mb-0" id="workflow-selected-documents-summary">No group documents selected in the picker.</div>
-                <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh selected documents</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="workflow-use-selected-documents-btn">Refresh documents</button>
               </div>
               <div id="workflow-document-picker-loading" class="text-muted small mb-2 d-none">
                 <span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Loading documents...
@@ -2379,8 +2379,18 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
 
         <div class="card p-3 mb-3 workflow-step-block" data-workflow-step="review">
-          <div class="row g-3 align-items-end">
+          <h6 class="mb-1">Alerts</h6>
+          <div class="form-text mb-3">Alerts notify you when a run meets a condition you define. A run that matches nothing stays silent.</div>
+          <div class="row g-3">
             <div class="col-md-5">
+              <label for="workflow-alert-mode" class="form-label">When to alert</label>
+              <select class="form-select" id="workflow-alert-mode">
+                <option value="off">Never notify me</option>
+                <option value="rules">Only when a condition is met</option>
+                <option value="every_run">On every run</option>
+              </select>
+            </div>
+            <div class="col-md-5 d-none" id="workflow-alert-priority-group">
               <label for="workflow-alert-priority" class="form-label">Pop-up Alert Priority</label>
               <select class="form-select" id="workflow-alert-priority">
                 <option value="none">No notification</option>
@@ -2389,8 +2399,23 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 <option value="high">High priority</option>
               </select>
             </div>
-            <div class="col-md-7">
-              <div class="form-text mt-0">When enabled, workflow runs create a pop-up alert modal with direct links to the workflow conversation and any conversation the agent created during the run.</div>
+          </div>
+          <div class="mt-3 d-none" id="workflow-alert-rules-group">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <span class="form-label mb-0">Alert rules</span>
+              <button type="button" class="btn btn-sm btn-outline-primary" id="workflow-alert-rule-add-btn"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Add rule</button>
+            </div>
+            <div id="workflow-alert-rules-list" class="workflow-alert-rules-list"></div>
+            <div class="form-text mt-2">When several rules match the same run, the highest severity wins and every matched rule is listed in the alert.</div>
+            <div class="form-text">Info and low severities go to the notification bell only. Medium and above open the pop-up alert.</div>
+            <div class="row g-3 mt-1">
+              <div class="col-md-6">
+                <label for="workflow-alert-evaluation-on-error" class="form-label">If a model evaluated condition cannot be judged</label>
+                <select class="form-select" id="workflow-alert-evaluation-on-error">
+                  <option value="skip">Skip the rule and stay silent</option>
+                  <option value="alert">Alert anyway so it is not missed</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -3379,6 +3404,20 @@ app_settings.app_title }} {% endblock %} {% block head %}
     let completed = 0;
     let failed = 0;
 
+    function updateGroupUploadRequestSummary() {
+      groupUploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+    }
+
+    function finishGroupUploadRequests() {
+      groupFileInput.value = '';
+      groupDocsCurrentPage = 1;
+      fetchGroupDocuments();
+      groupUploadStatusSpan.textContent = failed
+        ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+        : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+      if (progressContainer) progressContainer.innerHTML = '';
+    }
+
     // Helper to create a unique ID for each file
     function makeId(file) {
       return 'group-progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -3433,7 +3472,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Uploaded ${file.name} (100%)`;
+            statusText.textContent = `Queued ${file.name} (100%)`;
           }
           completed++;
         } else {
@@ -3443,18 +3482,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Failed to upload ${file.name}`;
+            statusText.textContent = `Upload request did not confirm for ${file.name}`;
           }
           failed++;
         }
-        // Update summary status
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          // Clear upload progress bars after all uploads and table refresh
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -3465,15 +3499,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Failed to upload ${file.name}`;
+          statusText.textContent = `Upload request did not confirm for ${file.name}`;
         }
         failed++;
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -3693,7 +3724,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     if (doc.number_of_pages) {
       pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-text"></i>${escapeGroupHtml(String(doc.number_of_pages))} pages</span>`);
     }
-    if (isGroupPdfDocument(doc)) {
+    if (supportsGroupExtractionModeChange(doc)) {
       pills.push(`<span class="document-meta-pill"><i class="bi bi-file-earmark-richtext"></i>${escapeGroupHtml(getGroupDocumentExtractionModeLabel(doc))}</span>`);
     }
     if (authors.length) {
@@ -3709,8 +3740,32 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return pills.join('');
   }
 
+  const GROUP_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif', '.heic'];
+  const GROUP_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster, lower-cost text extraction. Best for plain text PDFs and images.';
+  const GROUP_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP = 'Enhanced extraction uses Azure AI Content Understanding to preserve tables, page structure, and checkbox states, and to describe figures, charts, and images. Adds latency and higher cost.';
+  const GROUP_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+
   function isGroupPdfDocument(doc) {
     return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+  }
+
+  function isGroupImageDocument(doc) {
+    const fileName = String(doc?.file_name || '').toLowerCase();
+    return GROUP_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+  }
+
+  function supportsGroupExtractionModeChange(doc) {
+    return isGroupPdfDocument(doc) || isGroupImageDocument(doc);
+  }
+
+  function getGroupDocumentExtractionEngine(doc) {
+    return String(doc?.extraction_engine || '').trim().toLowerCase();
+  }
+
+  function getGroupDocumentEnhancedTooltipForEngine(engine) {
+    return engine === 'content_understanding'
+      ? GROUP_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP
+      : GROUP_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP;
   }
 
   function getGroupDocumentExtractionModeLabel(doc) {
@@ -3731,17 +3786,19 @@ app_settings.app_title }} {% endblock %} {% block head %}
     return mode === 'layout' ? 'Enhanced' : 'Standard';
   }
 
-  function getGroupDocumentExtractionChangeTooltip(targetMode) {
+  function getGroupDocumentExtractionChangeTooltip(targetMode, engine) {
     return targetMode === 'layout'
-      ? 'Extract again with Enhanced extraction. Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-      : 'Extract again with Standard extraction. Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+      ? `Extract again with Enhanced extraction. ${getGroupDocumentEnhancedTooltipForEngine(engine)}`
+      : `Extract again with Standard extraction. ${GROUP_EXTRACTION_STANDARD_TOOLTIP}`;
   }
 
   function getGroupDocumentExtractionModeTooltip(doc) {
     const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-    return mode === 'layout'
-      ? 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-      : 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+    const tooltip = mode === 'layout'
+      ? getGroupDocumentEnhancedTooltipForEngine(getGroupDocumentExtractionEngine(doc))
+      : GROUP_EXTRACTION_STANDARD_TOOLTIP;
+    const reason = String(doc?.extraction_engine_reason || '').trim();
+    return reason ? `${tooltip} ${reason}.` : tooltip;
   }
 
   function getGroupDocumentCitationTooltip(doc) {
@@ -3751,7 +3808,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function getGroupDocumentExtractionModeBadge(doc) {
-    if (!isGroupPdfDocument(doc)) {
+    if (!supportsGroupExtractionModeChange(doc)) {
       return '';
     }
 
@@ -3762,7 +3819,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function getGroupDocumentReprocessDropdownItems(doc) {
-    if (!isGroupPdfDocument(doc)) {
+    if (!supportsGroupExtractionModeChange(doc)) {
       return '';
     }
 
@@ -3770,7 +3827,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     const targetMode = getGroupDocumentTargetExtractionMode(doc);
     const targetLabel = getGroupDocumentExtractionModeLabelFromMode(targetMode);
     const targetIcon = getGroupDocumentExtractionModeIcon(targetMode);
-    const targetTooltip = getGroupDocumentExtractionChangeTooltip(targetMode);
+    const targetTooltip = getGroupDocumentExtractionChangeTooltip(targetMode, getGroupDocumentExtractionEngine(doc));
 
     return `
       <li><hr class="dropdown-divider"></li>
@@ -6282,7 +6339,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
                 <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(
                   doc.number_of_pages || "N/A"
                 )}</p> <!-- Assuming number_of_pages stores chunk count -->
-                ${isGroupPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}</p>` : ''}
+                ${supportsGroupExtractionModeChange(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getGroupDocumentExtractionModeBadge(doc)}</p>` : ''}
                 <p class="mb-1"><strong>Citations:</strong> ${
                   doc.enhanced_citations
                     ? `<span class="badge bg-success" title="${escapeHtml(getGroupDocumentCitationTooltip(doc))}">Enhanced</span>`
@@ -6317,12 +6374,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           detailsHtml += `
                       <button class="btn btn-sm btn-warning" onclick="onExtractGroupMetadata('${docId}', event)" title="Re-run Metadata Extraction"> <i class="bi bi-magic"></i> Extract Metadata </button>`;
         }
-        if (isGroupPdfDocument(doc)) {
+        if (supportsGroupExtractionModeChange(doc)) {
           const reprocessDocId = escapeHtml(String(docId || ''));
           const extractionActionMode = getGroupDocumentTargetExtractionMode(doc);
           const extractionActionLabel = getGroupDocumentExtractionModeLabelFromMode(extractionActionMode);
           const extractionActionIcon = getGroupDocumentExtractionModeIcon(extractionActionMode);
-          const extractionActionTooltip = getGroupDocumentExtractionChangeTooltip(extractionActionMode);
+          const extractionActionTooltip = getGroupDocumentExtractionChangeTooltip(extractionActionMode, getGroupDocumentExtractionEngine(doc));
           detailsHtml += `
                       <button class="btn btn-sm btn-outline-secondary" onclick="reprocessGroupDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}"> <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel} </button>`;
         }
@@ -6795,6 +6852,22 @@ app_settings.app_title }} {% endblock %} {% block head %}
     let completed = 0;
     let failed = 0;
 
+    function updateGroupUploadRequestSummary() {
+      groupUploadStatusSpan.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+    }
+
+    function finishGroupUploadRequests() {
+      groupFileInput.value = '';
+      groupDocsCurrentPage = 1;
+      fetchGroupDocuments();
+      groupUploadBtn.disabled = false;
+      groupUploadBtn.innerHTML = "Upload Document(s)";
+      groupUploadStatusSpan.textContent = failed
+        ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+        : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+      if (progressContainer) progressContainer.innerHTML = '';
+    }
+
     // Helper to create a unique ID for each file
     function makeId(file) {
       return 'group-progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -6849,7 +6922,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Uploaded ${file.name} (100%)`;
+            statusText.textContent = `Queued ${file.name} (100%)`;
           }
           completed++;
         } else {
@@ -6859,20 +6932,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
             progressBar.classList.remove('progress-bar-animated');
           }
           if (statusText) {
-            statusText.textContent = `Failed to upload ${file.name}`;
+            statusText.textContent = `Upload request did not confirm for ${file.name}`;
           }
           failed++;
         }
-        // Update summary status
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          groupUploadBtn.disabled = false;
-          groupUploadBtn.innerHTML = "Upload Document(s)";
-          // Clear upload progress bars after all uploads and table refresh
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 
@@ -6883,17 +6949,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Failed to upload ${file.name}`;
+          statusText.textContent = `Upload request did not confirm for ${file.name}`;
         }
         failed++;
-        groupUploadStatusSpan.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+        updateGroupUploadRequestSummary();
         if (completed + failed === files.length) {
-          groupFileInput.value = '';
-          groupDocsCurrentPage = 1;
-          fetchGroupDocuments();
-          groupUploadBtn.disabled = false;
-          groupUploadBtn.innerHTML = "Upload Document(s)";
-          if (progressContainer) progressContainer.innerHTML = '';
+          finishGroupUploadRequests();
         }
       };
 

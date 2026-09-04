@@ -288,9 +288,9 @@ No configuration changes required. The feature is enabled by default for all new
 
 ## Related Documentation
 
-- [Message Management Architecture](./MESSAGE_MANAGEMENT_ARCHITECTURE.md)
-- [Conversation Metadata](./CONVERSATION_METADATA.md)
-- [Message Masking](../fixes/MESSAGE_MASKING_FIX.md)
+- Message Management Architecture
+- Conversation Metadata
+- Message Masking
 
 ## References
 

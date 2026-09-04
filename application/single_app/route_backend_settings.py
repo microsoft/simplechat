@@ -10,6 +10,7 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     resolve_model_endpoint_from_context,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
@@ -93,6 +94,8 @@ def _resolve_admin_settings_test_secrets(payload):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_document_intelligence_subscription_key')
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_document_intelligence_key')
+    elif test_type == 'content_understanding':
+        _resolve_test_payload_secret(payload, ('key',), settings, 'azure_content_understanding_key')
     elif test_type == 'redis':
         _resolve_test_payload_secret(payload, ('key',), settings, 'redis_key')
     elif test_type == 'web_search':
@@ -749,6 +752,9 @@ def register_route_backend_settings(bp):
             elif test_type == 'azure_doc_intelligence':
                 return _test_azure_doc_intelligence_connection(data)
 
+            elif test_type == 'content_understanding':
+                return _test_content_understanding_connection(data)
+
             elif test_type == 'multimodal_vision':
                 return _test_multimodal_vision_connection(data)
 
@@ -1399,6 +1405,7 @@ def _test_multimodal_vision_connection(payload):
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
         if multi_endpoint_selection:
             settings = get_settings()
+            identity_context = {'user_id': get_current_user_id()}
             model_context = {
                 'endpoint_id': str(multi_endpoint_selection.get('endpoint_id') or '').strip(),
                 'model_id': str(multi_endpoint_selection.get('model_id') or '').strip(),
@@ -1449,8 +1456,16 @@ def _test_multimodal_vision_connection(payload):
                 allow_private_custom_endpoints=bool(
                     settings.get('allow_private_custom_model_endpoints', False)
                 ),
+                settings=settings,
+                endpoint_config=resolved_endpoint,
+                identity_context=identity_context,
             )
         elif enable_apim:
+            settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(
+                settings,
+                identity_context={'user_id': get_current_user_id()},
+            )
             apim_data = payload.get('apim', {})
             endpoint = apim_data.get('endpoint')
             api_version = apim_data.get('api_version')
@@ -1459,9 +1474,15 @@ def _test_multimodal_vision_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                api_key=subscription_key
+                api_key=subscription_key,
+                default_headers=extra_headers or None,
             )
         else:
+            settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(
+                settings,
+                identity_context={'user_id': get_current_user_id()},
+            )
             direct_data = payload.get('direct', {})
             endpoint = direct_data.get('endpoint')
             api_version = direct_data.get('api_version')
@@ -1475,14 +1496,16 @@ def _test_multimodal_vision_connection(payload):
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
+                    azure_ad_token_provider=token_provider,
+                    default_headers=extra_headers or None,
                 )
             else:
                 api_key = direct_data.get('key')
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    api_key=api_key
+                    api_key=api_key,
+                    default_headers=extra_headers or None,
                 )
 
         # Determine which token parameter to use based on model type
@@ -1578,6 +1601,11 @@ def _test_gpt_connection(payload):
         'role': 'system',
         'content': f"Testing access."
     }
+    settings = get_settings()
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': get_current_user_id()},
+    )
 
     # Decide GPT model
     if enable_apim:
@@ -1590,7 +1618,8 @@ def _test_gpt_connection(payload):
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            api_key=subscription_key
+            api_key=subscription_key,
+            default_headers=extra_headers or None,
         )
     else:
         direct_data = payload.get('direct', {})
@@ -1604,7 +1633,8 @@ def _test_gpt_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
+                azure_ad_token_provider=token_provider,
+                default_headers=extra_headers or None,
             )
         else:
             key = direct_data.get('key')
@@ -1612,7 +1642,8 @@ def _test_gpt_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                api_key=key
+                api_key=key,
+                default_headers=extra_headers or None,
             )
 
     try:
@@ -1989,12 +2020,46 @@ def _test_azure_doc_intelligence_connection(payload):
         time.sleep(10)
 
     if status == "succeeded":
-        if extraction_mode == "auto":
-            return jsonify({'message': 'Azure document intelligence Auto connection successful. Auto samples PDFs with Enhanced extraction during ingestion, then finishes with Standard or Enhanced.'}), 200
-        extraction_mode_label = "Enhanced" if extraction_mode == "layout" else "Standard"
-        return jsonify({'message': f'Azure document intelligence {extraction_mode_label} connection successful'}), 200
+        if test_extraction_mode == "layout":
+            return jsonify({'message': (
+                'Azure document intelligence connection successful. Standard extraction and the '
+                'Layout model used for Auto sampling and Enhanced fallback are both reachable.'
+            )}), 200
+        return jsonify({'message': 'Azure document intelligence Standard connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
+
+def _test_content_understanding_connection(payload):
+    """Attempt to reach Azure AI Content Understanding using ephemeral settings."""
+    from functions_content_understanding import test_content_understanding_connection
+
+    config_override = {
+        'endpoint': payload.get('endpoint'),
+        'key': payload.get('key'),
+        'authentication_type': payload.get('authentication_type'),
+        'api_version': payload.get('api_version'),
+        'analyzer_id': payload.get('analyzer_id'),
+        'image_analyzer_id': payload.get('image_analyzer_id'),
+    }
+
+    sample_file_path = None
+    if payload.get('run_sample_analysis'):
+        candidate_path = os.path.join(current_app.root_path, 'static', 'test_files', 'test_document.pdf')
+        if os.path.exists(candidate_path):
+            sample_file_path = candidate_path
+
+    try:
+        is_ok, message = test_content_understanding_connection(
+            config_override,
+            sample_file_path=sample_file_path,
+        )
+    except Exception as e:
+        return jsonify({'error': f'Content Understanding connection error: {str(e)}'}), 500
+
+    if is_ok:
+        return jsonify({'message': message}), 200
+    return jsonify({'error': message}), 400
+
 
 def _test_key_vault_connection(payload):
     """Attempt to connect to Azure Key Vault using ephemeral settings."""

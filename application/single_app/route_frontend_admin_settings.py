@@ -16,6 +16,7 @@ from functions_model_endpoint_validation import (
 )
 from functions_settings import *
 from functions_content_safety import normalize_content_safety_violation_message
+from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
     INBOUND_MCP_SETTINGS_DEFAULTS,
@@ -551,6 +552,7 @@ def register_route_frontend_admin_settings(bp):
             settings['enable_multi_model_endpoints'] = False
         if 'model_endpoints' not in settings or not isinstance(settings.get('model_endpoints'), list):
             settings['model_endpoints'] = []
+        normalize_model_endpoint_identity_header_settings(settings)
         if 'default_model_selection' not in settings or not isinstance(settings.get('default_model_selection'), dict):
             settings['default_model_selection'] = {
                 'endpoint_id': '',
@@ -1008,6 +1010,10 @@ def register_route_frontend_admin_settings(bp):
                 app_settings=settings_for_template,
                 settings=settings_for_template,
                 azure_environment=AZURE_ENVIRONMENT,
+                content_understanding_supported=is_content_understanding_supported_environment(),
+                content_understanding_api_version_default=CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
+                content_understanding_document_analyzer_default=CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+                content_understanding_image_analyzer_default=CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
                 default_video_indexer_endpoint=video_indexer_endpoint,
                 default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
@@ -1021,6 +1027,9 @@ def register_route_frontend_admin_settings(bp):
                 chunk_size_defaults=get_chunk_size_defaults(),
                 chunk_size_settings=settings.get('chunk_size', {}),
                 chunk_size_cap=get_chunk_size_cap(settings),
+                chunk_size_caps=get_chunk_size_caps_by_key(settings),
+                chunk_size_word_cap=get_embedding_safe_chunk_words(settings),
+                chunk_size_character_cap=get_embedding_safe_chunk_characters(settings),
                 chunk_size_effective=get_chunk_size_config(settings),
                 audio_runtime_capabilities=audio_runtime_capabilities,
                 source_review_runtime_capabilities=source_review_runtime_capabilities,
@@ -1185,6 +1194,12 @@ def register_route_frontend_admin_settings(bp):
             content_safety_include_trigger_information = form_data.get(
                 'content_safety_include_trigger_information'
             ) == 'on'
+            enable_custom_rate_limit_message = form_data.get(
+                'enable_custom_rate_limit_message'
+            ) == 'on'
+            rate_limit_message = normalize_rate_limit_message(
+                form_data.get('rate_limit_message')
+            )
             require_member_of_safety_violation_admin = form_data.get('require_member_of_safety_violation_admin') == 'on'
             require_member_of_control_center_admin = form_data.get('require_member_of_control_center_admin') == 'on'
             require_member_of_control_center_dashboard_reader = form_data.get('require_member_of_control_center_dashboard_reader') == 'on'
@@ -1624,6 +1639,16 @@ def register_route_frontend_admin_settings(bp):
             enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
                 existing_multi_endpoints_enabled,
                 requested_enable_multi_model_endpoints,
+            )
+            model_endpoint_identity_header_enabled = (
+                form_data.get('model_endpoint_identity_header_enabled') == 'on'
+            )
+            model_endpoint_identity_header_name = normalize_model_endpoint_identity_header_name(
+                form_data.get('model_endpoint_identity_header_name'),
+                fallback=DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+            )
+            model_endpoint_identity_header_value_type = normalize_model_endpoint_identity_header_value_type(
+                form_data.get('model_endpoint_identity_header_value_type')
             )
             should_migrate_endpoints = enable_multi_model_endpoints and not existing_multi_endpoints_enabled
             migration_notice = settings.get('multi_endpoint_migration_notice', {
@@ -2299,7 +2324,7 @@ def register_route_frontend_admin_settings(bp):
             # --- Chunk Size Overrides ---
             chunk_size_defaults = get_chunk_size_defaults()
             existing_chunk_sizes = settings.get('chunk_size', {}) if isinstance(settings, dict) else {}
-            chunk_size_cap = get_chunk_size_cap(settings)
+            chunk_size_caps = get_chunk_size_caps_by_key(settings)
             enable_chunk_size_override = form_data.get('enable_chunk_size_override') == 'on'
             normalized_chunk_sizes = {}
             chunk_size_warning_keys = []
@@ -2314,14 +2339,19 @@ def register_route_frontend_admin_settings(bp):
                 except Exception:
                     parsed_value = meta.get('value', 1)
 
+                unit = stored_meta.get('unit', meta.get('unit', 'words'))
+                # Each unit has its own cap, because a word count and a character count cannot
+                # share one numeric limit and still stay inside the embedding token budget.
+                key_cap = chunk_size_caps.get(key, get_chunk_size_cap(settings, unit))
+
                 sanitized_value = max(1, parsed_value)
-                if sanitized_value > chunk_size_cap:
-                    chunk_size_warning_keys.append(key.upper())
-                sanitized_value = min(sanitized_value, chunk_size_cap)
+                if sanitized_value > key_cap:
+                    chunk_size_warning_keys.append(f"{key.upper()} ({key_cap} {unit})")
+                sanitized_value = min(sanitized_value, key_cap)
 
                 normalized_chunk_sizes[key] = {
                     'value': sanitized_value,
-                    'unit': stored_meta.get('unit', meta.get('unit', 'words'))
+                    'unit': unit
                 }
 
             chunk_size_changed = (
@@ -2331,7 +2361,8 @@ def register_route_frontend_admin_settings(bp):
 
             if chunk_size_warning_keys:
                 flash(
-                    f"Chunk sizes capped at {chunk_size_cap} for: {', '.join(chunk_size_warning_keys)}.",
+                    "Chunk sizes were reduced to what a single chunk can embed for: "
+                    f"{', '.join(chunk_size_warning_keys)}.",
                     'warning'
                 )
 
@@ -2340,6 +2371,39 @@ def register_route_frontend_admin_settings(bp):
             )
             document_intelligence_auto_sample_pages = normalize_document_intelligence_auto_sample_pages(
                 form_data.get('document_intelligence_auto_sample_pages')
+            )
+
+            enable_enhanced_extraction = form_data.get('enable_enhanced_extraction') == 'on'
+            enhanced_extraction_was_enabled = is_enhanced_extraction_enabled(settings)
+            if not enable_enhanced_extraction:
+                # Standard is the only mode available while Enhanced is off.
+                document_intelligence_pdf_image_extraction_mode = 'read'
+            elif not enhanced_extraction_was_enabled and document_intelligence_pdf_image_extraction_mode == 'read':
+                # Turning Enhanced on defaults to Auto so it upgrades only when structure is detected.
+                document_intelligence_pdf_image_extraction_mode = 'auto'
+
+            azure_content_understanding_endpoint = normalize_content_understanding_endpoint(
+                form_data.get('azure_content_understanding_endpoint')
+            )
+            azure_content_understanding_authentication_type = normalize_content_understanding_authentication_type(
+                form_data.get('azure_content_understanding_authentication_type')
+            )
+            azure_content_understanding_api_version = normalize_content_understanding_api_version(
+                form_data.get('azure_content_understanding_api_version')
+            )
+            azure_content_understanding_analyzer_id = normalize_content_understanding_analyzer_id(
+                form_data.get('azure_content_understanding_analyzer_id'),
+                CONTENT_UNDERSTANDING_DOCUMENT_ANALYZER_DEFAULT,
+            )
+            azure_content_understanding_image_analyzer_id = normalize_content_understanding_analyzer_id(
+                form_data.get('azure_content_understanding_image_analyzer_id'),
+                CONTENT_UNDERSTANDING_IMAGE_ANALYZER_DEFAULT,
+            )
+            office_embedded_image_min_pixels = normalize_office_embedded_image_min_pixels(
+                form_data.get('office_embedded_image_min_pixels')
+            )
+            office_embedded_image_max_per_document = normalize_office_embedded_image_max_per_document(
+                form_data.get('office_embedded_image_max_per_document')
             )
 
             # --- Construct new_settings Dictionary ---
@@ -2417,6 +2481,10 @@ def register_route_frontend_admin_settings(bp):
                 'allow_private_custom_model_endpoints': (
                     form_data.get('allow_private_custom_model_endpoints') == 'on'
                 ),
+                'model_endpoint_identity_header_enabled': model_endpoint_identity_header_enabled,
+                'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
+                'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,
+                'model_endpoint_identity_header_hmac_secret': settings.get('model_endpoint_identity_header_hmac_secret', ''),
                 'default_model_selection': normalized_default_model_selection,
                 'multi_endpoint_migrated_at': migrated_at,
                 'multi_endpoint_migration_notice': migration_notice,
@@ -2657,6 +2725,8 @@ def register_route_frontend_admin_settings(bp):
                 'enable_desktop_notifications': form_data.get('enable_desktop_notifications') == 'on',
                 'enable_conversation_archiving': form_data.get('enable_conversation_archiving') == 'on',
                 'enable_thoughts': form_data.get('enable_thoughts') == 'on',
+                'enable_fact_memory_plugin': form_data.get('enable_fact_memory_plugin') == 'on',
+                'require_shared_conversation_file_approval': form_data.get('require_shared_conversation_file_approval') == 'on',
 
                 # Search (Web Search via Azure AI Foundry agent)
                 'enable_web_search': enable_web_search,
@@ -2737,9 +2807,22 @@ def register_route_frontend_admin_settings(bp):
                 'azure_document_intelligence_authentication_type': form_data.get('azure_document_intelligence_authentication_type', 'key'),
                 'document_intelligence_pdf_image_extraction_mode': document_intelligence_pdf_image_extraction_mode,
                 'document_intelligence_auto_sample_pages': document_intelligence_auto_sample_pages,
+                'enable_document_intelligence_formula_extraction': form_data.get('enable_document_intelligence_formula_extraction') == 'on',
                 'enable_document_intelligence_apim': form_data.get('enable_document_intelligence_apim') == 'on',
                 'azure_apim_document_intelligence_endpoint': form_data.get('azure_apim_document_intelligence_endpoint', '').strip(),
                 'azure_apim_document_intelligence_subscription_key': admin_secret('azure_apim_document_intelligence_subscription_key'),
+
+                # Enhanced extraction (Azure AI Content Understanding, with Doc Intelligence Layout fallback)
+                'enable_enhanced_extraction': enable_enhanced_extraction,
+                'azure_content_understanding_endpoint': azure_content_understanding_endpoint,
+                'azure_content_understanding_key': admin_secret('azure_content_understanding_key'),
+                'azure_content_understanding_authentication_type': azure_content_understanding_authentication_type,
+                'azure_content_understanding_api_version': azure_content_understanding_api_version,
+                'azure_content_understanding_analyzer_id': azure_content_understanding_analyzer_id,
+                'azure_content_understanding_image_analyzer_id': azure_content_understanding_image_analyzer_id,
+                'enable_office_embedded_image_analysis': form_data.get('enable_office_embedded_image_analysis') == 'on',
+                'office_embedded_image_min_pixels': office_embedded_image_min_pixels,
+                'office_embedded_image_max_per_document': office_embedded_image_max_per_document,
 
                 'enable_key_vault_secret_storage': form_data.get('enable_key_vault_secret_storage') == 'on',
                 'key_vault_name': form_data.get('key_vault_name', '').strip(),
@@ -2765,6 +2848,10 @@ def register_route_frontend_admin_settings(bp):
                 'idle_warning_message': idle_warning_message,
                 'default_system_prompt': form_data.get('default_system_prompt', '').strip(),
                 'access_denied_message': form_data.get('access_denied_message', settings.get('access_denied_message', '')).strip(),
+
+                # Rate limiting (HTTP 429) response message
+                'enable_custom_rate_limit_message': enable_custom_rate_limit_message,
+                'rate_limit_message': rate_limit_message,
 
                 # Video file settings with Azure Video Indexer Settings
                 'video_indexer_endpoint': form_data.get('video_indexer_endpoint', video_indexer_endpoint).strip(),
@@ -3180,7 +3267,7 @@ def register_route_frontend_admin_settings(bp):
                             description='Updated chunk size overrides for document processing.',
                             additional_context={
                                 'override_enabled': enable_chunk_size_override,
-                                'chunk_size_cap': chunk_size_cap,
+                                'chunk_size_caps': chunk_size_caps,
                                 'chunk_sizes': normalized_chunk_sizes
                             }
                         )
@@ -3193,7 +3280,7 @@ def register_route_frontend_admin_settings(bp):
                             message="Admins updated chunk size defaults. New uploads will use the latest limits.",
                             metadata={
                                 'override_enabled': enable_chunk_size_override,
-                                'chunk_size_cap': chunk_size_cap
+                                'chunk_size_caps': chunk_size_caps
                             }
                         )
                     except Exception as e:

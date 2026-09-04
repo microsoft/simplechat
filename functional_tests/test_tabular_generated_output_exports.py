@@ -160,7 +160,7 @@ def test_generated_tabular_output_download_route() -> None:
 
     enhanced_citations_route_content = read_text(ENHANCED_CITATIONS_ROUTE_FILE)
 
-    assert '@app.route("/api/chat_artifacts/download", methods=["GET"])' in enhanced_citations_route_content, (
+    assert '@bp.route("/api/chat_artifacts/download", methods=["GET"])' in enhanced_citations_route_content, (
         "Expected route_enhanced_citations.py to register /api/chat_artifacts/download."
     )
     assert 'def _get_authorized_chat_artifact_message(' in enhanced_citations_route_content, (

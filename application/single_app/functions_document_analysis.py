@@ -452,14 +452,19 @@ def _prompt_requests_per_source_output(analysis_prompt):
     source_output_markers = (
         'one object per comment',
         'one row per comment',
+        'one line per comment',
         'one object per submission',
         'one row per submission',
+        'one line per submission',
         'one object per document',
         'one row per document',
+        'one line per document',
         'one object per source',
         'one row per source',
+        'one line per source',
         'each object must contain',
         'each row must contain',
+        'each line must contain',
         'exactly these fields',
         'treat each standalone document as one comment',
     )
@@ -761,6 +766,13 @@ def _reduce_document_analysis_items(
                 stage_label=f'document-reduction-{reduction_round}.{batch_index}',
                 failed_range_labels=failed_range_labels,
             )
+            batch_input_chars = sum(len(str(item.get('text') or '')) for item in batch_items)
+            debug_print(
+                '[DOCUMENT_ANALYSIS] Starting document reduction batch | '
+                f'document_name={document_name} | '
+                f'round={reduction_round} | batch={batch_index}/{len(batches)} | '
+                f'items={len(batch_items)} | input_chars={batch_input_chars}'
+            )
             reduced_text = str(invoke_prompt(
                 reduction_prompt,
                 stage='reduction',
@@ -782,6 +794,12 @@ def _reduce_document_analysis_items(
                     f'Document analysis document reduction returned an empty response for {document_name} '
                     f'at round {reduction_round}, batch {batch_index}.'
                 )
+            debug_print(
+                '[DOCUMENT_ANALYSIS] Completed document reduction batch | '
+                f'document_name={document_name} | '
+                f'round={reduction_round} | batch={batch_index}/{len(batches)} | '
+                f'input_chars={batch_input_chars} | output_chars={len(reduced_text)}'
+            )
             next_items.append({
                 'label': f'{document_name} reduction {reduction_round}.{batch_index}',
                 'text': reduced_text,
@@ -1100,6 +1118,7 @@ def run_document_analysis(
                     'progress': _build_progress_snapshot(coverage),
                 })
 
+            window_source_chars = len(_render_window_source_text(window_payload))
             analysis_text = ''
             last_error = ''
             max_attempts = targets.get('max_retries_per_window', DEFAULT_MAX_RETRIES_PER_WINDOW) + 1
@@ -1188,7 +1207,10 @@ def run_document_analysis(
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
-                    f"chunk_count={window_range.get('chunk_count', 0)}"
+                    f"chunk_count={window_range.get('chunk_count', 0)} | "
+                    f'source_chars={window_source_chars} | '
+                    f'prompt_chars={len(prompt_text)} | '
+                    f'response_chars={len(analysis_text)}'
                 )
                 coverage['processed_windows'] += 1
                 coverage['processed_chunks'] += window_range.get('chunk_count', 0) or 0
@@ -1242,6 +1264,7 @@ def run_document_analysis(
                     f'document_id={document_id} | '
                     f'document_name={document_name} | '
                     f"window={window_range.get('window_number')} | "
+                    f'source_chars={window_source_chars} | '
                     f'error={last_error or "unknown"}'
                 )
                 coverage['failed_windows'] += 1
@@ -1401,11 +1424,13 @@ def run_document_analysis(
                     phase_step=reduction_step_index,
                     phase_total_steps=reduction_step_total,
                 )
+                global_reduction_input_chars = sum(len(str(item.get('text') or '')) for item in batch_items)
                 debug_print(
                     '[DOCUMENT_ANALYSIS] Starting reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
-                    f'items={len(batch_items)}'
+                    f'items={len(batch_items)} | '
+                    f'input_chars={global_reduction_input_chars}'
                 )
                 if callable(activity_callback):
                     activity_callback({
@@ -1455,7 +1480,9 @@ def run_document_analysis(
                     '[DOCUMENT_ANALYSIS] Completed reduction batch | '
                     f'round={reduction_round} | '
                     f'batch={batch_index}/{len(batches)} | '
-                    f'sources={len(source_labels)}'
+                    f'sources={len(source_labels)} | '
+                    f'input_chars={global_reduction_input_chars} | '
+                    f'output_chars={len(reduced_text)}'
                 )
                 next_items.append({
                     'label': f'Reduction {reduction_round}.{batch_index}',
@@ -1509,6 +1536,7 @@ def run_document_analysis(
             'processed_windows': coverage.get('processed_windows', 0),
             'failed_windows': coverage.get('failed_windows', 0),
             'retries': coverage.get('retries', 0),
+            'final_analysis_reply_chars': len(final_analysis_reply),
         },
         level=logging.INFO,
     )
@@ -1518,7 +1546,8 @@ def run_document_analysis(
         f"windows={coverage.get('total_windows', 0)} | "
         f"processed={coverage.get('processed_windows', 0)} | "
         f"failed={coverage.get('failed_windows', 0)} | "
-        f"retries={coverage.get('retries', 0)}"
+        f"retries={coverage.get('retries', 0)} | "
+        f'final_analysis_reply_chars={len(final_analysis_reply)}'
     )
 
     return {

@@ -14,8 +14,35 @@ _LEGACY_ACTION_ENDPOINTS = {
 }
 
 
-def _latest_feature_card(feature_id, title, icon, summary, details, why, guidance, actions=None, image_label=None, image_title=None, image_caption=None, image_name=None, include_media=True):
+def _latest_feature_card(feature_id, title, icon, summary, details, why, guidance, actions=None, image_label=None, image_title=None, image_caption=None, image_name=None, include_media=True, images=None):
     """Build a latest-feature catalog entry with optional screenshot metadata."""
+    if images:
+        gallery = []
+        for index, spec in enumerate(images, start=1):
+            image_file = spec.get('name') or f"{feature_id}_{index}.png"
+            image_title_value = spec.get('title') or title
+            gallery.append({
+                'path': f"images/features/{image_file}",
+                'alt': spec.get('alt') or f"{image_title_value} screenshot placeholder",
+                'title': image_title_value,
+                'caption': spec.get('caption') or f"Screenshot placeholder for {image_title_value}.",
+                'label': spec.get('label') or image_title_value,
+            })
+
+        return {
+            'id': feature_id,
+            'title': title,
+            'icon': icon,
+            'summary': summary,
+            'details': details,
+            'why': why,
+            'guidance': guidance,
+            'actions': actions or [],
+            'image': gallery[0]['path'],
+            'image_alt': gallery[0]['alt'],
+            'images': gallery,
+        }
+
     if not include_media:
         return {
             'id': feature_id,
@@ -57,7 +84,7 @@ def _latest_feature_card(feature_id, title, icon, summary, details, why, guidanc
     }
 
 
-_SUPPORT_LATEST_FEATURE_CATALOG = [
+_SUPPORT_RELEASE_250_FEATURE_CATALOG = [
     _latest_feature_card(
         'release_250_ai_access',
         'Personalized Model and Agent Access',
@@ -365,7 +392,7 @@ _SUPPORT_LATEST_FEATURE_CATALOG = [
 ]
 
 
-_SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
+_ADMIN_RELEASE_250_FEATURE_CATALOG = [
     _latest_feature_card(
         'admin_release_250_azure_openai_identity',
         'Azure OpenAI Identity Setup',
@@ -629,569 +656,6 @@ _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG = [
 ]
 
 
-_SUPPORT_CURRENT_FEATURE_IMAGE_METADATA = {
-    'document_intelligence': {
-        'focused_path': 'images/features/document_intelligence_admin_controls.png',
-        'focused_alt': 'Annotated Document Intelligence Auto Mode admin settings screenshot',
-        'focused_title': 'Configure Document Intelligence Auto Mode',
-        'focused_caption': 'Numbers highlight extraction mode selection, Auto sample-page tuning, and where users review extraction badges or change PDF extraction.',
-        'focused_label': 'Admin Controls',
-    },
-    'cloud_anthropic_models': {
-        'focused_path': 'images/features/model_selection_multi_endpoint_admin.png',
-        'focused_alt': 'Admin multi-endpoint model management screenshot showing provider choices and configured models',
-        'focused_title': 'Configure Cloud and Anthropic Model Endpoints',
-        'focused_caption': 'Numbers highlight model endpoint management, provider-aware Foundry configuration, and the admin model choices that can include Claude deployments.',
-        'focused_label': 'Model Endpoint Controls',
-    },
-    'file_sync': {
-        'focused_path': 'images/features/file_sync_admin_scope_controls.png',
-        'focused_alt': 'Annotated File Sync connector settings screenshot',
-        'focused_title': 'Configure File Sync Connectors',
-        'focused_caption': 'Numbers highlight SMB and Azure Files source enablement, reusable identity configuration, and sync status or history review.',
-        'focused_label': 'Connector Controls',
-    },
-    'group_workflows': {
-        'focused_path': 'images/features/workflow_automation_admin_controls.png',
-        'focused_alt': 'Annotated workflow automation admin settings screenshot with workflow access controls',
-        'focused_title': 'Configure Group Workflow Support',
-        'focused_caption': 'Numbers highlight workflow access enablement, group workflow policy controls, and File Sync before-run automation shared with group workflows.',
-        'focused_label': 'Group Workflow Controls',
-    },
-    'source_review': {
-        'focused_path': 'images/features/source_review_admin_policy.png',
-        'focused_alt': 'Annotated Source Review and Deep Research policy screenshot',
-        'focused_title': 'Configure Source Review Policies',
-        'focused_caption': 'Numbers highlight Source Review enablement, Deep Research policy options, and bounded allow or block controls.',
-        'focused_label': 'Policy Controls',
-    },
-    'analyze_compare': {
-        'focused_path': 'images/features/document_revision_delete_compare.png',
-        'focused_alt': 'Document revision actions and comparison screenshot showing compare-related document actions',
-        'focused_title': 'Use Analyze and Compare Document Actions',
-        'focused_caption': 'Numbers highlight document action entry points for analysis and comparison workflows that go beyond regular search.',
-        'focused_label': 'Document Actions',
-    },
-    'agent_knowledge_actions': {
-        'focused_path': 'images/features/agent_knowledge_actions_assigned_knowledge.png',
-        'focused_alt': 'Annotated Assigned Knowledge setup screenshot for agents',
-        'focused_title': 'Assign Agent Knowledge and Actions',
-        'focused_caption': 'Numbers highlight Assigned Knowledge enablement, source workspace and document selection, and optional web sources or user actions.',
-        'focused_label': 'Agent Setup',
-    },
-    'generated_artifacts': {
-        'focused_path': 'images/features/generated_artifacts_chat_artifacts.png',
-        'focused_alt': 'Annotated generated artifact card screenshot in chat',
-        'focused_title': 'Use Generated Artifacts in Chat',
-        'focused_caption': 'Numbers highlight the generated Markdown artifact, rendered structured output, and the action to promote reusable work into a workspace.',
-        'focused_label': 'Artifact Workflow',
-    },
-    'chat_productivity': {
-        'focused_path': 'images/features/chat_productivity_chat_toolbar.png',
-        'focused_alt': 'Annotated chat productivity toolbar screenshot',
-        'focused_title': 'Use Chat Productivity Controls',
-        'focused_caption': 'Numbers highlight prompt, model, and agent selection, attachment and paste upload controls, document actions, and Source Review before sending.',
-        'focused_label': 'Chat Controls',
-    },
-    'chat_upload_workspace_parity': {
-        'focused_path': 'images/features/chat_productivity_chat_toolbar.png',
-        'focused_alt': 'Annotated chat productivity toolbar screenshot showing attachment and workspace controls',
-        'focused_title': 'Use Workspace-Backed Chat Uploads',
-        'focused_caption': 'Numbers highlight chat attachment controls and workspace grounding paths that turn eligible uploads into personal or group workspace documents.',
-        'focused_label': 'Upload Controls',
-    },
-    'workspace_experience': {
-        'focused_path': 'images/features/workspace_experience_document_cards.png',
-        'focused_alt': 'Annotated workspace document cards screenshot',
-        'focused_title': 'Navigate Workspace Document Views',
-        'focused_caption': 'Numbers highlight view switching, card and folder scanning, and document actions such as open, compare, or reprocess.',
-        'focused_label': 'Workspace Views',
-    },
-    'workflow_automation': {
-        'focused_path': 'images/features/workflow_automation_admin_controls.png',
-        'focused_alt': 'Annotated workflow automation admin settings screenshot',
-        'focused_title': 'Configure Workflow Automation',
-        'focused_caption': 'Numbers highlight workflow access enablement, optional Enterprise App role enforcement, and File Sync before-run automation.',
-        'focused_label': 'Workflow Controls',
-    },
-    'visio_ingestion': {
-        'focused_path': 'images/features/visio_ingestion_workspace_upload.png',
-        'focused_alt': 'Annotated Visio diagram upload screenshot in a workspace',
-        'focused_title': 'Upload and Search Visio Diagrams',
-        'focused_caption': 'Numbers highlight .vsdx upload, page and shape indexing, and citation or original-file inspection workflows.',
-        'focused_label': 'Visio Workflow',
-    },
-    'stats_reporting': {
-        'focused_path': 'images/features/stats_reporting_profile_dashboard.png',
-        'focused_alt': 'Annotated profile stats reporting dashboard screenshot',
-        'focused_title': 'Review Stats and Reporting',
-        'focused_caption': 'Numbers highlight reporting windows, cached usage totals, and export controls for offline reporting.',
-        'focused_label': 'Reporting Dashboard',
-    },
-}
-
-
-_SUPPORT_CURRENT_FEATURE_USER_METADATA = {
-    'document_intelligence': {
-        'guidance': [
-            'Open Personal Workspace and expand a document row to review how it was processed.',
-            'Use the extraction and citation badges to see whether the file used Standard, Enhanced, or enhanced citation processing.',
-            'Use Edit Metadata, Extract Metadata, or Change Extraction when you need to refine or extract a stored document again.',
-        ],
-        'actions': [
-            {
-                'label': 'Review Workspace Documents',
-                'description': 'Open Personal Workspace and inspect document extraction badges, metadata, and Change Extraction actions.',
-                'href': '/workspace#documents-tab',
-                'icon': 'bi-folder2-open',
-                'requires_settings': ['enable_user_workspace'],
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/document_intelligence_user_details.png',
-                'alt': 'Annotated workspace document details screenshot showing extraction badges and Change Extraction actions',
-                'title': 'Review Document Enrichment',
-                'caption': '1 opens a document row, 2 checks extraction and citation badges, and 3 uses metadata or Change Extraction actions when a different extraction mode is needed.',
-                'label': 'Document Details',
-            },
-        ],
-    },
-    'cloud_anthropic_models': {
-        'guidance': [
-            'Open Chat and use the model selector to choose among the Azure OpenAI, Foundry, New Foundry, and Claude-capable models your admins enabled.',
-            'Use Claude-backed models for tasks where that deployment is the preferred reasoning or writing option in your environment.',
-            'Expect model-bound chat, agents, workflows, and summaries to keep using the selected endpoint metadata when a Claude deployment is selected.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Chat Model Picker',
-                'description': 'Open Chat and choose one of the model endpoints made available by your admins.',
-                'href': '/chats#model-select-container',
-                'icon': 'bi-cpu',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/model_selection_chat_selector.png',
-                'alt': 'User chat model selector screenshot showing multiple available model choices',
-                'title': 'Choose an Available Chat Model',
-                'caption': '1 opens the model picker, 2 reviews available provider-backed model choices, and 3 selects the model for the next chat turn.',
-                'label': 'Model Picker',
-            },
-        ],
-    },
-    'file_sync': {
-        'guidance': [
-            'Open Personal Workspace > Sync to add sources, run sync, and review provider status, counts, and history.',
-            'Open Personal Workspace > Identities to reuse credentials across sync sources and actions without duplicating setup.',
-            'Use SMB or Azure Files sources for the current connector set, then watch synced document badges in the Documents tab.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Workspace Sync',
-                'description': 'Review sync sources, run status, history, and provider counts from Personal Workspace.',
-                'href': '/workspace?feature_action=file_sync',
-                'icon': 'bi-arrow-repeat',
-                'requires_settings': ['enable_user_workspace'],
-            },
-            {
-                'label': 'Open Workspace Identities',
-                'description': 'Review reusable identities used by sync sources and actions.',
-                'href': '/workspace#identities-tab',
-                'icon': 'bi-person-badge',
-                'requires_settings': ['enable_user_workspace'],
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/file_sync_user_sources.png',
-                'alt': 'Annotated workspace Sync tab screenshot showing a sync source, counts, and run actions',
-                'title': 'Manage Sync Sources',
-                'caption': '1 adds a source, 2 reviews provider status and counts, and 3 runs sync or opens history from the user workspace.',
-                'label': 'Sync Sources',
-            },
-            {
-                'path': 'images/features/file_sync_user_identities.png',
-                'alt': 'Annotated workspace Identities tab screenshot showing reusable credentials for sync and actions',
-                'title': 'Reuse Workspace Identities',
-                'caption': '1 adds an identity, 2 shows what uses it, and 3 opens view or edit controls for credential maintenance.',
-                'label': 'Identities',
-            },
-        ],
-    },
-    'group_workflows': {
-        'guidance': [
-            'Open Group Workspaces, choose an active group, and review the Group Workflows area when your admins enabled it.',
-            'Create group workflows with group-scoped agents, model endpoints, File Sync sources, manual runs, or interval schedules.',
-            'Use group workflow activity and run history to inspect shared workflow output without moving the work into a personal workspace.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Group Workspaces',
-                'description': 'Open Group Workspaces and review group workflow availability for the active group.',
-                'href': '/group_workspaces',
-                'icon': 'bi-people',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/workflow_automation_user_list.png',
-                'alt': 'Annotated workspace Workflows tab screenshot showing workflow list and create controls',
-                'title': 'Manage Shared Workflows',
-                'caption': '1 creates a workflow, 2 reviews run status, and 3 uses the workflow list pattern now available for group workflows when enabled.',
-                'label': 'Workflow List',
-            },
-        ],
-    },
-    'source_review': {
-        'guidance': [
-            'Open Chat and use the Workspaces tool when an answer should be grounded in selected documents or tags.',
-            'Turn on Source Review or Deep Research when pasted URLs or web evidence should be reviewed before the final answer.',
-            'Choose a narrow scope, tag, or document set so the reviewed evidence stays deliberate and easy to audit.',
-        ],
-        'actions': [
-            {
-                'label': 'Try Sources in Chat',
-                'description': 'Open Chat and use workspace grounding, source review, or Deep Research controls with your next prompt.',
-                'href': '/chats#chatbox',
-                'icon': 'bi-chat-dots',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/source_review_user_grounded_search.png',
-                'alt': 'Annotated chat grounded search screenshot showing workspace scope, tags, and document controls',
-                'title': 'Ground Chat in Workspace Sources',
-                'caption': '1 opens the Workspaces grounding tool, 2 chooses action, scope, tags, and documents, and 3 grounds the next message.',
-                'label': 'Grounded Search',
-            },
-            {
-                'path': 'images/features/source_review_user_deep_research.png',
-                'alt': 'Annotated chat source review screenshot showing source tools and prompt entry',
-                'title': 'Use Source Review and Deep Research',
-                'caption': '1 opens source tools, 2 enables source review when available, and 3 asks a URL or web-evidence question.',
-                'label': 'Source Review',
-            },
-        ],
-    },
-    'analyze_compare': {
-        'guidance': [
-            'Open Chat, expand the Workspaces tool, and choose Analyze when a prompt should review selected documents end to end.',
-            'Choose Compare when you want one source document compared against one or more target documents.',
-            'Use progress and coverage details to understand which documents were reviewed or compared in the final answer.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Chat Document Actions',
-                'description': 'Open Chat and choose Analyze or Compare from the Workspaces tool.',
-                'href': '/chats#chatbox',
-                'icon': 'bi-chat-dots',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/document_revision_delete_compare.png',
-                'alt': 'Document revision actions and comparison screenshot showing compare-related document actions',
-                'title': 'Review Document Action Choices',
-                'caption': '1 reviews available document actions, 2 chooses comparison-oriented work when needed, and 3 keeps document history available for follow-up analysis.',
-                'label': 'Document Actions',
-            },
-        ],
-    },
-    'agent_knowledge_actions': {
-        'guidance': [
-            'Open Personal Workspace > Agents to view, chat with, or edit agents that have assigned knowledge.',
-            'Open Personal Workspace > Actions to see which reusable tools are enabled for agents and workflows.',
-            'Use identities with actions that need credentials, then test the agent from Chat before relying on it for repeat work.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Workspace Agents',
-                'description': 'Review agents, assigned knowledge, and chat or edit controls from Personal Workspace.',
-                'href': '/workspace#agents-tab',
-                'icon': 'bi-diagram-3',
-                'requires_settings': ['enable_user_workspace'],
-            },
-            {
-                'label': 'Open Workspace Actions',
-                'description': 'Review enabled actions that agents and workflows can use.',
-                'href': '/workspace#plugins-tab',
-                'icon': 'bi-plug',
-                'requires_settings': ['enable_user_workspace'],
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/agent_knowledge_user_agents.png',
-                'alt': 'Annotated workspace Agents tab screenshot showing agent list and chat or edit controls',
-                'title': 'Use Workspace Agents',
-                'caption': '1 creates or edits an agent, 2 reviews its purpose, and 3 chats, views, or edits the agent.',
-                'label': 'Agents',
-            },
-            {
-                'path': 'images/features/agent_knowledge_user_actions.png',
-                'alt': 'Annotated workspace Actions tab screenshot showing enabled actions and edit controls',
-                'title': 'Use Workspace Actions',
-                'caption': '1 creates an action, 2 confirms enabled tools, and 3 views or edits action details.',
-                'label': 'Actions',
-            },
-        ],
-    },
-    'generated_artifacts': {
-        'guidance': [
-            'Generate charts, Markdown, or structured analysis in Chat when the response should become reusable work.',
-            'Use chart, copy, retry, or artifact controls to inspect the generated output before continuing.',
-            'Use Add to Workspace when a generated artifact should become a durable workspace document.',
-        ],
-        'images': [
-            {
-                'path': 'images/features/generated_artifacts_user_chat_output.png',
-                'alt': 'Annotated chat screenshot showing generated chart output and message action controls',
-                'title': 'Review Generated Output in Chat',
-                'caption': '1 reviews the generated output, 2 opens chart or artifact controls, and 3 copies, retries, or continues the work.',
-                'label': 'Generated Output',
-            },
-        ],
-    },
-    'chat_productivity': {
-        'guidance': [
-            'Use the composer tools to attach images, files, URLs, prompts, source grounding, and agents without leaving Chat.',
-            'Use the model selector when a task needs a different model capability or speed profile.',
-            'Use Analyze or Compare from the Workspaces tool when a selected document needs full review or side-by-side comparison.',
-            'Paste or type the next prompt directly in the composer after reviewing generated charts, artifacts, citations, or document-action output.',
-        ],
-        'images': [
-            {
-                'path': 'images/features/chat_productivity_user_chat.png',
-                'alt': 'Annotated chat composer screenshot showing attachment tools, model picker, and prompt input',
-                'title': 'Use Chat Productivity Controls',
-                'caption': '1 opens attachment and workspace tools, 2 switches models, and 3 pastes or types the next prompt.',
-                'label': 'Chat Composer',
-            },
-        ],
-    },
-    'chat_upload_workspace_parity': {
-        'guidance': [
-            'Upload or paste files in personal Chat to create linked personal workspace documents when personal workspace processing is enabled.',
-            'Upload files in group or group multi-user conversations to create linked documents in the writable group workspace.',
-            'After processing finishes, use the linked workspace document for Search, Analyze, Compare, citations, tagging, and normal document governance.',
-        ],
-        'actions': [
-            {
-                'label': 'Upload from Chat',
-                'description': 'Open Chat and attach a file to use the workspace-backed upload path when enabled.',
-                'href': '/chats#chatbox',
-                'icon': 'bi-paperclip',
-            },
-            {
-                'label': 'Open Group Workspaces',
-                'description': 'Review group workspace documents created from group chat uploads.',
-                'href': '/group_workspaces',
-                'icon': 'bi-people',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/chat_productivity_user_chat.png',
-                'alt': 'Annotated chat composer screenshot showing attachment tools, model picker, and prompt input',
-                'title': 'Upload Files from Chat',
-                'caption': '1 opens attachment tools, 2 uploads or pastes a file, and 3 continues the conversation while workspace processing runs.',
-                'label': 'Chat Upload',
-            },
-            {
-                'path': 'images/features/workspace_experience_document_cards.png',
-                'alt': 'Annotated workspace document cards screenshot showing document cards and actions',
-                'title': 'Use Uploaded Files as Workspace Documents',
-                'caption': '1 finds the uploaded file in the workspace, 2 opens document actions, and 3 uses search, analysis, comparison, citations, or governance workflows.',
-                'label': 'Workspace Document',
-            },
-        ],
-    },
-    'workspace_experience': {
-        'guidance': [
-            'Use List view when you need dense file, title, badge, and action scanning.',
-            'Use Cards when you want larger document previews, then switch to Folders or Folders + Cards for tag-first browsing.',
-            'Use Manage Tags and multi-select when a set of documents needs cleanup, approval, or organization.',
-        ],
-        'images': [
-            {
-                'path': 'images/features/workspace_experience_user_list_view.png',
-                'alt': 'Annotated workspace List view screenshot showing dense document rows and row actions',
-                'title': 'Scan Documents in List View',
-                'caption': '1 switches view mode, 2 scans file names, titles, and badges, and 3 opens chat or row actions.',
-                'label': 'List View',
-            },
-            {
-                'path': 'images/features/workspace_experience_user_cards_view.png',
-                'alt': 'Annotated workspace Cards view screenshot showing document cards and card actions',
-                'title': 'Browse Document Cards',
-                'caption': '1 chooses Cards view, 2 scans document cards, and 3 uses document actions.',
-                'label': 'Cards View',
-            },
-            {
-                'path': 'images/features/workspace_experience_user_folders_view.png',
-                'alt': 'Annotated workspace Folders view screenshot showing tag folders and sort controls',
-                'title': 'Browse Tag Folders',
-                'caption': '1 chooses Folders view, 2 browses tag folders, and 3 sorts folders by name or file count.',
-                'label': 'Folders View',
-            },
-            {
-                'path': 'images/features/workspace_experience_user_folders_cards_view.png',
-                'alt': 'Annotated workspace Folders and Cards view screenshot showing tag folders and document organization controls',
-                'title': 'Use Folders and Cards Together',
-                'caption': '1 chooses Folders + Cards, 2 opens a folder by tag, and 3 manages tags or multi-selects documents.',
-                'label': 'Folders + Cards',
-            },
-        ],
-    },
-    'workflow_automation': {
-        'guidance': [
-            'Open Personal Workspace > Workflows for personal automation, or Group Workspaces for shared group workflow automation when enabled.',
-            'In the workflow editor, enable File Sync Before Run when the workflow should refresh personal or group source files first.',
-            'Select sync sources, choose whether to wait for completion, and use changed files as Analyze targets when appropriate.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Workspace Workflows',
-                'description': 'Create or review workflows and File Sync before-run controls from Personal Workspace.',
-                'href': '/workspace#workflows-tab',
-                'icon': 'bi-play-circle',
-                'requires_settings': ['enable_user_workspace'],
-            },
-            {
-                'label': 'Open Group Workspaces',
-                'description': 'Create or review group workflows from the active group workspace when enabled.',
-                'href': '/group_workspaces',
-                'icon': 'bi-people',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/workflow_automation_user_list.png',
-                'alt': 'Annotated workspace Workflows tab screenshot showing workflow list and create controls',
-                'title': 'Manage Workspace Workflows',
-                'caption': '1 creates a workflow, 2 reviews workflow runs and status, and 3 switches list or grid view.',
-                'label': 'Workflow List',
-            },
-            {
-                'path': 'images/features/workflow_automation_user_file_sync_trigger.png',
-                'alt': 'Annotated workflow editor screenshot showing File Sync Before Run controls',
-                'title': 'Trigger File Sync Before Workflow Runs',
-                'caption': '1 enables File Sync before run, 2 selects sources, and 3 chooses wait, continue, and changed-file targeting behavior.',
-                'label': 'File Sync Trigger',
-            },
-        ],
-    },
-    'visio_ingestion': {
-        'guidance': [
-            'Upload `.vsdx` files from Personal Workspace when diagrams should become searchable workspace knowledge.',
-            'Find Visio documents in the document list like any other workspace file.',
-            'Use Chat on the Visio file to ask about pages, labels, shapes, and connectors.',
-        ],
-        'images': [
-            {
-                'path': 'images/features/visio_ingestion_user_upload.png',
-                'alt': 'Annotated workspace document list screenshot showing Visio upload support and chat action',
-                'title': 'Upload and Use Visio Diagrams',
-                'caption': '1 uploads `.vsdx` diagrams, 2 finds Visio files in the workspace, and 3 opens Chat for the diagram.',
-                'label': 'Visio Upload',
-            },
-        ],
-    },
-    'stats_reporting': {
-        'guidance': [
-            'Open Profile > Stats to review your activity with 7-day, 30-day, 90-day, or custom windows and export visible metrics.',
-            'Open Profile > Settings to control navigation preferences, tutorial visibility, retention, saved memories, speech preferences, and text-to-speech voice selection.',
-            'Use Profile tabs to review your groups, public workspaces, submitted feedback, and safety violations from one place.',
-        ],
-        'actions': [
-            {
-                'label': 'Open Profile Stats',
-                'description': 'Review your personal activity windows and export options from Profile.',
-                'href': '/profile?tab=stats#profile-stats-pane',
-                'icon': 'bi-person-lines-fill',
-            },
-            {
-                'label': 'Open Profile Settings',
-                'description': 'Review navigation, tutorial, memory, speech, and voice preferences from Profile.',
-                'href': '/profile?tab=settings#profile-settings-pane',
-                'icon': 'bi-person-gear',
-            },
-            {
-                'label': 'Open Groups',
-                'description': 'Review the groups connected to your account from Profile.',
-                'href': '/profile?tab=groups#profile-groups-pane',
-                'icon': 'bi-people',
-            },
-            {
-                'label': 'Open Public Workspaces',
-                'description': 'Review public workspaces connected to your account from Profile.',
-                'href': '/profile?tab=public-workspaces#profile-public-workspaces-pane',
-                'icon': 'bi-globe',
-            },
-        ],
-        'images': [
-            {
-                'path': 'images/features/stats_reporting_user_profile.png',
-                'alt': 'Annotated profile stats screenshot showing time windows, export, and activity charts',
-                'title': 'Review Profile Stats and Preferences',
-                'caption': '1 chooses a reporting window, 2 exports stats to CSV, and 3 reviews profile activity, settings, groups, workspaces, feedback, and violations from the profile tabs.',
-                'label': 'Profile Stats',
-            },
-            {
-                'path': 'images/features/facts_memory_view_profile.png',
-                'alt': 'Profile fact memory section screenshot showing saved instructions and facts controls',
-                'title': 'Manage Profile Memories',
-                'caption': 'Fact Memory lives in Profile settings alongside tutorial, retention, speech, and voice preferences.',
-                'label': 'Profile Memories',
-            },
-        ],
-    },
-}
-
-
-def _apply_current_feature_image_metadata():
-    """Attach practical annotated screenshots to the current Latest Features catalog."""
-    for feature in _SUPPORT_LATEST_FEATURE_CATALOG:
-        image_metadata = _SUPPORT_CURRENT_FEATURE_IMAGE_METADATA.get(feature['id'])
-        if not image_metadata:
-            continue
-
-        feature['image'] = image_metadata['focused_path']
-        feature['image_alt'] = image_metadata['focused_alt']
-        feature['images'] = [
-            {
-                'path': image_metadata['focused_path'],
-                'alt': image_metadata['focused_alt'],
-                'title': image_metadata['focused_title'],
-                'caption': image_metadata['focused_caption'],
-                'label': image_metadata['focused_label'],
-            },
-        ]
-
-
-def _apply_user_support_feature_metadata(feature):
-    """Apply user-facing screenshots, guidance, and actions to current release support cards."""
-    user_metadata = _SUPPORT_CURRENT_FEATURE_USER_METADATA.get(feature.get('id'))
-    if not user_metadata:
-        return
-
-    if 'guidance' in user_metadata:
-        feature['guidance'] = deepcopy(user_metadata['guidance'])
-
-    if 'actions' in user_metadata:
-        feature['actions'] = deepcopy(user_metadata['actions'])
-
-    images = deepcopy(user_metadata.get('images', []))
-    if images:
-        feature['images'] = images
-        feature['image'] = images[0].get('path')
-        feature['image_alt'] = images[0].get('alt', '')
-
-
-_apply_current_feature_image_metadata()
-
 def _resolve_support_application_title(settings):
     """Return the application title used for user-facing support copy."""
     app_title = str((settings or {}).get('app_title') or '').strip()
@@ -1215,7 +679,7 @@ def _apply_support_application_title(value, app_title):
     return value
 
 
-_SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG = [
+_SUPPORT_RELEASE_241_FEATURE_CATALOG = [
     {
         'id': 'guided_tutorials',
         'title': 'Guided Tutorials',
@@ -1606,11 +1070,13 @@ _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG = [
         'id': 'fact_memory',
         'title': 'Fact Memory',
         'icon': 'bi-journal-bookmark',
-        'summary': 'Profile-based memory now distinguishes always-on Instructions from recall-only Facts so the assistant can carry durable preferences and relevant personal context forward more cleanly.',
-        'details': 'Fact Memory gives each user a compact profile experience for saving Instructions and Facts. Instructions act like durable response preferences, while Facts are recalled only when they are relevant to the current request.',
-        'why': 'This matters because you no longer need to restate the same preferences or personal context in every conversation, and the chat experience now shows when saved instructions and facts were actually used.',
+        'summary': 'The assistant can now remember durable preferences and personal context during normal chat, and you can manage everything it has saved from your profile.',
+        'details': 'Fact Memory saves two kinds of entries. Instructions act like durable response preferences that apply to every prompt, while Facts are recalled only when they are relevant to the current request. You can add entries yourself from your profile, or simply ask the assistant in chat to remember something or to stop doing something.',
+        'why': 'This matters because you no longer need to restate the same preferences or personal context in every conversation. Saving a memory is now part of the conversation itself, and chat shows you when saved instructions and facts were actually used.',
         'guidance': [
-            'Open your profile page and use Fact Memory when you want to save a lasting preference or a detail about yourself.',
+            'Ask in chat to have something remembered, such as "remember that I prefer bullet points" or "from now on, keep answers under 200 words".',
+            'Ask the assistant to forget or change a saved detail when it is no longer accurate.',
+            'Open your profile page and use Fact Memory to review, edit, or delete everything that has been saved for you.',
             'Choose Instruction for durable preferences like tone, brevity, formatting, or things the assistant should always keep in mind.',
             'Choose Fact for details that should only be recalled when relevant, such as who you are, what you prefer, or other personal context.',
             'Try a chat prompt like "tell me all about myself" when you want to confirm which saved facts the assistant can recall.',
@@ -1625,7 +1091,7 @@ _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG = [
             },
             {
                 'label': 'Try It in Chat',
-                'description': 'Open Chat and ask a personal or preference-aware question to see instruction memory and fact recall in action.',
+                'description': 'Open Chat and ask the assistant to remember a preference, or ask a personal question to see instruction memory and fact recall in action.',
                 'endpoint': 'chats',
                 'fragment': 'chatbox',
                 'icon': 'bi-chat-dots',
@@ -1778,7 +1244,7 @@ _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG = [
     },
 ]
 
-_SUPPORT_EARLIER_RELEASE_FEATURE_CATALOG = [
+_SUPPORT_RELEASE_239_FEATURE_CATALOG = [
     {
         'id': 'conversation_export',
         'title': 'Conversation Export',
@@ -2069,7 +1535,7 @@ _SUPPORT_EARLIER_RELEASE_FEATURE_CATALOG = [
     },
 ]
 
-_ADMIN_PREVIOUS_RELEASE_FEATURE_CATALOG = [
+_ADMIN_RELEASE_241_FEATURE_CATALOG = [
     {
         'id': 'release_notifications_status_badge',
         'title': 'Registered / Unregistered Badge',
@@ -2084,36 +1550,1132 @@ _ADMIN_PREVIOUS_RELEASE_FEATURE_CATALOG = [
         ],
         'actions': [],
     },
-] + _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG
+] + _SUPPORT_RELEASE_241_FEATURE_CATALOG
+
+_SUPPORT_RELEASE_260_FEATURE_CATALOG = [
+    _latest_feature_card(
+        'release_260_enhanced_extraction',
+        'Sharper Document Extraction with Figure Descriptions',
+        'bi-file-earmark-richtext',
+        'Enhanced extraction now reads charts, diagrams, and figures inside your documents and writes searchable descriptions of them, so answers can draw on pictures instead of skipping past them.',
+        'When your admins turn on Enhanced extraction, SimpleChat uses Azure AI Content Understanding to describe figures, charts, and diagrams as it processes a file. Those descriptions become searchable text, so a question about a chart can be answered from the chart itself. Workspace document rows show a badge naming which extraction engine actually ran, and why it fell back if a different one was used.',
+        'This matters because a large share of the meaning in reports, decks, and scanned documents lives in pictures, and until now that content was effectively invisible to search.',
+        [
+            'Open Personal Workspace and upload a document that contains charts, diagrams, or scanned figures.',
+            'Wait for processing to finish, then expand the document row to see the extraction badge.',
+            'Hover the badge to see which engine ran, and the fallback reason if a different engine was used.',
+            'Open the document details to read the generated figure descriptions alongside the extracted text.',
+            'Go to Chat, ground on that document, and ask a question that can only be answered from a figure or chart.',
+            'If an older document was uploaded before this change, use Change Extraction to reprocess it with the newer engine.',
+            'If you do not see the option, ask your admin whether Enhanced extraction is enabled for your environment.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Upload a document and review its extraction badge and figure descriptions.', 'href': '/workspace#documents-tab', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Chat', 'description': 'Ask a question that depends on a chart or diagram inside a processed document.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Upload a Document With Figures', 'label': 'Upload', 'caption': 'Upload a report or deck that contains charts, diagrams, or scanned figures from Personal Workspace.'},
+            {'title': 'Check the Extraction Badge', 'label': 'Extraction Badge', 'caption': 'The document row badge names the extraction engine that ran and explains any fallback.'},
+            {'title': 'Ask About a Chart', 'label': 'Chart Answer', 'caption': 'Ground a chat on the document and ask a question that can only be answered from a figure.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_office_embedded_images',
+        'Pictures Inside Word and PowerPoint Are Now Searchable',
+        'bi-image',
+        'Images embedded in Word and PowerPoint files, including SmartArt, Visio drawings, and chart graphics, are now analyzed and cited with the correct page or slide.',
+        'SimpleChat now pulls images out of DOCX, PPTX, and the legacy DOC and PPT formats, including EMF and WMF metafile diagrams that older Office documents use. Each image is indexed as its own citable chunk with proper page or slide attribution, duplicate images are collapsed, and figures stay in the same chunk as the text around them instead of being dumped at the end of the document.',
+        'This matters because architecture diagrams, org charts, and process flows are often the whole point of a deck, and citations now point at the slide those visuals actually live on.',
+        [
+            'Upload a Word document or PowerPoint deck that contains diagrams, SmartArt, or embedded charts.',
+            'Let processing finish, then open the document details to see the extracted image chunks.',
+            'Confirm each image chunk reports the page or slide number it came from.',
+            'Open Chat and ground a conversation on that document.',
+            'Ask about something that only appears in a diagram, such as a process step or a box in an org chart.',
+            'Open the citation on the answer and confirm it points at the correct slide or page.',
+            'For documents uploaded before this release, use Change Extraction or re-upload so figures land in the right chunk.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Upload a Word or PowerPoint file and inspect the extracted image chunks.', 'href': '/workspace#documents-tab', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Chat', 'description': 'Ask a question about a diagram and check the returned citation.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Upload a Deck With Diagrams', 'label': 'Deck Upload', 'caption': 'Word and PowerPoint files with SmartArt, Visio drawings, or charts are now fully analyzed.'},
+            {'title': 'Image Chunks With Slide Numbers', 'label': 'Image Chunks', 'caption': 'Each embedded image becomes its own citable chunk carrying the correct page or slide attribution.'},
+            {'title': 'Citation Points at the Slide', 'label': 'Slide Citation', 'caption': 'Answers drawn from a diagram cite the exact slide the visual appears on.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_workflow_task_sequences',
+        'Multi-Step Workflows With Alert Rules',
+        'bi-diagram-3',
+        'Workflows can now run an ordered sequence of tasks, each with its own model, agent, and documents, and can notify you through configurable alert rules instead of a single priority setting.',
+        'The workflow builder is now a stepped experience covering General, Trigger, Tasks, Reliability, and Review. Each task chooses its own model or agent, sets its own document action and targets, and passes context forward to the next task. Alerts moved to a rules engine supporting run status, text matches, regular expressions, File Sync results, and AI-judged conditions across five severity levels. Runs can also be cancelled while in flight.',
+        'This matters because real work is rarely one prompt, and chaining steps with targeted notifications turns a workflow into something you can trust to run unattended.',
+        [
+            'Open Personal Workspace and go to the Workflows section, or open Group Workspaces for a shared workflow.',
+            'Create a workflow and step through General and Trigger to name it and choose when it runs.',
+            'In the Tasks step, add your first instruction task and pick the model or agent that should run it.',
+            'Set that task document action and choose the specific documents it should operate on.',
+            'Add a second task and reference what the first task produced so the steps build on each other.',
+            'In the Reliability step, set retry and failure handling for tasks that call external systems.',
+            'In the Review step, add alert rules such as notify on failure or notify when the output matches a phrase, then save and run it.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Build or run a personal workflow from the Workflows section.', 'href': '/workspace', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Group Workspaces', 'description': 'Build or run a shared group workflow.', 'href': '/group_workspaces', 'icon': 'bi-people', 'requires_settings': ['enable_group_workspaces']},
+            {'label': 'Open Workflow Activity', 'description': 'Review running, completed, failed, and cancelled workflow runs.', 'href': '/workflow-activity', 'icon': 'bi-activity'},
+        ],
+        images=[
+            {'title': 'Stepped Workflow Builder', 'label': 'Builder Steps', 'caption': 'General, Trigger, Tasks, Reliability, and Review guide you through building a workflow.'},
+            {'title': 'Per-Task Model and Documents', 'label': 'Task Setup', 'caption': 'Each task picks its own model or agent and its own document action and targets.'},
+            {'title': 'Alert Rules in the Review Step', 'label': 'Alert Rules', 'caption': 'Rules can notify on status, text match, regular expression, File Sync result, or an AI-judged condition.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_mcp_platform',
+        'Model Context Protocol Connections',
+        'bi-plug',
+        'SimpleChat can now act as a governed MCP server for approved external clients, and outbound MCP actions gained presets, preconfigured catalogs, and a Test Connection button.',
+        'Model Context Protocol connections work in both directions. Outbound, your agents reach MCP servers using presets and admin-curated catalogs rather than hand-typed configuration, and you can verify a connection before saving it. Inbound, approved MCP clients can reach SimpleChat conversations, documents, prompts, tags, and workflow tools under admin governance.',
+        'This matters because it lets SimpleChat participate in the wider tool ecosystem your organization already uses, without every team hand-rolling its own integration.',
+        [
+            'Open Personal Workspace and go to the Actions section, or open Agents if you are wiring an agent directly.',
+            'Create a new action and choose the MCP action type.',
+            'Pick a preset or an admin-preconfigured server entry instead of typing the connection by hand.',
+            'Fill in any remaining destination and authentication details the preset does not cover.',
+            'Click Test Connection and confirm the server responds before saving.',
+            'Attach the saved action to an agent so it can call those MCP tools during a conversation.',
+            'Open Chat, select that agent, and ask something that requires the connected MCP tool.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Create and test an MCP action from the Actions section.', 'href': '/workspace', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Agents', 'description': 'Attach a saved MCP action to an agent.', 'href': '/agents', 'icon': 'bi-robot', 'requires_settings': ['enable_semantic_kernel']},
+        ],
+        images=[
+            {'title': 'Choose an MCP Preset', 'label': 'MCP Presets', 'caption': 'Presets and admin-curated catalogs replace hand-typed MCP server configuration.'},
+            {'title': 'Test the Connection', 'label': 'Test Connection', 'caption': 'Verify the MCP server responds before saving the action.'},
+            {'title': 'Review the MCP Configuration', 'label': 'MCP Summary', 'caption': 'The final step lists the transport, preset, timeouts, and the exact tools the action will expose.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_yamcs_action',
+        'Yamcs Mission Control Integration',
+        'bi-broadcast',
+        'A new Yamcs action type connects agents to Yamcs mission control servers with eleven read-only tools covering telemetry, parameters, events, packets, alarms, and archive queries.',
+        'The Yamcs action is strictly read-only by design, so an agent can investigate mission data but cannot command a spacecraft. Archive SQL access is opt-in and enforced as SELECT-only. Several authentication methods are supported, and a dedicated configuration panel plus a Test Connection button make setup verifiable before you rely on it.',
+        'This matters because mission operators can ask plain-language questions about telemetry and alarms instead of hand-writing queries against the archive.',
+        [
+            'Open Personal Workspace and go to the Actions section.',
+            'Create a new action and choose the Yamcs action type.',
+            'Enter your Yamcs server address and pick the authentication method your instance uses.',
+            'Leave archive SQL disabled unless you specifically need archive queries, then enable it deliberately.',
+            'Click Test Connection to confirm SimpleChat can reach the server and read an instance.',
+            'Attach the saved action to an agent, then open Agents to confirm the eleven Yamcs tools are listed.',
+            'Open Chat, select that agent, and ask about recent telemetry, parameters, events, or active alarms.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Create and test a Yamcs action from the Actions section.', 'href': '/workspace', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Agents', 'description': 'Attach the Yamcs action to an agent that answers mission questions.', 'href': '/agents', 'icon': 'bi-robot', 'requires_settings': ['enable_semantic_kernel']},
+        ],
+        images=[
+            {'title': 'Configure the Yamcs Action', 'label': 'Yamcs Setup', 'caption': 'A dedicated panel collects the server address, authentication method, and optional archive SQL access.'},
+            {'title': 'Verify With Test Connection', 'label': 'Connection Test', 'caption': 'Confirm SimpleChat can reach the Yamcs instance before relying on the action.'},
+            {'title': 'Review the Yamcs Configuration', 'label': 'Configuration Summary', 'caption': 'The summary confirms the instance, processor, authentication, TLS, limits, and archive SQL state before saving.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_rocksdb_action',
+        'RocksDB Key-Value Store Action',
+        'bi-hdd-rack',
+        'A new RocksDB action type lets agents read from an ordered key-value store through a conforming HTTP and JSON service, with get, scan, and stats tools.',
+        'The RocksDB action targets an HTTP and JSON service in front of a RocksDB store. It exposes get, scan, and stats tools for reads, plus guarded write operations, and supports no-auth, bearer token, and API key authentication. A dedicated configuration card and a Test Connection button let you confirm the endpoint before saving.',
+        'This matters because ordered key-value data is common in telemetry and logging systems, and agents can now query it directly instead of asking a person to run a lookup.',
+        [
+            'Open Personal Workspace and go to the Actions section.',
+            'Create a new action and choose the RocksDB action type.',
+            'Enter the base address of the HTTP and JSON service that fronts your RocksDB store.',
+            'Choose no-auth, bearer token, or API key authentication to match that service.',
+            'Click Test Connection and confirm the endpoint responds before saving.',
+            'Attach the saved action to an agent and confirm the get, scan, and stats tools appear.',
+            'Open Chat, select that agent, and ask for a specific key or a range scan over a key prefix.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Create and test a RocksDB action from the Actions section.', 'href': '/workspace', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Agents', 'description': 'Attach the RocksDB action to an agent.', 'href': '/agents', 'icon': 'bi-robot', 'requires_settings': ['enable_semantic_kernel']},
+        ],
+        images=[
+            {'title': 'Configure the RocksDB Action', 'label': 'RocksDB Setup', 'caption': 'Point the action at the HTTP and JSON service fronting your key-value store.'},
+            {'title': 'Choose an Authentication Mode', 'label': 'Auth Options', 'caption': 'No-auth, bearer token, and API key authentication are all supported.'},
+            {'title': 'Review the Keyspace Configuration', 'label': 'Keyspace Summary', 'caption': 'The summary confirms read-only access, encodings, limits, and the key prefixes the model is told about.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_agent_instruction_references',
+        'Reference Actions and Knowledge Directly in Agent Instructions',
+        'bi-robot',
+        'Agent instructions can now name the exact actions and documents an agent holds using autocompleted hash-action and hash-knowledge tokens, and the agent builder reorders its steps so instructions come last.',
+        'While writing agent instructions you can type a hash character to open an autocomplete listing the actions, capabilities, and documents that agent actually has, then insert a precise reference instead of describing the tool in prose. The agent modal now runs Actions, then Knowledge, then Instructions, so you choose capabilities before you write about them, and a collapsible summary panel shows your selections while you write.',
+        'This matters because vague instructions are the most common reason an agent ignores a tool you gave it, and naming the capability directly removes that guesswork.',
+        [
+            'Open Agents and create a new agent or edit an existing one.',
+            'Work through the Actions step first and attach the actions this agent should be able to call.',
+            'Move to the Knowledge step and select the workspaces or documents it should ground on.',
+            'Continue to the Instructions step and expand the summary panel to review what you selected.',
+            'Start typing a hash character in the instruction editor to open the reference autocomplete.',
+            'Insert an action or knowledge reference so the instruction names the capability exactly.',
+            'Use Draft Instructions if you want a starting point, then save and test the agent in Chat.',
+        ],
+        actions=[
+            {'label': 'Open Agents', 'description': 'Create or edit an agent and use the instruction reference autocomplete.', 'href': '/agents', 'icon': 'bi-robot', 'requires_settings': ['enable_semantic_kernel']},
+            {'label': 'Open Chat', 'description': 'Select your agent and confirm it uses the referenced actions and knowledge.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Actions and Knowledge Come First', 'label': 'Step Order', 'caption': 'The agent builder now runs Actions, then Knowledge, then Instructions.'},
+            {'title': 'Reference Autocomplete', 'label': 'Autocomplete', 'caption': 'Typing a hash character lists the actions, capabilities, and documents this agent actually holds.'},
+            {'title': 'Selection Summary While Writing', 'label': 'Summary Panel', 'caption': 'A collapsible panel keeps your selected actions and knowledge visible as you write instructions.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_action_test_connection',
+        'Test Connection Before You Save an Action',
+        'bi-wifi',
+        'Test Connection is now available across twelve action types, verifying credentials and reachability without making you re-enter stored secrets.',
+        'OpenAPI, Azure Maps, Blob Storage, Databricks, Log Analytics, MCP, Snowflake, Tableau, RocksDB, Yamcs, SQL, and Cosmos DB actions all support Test Connection. The test resolves secrets stored in Key Vault on the server side, so you never retype a credential to check it. A successful test reports useful detail about what it reached, and a failure names the specific cause rather than a generic error.',
+        'This matters because a broken action used to surface as a confusing failure mid-conversation, and now you find out at setup time with a message that tells you what to fix.',
+        [
+            'Open Personal Workspace and go to the Actions section.',
+            'Create a new action or open an existing one that is not behaving as expected.',
+            'Fill in the connection details for the action type you are configuring.',
+            'Click Test Connection and wait for the result rather than saving immediately.',
+            'On success, read the returned detail to confirm you reached the intended system and scope.',
+            'On failure, read the named cause and correct just that field, then test again.',
+            'Save the action once the test passes, then attach it to an agent.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Test any configured action from the Actions section.', 'href': '/workspace', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Agents', 'description': 'Attach a verified action to an agent.', 'href': '/agents', 'icon': 'bi-robot', 'requires_settings': ['enable_semantic_kernel']},
+        ],
+        images=[
+            {'title': 'Test Connection Button', 'label': 'Test Button', 'caption': 'Twelve action types now expose a Test Connection control during setup.'},
+            {'title': 'Successful Test Detail', 'label': 'Success Detail', 'caption': 'A passing test reports what it reached so you can confirm the scope is right.'},
+            {'title': 'Named Failure Cause', 'label': 'Failure Cause', 'caption': 'A failing test names the specific problem instead of returning a generic error.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_azure_blob_file_sync',
+        'Sync Documents From Azure Blob Storage',
+        'bi-cloud-upload',
+        'Azure Blob Storage containers can now be used as File Sync sources for personal, group, and public workspaces, with folder browsing and change detection.',
+        'Blob Storage joins the existing File Sync connectors. Sources support managed identity, Key Vault backed service principals, connection strings, and SAS tokens, and you can browse virtual folders rather than typing paths blind. Change detection uses ETags so only changed blobs are reprocessed, and prefix and filter controls keep a sync narrow.',
+        'This matters because a lot of organizational content already lives in blob containers, and syncing it keeps workspace documents current without manual re-uploads.',
+        [
+            'Open Personal Workspace and go to the Sync section.',
+            'Add a new sync source and choose Azure Blob Storage.',
+            'Select the authentication method your container uses, such as managed identity or a SAS token.',
+            'Browse the virtual folders in the container and pick the prefix you want to sync.',
+            'Apply filters so only the file types you care about are pulled in.',
+            'Run the sync and watch the status, counts, and history for that source.',
+            'Open the Documents section and confirm the synced files appear with their sync badges.',
+        ],
+        actions=[
+            {'label': 'Open Workspace Sync', 'description': 'Add an Azure Blob Storage sync source and run it.', 'href': '/workspace?feature_action=file_sync', 'icon': 'bi-arrow-repeat', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Group Workspaces', 'description': 'Configure a blob sync source for a shared group workspace.', 'href': '/group_workspaces', 'icon': 'bi-people', 'requires_settings': ['enable_group_workspaces']},
+        ],
+        images=[
+            {'title': 'Add a Blob Storage Source', 'label': 'Add Source', 'caption': 'Azure Blob Storage is now a first-class File Sync connector.'},
+            {'title': 'Browse Virtual Folders', 'label': 'Folder Browser', 'caption': 'Pick the container prefix visually instead of typing a path blind.'},
+            {'title': 'Review Sync Status', 'label': 'Sync Status', 'caption': 'Status, counts, and history show what was pulled in and what changed.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_terms_of_use',
+        'Terms of Use Acceptance',
+        'bi-file-earmark-text',
+        'Your organization can require you to accept a terms of use or rules of behavior notice before using SimpleChat, with the reminder repeating on a schedule your admins choose.',
+        'When enabled, an acceptance screen appears before you reach the app. Admins choose whether it returns every session, once per day, or only when the text changes. Your accept and decline choices are recorded in the activity log, and the gate is enforced on the server so it cannot be skipped by navigating directly to a page.',
+        'This matters because many organizations must record that users acknowledged acceptable-use rules before working with an AI assistant.',
+        [
+            'Sign in to SimpleChat and read the terms of use notice if your organization has enabled one.',
+            'Scroll through the full text before responding, since the content is set by your organization.',
+            'Choose Accept to continue into the app.',
+            'Expect the notice to reappear according to the schedule your admins configured.',
+            'If the wording changes, expect to be asked again even if you accepted the earlier version.',
+            'Choose Decline if you do not agree, which will end your session rather than continuing.',
+            'Contact your admin if you believe the notice is appearing more often than intended.',
+        ],
+        actions=[],
+        images=[
+            {'title': 'Acceptance Screen', 'label': 'Terms Screen', 'caption': 'The notice appears before you reach the app when your organization enables it.'},
+            {'title': 'Accept or Decline', 'label': 'Accept', 'caption': 'Accepting continues into SimpleChat and is recorded in the activity log.'},
+            {'title': 'Recurring Reminder', 'label': 'Recurrence', 'caption': 'Admins choose whether the notice returns every session, daily, or only when the text changes.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_audio_file_support',
+        'Upload Almost Any Audio File',
+        'bi-mic',
+        'Audio uploads now cover a much wider set of formats including AAC, FLAC, M4A, OGG, Opus, WAV, WebM audio, and WMA.',
+        'Media handling is now bundled directly into SimpleChat container builds, which greatly expands the audio formats it can recognize and transcribe. Transcription degrades gracefully when the media tooling is unavailable rather than failing outright, and iPhone M4A voice memo uploads work correctly.',
+        'This matters because meeting recordings and voice memos arrive in whatever format the recording device produced, and converting them by hand first was a real obstacle.',
+        [
+            'Open Personal Workspace and go to the Documents section.',
+            'Upload an audio file in whatever format you have, such as an iPhone M4A voice memo or a WAV recording.',
+            'Wait for the file to finish processing and produce a transcript.',
+            'Open the document details and read the transcript that was generated.',
+            'Open Chat and ground a conversation on that audio file.',
+            'Ask for a summary, decisions, or action items from the recording.',
+            'Check the returned citation to confirm it points back at the audio document.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Upload an audio recording and review its transcript.', 'href': '/workspace#documents-tab', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+            {'label': 'Open Chat', 'description': 'Ask for a summary or action items from a transcribed recording.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Upload a Recording', 'label': 'Audio Upload', 'caption': 'AAC, FLAC, M4A, OGG, Opus, WAV, WebM audio, WMA, and more are recognized.'},
+            {'title': 'Review the Transcript', 'label': 'Transcript', 'caption': 'The generated transcript becomes searchable text on the document.'},
+            {'title': 'Ask About the Recording', 'label': 'Audio Q&A', 'caption': 'Ground a chat on the audio file and ask for decisions or action items.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_completion_notifications',
+        'Know When a Long Answer Finishes',
+        'bi-bell',
+        'You can opt in to a sound when a response completes, a desktop notification when the answer lands in a tab you are not looking at, or both.',
+        'Two independent opt-in preferences live on your profile. Completion audio cues offer ten bundled sounds with volume control and a preview button. Desktop notifications use your browser notification permission and appear when the response finishes in a hidden or unfocused tab, showing only the app and conversation title rather than the response content, and clicking one focuses the existing tab instead of opening a new one.',
+        'This matters because long research answers are worth stepping away from, and there was previously no way to know the response had arrived.',
+        [
+            'Open your Profile page and find the notification and audio preferences.',
+            'Turn on completion audio cues if you want an audible signal.',
+            'Pick one of the ten available sounds and set the volume, using preview to hear it.',
+            'Turn on desktop notifications separately if you want alerts for background tabs.',
+            'Allow the browser notification permission prompt when it appears.',
+            'Open Chat, ask a question that takes a while, and switch to another tab.',
+            'Confirm you get the notification and that clicking it returns you to the existing tab.',
+        ],
+        actions=[
+            {'label': 'Open Profile', 'description': 'Turn on completion sounds and desktop notifications for your account.', 'href': '/profile', 'icon': 'bi-person-gear'},
+            {'label': 'Open Chat', 'description': 'Ask a longer question and confirm the completion signal works.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Notification Preferences', 'label': 'Preferences', 'caption': 'Completion sounds and desktop notifications are separate opt-in settings on your profile.'},
+            {'title': 'Choose a Sound', 'label': 'Sound Picker', 'caption': 'Ten bundled sounds with volume control and a preview button.'},
+            {'title': 'Desktop Notification', 'label': 'Desktop Alert', 'caption': 'Background tabs show the app and conversation title without revealing response content.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_chat_ai_notice',
+        'AI Usage Guidance in Chat',
+        'bi-info-circle',
+        'Your organization can display its own AI guidance directly under the chat composer, with control over how often it reappears.',
+        'Admins write the notice in Markdown and choose how it behaves: always visible, dismissible for the session, dismissible for the day, or dismissible until the wording changes. If your organization updates the text, the notice comes back automatically so you see the current guidance rather than a stale version you dismissed months ago.',
+        'This matters because AI usage rules differ by organization, and the reminder is most useful sitting right where you type rather than buried in a policy document.',
+        [
+            'Open Chat and look directly beneath the message composer.',
+            'Read the AI usage notice if your organization has configured one.',
+            'Follow any links in the notice for your local policy details.',
+            'Dismiss the notice if your admins allowed dismissal and you have read it.',
+            'Expect it to return based on the schedule your admins chose, such as each session or each day.',
+            'Watch for it to reappear automatically whenever your organization updates the wording.',
+            'Contact your admin if the guidance looks out of date for your team.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'View the AI usage notice beneath the message composer.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Notice Under the Composer', 'label': 'AI Notice', 'caption': 'Organization-specific AI guidance appears directly where you type.'},
+            {'title': 'Dismiss When Allowed', 'label': 'Dismiss', 'caption': 'Admins choose whether the notice is permanent, per session, daily, or until the text changes.'},
+            {'title': 'Returns When Updated', 'label': 'Auto Return', 'caption': 'Updated guidance reappears automatically instead of staying dismissed.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_conversation_context_grounding',
+        'See Exactly What Shaped Each Answer',
+        'bi-chat-quote',
+        'Every response now carries a Conversation Context citation showing the model, app version, workspace scope, selected documents, agent, and capabilities that were active when it was written.',
+        'The context snapshot is both given to the model as hidden grounding and shown to you as a citation on the response. It covers streaming answers, retries, fallbacks, collaboration conversations, and document actions, so the record is consistent no matter which path produced the answer.',
+        'This matters because when an answer surprises you, the first question is usually which model and which documents were actually in play, and now that is one click away.',
+        [
+            'Open Chat and send any question.',
+            'When the response arrives, open the citations area on that message.',
+            'Select the Conversation Context citation.',
+            'Review the model name and SimpleChat version that produced the answer.',
+            'Check the workspace scope and the specific documents that were selected.',
+            'Confirm which agent and which capabilities were active for that turn.',
+            'Change your model or document selection, ask again, and compare the two context snapshots.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Send a message and open the Conversation Context citation on the response.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Context Citation on a Response', 'label': 'Context Citation', 'caption': 'Every answer carries a Conversation Context citation alongside Conversation History and Instruction Memory.'},
+            {'title': 'Document Sources', 'label': 'Document Sources', 'caption': 'Statements drawn from a workspace document cite the source file and the page they came from.'},
+            {'title': 'Scope and Generation Detail', 'label': 'Generation Detail', 'caption': 'The detail panel records the model, workspace action, retrieval flags, and agent citations behind the answer.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_used_documents_fork',
+        'Used Documents View and Conversation Forking',
+        'bi-journals',
+        'A Used Documents mode shows only the documents actually cited in a conversation, and you can fork a conversation from any response to explore a different direction.',
+        'The chat side pane gained a Used Documents mode that lists the documents a conversation has genuinely drawn on, without opening the full details modal, and it opens automatically the first time cited documents appear. Separately, forking from an assistant response creates an independent copy of the conversation through that message, so the original stays intact.',
+        'This matters because long conversations accumulate a lot of context, and both knowing what was actually used and being able to branch without losing the thread are hard problems otherwise.',
+        [
+            'Open Chat and start a conversation grounded on several workspace documents.',
+            'Ask a few questions so the assistant cites real sources.',
+            'Watch the side pane open to Used Documents the first time a citation appears.',
+            'Switch the side pane to Used Documents manually at any time to see the current list.',
+            'Confirm the list shows only documents that were genuinely cited, not everything in scope.',
+            'Find an assistant response where you want to try a different direction and choose to fork from it.',
+            'Work in the forked copy and confirm the original conversation is unchanged.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Use the Used Documents pane and fork a conversation from a response.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+            {'label': 'Open Conversations', 'description': 'Find the forked copy alongside the original conversation.', 'href': '/conversations', 'icon': 'bi-chat-left-text'},
+        ],
+        images=[
+            {'title': 'Used Documents Pane', 'label': 'Used Documents', 'caption': 'The side pane lists only the documents the conversation actually cited.'},
+            {'title': 'Fork From a Response', 'label': 'Fork', 'caption': 'Branch from any assistant response into an independent copy of the conversation.'},
+            {'title': 'Original Stays Intact', 'label': 'Both Threads', 'caption': 'The forked copy and the original conversation both remain available.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_conversation_contents_drawer',
+        'Jump Back to Any Earlier Prompt',
+        'bi-layout-text-sidebar',
+        'A contents drawer indexes the questions you asked in a conversation so you can jump straight back to any of them instead of scrolling.',
+        'The drawer lists your saved prompts as navigable entries and tracks where you currently are in the conversation. It is on by default when your admins enable it, works with keyboard navigation, and adapts to an off-canvas panel on smaller screens. You can hide it for your own account from your profile if you prefer a wider chat area.',
+        'This matters because a long working session becomes hard to navigate, and the thing you want to return to is almost always a question you already asked.',
+        [
+            'Open Chat and continue a conversation that already has many messages.',
+            'Find the conversation contents drawer beside the message area.',
+            'Scan the list of your earlier prompts to locate the point you want.',
+            'Select an entry to jump directly to that place in the conversation.',
+            'Notice the drawer tracks your current position as you scroll.',
+            'On a smaller screen, open the drawer as an off-canvas panel instead.',
+            'Open your Profile and hide the drawer for your account if you would rather have the space.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Use the contents drawer to jump between earlier prompts.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+            {'label': 'Open Profile', 'description': 'Show or hide the conversation contents drawer for your account.', 'href': '/profile', 'icon': 'bi-person-gear'},
+        ],
+        images=[
+            {'title': 'Contents Drawer', 'label': 'Drawer', 'caption': 'Your earlier prompts are indexed as navigable entries; select one to move straight to that point in a long conversation.'},
+            {'title': 'Hide It If You Prefer', 'label': 'Profile Toggle', 'caption': 'Each user can hide the drawer from their own profile page.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_font_size_zoom',
+        'Choose Your Text Size',
+        'bi-fonts',
+        'Five font size choices ranging from 75 percent to 200 percent are available on your profile, and the interface stays usable at 200 percent browser zoom.',
+        'Font size is a saved per-user preference, so it follows you across sessions rather than resetting. Alongside it, chat, top navigation, classification banners, and the sidebar were reworked to remain fully usable when the browser itself is zoomed to 200 percent.',
+        'This matters because readable text is an accessibility requirement, not a preference, and layouts that break under zoom effectively lock people out.',
+        [
+            'Open your Profile page and find the font size preference.',
+            'Choose from the five available sizes ranging from extra small to extra large.',
+            'Save the preference and return to Chat to see it applied.',
+            'Confirm the size persists after you sign out and back in.',
+            'Separately, set your browser zoom to 200 percent to check the layout.',
+            'Confirm the chat area, top navigation, and sidebar all remain usable at that zoom level.',
+            'Adjust between the font preference and browser zoom to find the combination that reads best.',
+        ],
+        actions=[
+            {'label': 'Open Profile', 'description': 'Choose your preferred font size.', 'href': '/profile', 'icon': 'bi-person-gear'},
+            {'label': 'Open Chat', 'description': 'Confirm your font size preference applied to the conversation view.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Font Size Preference', 'label': 'Font Sizes', 'caption': 'Five sizes from 75 percent to 200 percent, saved to your account.'},
+            {'title': 'Applied Across Chat', 'label': 'Applied', 'caption': 'The preference follows you across sessions rather than resetting.'},
+            {'title': 'Usable at 200 Percent Zoom', 'label': 'Zoom Support', 'caption': 'Chat, navigation, banners, and sidebar remain usable at full browser zoom.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_message_audio_export',
+        'Download a Response as Audio',
+        'bi-file-earmark-music',
+        'Any completed chat message can be exported as an MP3 using the configured speech voice and speed.',
+        'The export uses the active Azure Speech voice and speed settings for your environment and produces a normal MP3 download. The audio is generated on demand and is not stored in SimpleChat, so nothing is retained after the download completes.',
+        'This matters because a long answer is sometimes easier to absorb on a commute than on a screen.',
+        [
+            'Open Chat and find a completed assistant response you want to listen to.',
+            'Open the message actions for that response.',
+            'Choose the option to export the message as audio.',
+            'Wait for the MP3 to be generated from the configured speech voice.',
+            'Save the downloaded file when your browser prompts you.',
+            'Play it back in any normal audio player.',
+            'Repeat on another message and note that nothing is stored in SimpleChat between exports.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Export a completed response as an MP3 download.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Message Actions', 'label': 'Message Menu', 'caption': 'Audio export sits alongside the other actions on a completed response.'},
+            {'title': 'Generate the MP3', 'label': 'Generate', 'caption': 'The export uses the configured Azure Speech voice and speed settings.'},
+            {'title': 'Download and Listen', 'label': 'Download', 'caption': 'The file downloads normally and is not retained in SimpleChat.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_public_workspace_display_name',
+        'Public Workspace Can Carry Your Own Name',
+        'bi-building',
+        'Your organization can rename the Public Workspace to something meaningful such as Domain Knowledge, and the new name appears everywhere in the interface.',
+        'When admins set a display name, it replaces the generic label across navigation, your profile, chat scope selection, and directory pages. Only the label changes; the underlying workspace, its documents, and every link continue to work exactly as before.',
+        'This matters because shared knowledge collections usually already have a name inside your organization, and matching it removes a translation step for everyone.',
+        [
+            'Open Chat and look at the workspace scope selector.',
+            'Note the name your organization chose in place of the default Public Workspace label.',
+            'Open your Profile and confirm the same name appears there.',
+            'Check the navigation and directory pages for the same consistent label.',
+            'Select that workspace as your chat scope and ask a question against it.',
+            'Confirm documents and citations behave exactly as they did before the rename.',
+            'Ask your admin if the label does not match what your team calls this collection.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'See the workspace name in the chat scope selector.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+            {'label': 'Open Profile', 'description': 'Confirm the same workspace name appears on your profile.', 'href': '/profile', 'icon': 'bi-person-gear'},
+        ],
+        images=[
+            {'title': 'Set the End-User Label', 'label': 'Display Name', 'caption': 'An optional display name replaces Public Workspace everywhere end users see it.'},
+            {'title': 'Consistent Across Navigation', 'label': 'Navigation', 'caption': 'The same label appears in navigation, profile, and directory pages.'},
+            {'title': 'Behavior Is Unchanged', 'label': 'Same Behavior', 'caption': 'Chat scope selection, documents, and citations work exactly as before; only the label changes.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_chat_scroll_508',
+        'Chat Stops Yanking You to the Bottom',
+        'bi-arrow-down-circle',
+        'The conversation no longer jumps to the bottom while you are reading further up, and a floating control takes you to the newest content when you want it.',
+        'Previously, new streaming content pulled the viewport down even when you had deliberately scrolled up to read something. Now the view stays where you put it, and a floating scroll-to-latest button appears when there is newer content below your current position. The change also improves the experience for keyboard users and screen reader testing.',
+        'This matters because losing your place mid-paragraph while an answer is still streaming makes long responses genuinely hard to read.',
+        [
+            'Open Chat and ask a question that produces a long streaming answer.',
+            'While it is still generating, scroll up to re-read an earlier part of the response.',
+            'Confirm the view stays where you put it instead of snapping back down.',
+            'Look for the floating scroll-to-latest control that appears near the bottom.',
+            'Select it when you are ready to return to the newest content.',
+            'Try the same flow using only the keyboard to move through the conversation.',
+            'Confirm focus order stays sensible as new content arrives.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Scroll up during a long streaming answer and confirm the view holds.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Read While It Streams', 'label': 'Stable View', 'caption': 'Scrolling up during a streaming answer no longer snaps you back to the bottom.'},
+            {'title': 'Scroll to Latest Control', 'label': 'Scroll Button', 'caption': 'A floating control appears when newer content is below your current position.'},
+            {'title': 'Keyboard Friendly', 'label': 'Keyboard Use', 'caption': 'Focus order stays sensible as new content arrives.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_workflow_run_control',
+        'Stop a Running Workflow, and Give Each Task Its Own Model',
+        'bi-stop-circle',
+        'You can cancel a workflow while it is still running, and every task in a workflow can use its own model or agent and its own documents.',
+        'An active run can be cancelled from the workspace row, from run history, or from the workflow activity view. Cancellation stops further File Sync, document, model, agent, artifact, and notification work once any in-flight request returns, and a cancelled scheduled workflow goes back to idle and waits for its next scheduled run instead of restarting immediately. Separately, each task can either inherit the workflow Default Runner or pick its own model or agent, and each task now owns its own document action, document targets, and selected documents.',
+        'This matters because a long workflow that is clearly going wrong no longer has to run to the end, and a multi-step workflow can use a fast model for early steps and a stronger one only where it counts.',
+        [
+            'Open Personal Workspace and go to the Workflows section.',
+            'Open a workflow and step through to Tasks in the builder.',
+            'On a task, change Runner from Workflow default to a specific Direct Model or Agent.',
+            'Set that task its own document action and pick the documents it should use.',
+            'Add a second task and confirm its document fields start clean rather than inheriting the first one.',
+            'Save the workflow and start a run.',
+            'While the run is active, select Cancel from the workflow row or from run history and confirm it stops.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Configure per-task runners and documents, then cancel an active run.', 'href': '/workspace#workflows-tab', 'icon': 'bi-diagram-3'},
+        ],
+        images=[
+            {'title': 'Per-Task Runner and Documents', 'label': 'Task Runner', 'caption': 'Each task can inherit the workflow default or choose its own model, agent, and documents.'},
+            {'title': 'Cancel an Active Run', 'label': 'Cancel Run', 'caption': 'A running workflow can be cancelled from the workspace row, run history, or activity view.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_workflow_alert_rules',
+        'Workflow Alerts That Only Fire When They Should',
+        'bi-bell',
+        'Instead of notifying you on every run, a workflow now defines rules that describe why it should interrupt you, and a run that matches nothing stays completely silent.',
+        'Conditions cover run status, task status, output text that contains, does not contain, or matches a regular expression, File Sync results, empty output, a signal raised by an agent, and a plain-English condition judged by a model such as "any certificate expires within 14 days". Each rule can watch the final output, any task output, or one specific task. Severity runs info, low, medium, high, and critical: info and low land quietly in the notification bell while medium and above open the pop-up. When several rules match, the highest severity wins and the alert lists every matched rule under Triggered by.',
+        'This matters because a workflow that notifies you on every single run gets ignored, which defeats the point of running it unattended.',
+        [
+            'Open Personal Workspace and go to the Workflows section.',
+            'Open a workflow and step through the builder to Review.',
+            'Switch the alert mode from the simple setting to rules.',
+            'Add a rule and choose a condition, such as output text matching a phrase you care about.',
+            'Set the severity, remembering that info and low stay in the notification bell.',
+            'Save, then run the workflow and confirm a non-matching run stays silent.',
+            'Trigger a matching run and check the Triggered by section on the alert.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Add conditional alert rules in the workflow builder Review step.', 'href': '/workspace#workflows-tab', 'icon': 'bi-bell'},
+        ],
+        images=[
+            {'title': 'Alert Rules Editor', 'label': 'Alert Rules', 'caption': 'Rules describe the condition, severity, and delivery for each workflow alert.'},
+            {'title': 'Triggered By Detail', 'label': 'Triggered By', 'caption': 'When several rules match, the alert lists every matched rule with its reason.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_agent_document_citations',
+        'Agent Document Searches Now Produce Real Citations',
+        'bi-quote',
+        'Documents an agent finds through its document search action are now recorded as proper document sources instead of appearing only as a raw tool call.',
+        'This covers all three document search functions: relevance-ranked search, ordered chunk retrieval, and document summarization, across personal, group, and public workspaces. Retrieved documents now appear in the message Sources list, are clickable, open in the enhanced citation viewer, and reach the Used documents drawer. It applies to streaming and non-streaming chat, document actions, cancelled and interrupted streams, and scheduled workflow runs.',
+        'This matters because an agent could previously read a dozen documents to answer you and none of them would show up as a source you could actually open and check.',
+        [
+            'Open Chat and select an agent that has a document search action attached.',
+            'Ask a question that requires the agent to search your workspace documents.',
+            'When the answer arrives, expand the Sources disclosure below the message.',
+            'Confirm the retrieved documents are listed rather than only a raw tool call.',
+            'Select one of the document sources to open it in the citation viewer.',
+            'Open the Used documents drawer and confirm cited documents are recorded there.',
+            'Try the same question in a group or public workspace to confirm the behavior matches.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Ask an agent a question that requires document search, then inspect Sources.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Agent Sources Listed', 'label': 'Agent Sources', 'caption': 'Documents retrieved by an agent action now appear as real, clickable document sources.'},
+            {'title': 'Opens in the Citation Viewer', 'label': 'Citation Viewer', 'caption': 'Selecting an agent-retrieved source opens it in the enhanced citation viewer.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_cited_vs_retrieved_sources',
+        'See Which Sources Were Actually Used',
+        'bi-list-check',
+        'Everything retrieved still appears under Sources, while Used documents now follows only what the answer actually cited.',
+        'Complete document and web retrieval results are kept separate from the exact references used in the final response. Used documents follows the cited responses, conversation details marks which items were cited within the full inventory, and conversation and message exports leave out sources that were retrieved but never referenced. Long lists show the first 25 sources with a control to reveal the rest, and inline image and video galleries render only the media the answer actually cited.',
+        'This matters because a search that returns sixty chunks used to make it impossible to tell which three actually shaped the answer you are reading.',
+        [
+            'Open Chat and ask a question grounded on a workspace with many documents.',
+            'Expand the Sources disclosure and note the full set of retrieved results.',
+            'If more than 25 are listed, use the control to show the remaining sources.',
+            'Open the Used documents drawer and compare it against the full Sources list.',
+            'Open conversation details and look for the markers on items that were cited.',
+            'Export the conversation and confirm retrieved-only sources are not included.',
+            'Ask a question in a workspace containing images and confirm only cited media appears inline.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Compare the full Sources list against the Used documents drawer.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Full Sources List', 'label': 'All Sources', 'caption': 'Every retrieved document and web result stays available under Sources.'},
+            {'title': 'Used Documents Only', 'label': 'Used Documents', 'caption': 'Used documents follows only the sources the answer actually cited.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_source_continuity_followups',
+        'Refer Back to a File You Already Talked About',
+        'bi-arrow-repeat',
+        'A follow-up question can say "that XML file" or "the same spreadsheet" and SimpleChat works out which source you mean.',
+        'Follow-up turns detect references such as "that XML file", "same template", or "previous spreadsheet" and combine the earlier grounded sources with whatever you have selected now. Access is rechecked rather than assumed: prior sources are resolved from the conversation\'s recorded grounded references and revalidated against your current permissions before they are used again.',
+        'This matters because natural follow-ups are how people actually talk, and reselecting the same document on every single turn is needless friction.',
+        [
+            'Open Chat and ground a question on a specific workspace document.',
+            'Read the answer and note which document was used.',
+            'Ask a follow-up that refers to it indirectly, such as "summarize that spreadsheet".',
+            'Confirm the answer uses the earlier document without you reselecting it.',
+            'Try a phrase like "the same template" on a different source type.',
+            'Expand Sources on the follow-up answer to confirm the right file was used.',
+            'Continue the thread and confirm the reference still resolves several turns later.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Ask a follow-up that refers to an earlier document indirectly.', 'href': '/chats#chatbox', 'icon': 'bi-chat-dots'},
+        ],
+        images=[
+            {'title': 'Indirect Follow-Up', 'label': 'Follow-Up', 'caption': 'A follow-up phrased as "that spreadsheet" resolves to the source used earlier.'},
+            {'title': 'Resolved Source', 'label': 'Resolved Source', 'caption': 'Sources on the follow-up answer confirm which earlier file was reused.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_generated_json_xml',
+        'Get Answers Back as JSON or XML Files',
+        'bi-filetype-json',
+        'Requests that produce JSON or XML are saved as downloadable artifacts instead of dumping file-shaped content into the middle of a reply.',
+        'Document Analyze and the generated export flows now recognize natural phrasing for JSON and XML conversion, including requests to populate an XML template, and XML serialization is supported by the durable export pipeline. Prompts that only read a source, such as "summarize this XML document" or "validate this JSON object", are deliberately not treated as generation requests, so you still get an answer rather than a file.',
+        'This matters because a thousand-line JSON payload pasted into a chat bubble is not something you can actually use.',
+        [
+            'Open Chat and ground the conversation on a structured source such as a spreadsheet.',
+            'Ask for the result as JSON, for example "export this as JSON".',
+            'Wait for the run to finish and look for the generated artifact card in the reply.',
+            'Download the artifact and confirm it is valid, complete JSON.',
+            'Repeat the request asking for XML instead.',
+            'Try populating an XML template from a source document.',
+            'Ask a reading question such as "summarize this XML" and confirm you get an answer, not a file.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Request JSON or XML output and download the generated artifact.', 'href': '/chats#chatbox', 'icon': 'bi-filetype-json'},
+        ],
+        images=[
+            {'title': 'Request Structured Output', 'label': 'Request', 'caption': 'Ask for JSON or XML output from a grounded structured source.'},
+            {'title': 'Download the Artifact', 'label': 'Artifact', 'caption': 'Valid output is saved as a downloadable artifact instead of inline text.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_formula_extraction',
+        'Mathematical Formulas Captured as LaTeX',
+        'bi-calculator',
+        'Equations in PDFs and images can be captured as LaTeX instead of being approximated as ordinary OCR text.',
+        'When your admin enables the Extract mathematical formulas option, equations are captured as LaTeX during processing. This is a billed Document Intelligence add-on, so it is off by default and has to be turned on deliberately. It applies to the Layout model only, which means it has no effect while extraction is set to Standard.',
+        'This matters because an equation flattened into plain OCR text is usually wrong in a way that is easy to miss and hard to correct later.',
+        [
+            'Ask your admin whether formula extraction is enabled for your environment.',
+            'Upload a PDF or image that contains mathematical equations.',
+            'Expand the document row once processing finishes and confirm Extraction reads Enhanced rather than Standard.',
+            'Open Chat and ground a question on that document.',
+            'Ask about a specific equation.',
+            'Confirm the answer reproduces the real expression as LaTeX instead of garbled inline text.',
+            'Open the citation to read the captured LaTeX in the source passage.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Upload a document with equations and review the extracted formulas.', 'href': '/workspace#documents-tab', 'icon': 'bi-folder2-open', 'requires_settings': ['enable_user_workspace']},
+        ],
+        images=[
+            {'title': 'Document With Equations', 'label': 'Equations', 'caption': 'Upload a PDF or image containing mathematical expressions.'},
+            {'title': 'Captured as LaTeX', 'label': 'LaTeX Output', 'caption': 'Equations are captured as LaTeX rather than approximated as OCR text.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_document_filename_search',
+        'Find a Document by Its File Name',
+        'bi-search',
+        'The document picker now matches file names, not just document titles, so a file is findable by what it is actually called.',
+        'Typing any fragment of a file name now surfaces the document, anywhere in the name, so searching 200 finds Quarterly_Report_200_final.pdf. Multi-word queries work too, with underscores, hyphens, and dots treated as word breaks, so "report 200" matches the same file. The same improvement applies to the scope, tags, prompt, model, and agent selectors, and document rows show the file name beneath the title whenever the two differ.',
+        'This matters because any document with extracted title metadata used to be completely unfindable by its own file name.',
+        [
+            'Open Chat and open the workspace document picker.',
+            'Type a fragment from the middle of a known file name.',
+            'Confirm the document appears even though the fragment is not in its title.',
+            'Try a two-word query separated by a space, such as "report 200".',
+            'Note the file name shown beneath the title where the two differ.',
+            'Open the scope, tags, or agent selector and confirm searching behaves the same way.',
+            'Clear the search and confirm the list structure returns without stray divider lines.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Search the document picker by file name fragment.', 'href': '/chats#chatbox', 'icon': 'bi-search'},
+        ],
+        images=[
+            {'title': 'Search by File Name', 'label': 'Name Search', 'caption': 'Any fragment of a file name now surfaces the document in the picker.'},
+            {'title': 'File Name Under Title', 'label': 'Row Detail', 'caption': 'Rows show the file name beneath the title whenever the two differ.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_bulk_metadata_extraction',
+        'Extract Metadata for Many Documents at Once',
+        'bi-tags',
+        'The workspace multi-select bar now includes Extract Metadata, so a whole batch of documents can be enriched in one action.',
+        'Personal, group, and public workspace document lists all expose the action when metadata extraction is enabled for your environment. Selected documents are queued through the same background workflow used for a single file, preserving generated titles along with authors, abstracts, keywords, publication dates, and organization metadata.',
+        'This matters because running metadata extraction one document at a time does not scale past a handful of files.',
+        [
+            'Open Personal Workspace and go to the Documents section.',
+            'Use the checkboxes to select several processed documents.',
+            'Find Extract Metadata in the multi-select bar that appears.',
+            'Start the action and let the background job run.',
+            'Refresh the list and open one of the selected documents.',
+            'Confirm authors, keywords, abstract, and publication date were populated.',
+            'If you do not see the action, ask your admin whether metadata extraction is enabled.',
+        ],
+        actions=[
+            {'label': 'Open Personal Workspace', 'description': 'Multi-select documents and run Extract Metadata.', 'href': '/workspace#documents-tab', 'icon': 'bi-tags', 'requires_settings': ['enable_user_workspace']},
+        ],
+        images=[
+            {'title': 'Multi-Select Documents', 'label': 'Multi-Select', 'caption': 'Select several documents to reveal the multi-select action bar.'},
+            {'title': 'Extract Metadata Action', 'label': 'Extract Metadata', 'caption': 'Selected documents are queued through the background metadata workflow.'},
+        ],
+    ),
+    _latest_feature_card(
+        'release_260_shared_conversation_collaboration',
+        'Shared Conversations: File Approvals and Faster Mentions',
+        'bi-people',
+        'Files shared into a conversation now go through an approval step, and pressing Tab completes an @ mention.',
+        'When a participant contributes a file to a shared conversation it is approved before it becomes available to everyone, so shared context is deliberate rather than automatic. Typing @ and pressing Tab now completes a participant mention instead of requiring a click, and the mention menu is announced correctly by screen readers.',
+        'This matters because shared conversations only work when everyone can see what has been contributed and can bring the right person in quickly.',
+        [
+            'Open a conversation and share it with a colleague.',
+            'Have a participant upload a file into the shared conversation.',
+            'Review the file approval before it becomes available to the group.',
+            'Approve it and confirm it appears for the other participants.',
+            'Type @ in the composer to open the mention menu.',
+            'Press Tab to complete the mention rather than clicking it.',
+            'Confirm the mention resolves to the correct participant.',
+        ],
+        actions=[
+            {'label': 'Open Chat', 'description': 'Share a conversation, approve a contributed file, and mention a participant.', 'href': '/chats#chatbox', 'icon': 'bi-people'},
+        ],
+        images=[
+            {'title': 'Shared File Approval', 'label': 'File Approval', 'caption': 'Files contributed to a shared conversation are approved before becoming available.'},
+            {'title': 'Tab Completes a Mention', 'label': 'Mentions', 'caption': 'Typing @ and pressing Tab completes a participant mention.'},
+        ],
+    ),
+]
+
+
+_SUPPORT_LATEST_FEATURE_CATALOG = _SUPPORT_RELEASE_260_FEATURE_CATALOG
 
 _SUPPORT_LATEST_FEATURE_RELEASE_GROUPS = [
     {
         'id': 'current_release',
         'label': 'Latest Features',
-        'description': 'The SimpleChat 0.250.001 feature set your admins are currently sharing with end users.',
-        'release_version': '0.250.001',
+        'description': 'Everything released after v0.250.001, consolidated into the SimpleChat 0.261.001 feature set your admins are currently sharing with end users.',
+        'release_version': '0.261.001',
         'default_expanded': True,
         'collapse_id': 'supportLatestFeaturesCurrentRelease',
-        'features': _SUPPORT_LATEST_FEATURE_CATALOG,
+        'features': _SUPPORT_RELEASE_260_FEATURE_CATALOG,
     },
     {
         'id': 'previous_release',
         'label': 'Previous Release Features',
-        'description': 'The v0.241.001 through v0.241.007 feature set remains available for reference after the v0.250.001 feature set became current.',
-        'release_version': '0.241.001 - 0.241.007',
+        'description': 'The v0.250.001 feature set remains available for reference after the v0.261.001 feature set became current.',
+        'release_version': '0.250.001',
         'default_expanded': False,
         'collapse_id': 'supportLatestFeaturesPreviousRelease',
-        'features': _SUPPORT_PREVIOUS_RELEASE_FEATURE_CATALOG,
+        'features': _SUPPORT_RELEASE_250_FEATURE_CATALOG,
     },
     {
         'id': 'archive_release',
         'label': 'Archive Release Features',
-        'description': 'Older v0.239.001 highlights remain available for longer-term reference.',
-        'release_version': '0.239.001',
+        'description': 'Older v0.239.001 through v0.241.007 highlights remain available for longer-term reference.',
+        'release_version': '0.239.001 - 0.241.007',
         'default_expanded': False,
         'collapse_id': 'supportLatestFeaturesArchiveRelease',
-        'features': _SUPPORT_EARLIER_RELEASE_FEATURE_CATALOG,
+        'features': _SUPPORT_RELEASE_241_FEATURE_CATALOG + _SUPPORT_RELEASE_239_FEATURE_CATALOG,
     },
+]
+
+
+_ADMIN_RELEASE_260_FEATURE_CATALOG = [
+    _latest_feature_card(
+        'admin_release_260_data_management',
+        'Enterprise Data Management: Backup, Restore & Migration',
+        'bi-database-check',
+        'Admins can run durable backup, restore, migration, and inspection workflows from the refreshed Backup, Migrate & Restore experience.',
+        'Backup jobs now cover Cosmos DB, AI Search, and Blob Storage with keyset paging, ETag verification, adaptive throttling, resume, and retention policies. Restore adds admin-only preflight checks, overwrite confirmation, durable restore jobs, and the migration engine supports delta and mirror modes with provenance tracking and per-resource checkpoints.',
+        'This matters because tenant data operations can be planned, audited, resumed, and recovered without relying on one-off scripts.',
+        [
+            'Open Admin Settings > Backup, Migrate & Restore and review the setup guidance before enabling production jobs.',
+            'Configure storage, source resources, and retention policies for Cosmos DB, AI Search, and Blob Storage backups.',
+            'Use preflight checks and overwrite confirmations before running restore jobs against live tenant data.',
+            'Choose delta or mirror migration mode deliberately and monitor per-resource checkpoints for long-running migrations.',
+        ],
+        actions=[
+            {'label': 'Open Backup', 'description': 'Configure backup, migration, restore, storage, and inspection workflows.', 'href': '#backup', 'admin_tab': '#backup', 'icon': 'bi-database'},
+        ],
+        image_label='Backup Restore',
+    ),
+    _latest_feature_card(
+        'admin_release_260_keyvault_reminders',
+        'Key Vault Secret Expiration Reminders',
+        'bi-key',
+        'Admins can track action secret expirations and route reminder signals before Key Vault-backed integrations break.',
+        'The reminder inventory stores per-action secret expiration dates, lead days, contact emails, and rotation notes. A background sweep emits key_vault_secret_expiring in-app notifications and can also emit Application Insights telemetry for Azure Monitor alert routing, while secret replacement reliably writes a new Key Vault version.',
+        'This matters because expiring integration secrets become visible operational work instead of surprise outages.',
+        [
+            'Open Admin Settings > Secrets and review Key Vault-backed action secret usage.',
+            'Record expiration dates, reminder lead days, contact emails, and rotation notes for managed action secrets.',
+            'Connect the optional Application Insights telemetry event to Azure Monitor alerts if central operations teams need escalation.',
+            'After rotating a secret, confirm the replacement creates a new Key Vault version and update the reminder inventory.',
+        ],
+        actions=[
+            {'label': 'Open Secrets', 'description': 'Review Key Vault secret storage and reminder configuration.', 'href': '#secrets', 'admin_tab': '#secrets', 'icon': 'bi-key'},
+            {'label': 'Open Logging', 'description': 'Review telemetry routing for secret-expiration reminders.', 'href': '#logging', 'admin_tab': '#logging', 'icon': 'bi-activity'},
+        ],
+        image_label='Secret Reminders',
+    ),
+    _latest_feature_card(
+        'admin_release_260_governance_block_lists',
+        'Governance Policy Block Lists & Admin Policy Tools',
+        'bi-shield-check',
+        'Admins can explicitly block users or groups and manage policies faster with duplicate, inverse, and principal review tools.',
+        'Governance policies now support block lists so a user or group can be denied even when allow-all or allow-list rules would otherwise grant access. Duplicate and Inverse actions speed policy creation, a Show Users modal helps review principals, and policy retargeting fixes prevent orphaned duplicates.',
+        'This matters because exception handling and access reviews are easier to enforce across models, agents, actions, and delegated items.',
+        [
+            'Open Admin Settings > Governance Policies and review policies that currently rely on broad allow-all access.',
+            'Add block-list entries for users or groups that must be excluded from a capability.',
+            'Use Duplicate or Inverse when creating related policies so deny and allow rules stay consistent.',
+            'Open Show Users before rollout to confirm the resolved principals match the intended audience.',
+        ],
+        actions=[
+            {'label': 'Open Governance Policies', 'description': 'Configure allow and block policies for AI capabilities.', 'href': '#governance-policies', 'admin_tab': '#governance-policies', 'icon': 'bi-shield-check'},
+        ],
+        image_label='Policy Blocks',
+    ),
+    _latest_feature_card(
+        'admin_release_260_model_identity_header',
+        'Model Endpoint User Identity Header for APIM',
+        'bi-person-badge',
+        'Admins can send stable hashed user identity headers with model endpoint calls for APIM routing, quota, and attribution scenarios.',
+        'The model endpoint path can include an HMAC-hashed user identity key without exposing raw UPN, object ID, or tenant ID. Configuration supports global enablement, custom header names, selectable identity inputs, and per-endpoint overrides.',
+        'This matters because APIM policies can enforce per-user quotas and cost attribution without leaking direct user identifiers.',
+        [
+            'Open Admin Settings > AI Models and identify the endpoints routed through APIM.',
+            'Enable the identity header globally only when downstream APIM policies are ready to consume it.',
+            'Choose the header name and identity input that match the tenant quota or attribution design.',
+            'Use per-endpoint overrides for providers that should not receive the hashed identity header.',
+        ],
+        actions=[
+            {'label': 'Open Model Endpoints', 'description': 'Configure model endpoint identity header behavior.', 'href': '#model-endpoints', 'admin_tab': '#model-endpoints', 'icon': 'bi-cpu'},
+        ],
+        image_label='Identity Header',
+    ),
+    _latest_feature_card(
+        'admin_release_260_per_model_response_length',
+        'Per-Model Output Token Ceilings',
+        'bi-sliders',
+        'Admins can set optional output-token ceilings per global model endpoint instead of relying on one tenant-wide response limit.',
+        'Each model in the global multi-endpoint GPT configuration can now carry its own output-token ceiling. The chat path applies the correct backend token parameter for GPT-5 and o-series models as well as other OpenAI-compatible providers.',
+        'This matters because administrators can balance cost, latency, and answer depth independently for each deployed model.',
+        [
+            'Open Admin Settings > AI Models and review each global GPT endpoint.',
+            'Set an output-token ceiling for high-cost or latency-sensitive models that need tighter limits.',
+            'Leave the ceiling empty for models that should keep provider or application defaults.',
+            'Test representative prompts after changing limits to confirm responses remain useful for end users.',
+        ],
+        actions=[
+            {'label': 'Open Model Endpoints', 'description': 'Set per-model output token ceilings.', 'href': '#model-endpoints', 'admin_tab': '#model-endpoints', 'icon': 'bi-sliders'},
+        ],
+        image_label='Token Ceilings',
+    ),
+    _latest_feature_card(
+        'admin_release_260_control_center_refresh',
+        'Scheduled Overnight Control Center Refresh',
+        'bi-arrow-repeat',
+        'Admins can keep Control Center statistics fresh with a daily overnight refresh that is enabled by default.',
+        'Control Center metrics refresh automatically at 2:00 AM Eastern each day when the admin schedule is enabled. The schedule follows daylight-saving changes and shows last-run and next-run times in the admin\'s local timezone.',
+        'This matters because operational dashboards are ready at the start of the day without manual refresh work.',
+        [
+            'Open Admin Settings > Control Center and confirm the scheduled refresh toggle matches tenant operations policy.',
+            'Review the displayed last-run and next-run times in the local timezone used by admins.',
+            'Coordinate any heavy maintenance windows around the 2:00 AM Eastern default schedule.',
+            'Check Control Center metrics after the first scheduled run to confirm overnight refresh behavior.',
+        ],
+        actions=[
+            {'label': 'Open Control Center', 'description': 'Review scheduled statistics refresh settings and run timing.', 'href': '#control-center-config', 'admin_tab': '#control-center-config', 'icon': 'bi-arrow-repeat'},
+        ],
+        image_label='Nightly Refresh',
+    ),
+    _latest_feature_card(
+        'admin_release_260_feedback_safety_lifecycle',
+        'Feedback & Safety Violation Archive / Delete Lifecycle',
+        'bi-archive',
+        'Admins can archive, restore, or permanently delete feedback and safety records with audit-aware controls.',
+        'Feedback Review and Safety Violation records now support archive, unarchive, and permanent delete actions. Archived records are hidden from user profile history, deletions require confirmation, violations with pending remediation approvals cannot be deleted, and lifecycle actions create audit records.',
+        'This matters because moderation and feedback queues can be retained, cleaned up, and audited with clearer lifecycle rules.',
+        [
+            'Open the Safety Violations admin page and review active records before archiving or deleting anything.',
+            'Use archive when records should leave user profile history but remain recoverable for administrative review.',
+            'Resolve pending remediation approvals before attempting permanent deletion of safety violations.',
+            'Review audit records after lifecycle actions to confirm the administrative history is complete.',
+        ],
+        actions=[
+            {'label': 'Open Safety Violations', 'description': 'Manage safety violation archive and delete lifecycle.', 'href': '/admin/safety_violations', 'icon': 'bi-shield-exclamation'},
+            {'label': 'Open Send Feedback', 'description': 'Review feedback records affected by archive and delete lifecycle controls.', 'href': '#send-feedback', 'admin_tab': '#send-feedback', 'icon': 'bi-chat-left-text'},
+        ],
+        include_media=False,
+    ),
+    _latest_feature_card(
+        'admin_release_260_log_cleanup',
+        'File Processing Log Cleanup',
+        'bi-trash3',
+        'Admins can remove old file-processing logs by retention window or purge all logs with confirmation and activity logging.',
+        'Cleanup controls can permanently delete file-processing logs older than a configurable retention period measured in days, weeks, or months. Admins can also purge all logs, with confirmation dialogs, exact counts, and admin activity logging for each cleanup action.',
+        'This matters because log growth can be controlled while preserving deliberate confirmation and auditability for destructive cleanup.',
+        [
+            'Open Admin Settings > Logging and review current file-processing log volume.',
+            'Choose a retention period in days, weeks, or months that matches tenant support and audit needs.',
+            'Review the exact count shown in the confirmation dialog before deleting old logs.',
+            'Use purge-all only for intentional reset scenarios and confirm the admin activity log afterward.',
+        ],
+        actions=[
+            {'label': 'Open Logging', 'description': 'Configure and run file-processing log cleanup.', 'href': '#logging', 'admin_tab': '#logging', 'icon': 'bi-trash3'},
+        ],
+        image_label='Log Cleanup',
+    ),
+    _latest_feature_card(
+        'admin_release_260_redis_explorer',
+        'Redis Explorer & Cache Observability Dashboard',
+        'bi-speedometer2',
+        'Admins can inspect Redis safely and monitor conversation and DAI cache behavior from Scale settings.',
+        'Redis Explorer provides read-only, cursor-paginated key browsing with sensitive-key redaction and SimpleChat-specific DAI cache key resolution. Conversation cache and DAI cache dashboards show hit rate, miss, bypass, and invalidation events, while DAI Redis caching, conversation list/feed caching, and low-churn bootstrap caching include enable toggles, TTL controls, and invalidation coverage.',
+        'This matters because cache performance and cache safety can be observed without exposing sensitive values or using direct Redis tooling.',
+        [
+            'Open Admin Settings > Scale and review Redis connection and cache enablement state.',
+            'Use Redis Explorer for read-only key browsing when troubleshooting cache behavior.',
+            'Review hit, miss, bypass, and invalidation metrics before changing TTL values.',
+            'Keep sensitive-key redaction enabled and avoid using cache dashboards as a data export path.',
+        ],
+        actions=[
+            {'label': 'Open Redis & Caching', 'description': 'Inspect Redis and review cache metrics, toggles, and TTLs.', 'href': '#redis-caching', 'admin_tab': '#redis-caching', 'icon': 'bi-speedometer2'},
+        ],
+        image_label='Cache Metrics',
+    ),
+    _latest_feature_card(
+        'admin_release_260_index_auto_login',
+        'Auto-Login on Home Page (Entra SSO)',
+        'bi-shield-lock',
+        'Admins can opt in to redirect unauthenticated home-page visits directly into Microsoft Entra sign-in.',
+        'The ENABLE_AUTO_LOGIN_ON_INDEX setting sends unauthenticated visits to the home page into the Microsoft Entra sign-in flow. It supports government tenant SSO scenarios where users commonly already have a browser session.',
+        'This matters because SSO-first tenants can reduce landing-page friction while keeping the behavior explicit and opt-in.',
+        [
+            'Open Admin Settings > Security and confirm Microsoft Entra authentication is the intended sign-in path.',
+            'Enable home-page auto-login only for tenants where browser SSO is expected for most users.',
+            'Validate the unauthenticated home-page flow in a private browser session before broad rollout.',
+            'Document the opt-in redirect behavior for help desk teams that support first-time access.',
+        ],
+        actions=[
+            {'label': 'Open Secrets', 'description': 'Review Entra SSO and home-page auto-login behavior.', 'href': '#secrets', 'admin_tab': '#secrets', 'icon': 'bi-shield-lock'},
+        ],
+        include_media=False,
+    ),
+    _latest_feature_card(
+        'admin_release_260_enhanced_extraction',
+        'Enabling Azure AI Content Understanding Extraction',
+        'bi-file-earmark-richtext',
+        'Admins can enable Enhanced extraction with Azure AI Content Understanding so users receive richer document and figure understanding.',
+        'Enhanced extraction now uses Azure AI Content Understanding prebuilt-documentSearch instead of Document Intelligence Layout, adding AI-generated descriptions for figures, charts, and diagrams. Auto mode upgrades when figures are present, existing Enhanced or Auto deployments are migrated on upgrade, and users see extraction engine badges with fallback reasons in workspaces.',
+        'This matters because admins can improve retrieval quality for visual documents while preserving controlled fallback visibility.',
+        [
+            'Open Admin Settings > Document Extraction and enable the Enhanced extraction toggle for Azure AI Content Understanding.',
+            'Review existing Enhanced or Auto settings after upgrade to confirm the migration preserved the intended mode.',
+            'Tell workspace owners that users will see extraction engine badges and fallback reasons on processed documents.',
+            'Re-extract important documents with figures, charts, or diagrams so end users benefit from generated descriptions.',
+        ],
+        actions=[
+            {'label': 'Open Document Extraction', 'description': 'Enable and review Enhanced extraction configuration.', 'href': '#extraction', 'admin_tab': '#extraction', 'icon': 'bi-file-earmark-richtext'},
+        ],
+        image_label='Enhanced Extract',
+    ),
+    _latest_feature_card(
+        'admin_release_260_mcp_platform',
+        'MCP Server Governance & Outbound Action Controls',
+        'bi-plug',
+        'Admins can govern inbound MCP server exposure and outbound MCP action destinations before users connect external tools.',
+        'SimpleChat can operate as a governed inbound MCP server exposing conversations, documents, prompts, tags, and workflow tools to MCP clients. Outbound MCP actions add presets, server-side preconfiguration catalogs, destination governance, Test Connection support, observability controls, Application Insights KQL starters, and standards-compliant tool argument normalization for end users invoking MCP actions.',
+        'This matters because admins can unlock MCP interoperability while controlling destinations, observability, and supported tool surfaces.',
+        [
+            'Open Admin Settings > Agents and review outbound MCP action configuration and available presets.',
+            'Open Admin Settings > Inbound MCP to enable the inbound server and scope it with required roles, scope, and client or tenant allow-lists.',
+            'Open Admin Settings > MCP Governance and apply destination or capability policies before making MCP actions broadly available.',
+            'Use Test Connection on configured MCP actions so users see reliable action availability.',
+            'Tell users which MCP clients or outbound destinations are approved before enabling the capability tenant-wide.',
+        ],
+        actions=[
+            {'label': 'Open Agents', 'description': 'Configure outbound MCP action presets and server-side catalogs.', 'href': '#agents', 'admin_tab': '#agents', 'icon': 'bi-plug'},
+            {'label': 'Open Inbound MCP', 'description': 'Enable and scope the inbound MCP server exposed to MCP clients.', 'href': '#inbound-mcp', 'admin_tab': '#inbound-mcp', 'icon': 'bi-box-arrow-in-down-right'},
+            {'label': 'Open MCP Governance', 'description': 'Control MCP destination and capability access.', 'href': '#mcp-governance', 'admin_tab': '#mcp-governance', 'icon': 'bi-shield-check'},
+            {'label': 'Open Logging', 'description': 'Review observability and KQL starter guidance for MCP operations.', 'href': '#logging', 'admin_tab': '#logging', 'icon': 'bi-activity'},
+        ],
+        image_label='MCP Controls',
+    ),
+    _latest_feature_card(
+        'admin_release_260_azure_blob_file_sync',
+        'Azure Blob Storage File Sync Configuration',
+        'bi-cloud-upload',
+        'Admins can configure Azure Blob Storage containers as File Sync sources for personal, group, and public workspaces.',
+        'Blob File Sync authenticates with a managed identity, a service principal client secret, or a connection string. Admin configuration includes virtual-folder browsing, ETag change detection, and prefix and filter controls. A SAS URL supplied through the connection string is parsed and reported back with its scope, permissions, and expiry, so an over-permissive account SAS is visible before it is used; once enabled, workspace users can sync approved Blob content into their workspace document sets.',
+        'This matters because admins can connect governed storage sources without forcing users to manually upload every file.',
+        [
+            'Open Admin Settings > File Sync and add an Azure Blob Storage source for the intended workspace type.',
+            'Choose managed identity, a service principal client secret, or a connection string based on tenant policy.',
+            'Use prefix and filter controls to limit which container content users can sync.',
+            'Validate SAS permissions and expiry guidance before allowing workspace owners to run sync jobs.',
+        ],
+        actions=[
+            {'label': 'Open File Sync', 'description': 'Configure Azure Blob Storage sync sources and authentication.', 'href': '#file-sync', 'admin_tab': '#file-sync', 'icon': 'bi-cloud-upload'},
+            {'label': 'Open Workspace Types', 'description': 'Review workspace availability for synced Blob content.', 'href': '#workspace-types', 'admin_tab': '#workspace-types', 'icon': 'bi-collection'},
+        ],
+        image_label='Blob Sync',
+    ),
+    _latest_feature_card(
+        'admin_release_260_terms_of_use',
+        'Terms of Use / Rules of Behavior Gate',
+        'bi-file-earmark-text',
+        'Admins can require users to accept tenant terms or rules of behavior before accessing SimpleChat.',
+        'The gate supports every-session, once-per-day, and once-per-version recurrence modes, with accept and decline events activity-logged and enforced server-side. Post-acceptance redirects are restricted to local-only paths, and end users will see the configured notice before they can continue into the app.',
+        'This matters because tenant access expectations can be acknowledged consistently and recorded before users interact with AI features.',
+        [
+            'Open Admin Settings > Notices & Agreements and configure the Terms of Use or Rules of Behavior content.',
+            'Select the recurrence mode that matches tenant policy: every session, once per day, or once per version.',
+            'Review the accept and decline activity logging expectations with compliance stakeholders.',
+            'Preview the user gate so support teams know what end users will see before entering SimpleChat.',
+        ],
+        actions=[
+            {'label': 'Open Notices & Agreements', 'description': 'Configure terms content, recurrence, and user gate behavior.', 'href': '#notices', 'admin_tab': '#notices', 'icon': 'bi-file-earmark-text'},
+        ],
+        image_label='Terms Gate',
+    ),
+    _latest_feature_card(
+        'admin_release_260_chat_ai_notice',
+        'Configuring the Chat AI Usage Notice',
+        'bi-info-circle',
+        'Admins can publish custom Markdown AI guidance directly below the chat composer.',
+        'The chat notice supports non-dismissible, per-session, daily, and once-per-message-version dismissal modes. When admins change the configured notice text, the message automatically reappears so end users see updated guidance in Chat.',
+        'This matters because AI usage guidance can be kept visible at the point of use without custom template changes.',
+        [
+            'Open Admin Settings > Notices & Agreements and write the Markdown guidance users should see below the chat composer.',
+            'Choose whether the notice is non-dismissible, per-session, daily, or once per message version.',
+            'Update the notice text when policy changes so the notice reappears for users who previously dismissed it.',
+            'Preview Chat after saving so admins can confirm the exact user-facing wording and placement.',
+        ],
+        actions=[
+            {'label': 'Open Notices & Agreements', 'description': 'Configure the Chat AI usage notice and dismissal mode.', 'href': '#notices', 'admin_tab': '#notices', 'icon': 'bi-info-circle'},
+        ],
+        image_label='AI Notice',
+    ),
+    _latest_feature_card(
+        'admin_release_260_public_workspace_display_name',
+        'Custom Public Workspace Display Name',
+        'bi-building',
+        'Admins can rename the Public Workspace label to a tenant-specific display name without changing internal identifiers.',
+        'The optional display name can replace Public Workspace with tenant language such as Domain Knowledge across navigation, Profile, chat scope selection, and directory pages. End users see the custom label throughout the interface while internal workspace identifiers remain unchanged.',
+        'This matters because admins can align shared knowledge areas with organizational terminology without data migration.',
+        [
+            'Open Admin Settings > Workspace Types and set the tenant-specific Public Workspace display name.',
+            'Choose a short label that users will recognize in navigation, Profile, chat scope selection, and directories.',
+            'Confirm help documentation and support scripts use the same display name users will see.',
+            'Leave the field empty if the tenant should continue using the default Public Workspace wording.',
+        ],
+        actions=[
+            {'label': 'Open Workspace Types', 'description': 'Set the custom Public Workspace display name.', 'href': '#workspace-types', 'admin_tab': '#workspace-types', 'icon': 'bi-building'},
+        ],
+        image_label='Workspace Name',
+    ),
+    _latest_feature_card(
+        'admin_release_260_document_access_index',
+        'Document Access Index for Faster Workspace Reads',
+        'bi-lightning-charge',
+        'Admins can serve workspace document lists from a companion index partitioned by access scope instead of querying the source containers across every partition.',
+        'Source document containers are partitioned by document id, which suits opening a single document but is expensive for list screens that ask which documents a user, group, or public workspace can see. The Document Access Index is a companion Cosmos container partitioned by access scope, so list, count, filter, and paging reads resolve inside one partition. Write-through projection keeps rows current, automatic repair and backfill reconcile drift, and an optional Redis read-through cache covers document lists, tag lists, and legacy counts with scope-version invalidation. The source containers stay authoritative and opening a document still validates access against them.',
+        'This matters because document list performance is dominated by a partitioning mismatch, and this addresses the cause rather than adding more throughput on top of it.',
+        [
+            'Open Admin Settings > Scale > Cosmos and review Document Access Index status before changing anything.',
+            'Confirm write-through projection and automatic repair or backfill are enabled and healthy.',
+            'Read the production panel for DAI-served reads, Redis cache hits, source fallbacks, RU, and latency in your own deployment.',
+            'Treat a rising fallback rate as the signal to investigate rather than a reason to disable the index.',
+            'Use the Redis document list cache TTL to trade freshness against read cost once the fallback rate is stable.',
+        ],
+        actions=[
+            {'label': 'Open Cosmos', 'description': 'Review Document Access Index health, fallbacks, RU, and latency.', 'href': '#cosmos', 'admin_tab': '#cosmos', 'icon': 'bi-lightning-charge'},
+        ],
+        image_label='Access Index',
+    ),
+    _latest_feature_card(
+        'admin_release_260_cosmos_maintenance',
+        'Cosmos Maintenance and Throughput Guardrails',
+        'bi-database-gear',
+        'Admins can apply missing Cosmos indexes, rebuild caches, and let SimpleChat scale throughput within explicit guardrails.',
+        'Cosmos Maintenance keeps its status view read-only and requires an explicit confirmation before applying missing expected composite indexes. Those updates are additive and preserve existing indexing policy paths, but they add write-index overhead and trigger asynchronous Cosmos index transformation. Maintenance also rebuilds low-churn and conversation caches and clears retired operational artifacts in bounded batches. Separately, throughput automation raises and lowers RU using configurable thresholds, steps, and cooldowns, bounded by minimum and maximum guardrails, with SimpleChat-managed scaling stopping at 10,000 RU/s.',
+        'This matters because index and capacity changes are exactly the operations that should be deliberate, reversible, and bounded rather than automatic and silent.',
+        [
+            'Open Admin Settings > Scale > Cosmos and refresh Cosmos Maintenance status.',
+            'Review which expected composite indexes are reported missing before applying anything.',
+            'Read the confirmation dialog carefully; index transformation runs asynchronously after you confirm.',
+            'Set throughput thresholds, steps, and cooldowns against your observed RU baseline, not a guess.',
+            'Keep the minimum and maximum guardrails in place so automation cannot scale beyond intended spend.',
+        ],
+        actions=[
+            {'label': 'Open Cosmos', 'description': 'Run Cosmos maintenance and configure throughput guardrails.', 'href': '#cosmos', 'admin_tab': '#cosmos', 'icon': 'bi-database-gear'},
+        ],
+        image_label='Cosmos Ops',
+    ),
 ]
 
 
@@ -2121,20 +2683,29 @@ _ADMIN_LATEST_FEATURE_RELEASE_GROUPS = [
     {
         'id': 'current_release',
         'label': 'Admin-Managed Latest Features',
-        'description': 'The newest capabilities admins can manage from Admin Settings. These cards focus on tenant controls, governance, and screenshot ideas for the admin guide.',
-        'release_version': '0.250.001',
+        'description': 'The newest capabilities admins can manage from Admin Settings. These cards focus on tenant controls, governance, and rollout guidance for the v0.261.001 feature set.',
+        'release_version': '0.261.001',
         'default_expanded': True,
         'collapse_id': 'adminLatestFeaturesCurrentRelease',
-        'features': _SUPPORT_ADMIN_LATEST_FEATURE_CURRENT_CATALOG,
+        'features': _ADMIN_RELEASE_260_FEATURE_CATALOG,
     },
     {
         'id': 'previous_release',
         'label': 'Previous Release Features',
-        'description': 'Admin-facing release items from the prior v0.241.001 through v0.241.007 feature set remain available for reference.',
-        'release_version': '0.241.001 - 0.241.007',
+        'description': 'Admin-facing release items from the prior v0.250.001 feature set remain available for reference.',
+        'release_version': '0.250.001',
         'default_expanded': False,
         'collapse_id': 'adminLatestFeaturesPreviousRelease',
-        'features': _ADMIN_PREVIOUS_RELEASE_FEATURE_CATALOG,
+        'features': _ADMIN_RELEASE_250_FEATURE_CATALOG,
+    },
+    {
+        'id': 'archive_release',
+        'label': 'Archive Release Features',
+        'description': 'Older admin-facing v0.241.001 through v0.241.007 items remain available for longer-term reference.',
+        'release_version': '0.241.001 - 0.241.007',
+        'default_expanded': False,
+        'collapse_id': 'adminLatestFeaturesArchiveRelease',
+        'features': _ADMIN_RELEASE_241_FEATURE_CATALOG,
     },
 ]
 
@@ -2227,6 +2798,7 @@ def get_default_support_latest_features_visibility():
     }
     defaults['deployment'] = False
     defaults['redis_key_vault'] = False
+
     return defaults
 
 
@@ -2252,10 +2824,9 @@ def get_visible_support_latest_features(settings):
     app_title = _resolve_support_application_title(settings)
     visible_items = []
 
-    for item in _SUPPORT_LATEST_FEATURE_CATALOG:
+    for item in _SUPPORT_RELEASE_250_FEATURE_CATALOG:
         if normalized_visibility.get(item['id'], True):
             visible_item = deepcopy(item)
-            _apply_user_support_feature_metadata(visible_item)
             visible_item['actions'] = [
                 action for action in visible_item.get('actions', [])
                 if _action_enabled(action, settings)
@@ -2283,7 +2854,6 @@ def get_visible_support_latest_feature_groups(settings):
                 continue
 
             visible_feature = deepcopy(feature)
-            _apply_user_support_feature_metadata(visible_feature)
             visible_feature['actions'] = [
                 action for action in visible_feature.get('actions', [])
                 if _action_enabled(action, settings)

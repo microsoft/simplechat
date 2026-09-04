@@ -65,3 +65,7 @@ application/teams_app/manifest.json
 application/teams_app/*.zip
 
 local_storage_state.json
+
+.pytest_cache
+.playwright-mcp
+.impeccable

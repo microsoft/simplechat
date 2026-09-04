@@ -131,6 +131,11 @@ async def maybe_create_tabular_generated_output(*args, **kwargs):
     return await helper(*args, **kwargs)
 
 
+def maybe_queue_direct_tabular_generated_output(*args, **kwargs):
+    helper = _load_chat_helper('maybe_queue_direct_tabular_generated_output')
+    return helper(*args, **kwargs)
+
+
 async def run_tabular_analysis_with_thought_tracking(*args, **kwargs):
     helper = _load_chat_helper('run_tabular_analysis_with_thought_tracking')
     return await helper(*args, **kwargs)

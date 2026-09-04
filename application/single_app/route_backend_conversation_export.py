@@ -30,6 +30,10 @@ from functions_collaboration import (
     is_collaboration_conversation,
     list_collaboration_messages,
 )
+from functions_citation_tracking import (
+    get_message_reference_citation_buckets,
+    get_message_source_citation_buckets,
+)
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
 from functions_group import get_group_model_endpoints, get_user_groups
@@ -40,6 +44,7 @@ from functions_image_messages import (
     is_blob_backed_image_message,
     is_external_image_url,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     hydrate_agent_citations_from_artifacts,
@@ -569,8 +574,9 @@ def _sanitize_message(
 ) -> Dict[str, Any]:
     role = message.get('role', '')
     content = message.get('content', '')
-    raw_citation_buckets = _collect_raw_citation_buckets(message)
-    normalized_citations = _normalize_citations(raw_citation_buckets)
+    reference_citation_buckets = _collect_raw_citation_buckets(message)
+    source_citation_buckets = _collect_source_citation_buckets(message)
+    normalized_citations = _normalize_citations(reference_citation_buckets)
     citation_counts = _build_citation_counts(normalized_citations)
     details = _curate_message_details(message, citation_counts, len(thoughts))
 
@@ -589,10 +595,21 @@ def _sanitize_message(
         'citations': normalized_citations,
         'citation_counts': citation_counts,
         'thoughts': thoughts,
-        'legacy_citations': raw_citation_buckets['legacy'],
-        'hybrid_citations': raw_citation_buckets['hybrid'],
-        'web_search_citations': raw_citation_buckets['web'],
-        'agent_citations': raw_citation_buckets['agent']
+        'citation_tracking_version': message.get('citation_tracking_version'),
+        'cited_hybrid_citations': (
+            list(message.get('cited_hybrid_citations'))
+            if isinstance(message.get('cited_hybrid_citations'), list)
+            else []
+        ),
+        'cited_web_search_citations': (
+            list(message.get('cited_web_search_citations'))
+            if isinstance(message.get('cited_web_search_citations'), list)
+            else []
+        ),
+        'legacy_citations': source_citation_buckets['legacy'],
+        'hybrid_citations': source_citation_buckets['hybrid'],
+        'web_search_citations': source_citation_buckets['web'],
+        'agent_citations': source_citation_buckets['agent']
     }
 
 
@@ -608,17 +625,13 @@ def _sanitize_thought(thought: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _collect_raw_citation_buckets(message: Dict[str, Any]) -> Dict[str, List[Any]]:
-    def ensure_list(value: Any) -> List[Any]:
-        if not value:
-            return []
-        return value if isinstance(value, list) else [value]
+    """Return citation records that are valid references for this message."""
+    return get_message_reference_citation_buckets(message)
 
-    return {
-        'legacy': ensure_list(message.get('citations')),
-        'hybrid': ensure_list(message.get('hybrid_citations')),
-        'web': ensure_list(message.get('web_search_citations')),
-        'agent': ensure_list(message.get('agent_citations'))
-    }
+
+def _collect_source_citation_buckets(message: Dict[str, Any]) -> Dict[str, List[Any]]:
+    """Return complete source and execution records for JSON audit output."""
+    return get_message_source_citation_buckets(message)
 
 
 def _normalize_citations(raw_citation_buckets: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
@@ -631,7 +644,11 @@ def _normalize_citations(raw_citation_buckets: Dict[str, List[Any]]) -> List[Dic
                 'label': _build_document_citation_label(citation),
                 'file_name': citation.get('file_name'),
                 'title': citation.get('title') or citation.get('file_name'),
+                'document_id': citation.get('document_id'),
                 'page_number': citation.get('page_number'),
+                'sheet_name': citation.get('sheet_name'),
+                'location_label': citation.get('location_label'),
+                'location_value': citation.get('location_value'),
                 'citation_id': citation.get('citation_id'),
                 'chunk_id': citation.get('chunk_id'),
                 'metadata_type': citation.get('metadata_type'),
@@ -672,6 +689,9 @@ def _normalize_citations(raw_citation_buckets: Dict[str, List[Any]]) -> List[Dic
                 'tool_name': citation.get('tool_name'),
                 'function_name': citation.get('function_name'),
                 'plugin_name': citation.get('plugin_name'),
+                'function_arguments': citation.get('function_arguments'),
+                'function_result': citation.get('function_result'),
+                'error_message': citation.get('error_message'),
                 'success': citation.get('success'),
                 'timestamp': citation.get('timestamp')
             })
@@ -705,12 +725,20 @@ def _normalize_citations(raw_citation_buckets: Dict[str, List[Any]]) -> List[Dic
 def _build_document_citation_label(citation: Dict[str, Any]) -> str:
     file_name = citation.get('file_name') or citation.get('title') or 'Document source'
     metadata_type = citation.get('metadata_type')
-    page_number = citation.get('page_number')
+    location_label = (
+        citation.get('location_label')
+        or ('Sheet' if citation.get('sheet_name') else 'Page')
+    )
+    location_value = (
+        citation.get('location_value')
+        or citation.get('sheet_name')
+        or citation.get('page_number')
+    )
 
     if metadata_type:
         return f"{file_name} — {metadata_type.replace('_', ' ').title()}"
-    if page_number not in (None, ''):
-        return f"{file_name} — Page {page_number}"
+    if location_value not in (None, ''):
+        return f"{file_name} — {location_label}: {location_value}"
     return file_name
 
 
@@ -1210,8 +1238,16 @@ def _build_summary_model_endpoint_client(
     api_type: str = '',
     anthropic_version: str = '',
     allow_private_custom_endpoints: bool = False,
+    settings: Dict[str, Any] = None,
+    endpoint_config: Dict[str, Any] = None,
+    identity_context: Dict[str, Any] = None,
 ):
     auth_settings = auth_settings or {}
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
+    )
     normalized_provider = _normalize_summary_model_value(provider or 'aoai').lower()
     if normalized_provider != 'custom':
         auth_type = _normalize_summary_model_value(
@@ -1228,13 +1264,23 @@ def _build_summary_model_endpoint_client(
             if not api_key:
                 raise ValueError('Selected summary model endpoint is missing an API key.')
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
-                return build_anthropic_chat_client(endpoint=endpoint, api_key=api_key)
+                return build_anthropic_chat_client(
+                    endpoint=endpoint,
+                    api_key=api_key,
+                    extra_headers=extra_headers,
+                )
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
-                return build_openai_style_chat_client(api_key, endpoint, api_version)
+                return build_openai_style_chat_client(
+                    api_key,
+                    endpoint,
+                    api_version,
+                    default_headers=extra_headers,
+                )
             return AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
                 api_key=api_key,
+                default_headers=extra_headers or None,
             )
 
         if auth_type == 'service_principal':
@@ -1264,17 +1310,27 @@ def _build_summary_model_endpoint_client(
 
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
             token = credential.get_token(scope).token
-            return build_anthropic_chat_client(endpoint=endpoint, bearer_token=token)
+            return build_anthropic_chat_client(
+                endpoint=endpoint,
+                bearer_token=token,
+                extra_headers=extra_headers,
+            )
 
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
             token = credential.get_token(scope).token
-            return build_openai_style_chat_client(token, endpoint, api_version)
+            return build_openai_style_chat_client(
+                token,
+                endpoint,
+                api_version,
+                default_headers=extra_headers,
+            )
 
         token_provider = get_bearer_token_provider(credential, scope)
         return AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
             azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         )
 
     client, _ = build_model_endpoint_sync_chat_client(
@@ -1286,6 +1342,9 @@ def _build_summary_model_endpoint_client(
         api_type=api_type,
         anthropic_version=anthropic_version,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        settings=settings,
+        endpoint_config=endpoint_config,
+        identity_context=identity_context,
     )
     return client
 
@@ -1399,6 +1458,9 @@ def _resolve_summary_multi_endpoint_client(
             allow_private_custom_endpoints=bool(
                 settings.get('allow_private_custom_model_endpoints', False)
             ),
+            settings=settings,
+            endpoint_config=resolved_endpoint_cfg,
+            identity_context={'user_id': user_id},
         )
         debug_print(
             f"[SUMMARY][Model Resolution] Resolved {selection_source} multi-endpoint model | "
@@ -1434,6 +1496,10 @@ def _initialize_gpt_client(
         return multi_endpoint_client
 
     enable_gpt_apim = settings.get('enable_gpt_apim', False)
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': user_id},
+    )
 
     if enable_gpt_apim:
         raw_models = settings.get('azure_apim_gpt_deployment', '') or ''
@@ -1448,7 +1514,8 @@ def _initialize_gpt_client(
         gpt_client = AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
-            api_key=settings.get('azure_apim_gpt_subscription_key')
+            api_key=settings.get('azure_apim_gpt_subscription_key'),
+            default_headers=extra_headers or None,
         )
         return gpt_client, gpt_model
 
@@ -1469,7 +1536,8 @@ def _initialize_gpt_client(
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider
+            azure_ad_token_provider=token_provider,
+            default_headers=extra_headers or None,
         )
     else:
         api_key = settings.get('azure_openai_gpt_key')
@@ -1478,7 +1546,8 @@ def _initialize_gpt_client(
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            api_key=api_key
+            api_key=api_key,
+            default_headers=extra_headers or None,
         )
 
     return gpt_client, gpt_model
@@ -1683,7 +1752,7 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
 def _append_citations_markdown(lines: List[str], message: Dict[str, Any]):
     document_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'document']
     web_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'web']
-    agent_citations = message.get('agent_citations', []) or []
+    agent_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'agent_tool']
     legacy_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'legacy']
 
     if not any([document_citations, web_citations, agent_citations, legacy_citations]):
@@ -1691,13 +1760,16 @@ def _append_citations_markdown(lines: List[str], message: Dict[str, Any]):
         return
 
     if document_citations:
-        lines.append('#### Document Sources')
+        lines.append('#### Document References')
         lines.append('')
         for index, citation in enumerate(document_citations, start=1):
             lines.append(f"{index}. **{citation.get('label', 'Document source')}**")
             detail_mapping = _remove_empty_values({
                 'citation_id': citation.get('citation_id'),
                 'page_number': citation.get('page_number'),
+                'sheet_name': citation.get('sheet_name'),
+                'location_label': citation.get('location_label'),
+                'location_value': citation.get('location_value'),
                 'classification': citation.get('classification'),
                 'score': citation.get('score'),
                 'metadata_type': citation.get('metadata_type')
@@ -1709,7 +1781,7 @@ def _append_citations_markdown(lines: List[str], message: Dict[str, Any]):
         lines.append('')
 
     if web_citations:
-        lines.append('#### Web Sources')
+        lines.append('#### Web References')
         lines.append('')
         for index, citation in enumerate(web_citations, start=1):
             title = citation.get('title') or citation.get('label') or 'Web source'
@@ -5624,7 +5696,7 @@ def _append_html_citations(parts: List[str], message: Dict[str, Any]):
     legacy_citations = [c for c in citations if c.get('citation_type') == 'legacy']
 
     if doc_citations:
-        parts.append('<h4>Document Sources</h4>')
+        parts.append('<h4>Document References</h4>')
         parts.append('<ol>')
         for citation in doc_citations:
             parts.append(
@@ -5633,6 +5705,9 @@ def _append_html_citations(parts: List[str], message: Dict[str, Any]):
             detail_items = _remove_empty_values({
                 'citation_id': citation.get('citation_id'),
                 'page_number': citation.get('page_number'),
+                'sheet_name': citation.get('sheet_name'),
+                'location_label': citation.get('location_label'),
+                'location_value': citation.get('location_value'),
                 'classification': citation.get('classification'),
                 'score': citation.get('score'),
                 'metadata_type': citation.get('metadata_type')
@@ -5650,7 +5725,7 @@ def _append_html_citations(parts: List[str], message: Dict[str, Any]):
         parts.append('</ol>')
 
     if web_citations:
-        parts.append('<h4>Web Sources</h4>')
+        parts.append('<h4>Web References</h4>')
         parts.append('<ol>')
         for citation in web_citations:
             title = _escape_html(

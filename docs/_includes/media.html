@@ -1,0 +1,155 @@
+{%- comment -%}
+media.html — renders a screenshot or video slot.
+
+If the underlying asset file does not exist yet, this renders a visible
+placeholder card naming the exact file to create. When someone drops the file
+at that path, the placeholder is replaced automatically on the next build. No
+YAML edit and no code change are required to fill a slot.
+
+Usage (registered slot, tracked on the shot list):
+    {% include media.html id="admin-general-tab" %}
+
+Usage (ad-hoc slot, no manifest entry needed):
+    {% include media.html src="guides/create-action-step-3.png"
+                          alt="The action editor with the endpoint field filled in."
+                          capture="Show the action editor after the endpoint is set." %}
+
+Usage (video):
+    {% include media.html id="admin-video-series" %}
+
+Parameters (inline mode mirrors the manifest schema in _data/media.yml):
+    id, src, alt, title, caption, capture, type, width, height,
+    poster, url, duration
+{%- endcomment -%}
+
+{%- assign entry = nil -%}
+{%- if include.id -%}
+    {%- assign entry = site.data.media[include.id] -%}
+{%- endif -%}
+
+{%- comment -%} Resolve every field: explicit include parameter wins over the manifest. {%- endcomment -%}
+{%- assign media_type = include.type | default: entry.type | default: 'image' -%}
+{%- assign media_title = include.title | default: entry.title -%}
+{%- assign media_file = include.src | default: entry.file -%}
+{%- assign media_alt = include.alt | default: entry.alt -%}
+{%- assign media_caption = include.caption | default: entry.caption -%}
+{%- assign media_capture = include.capture | default: entry.capture -%}
+{%- assign media_width = include.width | default: entry.width -%}
+{%- assign media_height = include.height | default: entry.height -%}
+{%- assign media_poster = include.poster | default: entry.poster -%}
+{%- assign media_url = include.url | default: entry.url -%}
+{%- assign media_duration = include.duration | default: entry.duration -%}
+
+{%- if include.id and entry == nil -%}
+    {%- comment -%} Unknown slot id. Surface it loudly rather than rendering nothing. {%- endcomment -%}
+    <div class="docs-media docs-media--error" role="note">
+        <p class="docs-media-error-title">Unknown media slot <code>{{ include.id }}</code></p>
+        <p class="docs-media-error-body">No entry with this id exists in <code>docs/_data/media.yml</code>. Check the spelling, or add the entry.</p>
+    </div>
+{%- elsif media_type == 'video' -%}
+
+    {%- assign poster_path = '' -%}
+    {%- assign poster_asset = nil -%}
+    {%- if media_poster -%}
+        {%- assign poster_path = '/images/' | append: media_poster -%}
+        {%- assign poster_asset = site.static_files | where: 'path', poster_path | first -%}
+    {%- endif -%}
+
+    {%- comment -%} Label the destination so readers know where the link goes before clicking. {%- endcomment -%}
+    {%- assign video_host = 'the video' -%}
+    {%- if media_url contains 'youtube.com' or media_url contains 'youtu.be' -%}
+        {%- assign video_host = 'YouTube' -%}
+    {%- elsif media_url contains 'microsoftstream.com' or media_url contains 'sharepoint.com' or media_url contains 'stream.office.com' -%}
+        {%- assign video_host = 'Microsoft Stream' -%}
+    {%- endif -%}
+
+    {%- if media_url and media_url != '' -%}
+        <figure class="docs-media docs-media--video">
+            <a class="docs-video-card" href="{{ media_url }}" target="_blank" rel="noopener noreferrer">
+                <span class="docs-video-poster">
+                    {%- if poster_asset -%}
+                        <img class="docs-video-poster-image"
+                             src="{{ poster_path | relative_url }}"
+                             alt=""
+                             loading="lazy"
+                             decoding="async"
+                             {% if media_width %}width="{{ media_width }}"{% endif %}
+                             {% if media_height %}height="{{ media_height }}"{% endif %} />
+                    {%- else -%}
+                        <span class="docs-video-poster-empty" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
+                    {%- endif -%}
+                    <span class="docs-video-play" aria-hidden="true"><i class="bi bi-play-fill"></i></span>
+                </span>
+                <span class="docs-video-meta">
+                    <span class="docs-video-title">{{ media_title | default: 'Watch the walkthrough' }}</span>
+                    <span class="docs-video-sub">
+                        Watch on {{ video_host }}{% if media_duration and media_duration != '' %} &middot; {{ media_duration }}{% endif %}
+                        <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                    </span>
+                </span>
+            </a>
+            {%- if media_caption -%}<figcaption class="docs-media-caption">{{ media_caption }}</figcaption>{%- endif -%}
+        </figure>
+    {%- else -%}
+        <figure class="docs-media docs-media--placeholder docs-media--video-planned">
+            <div class="docs-media-placeholder">
+                <span class="docs-media-placeholder-icon" aria-hidden="true"><i class="bi bi-camera-video"></i></span>
+                <p class="docs-media-placeholder-kicker">Video planned</p>
+                <p class="docs-media-placeholder-title">{{ media_title | default: 'Walkthrough video' }}</p>
+                {%- if media_capture -%}<p class="docs-media-placeholder-capture">{{ media_capture }}</p>{%- endif -%}
+                <div class="docs-media-placeholder-steps">
+                    <p>To publish this video:</p>
+                    <ol>
+                        <li>Upload the recording to YouTube or Microsoft Stream.</li>
+                        {%- if media_poster -%}
+                        <li>Save a poster frame as <code>docs/images/{{ media_poster }}</code>.</li>
+                        {%- endif -%}
+                        <li>Add the watch URL to <code>{{ include.id | default: 'this slot' }}</code> in <code>docs/_data/media.yml</code>.</li>
+                    </ol>
+                </div>
+            </div>
+        </figure>
+    {%- endif -%}
+
+{%- else -%}
+
+    {%- comment -%} Image slot. Look the file up in site.static_files so the placeholder self-resolves. {%- endcomment -%}
+    {%- assign image_path = '/images/' | append: media_file -%}
+    {%- assign image_asset = site.static_files | where: 'path', image_path | first -%}
+
+    {%- if image_asset and media_file -%}
+        <figure class="docs-media docs-media--image">
+            <button type="button"
+                    class="docs-media-zoom"
+                    data-docs-media-zoom="true"
+                    data-docs-media-src="{{ image_path | relative_url }}"
+                    data-docs-media-alt="{{ media_alt | default: media_title | escape }}"
+                    aria-label="Enlarge image: {{ media_alt | default: media_title | escape }}">
+                <img class="docs-media-image"
+                     src="{{ image_path | relative_url }}"
+                     alt="{{ media_alt | default: media_title | escape }}"
+                     loading="lazy"
+                     decoding="async"
+                     {% if media_width %}width="{{ media_width }}"{% endif %}
+                     {% if media_height %}height="{{ media_height }}"{% endif %} />
+            </button>
+            {%- if media_caption -%}<figcaption class="docs-media-caption">{{ media_caption }}</figcaption>{%- endif -%}
+        </figure>
+    {%- else -%}
+        <figure class="docs-media docs-media--placeholder">
+            <div class="docs-media-placeholder">
+                <span class="docs-media-placeholder-icon" aria-hidden="true"><i class="bi bi-image"></i></span>
+                <p class="docs-media-placeholder-kicker">Screenshot needed</p>
+                {%- if media_title -%}<p class="docs-media-placeholder-title">{{ media_title }}</p>{%- endif -%}
+                {%- if media_capture -%}<p class="docs-media-placeholder-capture">{{ media_capture }}</p>{%- endif -%}
+                {%- if media_file -%}
+                    <p class="docs-media-placeholder-path">Save as <code>docs/images/{{ media_file }}</code></p>
+                    <p class="docs-media-placeholder-hint">Drop the file at that path and it replaces this card automatically. No other change needed.</p>
+                {%- else -%}
+                    <p class="docs-media-placeholder-hint">This slot has no <code>file</code> set. Add one in <code>docs/_data/media.yml</code>.</p>
+                {%- endif -%}
+            </div>
+        </figure>
+    {%- endif -%}
+
+{%- endif -%}
