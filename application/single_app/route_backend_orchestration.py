@@ -133,12 +133,26 @@ def _orchestration_enabled(settings):
     return bool((settings or {}).get('enable_chat_orchestration'))
 
 
-def _build_invoke_prompt(settings):
+def _build_invoke_prompt(settings, token_usage=None):
     """A closure the adapters call to ask the model something.
 
-    Shares the planner's client resolution, which already handles APIM, managed identity and
-    key auth, but deliberately not its deployment: planning may be pointed at a small model,
-    while the answer should come from the deployment the administrator chose for chat.
+    The signature is not ours to choose. ``run_document_analysis``,
+    ``run_document_comparison`` and the respond adapter all call this as
+    ``invoke_prompt(prompt_text, stage=..., metadata={...})``, which is the convention
+    ``functions_workflow_runner.invoke_model_prompt`` established and every existing caller
+    follows. Getting it wrong does not fail at import or in a unit test with fake adapters
+    -- it fails at the moment a real step runs, with a TypeError that reads as a mystery,
+    which is exactly how it was found.
+
+    ``stage`` and ``metadata`` are accepted and deliberately unused beyond logging: they
+    describe which phase of a multi-pass analysis is asking, and the answer is the same
+    model call either way. They are named rather than swallowed by ``**kwargs`` so this
+    file states the contract it is honouring.
+
+    Shares the planner's client resolution, which already handles APIM, managed identity
+    and key auth, but deliberately not its deployment: planning may be pointed at a small
+    model, while the answer should come from the deployment the administrator chose for
+    chat.
     """
     client, planner_deployment = resolve_planner_client(settings)
 
@@ -148,16 +162,34 @@ def _build_invoke_prompt(settings):
         deployment = (gpt_model['selected'][0] or {}).get('deploymentName')
     deployment = deployment or planner_deployment
 
-    def invoke_prompt(messages, max_tokens=ANSWER_MAX_TOKENS, temperature=ANSWER_TEMPERATURE):
-        if isinstance(messages, str):
-            messages = [{'role': 'user', 'content': messages}]
+    def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
+        messages = (
+            prompt_text
+            if isinstance(prompt_text, list)
+            else [{'role': 'user', 'content': str(prompt_text or '')}]
+        )
         response = client.chat.completions.create(
             model=deployment,
             messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
+            temperature=ANSWER_TEMPERATURE,
+            max_tokens=ANSWER_MAX_TOKENS,
         )
+
+        # Accumulated here because this is the only place every model call an orchestration
+        # run makes passes through. A run's cost was previously reported as zero for that
+        # reason, not because it was free.
+        usage = getattr(response, 'usage', None)
+        if usage is not None and isinstance(token_usage, dict):
+            for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                value = getattr(usage, field, None)
+                if isinstance(value, int):
+                    token_usage[field] = token_usage.get(field, 0) + value
+
         if not response or not response.choices:
+            log_event(
+                f"[ORCHESTRATION] The model returned no choices at stage '{stage}'.",
+                level=logging.WARNING,
+            )
             return ''
         return response.choices[0].message.content or ''
 
@@ -560,8 +592,10 @@ def register_route_backend_orchestration(bp):
 
         conversation_id = conversation_id or _text(record.get('conversation_id'))
 
+        # One accumulator for the whole run, filled by every model call the closure makes.
+        run_token_usage = {}
         try:
-            invoke_prompt = _build_invoke_prompt(settings)
+            invoke_prompt = _build_invoke_prompt(settings, token_usage=run_token_usage)
         except Exception as exc:
             log_event(f"[ORCHESTRATION] No usable chat model: {exc}", level=logging.ERROR)
             return jsonify({'error': 'No chat model is configured.'}), 503
@@ -721,7 +755,7 @@ def register_route_backend_orchestration(bp):
                         'run_id': run_id,
                         'plan_summary': summary,
                     },
-                    'token_usage': result.get('token_usage') or {},
+                    'token_usage': run_token_usage or result.get('token_usage') or {},
                 },
             ) if answer else None
 
@@ -732,6 +766,7 @@ def register_route_backend_orchestration(bp):
             try:
                 update_orchestration_run(run_id, user_id, {
                     'assistant_message_id': message_id,
+                    'token_usage': run_token_usage,
                 }, conversation_id=conversation_id)
             except Exception:
                 # The answer is already saved and streamed; failing to cross-reference it
