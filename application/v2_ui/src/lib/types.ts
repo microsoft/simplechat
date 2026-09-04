@@ -715,6 +715,46 @@ export interface NavGroup<TItem> {
 }
 
 /** Response shape of GET /api/v2/bootstrap. Assembled by route_backend_v2.py. */
+/**
+ * One capability the orchestration planner may schedule, as the bootstrap advertises it.
+ *
+ * This is the deployment's *menu*, not a plan: the plan card reads `label`, `summary` and
+ * `cost` to describe steps the server actually chose, and `terminal` marks the answer-writing
+ * capability (`respond`) that a narrowing edit must never be allowed to disable. The union
+ * members mirror `CostClass` in `orchestration.ts` but are inlined here so this base type
+ * module keeps importing nothing — `orchestration.ts` already imports *from* here.
+ */
+export interface OrchestrationCapability {
+    id: string;
+    label: string;
+    /** The capability family (search, generation, …). A string because the registry is server-owned. */
+    kind: string;
+    summary: string;
+    cost: 'low' | 'medium' | 'high';
+    terminal: boolean;
+}
+
+/**
+ * The orchestration block of the bootstrap.
+ *
+ * Present and `enabled` only where the deployment has turned orchestration on; the composer
+ * gates its toggle on this *and* the `enable_chat_orchestration` feature flag, because a
+ * feature can be flagged on for a cohort while a given workspace has no capabilities wired.
+ * `default_approval_mode` seeds the composer's approval control, and `allow_user_approval_
+ * override` decides whether that control is even shown — an admin can pin the mode.
+ */
+export interface OrchestrationBootstrap {
+    enabled: boolean;
+    /** Mirrors `ApprovalMode` in orchestration.ts; inlined to keep this module import-free. */
+    default_approval_mode: 'manual' | 'timed' | 'auto';
+    timed_approval_seconds: number;
+    allow_user_approval_override: boolean;
+    /** Whether the manual capability/model/agent controls stay reachable under a disclosure. */
+    show_manual_controls: boolean;
+    max_steps: number;
+    capabilities: OrchestrationCapability[];
+}
+
 export interface BootstrapPayload {
     version: string;
     user: {
@@ -777,6 +817,14 @@ export interface BootstrapPayload {
         prompts: PromptOption[];
         initial_model_selection: ModelOption | null;
     };
+    /**
+     * Chat-orchestration configuration, present when the deployment ships the framework.
+     *
+     * Optional because a build without orchestration omits it entirely, and every reader
+     * therefore has to treat "absent" and "present but disabled" the same way. Read via
+     * `useBootstrapStore`.
+     */
+    orchestration?: OrchestrationBootstrap;
     scope: {
         active_group_id: string | null;
         active_group_name: string | null;

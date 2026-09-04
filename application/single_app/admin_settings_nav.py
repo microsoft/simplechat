@@ -215,6 +215,28 @@ ADMIN_NAV = [
         ],
     },
     {
+        # Orchestration plans, approves and runs a chat request on the user's behalf.
+        # It spans chat, agents and (later) workflows rather than belonging to any one
+        # of them, so it stands on its own rather than hiding inside Chat.
+        "id": "orchestration",
+        "label": "Orchestration",
+        "icon": "bi-signpost-split",
+        "tabs": [
+            {
+                "id": "chat-orchestration",
+                "label": "Chat Orchestration",
+                "icon": "bi-signpost-split",
+                "sections": [
+                    {"id": "chat-orchestration-section", "label": "Chat Orchestration", "icon": "bi-signpost-split"},
+                    {"id": "chat-orchestration-approval-section", "label": "Plan Approval", "icon": "bi-check2-square"},
+                    {"id": "chat-orchestration-capabilities-section", "label": "Capabilities", "icon": "bi-puzzle"},
+                    {"id": "chat-orchestration-limits-section", "label": "Limits", "icon": "bi-speedometer2"},
+                    {"id": "chat-orchestration-planner-model-section", "label": "Planner Model", "icon": "bi-cpu"},
+                ],
+            },
+        ],
+    },
+    {
         "id": "knowledge",
         "label": "Knowledge",
         "icon": "bi-search",

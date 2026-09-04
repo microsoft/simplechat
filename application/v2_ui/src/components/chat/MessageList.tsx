@@ -29,6 +29,14 @@ import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { MessageActions } from './MessageActions';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
+import { OrchestrationPlanCard } from './OrchestrationPlanCard';
+import { ElicitationCard } from './ElicitationCard';
+import {
+    selectActiveTurn,
+    selectElicitation,
+    selectPlan,
+    useOrchestrationStore,
+} from '../../stores/orchestrationStore';
 import { MaskedSpan, MaskSelectionPopup } from './MaskedSpan';
 import {
     applyMasks,
@@ -698,6 +706,35 @@ function TypingIndicator() {
     );
 }
 
+/**
+ * The orchestration card for the conversation's active turn, drawn at the tail of the thread.
+ *
+ * The plan exists in the store before any assistant message does, so it is rendered from the store
+ * here rather than parsed out of a markdown fence in a bubble. Only the most recent turn's card
+ * shows inline: a new turn re-points `activeTurn`, and older plans are reachable through the drawer.
+ * An elicitation supersedes a plan, because a turn that is still asking a question has no plan yet.
+ */
+function ActiveOrchestrationCard({ conversationId }: { conversationId: string }) {
+    const turnId = useOrchestrationStore((state) => selectActiveTurn(state, conversationId));
+    const hasElicitation = useOrchestrationStore((state) =>
+        turnId ? selectElicitation(state, conversationId, turnId) !== null : false,
+    );
+    const hasPlan = useOrchestrationStore((state) =>
+        turnId ? selectPlan(state, conversationId, turnId) !== null : false,
+    );
+
+    if (!conversationId || !turnId) {
+        return null;
+    }
+    if (hasElicitation) {
+        return <ElicitationCard conversationId={conversationId} turnId={turnId} />;
+    }
+    if (hasPlan) {
+        return <OrchestrationPlanCard conversationId={conversationId} turnId={turnId} />;
+    }
+    return null;
+}
+
 export function MessageList() {
     const {
         messages,
@@ -869,6 +906,9 @@ export function MessageList() {
                         />
                     ))}
                     {streaming && <StreamingBubble />}
+                    {activeConversationId && (
+                        <ActiveOrchestrationCard conversationId={activeConversationId} />
+                    )}
                     <TypingIndicator />
                 </div>
 
