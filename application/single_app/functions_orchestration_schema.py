@@ -795,6 +795,14 @@ def build_plan_inputs(plan, seeds=None, document_labels=None):
 
     selected = set(seeds.get('document_ids') or ())
 
+    # Named, not quoted. The plan document is stored and shown, and the prompt's full wording
+    # is already in the message the plan was built from; repeating it here would duplicate an
+    # unbounded string into every plan that used a prompt.
+    seed_prompt = seeds.get('prompt')
+    prompt = None
+    if isinstance(seed_prompt, dict):
+        prompt = {'id': seed_prompt.get('id'), 'name': seed_prompt.get('name')}
+
     return {
         'documents': [
             {
@@ -807,7 +815,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None):
         'web': uses_web,
         'agent': seeds.get('agent'),
         'model': seeds.get('model'),
-        'prompt': seeds.get('prompt'),
+        'prompt': prompt,
     }
 
 

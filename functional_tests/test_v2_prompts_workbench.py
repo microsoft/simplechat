@@ -71,7 +71,11 @@ WORKBENCH_TSX = V2_SRC / "components" / "prompts" / "PromptWorkbench.tsx"
 LIST_TSX = V2_SRC / "components" / "prompts" / "PromptList.tsx"
 DETAILS_TSX = V2_SRC / "components" / "prompts" / "PromptDetailsPane.tsx"
 EDITOR_TSX = V2_SRC / "components" / "prompts" / "PromptEditorDialog.tsx"
-VARIABLES_TSX = V2_SRC / "components" / "prompts" / "PromptVariablesDialog.tsx"
+# The fill-in dialog this replaced folded into the composer's attached-prompt card, so the
+# field and the values behind it now live in one component and one hook.
+VARIABLE_FIELD_TSX = V2_SRC / "components" / "prompts" / "PromptVariableField.tsx"
+VARIABLE_VALUES_TS = V2_SRC / "lib" / "usePromptVariableValues.ts"
+ATTACHED_CARD_TSX = V2_SRC / "components" / "chat" / "AttachedPromptCard.tsx"
 PRESENTATION_TSX = V2_SRC / "components" / "prompts" / "promptPresentation.tsx"
 SLASH_MENU_TSX = V2_SRC / "components" / "chat" / "PromptSlashMenu.tsx"
 COMPOSER_TSX = V2_SRC / "components" / "chat" / "Composer.tsx"
@@ -383,9 +387,18 @@ def test_picking_a_prompt_does_not_replace_the_composer():
     assert "setText(String(prompt.content))" not in composer, (
         "picking a prompt must not replace the composer's contents"
     )
-    assert "insertPromptText(" in composer, "insertion must go through insertPromptText"
-    assert "promptNeedsFilling(" in composer, (
-        "a prompt with variables must open the fill-in dialog rather than inserting raw braces"
+    # A prompt is now attached to the turn rather than pasted into the box, so its text must
+    # not reach the textarea at all. `insertPromptText` survives for the `/weekly` token the
+    # pick removes, which is why the check is on what is inserted rather than on the call.
+    assert "attachPrompt(" in composer, "picking a prompt must attach it to the turn"
+    assert "insertIntoComposer(content" not in composer, (
+        "prompt content must not be written into the message box"
+    )
+    assert "insertPromptText(" in composer, (
+        "the slash token the pick consumed must still be removed from the text"
+    )
+    assert "AttachedPromptCard" in composer, (
+        "an attached prompt must be shown above the message box"
     )
     assert "readSlashQuery(" in composer, "the `/` menu must be wired to the composer"
     assert "PromptSlashMenu" in composer
@@ -396,7 +409,54 @@ def test_picking_a_prompt_does_not_replace_the_composer():
         "the /chat?prompt=<id> handoff from the workbench must be consumed"
     )
 
-    print("  ok  the composer inserts rather than replaces")
+    print("  ok  the composer attaches rather than replaces")
+    return True
+
+
+def test_an_attached_prompt_is_resolved_when_the_message_is_sent():
+    """Resolved at pick time, `{{composer}}` is empty: nothing has been typed yet."""
+    print("Testing send-time resolution...")
+
+    composer = _read(COMPOSER_TSX)
+    assert "promptVariables.resolve(promptContext())" in composer, (
+        "the prompt must be resolved against the live composer context, not a snapshot "
+        "taken when it was picked"
+    )
+    # A prompt is a complete message on its own, so the send gate cannot require typed text.
+    assert "if (!text.trim() && !attachedPrompt)" in composer, (
+        "a turn carrying only a prompt must be sendable"
+    )
+    assert "(!text.trim() && !attachedPrompt) || !canPost" in composer, (
+        "the send button must stay enabled for a prompt-only turn"
+    )
+
+    values = _read(VARIABLE_VALUES_TS)
+    assert "isBuiltInPromptVariable(variableKey)" in values, (
+        "a built-in must not be overwritten by a stored value that would shadow it"
+    )
+
+    print("  ok  the prompt is resolved at send")
+    return True
+
+
+def test_the_prompt_is_reported_on_both_send_paths():
+    """The classic chat path sent no prompt_info, so an ordinary turn recorded no prompt."""
+    print("Testing prompt_info reporting...")
+
+    store = _read(V2_SRC / "stores" / "chatStore.ts")
+    assert "requestBody.prompt_info = options.promptInfo" in store, (
+        "the ordinary chat request must carry the prompt behind the message"
+    )
+
+    composer = _read(COMPOSER_TSX)
+    assert "seeds.prompt_info = promptInfo" in composer, (
+        "orchestration seeds must carry the same resolved prompt"
+    )
+    assert "buildPromptInfo(" in composer, (
+        "both paths must build prompt_info through the one shared builder"
+    )
+
+    print("  ok  both send paths report the prompt")
     return True
 
 
@@ -405,21 +465,25 @@ def test_nothing_is_prefilled_in_a_shared_conversation():
     print("Testing shared-conversation pre-fill...")
 
     composer = _read(COMPOSER_TSX)
-    assert "shared={shared}" in composer, (
-        "the fill-in dialog must be told whether this is a shared conversation"
+    assert "shared," in composer, (
+        "the variable values hook must be told whether this is a shared conversation"
     )
 
-    dialog = _read(VARIABLES_TSX)
-    assert "shared = false" in dialog, "the dialog must default to the safe case"
-    assert "if (!shared)" in dialog, (
+    values = _read(VARIABLE_VALUES_TS)
+    assert "shared = false" in values, "the hook must default to the safe case"
+    assert "shared ? {} : recallPromptValues(promptId)" in values, (
         "remembered values must be applied only when the conversation is not shared"
     )
+
+    field = _read(VARIABLE_FIELD_TSX)
     # The pre-filled badge is what keeps an auto-filled value from reading as typed.
-    assert "Reused" in dialog and "From this chat" in dialog, (
+    assert "Reused" in field and "From this chat" in field, (
         "an auto-filled value must be visibly distinct from one the reader typed"
     )
-    assert "onSubmit(content)" in dialog, (
-        "a prompt with nothing to ask must not present an empty dialog"
+
+    card = _read(ATTACHED_CARD_TSX)
+    assert "variables.length === 0" in card, (
+        "a prompt with nothing to ask must not present an empty set of fields"
     )
 
     print("  ok  nothing is pre-filled in a shared conversation")
@@ -677,7 +741,9 @@ def test_no_remote_asset_references():
         LIST_TSX,
         DETAILS_TSX,
         EDITOR_TSX,
-        VARIABLES_TSX,
+        VARIABLE_FIELD_TSX,
+        VARIABLE_VALUES_TS,
+        ATTACHED_CARD_TSX,
         PRESENTATION_TSX,
         SLASH_MENU_TSX,
         MODAL_TSX,
@@ -760,6 +826,8 @@ if __name__ == "__main__":
         test_the_search_parameter_matches_what_the_route_reads,
         test_the_section_is_registered_full_bleed,
         test_picking_a_prompt_does_not_replace_the_composer,
+        test_an_attached_prompt_is_resolved_when_the_message_is_sent,
+        test_the_prompt_is_reported_on_both_send_paths,
         test_nothing_is_prefilled_in_a_shared_conversation,
         test_variable_values_never_reach_the_server,
         test_the_message_action_says_what_it_does,

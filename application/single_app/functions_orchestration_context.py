@@ -54,6 +54,17 @@ LEDGER_MAX_ANSWERED_QUESTIONS = 12
 HISTORY_MAX_TURNS = 6
 HISTORY_TURN_LENGTH = 300
 
+# How much of a selected prompt the planner is shown.
+#
+# The name alone was not enough to plan with: "Quarterly review" says nothing about whether the
+# work involves reading documents, searching the web or comparing two things, which is precisely
+# what the plan has to decide. The wording says all of it.
+#
+# Capped rather than sent whole because a saved prompt has no length limit and the planner's
+# budget does. A prompt long enough to be truncated here has said what kind of work it is well
+# before this point.
+SELECTED_PROMPT_LENGTH = 2000
+
 
 def _text(value, limit=None):
     if value is None:
@@ -510,6 +521,25 @@ def _extract_urls(text):
 # The planner's view
 # --------------------------------------------------------------------------------------
 
+def _selected_prompt(seeds):
+    """The prompt the user attached, as the planner should see it.
+
+    Both the name and the wording, because a plan is chosen from what the work involves and
+    only the wording says that. Returns ``None`` rather than an empty dict when there is no
+    prompt, so ``triage_request`` can test it the same way it tests the other selections.
+    """
+    prompt = seeds.get('prompt')
+    if not isinstance(prompt, dict):
+        return None
+
+    name = _text(prompt.get('name'))
+    content = _text(prompt.get('content'), SELECTED_PROMPT_LENGTH)
+    if not name and not content:
+        return None
+
+    return {'name': name, 'content': content}
+
+
 def build_planner_context(
     user_message,
     candidates=None,
@@ -543,7 +573,7 @@ def build_planner_context(
         'user_selected': {
             'documents': seeds.get('document_ids') or [],
             'agent': (seeds.get('agent') or {}).get('name') if seeds.get('agent') else None,
-            'prompt': (seeds.get('prompt') or {}).get('name') if seeds.get('prompt') else None,
+            'prompt': _selected_prompt(seeds),
             'web_search': bool(seeds.get('web_search')),
         },
         'earlier_runs': ledger or {'runs': [], 'answered_questions': [], 'truncated': False},

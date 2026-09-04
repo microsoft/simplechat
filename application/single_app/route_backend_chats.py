@@ -17330,11 +17330,21 @@ def register_route_backend_chats(bp):
                 # Prompt selection (extract from message if available)
                 prompt_info = data.get('prompt_info')
                 if prompt_info:
+                    # The first four keys are the original contract and are unchanged. The rest
+                    # describe a prompt that was attached to the turn rather than pasted into
+                    # it: `user_text` is what was typed underneath, which is the only thing that
+                    # can tell the prompt and the message apart once they are concatenated into
+                    # the stored content. A client that does not send them is a client that
+                    # pasted, and it reads back exactly as it always did.
                     user_metadata['prompt_selection'] = {
                         'selected_prompt_index': prompt_info.get('index'),
                         'selected_prompt_text': prompt_info.get('content'),
                         'prompt_name': prompt_info.get('name'),
-                        'prompt_id': prompt_info.get('id')
+                        'prompt_id': prompt_info.get('id'),
+                        'original_prompt_text': prompt_info.get('original_content'),
+                        'prompt_variables': prompt_info.get('variables') or {},
+                        'prompt_edited': bool(prompt_info.get('edited', False)),
+                        'user_text': prompt_info.get('user_text')
                     }
 
                 # Agent selection (from frontend if available, override settings-based selection)
