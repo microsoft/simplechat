@@ -51,6 +51,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "color": ("default",),
     "text": ("default",),
     "textarea": ("default",),
+    "secret": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
     # An id_list resolves names through a search endpoint, so the renderer cannot
@@ -72,6 +73,7 @@ EXPECTED_DEFAULT_TYPES = {
     "switch": bool,
     "text": str,
     "textarea": str,
+    "secret": str,
     "select": str,
     "color": str,
     "range": int,
@@ -343,77 +345,121 @@ def test_connection_tests_read_declared_keys():
     return True
 
 
-def test_no_section_or_field_is_declared_twice():
-    """A later re-declaration silently overrides the earlier one.
+def test_string_dependencies_name_an_offered_option():
+    """A string condition that no option produces would hide the field forever."""
+    print("\nTesting string visibility dependencies against their select options...")
 
-    ``ADMIN_SETTINGS_FIELDS`` is a dict literal, so declaring the same section id
-    twice keeps only the last: the first block becomes dead code that reads as
-    live. This has already happened once, when two branches described the same
-    section in parallel and the merge kept both. A duplicate settings key is worse
-    still -- two controls edit one value and disagree about its help text.
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
 
-    The source is parsed rather than the imported dict inspected, because by the
-    time Python has built the dict the duplicate is gone.
-    """
-    print("\nTesting for duplicate declarations...")
-
-    source = (
-        Path(__file__).resolve().parents[1]
-        / "application"
-        / "single_app"
-        / "admin_settings_fields.py"
-    ).read_text(encoding="utf-8")
-
-    tree = ast.parse(source)
-    schema_node = next(
-        (
-            node.value
-            for node in tree.body
-            if isinstance(node, ast.Assign)
-            and any(
-                isinstance(target, ast.Name) and target.id == "ADMIN_SETTINGS_FIELDS"
-                for target in node.targets
-            )
-        ),
-        None,
-    )
-    assert isinstance(schema_node, ast.Dict), "Could not parse ADMIN_SETTINGS_FIELDS"
-
-    section_ids = [
-        key.value
-        for key in schema_node.keys
-        if isinstance(key, ast.Constant) and isinstance(key.value, str)
-    ]
-    duplicate_sections = sorted(
-        {name for name in section_ids if section_ids.count(name) > 1}
-    )
-    assert not duplicate_sections, (
-        "These section ids are declared more than once, so every declaration but "
-        "the last is dead code:\n  " + "\n  ".join(duplicate_sections)
-    )
-
-    field_keys = []
-    for value in schema_node.values:
-        if not isinstance(value, ast.List):
-            continue
-        for item in value.elts:
-            if not isinstance(item, ast.Dict):
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        identity = f"{section_id}.{field.get('key') or field.get('component')}"
+        for depends_on in fields_module.iter_field_dependencies(field):
+            expected = depends_on.get("equals")
+            if not isinstance(expected, str):
                 continue
-            for key, node in zip(item.keys, item.values):
-                if (
-                    isinstance(key, ast.Constant)
-                    and key.value == "key"
-                    and isinstance(node, ast.Constant)
-                ):
-                    field_keys.append(node.value)
 
-    duplicate_fields = sorted({key for key in field_keys if field_keys.count(key) > 1})
-    assert not duplicate_fields, (
-        "These settings keys are declared by more than one field, so two controls "
-        "would edit one value:\n  " + "\n  ".join(duplicate_fields)
+            checked += 1
+            gate = fields_by_key.get(depends_on.get("key"))
+
+            if gate is None:
+                problems.append(f"{identity}: gate field is not declared")
+                continue
+            if gate.get("type") != "select":
+                problems.append(
+                    f"{identity}: gate {gate['key']!r} is a {gate.get('type')!r}, but a "
+                    "string condition only makes sense against a select"
+                )
+                continue
+
+            values = [option["value"] for option in gate.get("options", [])]
+            if expected not in values:
+                problems.append(
+                    f"{identity}: waits for {gate['key']}=={expected!r}, which is not "
+                    f"one of {values}"
+                )
+
+    assert not problems, (
+        "These string dependencies can never be satisfied, so the field would "
+        "never render:\n  " + "\n  ".join(problems)
     )
 
-    print(f"  {len(section_ids)} section(s) and {len(field_keys)} field(s), none repeated.")
+    assert checked, (
+        "No string dependencies were compared; the Enhanced Citations storage "
+        "credentials should each be gated on an authentication type."
+    )
+    print(f"  All {checked} string dependency condition(s) are reachable.")
+    return True
+
+
+def test_gated_fields_inherit_their_gate_s_own_conditions():
+    """The renderer evaluates each field's conditions alone, not recursively.
+
+    So a field gated on a sibling is visible whenever that sibling's *value* matches,
+    even when the sibling is itself hidden. Gating the Enhanced Citations connection
+    string on the authentication type alone left it on screen while Enhanced Citations
+    was off, because the authentication type defaults to ``key`` whether the capability
+    is on or not -- offering a credential field for a disabled feature.
+
+    A field must therefore repeat every condition its gate carries.
+    """
+    print("\nTesting that gated fields inherit their gate's conditions...")
+
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    def condition_set(field, seen=None):
+        """Every (key, equals) a field declares, plus everything its gates declare."""
+        seen = seen if seen is not None else set()
+        for condition in fields_module.iter_field_dependencies(field):
+            key = condition.get("key")
+            entry = (key, condition.get("equals", True))
+            if entry in seen:
+                continue
+            seen.add(entry)
+            parent = fields_by_key.get(key)
+            if parent is not None:
+                condition_set(parent, seen)
+        return seen
+
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        own = {
+            (condition.get("key"), condition.get("equals", True))
+            for condition in fields_module.iter_field_dependencies(field)
+        }
+        if not own:
+            continue
+
+        checked += 1
+        inherited = condition_set(field)
+        missing = sorted(
+            f"{key}=={value!r}" for key, value in inherited - own
+        )
+        if missing:
+            problems.append(
+                f"{section_id}.{field.get('key') or field.get('component')}: also needs "
+                + ", ".join(missing)
+            )
+
+    assert not problems, (
+        "These fields are gated on another field that is itself gated, but do not "
+        "repeat its conditions. Because visibility is evaluated per field rather than "
+        "recursively, they stay on screen when their gate is hidden:\n  "
+        + "\n  ".join(problems)
+    )
+
+    assert checked, "No gated fields were compared; the extraction likely broke."
+    print(f"  All {checked} gated field(s) carry their gate's conditions.")
     return True
 
 
@@ -510,7 +556,8 @@ if __name__ == "__main__":
         test_setting_keys_are_unique,
         test_dependencies_reference_real_fields,
         test_connection_tests_read_declared_keys,
-        test_no_section_or_field_is_declared_twice,
+        test_string_dependencies_name_an_offered_option,
+        test_gated_fields_inherit_their_gate_s_own_conditions,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,
     ]

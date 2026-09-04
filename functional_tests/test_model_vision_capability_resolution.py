@@ -2,8 +2,8 @@
 # test_model_vision_capability_resolution.py
 """
 Functional test for how the application decides a model can accept images.
-Version: 0.261.072
-Implemented in: 0.261.072
+Version: 0.261.082
+Implemented in: 0.261.082
 
 Multi-Modal Vision Analysis sends page images to a model, so it can only offer
 models that read them. That was decided by a regular expression over the model's
@@ -48,7 +48,7 @@ def test_the_catalog_declares_vision_support_for_every_model():
     """A model missing the field falls through to a guess it should not need."""
     print("Testing catalog completeness...")
 
-    assert_app_version_at_least("0.261.072")
+    assert_app_version_at_least("0.261.082")
 
     document = json.loads(CATALOG.read_text(encoding="utf-8"))
     models = document.get("models") or []

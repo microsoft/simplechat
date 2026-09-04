@@ -30,6 +30,8 @@ const inputClass = clsx(
     'disabled:cursor-not-allowed disabled:opacity-60',
 );
 
+export { inputClass };
+
 /**
  * Standing operational guidance a field carries, drawn beneath its control.
  *
@@ -643,6 +645,10 @@ function readStatusMessage(value: unknown): string {
  * `image`, `link_list`, `id_list` and `component` fields are handled by the page, which
  * owns the upload endpoint, the search endpoints and the bespoke widgets, so they are
  * not reached here.
+ *
+ * The page also intercepts `secret` ahead of this, because telling "not configured" from
+ * "configured but hidden" needs the stored value and not just the draft one. The branch
+ * below is the fallback for anywhere else that renders a field directly.
  */
 export function SettingField(props: FieldControlProps) {
     switch (props.field.type) {
@@ -666,10 +672,6 @@ export function SettingField(props: FieldControlProps) {
             return <StringListControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
-        case 'secret':
-            return <SecretControl {...props} />;
-        case 'string_list':
-            return <StringListControl {...props} />;
         case 'status':
             return <StatusControl {...props} />;
         default:

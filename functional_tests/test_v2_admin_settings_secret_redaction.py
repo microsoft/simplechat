@@ -44,7 +44,7 @@ from test_support.versioning import assert_app_version_at_least
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
 V2_ROUTE = APP_ROOT / "route_backend_v2.py"
-SETTINGS_MODULE = APP_ROOT / "functions_settings.py"
+SETTINGS_MODULE = APP_ROOT / "admin_settings_secret_utils.py"
 
 # Credentials that must not reach the browser. The first two are declared by the field
 # schema; the rest are storage account keys that no admin template renders as a secret,
@@ -69,7 +69,7 @@ def read_secret_field_tuple(name):
     """Return the string entries of a secret-field tuple in functions_settings."""
     source = SETTINGS_MODULE.read_text(encoding="utf-8")
     match = re.search(TUPLE_RE.format(name=name), source, re.DOTALL)
-    assert match, f"Could not find {name} in functions_settings.py"
+    assert match, f"Could not find {name} in admin_settings_secret_utils.py"
     return set(re.findall(r'"([a-z0-9_.]+)"', match.group("body")))
 
 

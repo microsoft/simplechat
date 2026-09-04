@@ -2,8 +2,8 @@
 # test_v2_admin_knowledge_extraction.py
 """
 Functional test for the Knowledge group's Document Extraction tab in V2.
-Version: 0.261.072
-Implemented in: 0.261.072
+Version: 0.261.082
+Implemented in: 0.261.082
 
 The server-rendered extraction pane is inside out. "Enable Enhanced extraction"
 is its first control, at line 13, and the Document Intelligence endpoint and key
@@ -100,7 +100,7 @@ def test_the_previously_unreachable_cards_are_navigable():
     """Two cards existed in the markup but in no navigation, in either interface."""
     print("Testing Document Extraction sections against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.072")
+    assert_app_version_at_least("0.261.082")
 
     nav_sections = [
         section["id"]

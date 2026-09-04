@@ -1069,7 +1069,12 @@ def register_route_frontend_admin_settings(bp):
                 )
             )
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
-            conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
+            conversation_history_limit = max(1, parse_admin_int(
+                form_data.get('conversation_history_limit'),
+                settings.get('conversation_history_limit', 10),
+                'conversation_history_limit',
+                10,
+            ))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
             idle_timeout_minutes = max(10, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
             idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
@@ -1618,50 +1623,8 @@ def register_route_frontend_admin_settings(bp):
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
             if should_migrate_endpoints and not parsed_model_endpoints:
-                default_endpoint_id = str(uuid.uuid4())
-                migrated_models = []
-                for model in gpt_model_obj.get('selected', []):
-                    deployment_name = model.get('deploymentName') or model.get('deployment') or ''
-                    model_name = model.get('modelName') or model.get('name') or ''
-                    if not deployment_name:
-                        continue
-                    migrated_models.append({
-                        'id': str(uuid.uuid4()),
-                        'deploymentName': deployment_name,
-                        'modelName': model_name,
-                        'displayName': deployment_name,
-                        'description': '',
-                        'enabled': True
-                    })
-
-                legacy_auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
-                migrated_auth_type = 'api_key' if legacy_auth_type == 'key' else legacy_auth_type
-
-                parsed_model_endpoints = [{
-                    'id': default_endpoint_id,
-                    'name': 'Migrated Azure OpenAI Endpoint',
-                    'provider': 'aoai',
-                    'enabled': True,
-                    'auth': {
-                        'type': migrated_auth_type,
-                        'managed_identity_type': 'system_assigned',
-                        'managed_identity_client_id': '',
-                        'tenant_id': '',
-                        'client_id': '',
-                        'client_secret': '',
-                        'api_key': settings.get('azure_openai_gpt_key', '')
-                    },
-                    'connection': {
-                        'endpoint': settings.get('azure_openai_gpt_endpoint', ''),
-                        'api_version': settings.get('azure_openai_gpt_api_version', '')
-                    },
-                    'management': {
-                        'subscription_id': settings.get('azure_openai_gpt_subscription_id', ''),
-                        'resource_group': settings.get('azure_openai_gpt_resource_group', ''),
-                        'location': ''
-                    },
-                    'models': migrated_models
-                }]
+                parsed_model_endpoints = build_migrated_model_endpoints_from_legacy(settings)
+                migrated_models = parsed_model_endpoints[0]['models'] if parsed_model_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
                 debug_print(
                     f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
@@ -1740,53 +1703,15 @@ def register_route_frontend_admin_settings(bp):
                 flash(f"Error processing default model selection: {e}. Changes not saved.", 'danger')
                 parsed_default_model_selection = settings.get('default_model_selection', {})
 
-            normalized_default_model_selection = {
-                'endpoint_id': str(parsed_default_model_selection.get('endpoint_id') or '').strip(),
-                'model_id': str(parsed_default_model_selection.get('model_id') or '').strip(),
-                'provider': str(parsed_default_model_selection.get('provider') or '').strip().lower()
-            }
-
-            if not enable_multi_model_endpoints:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
-            elif normalized_default_model_selection['endpoint_id'] and normalized_default_model_selection['model_id']:
-                endpoint_cfg = next(
-                    (e for e in parsed_model_endpoints if e.get('id') == normalized_default_model_selection['endpoint_id']),
-                    None
+            normalized_default_model_selection, default_selection_warning = (
+                resolve_default_model_selection(
+                    parsed_default_model_selection,
+                    parsed_model_endpoints,
+                    multi_endpoint_enabled=enable_multi_model_endpoints,
                 )
-                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
-                    flash('Default model endpoint is not available. Please select a valid endpoint.', 'warning')
-                    normalized_default_model_selection = {
-                        'endpoint_id': '',
-                        'model_id': '',
-                        'provider': ''
-                    }
-                else:
-                    models = endpoint_cfg.get('models', []) or []
-                    model_cfg = next(
-                        (m for m in models if m.get('id') == normalized_default_model_selection['model_id']),
-                        None
-                    )
-                    if not model_cfg or not model_cfg.get('enabled', True):
-                        flash('Default model is not available. Please select a valid model.', 'warning')
-                        normalized_default_model_selection = {
-                            'endpoint_id': '',
-                            'model_id': '',
-                            'provider': ''
-                        }
-                    else:
-                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
-                        if endpoint_provider:
-                            normalized_default_model_selection['provider'] = endpoint_provider
-            else:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
+            )
+            if default_selection_warning:
+                flash(default_selection_warning, 'warning')
 
             metadata_selection_json = form_data.get('metadata_extraction_model_selection_json', '{}')
             parsed_metadata_model_selection = {}
@@ -2576,7 +2501,12 @@ def register_route_frontend_admin_settings(bp):
                 'enable_extract_meta_data': enable_extract_meta_data,
                 'enable_summarize_content_history_for_search': form_data.get('enable_summarize_content_history_for_search') == 'on',
                 'enable_summarize_content_history_beyond_conversation_history_limit': form_data.get('enable_summarize_content_history_beyond_conversation_history_limit') == 'on',
-                'number_of_historical_messages_to_summarize': int(form_data.get('number_of_historical_messages_to_summarize', 10)),
+                'number_of_historical_messages_to_summarize': min(100, max(1, parse_admin_int(
+                    form_data.get('number_of_historical_messages_to_summarize'),
+                    settings.get('number_of_historical_messages_to_summarize', 10),
+                    'number_of_historical_messages_to_summarize',
+                    10,
+                ))),
                 
                 # *** Document Classification ***
                 'enable_document_classification': enable_document_classification,
@@ -2635,13 +2565,17 @@ def register_route_frontend_admin_settings(bp):
                 'office_docs_storage_account_blob_endpoint': admin_secret('office_docs_storage_account_blob_endpoint'),
                 'office_docs_storage_account_url': admin_secret('office_docs_storage_account_url'),
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
-                'office_docs_key': form_data.get('office_docs_key', '').strip(),
+                # Storage account keys have no input anywhere in the form, so a bare
+                # '' default would overwrite the stored key on every save and break
+                # SAS signing for citation file access. Fall back to the stored value
+                # when the field is absent; an explicit empty submission still clears.
+                'office_docs_key': form_data.get('office_docs_key', settings.get('office_docs_key', '')).strip(),
                 'video_files_storage_account_url': admin_secret('video_files_storage_account_url'),
                 'video_files_authentication_type': form_data.get('video_files_authentication_type', 'key'),
-                'video_files_key': form_data.get('video_files_key', '').strip(),
+                'video_files_key': form_data.get('video_files_key', settings.get('video_files_key', '')).strip(),
                 'audio_files_storage_account_url': admin_secret('audio_files_storage_account_url'),
                 'audio_files_authentication_type': form_data.get('audio_files_authentication_type', 'key'),
-                'audio_files_key': form_data.get('audio_files_key', '').strip(),
+                'audio_files_key': form_data.get('audio_files_key', settings.get('audio_files_key', '')).strip(),
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',

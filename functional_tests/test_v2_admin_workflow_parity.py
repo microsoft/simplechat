@@ -240,13 +240,17 @@ def test_sub_settings_are_gated_by_their_capability():
         if field is None:
             problems.append(f"{key}: not declared")
             continue
-        depends_on = field.get("depends_on") or {}
-        if depends_on.get("key") != expected_gate:
-            problems.append(
-                f"{key}: gated on {depends_on.get('key')!r}, expected {expected_gate!r}"
-            )
-        if depends_on.get("equals") is not True:
-            problems.append(f"{key}: gate expects {depends_on.get('equals')!r}, not True")
+        # Read through the module's own iterator: a field may declare one
+        # condition or a list of them, and a list means every condition holds.
+        # Treating the list shape as a dict crashes rather than reporting.
+        conditions = list(fields_module.iter_field_dependencies(field))
+        gates = [c.get("key") for c in conditions]
+        if expected_gate not in gates:
+            problems.append(f"{key}: gated on {gates!r}, expected {expected_gate!r}")
+            continue
+        gate = next(c for c in conditions if c.get("key") == expected_gate)
+        if gate.get("equals") is not True:
+            problems.append(f"{key}: gate expects {gate.get('equals')!r}, not True")
 
     for key in UNGATED_KEYS:
         field = declared.get(key)
@@ -254,8 +258,9 @@ def test_sub_settings_are_gated_by_their_capability():
             problems.append(f"{key}: not declared")
             continue
         if field.get("depends_on"):
+            gates = [c.get("key") for c in fields_module.iter_field_dependencies(field)]
             problems.append(
-                f"{key}: gated on {field['depends_on'].get('key')!r}. It bounds both "
+                f"{key}: gated on {gates!r}. It bounds both "
                 "personal and group runs, so gating it on one capability hides a live "
                 "limit from administrators who use the other."
             )

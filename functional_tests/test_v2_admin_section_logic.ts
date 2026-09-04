@@ -1,8 +1,8 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.072
-// Implemented in: 0.261.072
+// Version: 0.261.082
+// Implemented in: 0.261.082
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document

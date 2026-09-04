@@ -2,8 +2,8 @@
 # test_v2_admin_settings_secret_handling.py
 """
 Functional test for credential handling on the V2 Admin Settings endpoint.
-Version: 0.261.072
-Implemented in: 0.261.072
+Version: 0.261.082
+Implemented in: 0.261.082
 
 The server-rendered admin form runs every settings document through
 ``redact_admin_settings_secrets_for_form`` before rendering, so a stored key
@@ -58,7 +58,7 @@ def test_get_does_not_return_the_raw_settings_document():
     """Returning get_settings() untouched hands every credential to the browser."""
     print("Testing that the settings GET redacts before responding...")
 
-    assert_app_version_at_least("0.261.072")
+    assert_app_version_at_least("0.261.082")
 
     source = read_route_source()
 
@@ -195,7 +195,7 @@ def test_declared_secrets_are_known_to_the_form_redaction_list():
     """A schema secret absent from the V1 list is still exposed by the old page."""
     print("\nTesting declared secrets against the server-rendered redaction list...")
 
-    settings_source = (APP_ROOT / "functions_settings.py").read_text(encoding="utf-8")
+    settings_source = (APP_ROOT / "admin_settings_secret_utils.py").read_text(encoding="utf-8")
     form_list = re.search(
         r"ADMIN_SETTINGS_FORM_SECRET_FIELDS = \((.*?)\)", settings_source, re.DOTALL
     )
@@ -219,7 +219,7 @@ def test_declared_secrets_are_known_to_the_form_redaction_list():
         "classic admin page would still render them in plain text. Add them to "
         "ADMIN_SETTINGS_FORM_SECRET_FIELDS (or "
         "ADMIN_SETTINGS_NESTED_SECRET_FIELDS for a dotted path) in "
-        "functions_settings.py:\n  " + "\n  ".join(missing)
+        "admin_settings_secret_utils.py:\n  " + "\n  ".join(missing)
     )
 
     print(
