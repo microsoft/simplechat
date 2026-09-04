@@ -231,6 +231,14 @@ def _build_replayed_document_context(original_metadata):
             workspace_search.get('classification')
             or workspace_search.get('classifications')
         ),
+        # Restored alongside the document ids so a retry or edit reproduces the same search.
+        # A tag filter dropped here silently widens the replay, which reads as the assistant
+        # answering a different question the second time it is asked.
+        'tags': (
+            workspace_search.get('tags')
+            or workspace_search.get('tags_filter')
+            or []
+        ),
         'active_group_ids': workspace_search.get('active_group_ids') or [],
         'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
     }

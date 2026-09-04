@@ -19,6 +19,17 @@ export interface ScopeState {
     activeGroupId?: string | null;
     /** The public workspace the user is currently working in, if any. */
     activePublicWorkspaceId?: string | null;
+    /**
+     * Groups named by the composer's context chips.
+     *
+     * Without these a chip pointing at a group document is unreachable: the server filters the
+     * requested ids down to what the caller may see, and a group whose id was never sent is not
+     * in that set. The document would simply be missing from the answer, with nothing to say
+     * why -- which is the same failure this file was written about, arriving by a new route.
+     */
+    contextGroupIds?: readonly string[];
+    /** Public workspaces named by the composer's context chips, for the same reason. */
+    contextPublicWorkspaceIds?: readonly string[];
 }
 
 export interface DocumentScopeRequest {
@@ -33,18 +44,37 @@ function id(value: unknown): string {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+/** Union of the workspace currently in play and any the chips name, in that order. */
+function mergeIds(active: unknown, fromContext: readonly string[] | undefined): string[] {
+    const merged: string[] = [];
+    const seen = new Set<string>();
+
+    for (const candidate of [id(active), ...(fromContext ?? [])]) {
+        const value = id(candidate);
+        if (value && !seen.has(value)) {
+            seen.add(value);
+            merged.push(value);
+        }
+    }
+    return merged;
+}
+
 /**
  * Resolve the scope for a document search.
  *
- * Personal documents are always in scope: the interface has no control for excluding them,
- * so treating them as always selected matches what the user sees.
+ * Personal documents are always in scope. That was originally because the interface had no
+ * control for excluding them, and it stays true now that the chip row does: narrowing the
+ * scope to the kinds the chips happen to mention would drop personal results that the caller
+ * never asked to exclude, and a search that silently covers less is the harder failure to
+ * notice. The real narrowing is done by `selected_document_ids` and `tags_filter`, which
+ * constrain the result set directly rather than by omission.
  */
 export function resolveDocumentScope(scope: ScopeState | undefined): DocumentScopeRequest {
-    const groupId = id(scope?.activeGroupId);
-    const publicId = id(scope?.activePublicWorkspaceId);
-
-    const groupIds = groupId ? [groupId] : [];
-    const publicIds = publicId ? [publicId] : [];
+    const groupIds = mergeIds(scope?.activeGroupId, scope?.contextGroupIds);
+    const publicIds = mergeIds(
+        scope?.activePublicWorkspaceId,
+        scope?.contextPublicWorkspaceIds,
+    );
 
     // Personal is always in play, so any additional workspace widens the search to 'all'
     // rather than replacing it.

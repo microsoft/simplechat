@@ -2,6 +2,34 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.087)**
+
+#### New Features
+
+*   **Choose Which Documents A Message Uses, And See The Choice**
+    *   The **Documents** button was previously a plain on/off: it meant "search my documents", with no way to say *which* ones and nothing on screen describing what a message would actually look at.
+    *   **You can now name them three ways.** Type `#` in the message box and search; open the Documents picker and tick them; or select documents in your workspace and press **Chat**. Tags have a chat action of their own now too.
+    *   **A reference shows up in two places on purpose.** It becomes a removable chip above the message box, grouped by workspace, and it stays inside your message as `#[Q3 Contract.pdf]` — rendered as a chip rather than raw brackets — so "compare `#[Q3 Contract.pdf]` against `#[Q2 Contract.pdf]`" still reads as a sentence after it is sent. Removing the chip removes the text, and editing the text retires the chip.
+    *   **The row condenses as it fills.** Up to five references show by name; beyond that each workspace collapses to a count you can open, so a long selection does not push the message box off the screen.
+    *   **The `#` menu searches everywhere at once** — your personal workspace, every group you belong to, and every visible public workspace — plus tags and whole workspaces. A scope that is briefly unavailable no longer empties the menu of everything else.
+    *   **The Documents picker opens upward and has a search box**, which the V2 dropdowns did not, and groups results by workspace. The original "search all my documents" behaviour is still there as the first row.
+    *   Documents and tags chosen together are now combined additively, so a document chip beside an unrelated tag chip no longer matches nothing. Selecting several tags still requires a document to carry all of them.
+    *   (Ref: `lib/chatContext.ts`, `lib/chatContextTokens.ts`, `lib/contextMentions.ts`, `components/chat/ContextChips.tsx`, `components/chat/DocumentPickerPopover.tsx`, [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
+
+#### Bug Fixes
+
+*   **Chat From The Workspace Left The V2 Interface**
+    *   Selecting documents in the V2 workspace and pressing **Chat** performed a full page load into the *classic* chat page, quietly moving the user out of V2 by the action most likely to follow choosing a document. It now opens the V2 composer with those documents already referenced.
+    *   (Ref: `DocumentExplorer.onChat`, `lib/chatContextHandoff.ts`)
+
+*   **Retrying A Tag-Filtered Message Searched More Widely Than The Original**
+    *   The streaming chat path — the one the V2 interface uses — recorded which documents a message searched but not which tags, while the non-streaming path recorded both. Retrying or editing such a message therefore replayed a broader search than the one that produced the original answer, which reads as the assistant answering a different question the second time it is asked.
+    *   (Ref: `route_backend_chats.py` `workspace_search` metadata, `route_backend_conversations._build_replayed_document_context`)
+
+*   **Planned Documents Were Listed As Raw Identifiers**
+    *   Each step of an orchestration plan listed the documents it would read as bare uuids. Deciding whether the planner picked the right document is the entire purpose of showing the plan before it runs, and `8f14e45f-ceea-467a-…` does not support that decision. Steps now list documents by name, falling back to the id only when the document can no longer be read.
+    *   (Ref: `lib/documentTitles.ts`, `components/chat/OrchestrationRunView.tsx`)
+
 ### **(v0.261.086)**
 
 #### Bug Fixes

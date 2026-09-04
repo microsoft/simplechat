@@ -3,7 +3,7 @@
 // and the capability toggles that map onto the /api/chat/stream request fields.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
     ArrowUp,
@@ -35,6 +35,48 @@ import { agentSelectionKey } from '../../lib/agents';
 import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestSelection';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { resolveGating } from '../../lib/composerGating';
+import { resolveDocumentScope } from '../../lib/documentScope';
+import {
+    addContextItem,
+    contextDocumentIds,
+    contextScopes,
+    contextTags,
+    hasContextItem,
+    removeContextItem,
+    type ContextItem,
+    type ContextOrigin,
+} from '../../lib/chatContext';
+import {
+    appendContextToken,
+    insertContextToken,
+    readContextQuery,
+    reconcileContextItems,
+    removeContextToken,
+    type ContextQuery,
+} from '../../lib/chatContextTokens';
+import {
+    candidateToContextItem,
+    type ContextCandidate,
+} from '../../lib/contextMentions';
+import { ContextChips } from './ContextChips';
+import {
+    COMPOSER_TEXT_CLASS,
+    COMPOSER_TRANSPARENT_TEXT_STYLE,
+    ComposerHighlight,
+    useHighlightScrollSync,
+} from './ComposerHighlight';
+import {
+    ContextMenu,
+    useContextSuggestions,
+    type ContextSearchScope,
+} from './ContextMenu';
+import { DocumentPickerPopover } from './DocumentPickerPopover';
+import {
+    CONTEXT_HANDOFF_PARAMS,
+    readContextHandoff,
+    resolveContextHandoff,
+    type ContextHandoffState,
+} from '../../lib/chatContextHandoff';
 import type { ApprovalMode } from '../../lib/orchestration';
 import {
     cancelOrchestration,
@@ -76,7 +118,7 @@ import { promptNeedsFilling } from '../../lib/promptVariables';
 import { readPromptParam } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
 import { messageToPlainText } from '../../lib/messageText';
-import type { PromptOption } from '../../lib/types';
+import type { PromptOption, WorkspaceRef } from '../../lib/types';
 import {
     EMPTY_PROMPT_DRAFT,
     PromptEditorDialog,
@@ -206,6 +248,13 @@ export function Composer() {
     const [slash, setSlash] = useState<SlashQuery | null>(null);
     const [slashIndex, setSlashIndex] = useState(0);
 
+    /** The `#` token under the caret, when the menu should be offering references for it. */
+    const [contextQuery, setContextQuery] = useState<ContextQuery | null>(null);
+    const [contextIndex, setContextIndex] = useState(0);
+    /** Whether the Documents button's picker is open. */
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const backdropRef = useRef<HTMLDivElement>(null);
+
     /** The prompt whose variables are being filled in, if any. */
     const [fillingPrompt, setFillingPrompt] = useState<PromptOption | null>(null);
     /** A prompt being saved from what is currently written, if any. */
@@ -219,7 +268,7 @@ export function Composer() {
         imageGeneration: false,
         deepResearch: false,
         urlAccess: false,
-        selectedDocumentIds: [],
+        contextItems: [],
     });
 
     /**
@@ -368,6 +417,7 @@ export function Composer() {
     };
 
     useEffect(autoGrow, [text]);
+    useHighlightScrollSync(textareaRef, backdropRef, text);
 
     /**
      * Tell the other participants that this person is writing.
@@ -447,7 +497,8 @@ export function Composer() {
      * The ref guards against StrictMode running effects twice on mount: a state flag is still
      * false in the second invocation's closure, so the prompt would be inserted twice.
      */
-    const [searchParams] = useSearchParams();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const location = useLocation();
     const [linkedPromptId] = useState(() => readPromptParam(searchParams));
     const promptLinkConsumed = useRef(false);
     useEffect(() => {
@@ -699,10 +750,30 @@ export function Composer() {
         dispatch(text);
     };
 
-    const dispatch = (message: string) => {
-        void sendMessage(message, options);
+    /**
+     * Clear the draft once it has been sent.
+     *
+     * The chips go with the text, because they are two views of one thing. The references are
+     * not lost: they are in the message that was just sent, both in its wording and in its
+     * stored `requested_document_ids`. Keeping them here instead would leave a row of chips
+     * whose tokens are no longer in the box -- which the next keystroke would reconcile away,
+     * so the references would appear to survive the send and then vanish one character into
+     * the following message.
+     */
+    const clearDraft = () => {
         setText('');
         setMention(null);
+        setContextQuery(null);
+        setOptions((current) =>
+            current.contextItems.length === 0 ? current : { ...current, contextItems: [] },
+        );
+    };
+
+    const dispatch = (message: string) => {
+        // `options` is read before the clear below replaces it, so the request carries the
+        // references this message was written with.
+        void sendMessage(message, options);
+        clearDraft();
         // Sent, so the indicator other people can see must stop now rather than when the
         // idle timer happens to fire.
         stopTyping();
@@ -718,10 +789,27 @@ export function Composer() {
      * keeps the agent-XOR-model exclusivity the chat request already relies on.
      */
     const buildOrchestrationSeeds = (): Record<string, unknown> => {
+        const workspaces = contextScopes(options.contextItems);
+        const scope = resolveDocumentScope({
+            activeGroupId: bootstrap?.scope?.active_group_id,
+            activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
+            contextGroupIds: workspaces.groupIds,
+            contextPublicWorkspaceIds: workspaces.publicWorkspaceIds,
+        });
+
         const seeds: Record<string, unknown> = {
             web_search_enabled: options.webSearch,
-            selected_document_ids: options.selectedDocumentIds,
+            selected_document_ids: contextDocumentIds(options.contextItems),
+            // `resolve_seeds` reads doc_scope and the workspace ids alongside the document
+            // ids, and `seeds_are_explicit` turns the planner's candidate probe off once
+            // documents are named. Sending the ids without the scope that reaches them would
+            // suppress the probe and then find nothing.
+            ...scope,
         };
+        const tags = contextTags(options.contextItems);
+        if (tags.length > 0) {
+            seeds.tags = tags;
+        }
         Object.assign(
             seeds,
             buildSelectionFields({
@@ -755,8 +843,7 @@ export function Composer() {
             approvalMode: effectiveApprovalMode,
             seeds: buildOrchestrationSeeds(),
         });
-        setText('');
-        setMention(null);
+        clearDraft();
         stopTyping();
     };
 
@@ -791,6 +878,230 @@ export function Composer() {
         setMention(found);
         setMentionIndex(0);
     };
+
+    /* ---------------------------------------------------------------------- */
+    /* Context references                                                      */
+    /* ---------------------------------------------------------------------- */
+
+    const contextItems = options.contextItems;
+    const contextKeys = useMemo(
+        () => new Set(contextItems.map((item) => item.key)),
+        [contextItems],
+    );
+    const contextTokens = useMemo(
+        () => new Set(contextItems.map((item) => item.token)),
+        [contextItems],
+    );
+
+    /** Which workspaces the picker and the `#` menu may search. */
+    const searchScope: ContextSearchScope = useMemo(
+        () => ({
+            groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
+            publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
+            groupsEnabled: Boolean(features.enable_group_workspaces),
+            publicEnabled: Boolean(features.enable_public_workspaces),
+        }),
+        [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces],
+    );
+
+    const { candidates: contextCandidates, loading: contextLoading } = useContextSuggestions(
+        canPost ? (contextQuery?.query ?? null) : null,
+        searchScope,
+    );
+
+    const syncContext = (element: HTMLTextAreaElement) => {
+        if (!canPost) {
+            return;
+        }
+        const found = readContextQuery(element.value, element.selectionStart ?? 0);
+        setContextQuery(found);
+        setContextIndex(0);
+    };
+
+    /**
+     * Write new text and retire any reference it no longer names.
+     *
+     * Every path that changes the message goes through here, because the reconciliation is the
+     * thing that keeps a chip from outliving the token it belongs to -- and a chip that
+     * outlives its token still puts its document into the request.
+     */
+    const applyText = (value: string) => {
+        setText(value);
+        setOptions((current) => {
+            const kept = reconcileContextItems(value, current.contextItems);
+            return kept.length === current.contextItems.length
+                ? current
+                : { ...current, contextItems: kept };
+        });
+    };
+
+    const addContextCandidate = (candidate: ContextCandidate, origin: ContextOrigin = 'user') => {
+        if (hasContextItem(contextItems, candidate.key)) {
+            return;
+        }
+        // Built against the current row so the label collision check sees the tokens already
+        // in play. Nothing is mutated here; both updates below are plain state writes.
+        const item = candidateToContextItem(candidate, contextItems, origin);
+        // The token is appended rather than spliced at the caret: the picker has no caret
+        // position to speak of, and the reference still ends up in the sentence.
+        setText((value) => appendContextToken(value, item.token));
+        setOptions((current) => ({
+            ...current,
+            contextItems: addContextItem(current.contextItems, item),
+        }));
+    };
+
+    /** Pick from the `#` menu: the token replaces the query it was typed for. */
+    const applyContextCandidate = (candidate: ContextCandidate) => {
+        const element = textareaRef.current;
+        if (!element || !contextQuery) {
+            return;
+        }
+
+        const { start, end } = contextQuery;
+        setContextQuery(null);
+
+        const focusAt = (caret: number) => {
+            window.requestAnimationFrame(() => {
+                element.focus();
+                element.setSelectionRange(caret, caret);
+            });
+        };
+
+        if (hasContextItem(contextItems, candidate.key)) {
+            // Already referenced. The half-typed `#doc` is still cleared, so it does not stay
+            // behind looking like a reference that failed to resolve.
+            setText(`${text.slice(0, start)}${text.slice(end)}`);
+            focusAt(start);
+            return;
+        }
+
+        const item = candidateToContextItem(candidate, contextItems);
+        const next = insertContextToken(text, start, end, item.token);
+        setText(next.text);
+        setOptions((current) => ({
+            ...current,
+            contextItems: addContextItem(current.contextItems, item),
+        }));
+        focusAt(next.caret);
+    };
+
+    /**
+     * Take a reference off the row, and its text with it.
+     *
+     * The token is only stripped when no *other* remaining chip still uses it. Two chips can
+     * share one token when two documents share a title, and blanking the text while a second
+     * chip still points at it would orphan that chip: reconciliation drops it on the next
+     * keystroke, but a message sent before that keystroke would still carry its document id --
+     * grounding the answer in something the user had already removed.
+     */
+    const removeContextChip = (item: ContextItem) => {
+        const remaining = removeContextItem(contextItems, item.key);
+        if (!remaining.some((entry) => entry.token === item.token)) {
+            setText((value) => removeContextToken(value, item.token));
+        }
+        setOptions((current) => ({
+            ...current,
+            contextItems: removeContextItem(current.contextItems, item.key),
+        }));
+    };
+
+    const removeContextChips = (items: ContextItem[]) => {
+        const dropped = new Set(items.map((item) => item.key));
+        const remaining = contextItems.filter((entry) => !dropped.has(entry.key));
+        const stillReferenced = new Set(remaining.map((entry) => entry.token));
+        const strip = [...new Set(items.map((item) => item.token))].filter(
+            (token) => !stillReferenced.has(token),
+        );
+
+        setText((value) =>
+            strip.reduce((carry, token) => removeContextToken(carry, token), value),
+        );
+        setOptions((current) => ({
+            ...current,
+            contextItems: current.contextItems.filter((entry) => !dropped.has(entry.key)),
+        }));
+    };
+
+    /** Used by the picker, where clicking a ticked row unticks it. */
+    const toggleContextCandidate = (candidate: ContextCandidate) => {
+        const existing = contextItems.find((item) => item.key === candidate.key);
+        if (existing) {
+            removeContextChip(existing);
+            return;
+        }
+        addContextCandidate(candidate);
+    };
+
+    const clearContextChips = () => removeContextChips(contextItems);
+
+    /**
+     * Adopt a selection handed over from the workspace.
+     *
+     * The hand-off is captured during the first render rather than read inside the effect, for
+     * the same reason the prompt link above is: effects that rewrite the query string also run
+     * on mount, and whichever ran first would decide whether the selection survived.
+     *
+     * The ref guards against StrictMode running effects twice, which would otherwise seed the
+     * chips -- and append their tokens -- a second time.
+     */
+    const [linkedHandoff] = useState(() => readContextHandoff(searchParams));
+    const [linkedHandoffState] = useState(
+        () => (location.state ?? null) as ContextHandoffState | null,
+    );
+    const handoffApplied = useRef(false);
+
+    useEffect(() => {
+        if (handoffApplied.current || !linkedHandoff || !canPost) {
+            return;
+        }
+        handoffApplied.current = true;
+
+        const controller = new AbortController();
+        void resolveContextHandoff(linkedHandoff, {
+            groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
+            publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
+            state: linkedHandoffState,
+            signal: controller.signal,
+        })
+            .then((items) => {
+                if (controller.signal.aborted || items.length === 0) {
+                    return;
+                }
+                setOptions((current) => ({
+                    ...current,
+                    // Arriving with documents named is a request to search them, so the
+                    // toggle is not left off underneath a full chip row.
+                    documentSearch: true,
+                    contextItems: items.reduce(
+                        (carry, item) => addContextItem(carry, item),
+                        current.contextItems,
+                    ),
+                }));
+                setText((value) =>
+                    items.reduce((carry, item) => appendContextToken(carry, item.token), value),
+                );
+                textareaRef.current?.focus();
+            })
+            .catch(() => {
+                // The composer is still usable; the references simply have to be re-picked.
+            });
+
+        // Stripped so reloading or re-sharing the link does not silently re-apply a selection
+        // the user may since have cleared.
+        setSearchParams(
+            (current) => {
+                const next = new URLSearchParams(current);
+                for (const key of CONTEXT_HANDOFF_PARAMS) {
+                    next.delete(key);
+                }
+                return next;
+            },
+            { replace: true },
+        );
+
+        return () => controller.abort();
+    }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope]);
 
     const applySuggestion = (suggestion: MentionSuggestion) => {
         const element = textareaRef.current;
@@ -851,7 +1162,9 @@ export function Composer() {
         const end = range?.end ?? element?.selectionEnd ?? start;
 
         const result = insertPromptText(text, start, end, addition);
-        setText(result.text);
+        // Through applyText because a prompt inserted over a selection can overwrite a
+        // reference, and the chip for it has to go with the text it replaced.
+        applyText(result.text);
         setSlash(null);
         setMention(null);
 
@@ -995,6 +1308,35 @@ export function Composer() {
     };
 
     const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // The context menu owns these keys first. A `#` token and a `/` or `@` token cannot
+        // both be under the caret, so the order between the three is arbitrary — but all
+        // three must be tested before the send, or Enter posts a message containing a
+        // half-typed reference instead of completing it.
+        if (contextQuery && contextCandidates.length > 0) {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setContextIndex((index) => (index + 1) % contextCandidates.length);
+                return;
+            }
+            if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setContextIndex(
+                    (index) => (index - 1 + contextCandidates.length) % contextCandidates.length,
+                );
+                return;
+            }
+            if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault();
+                applyContextCandidate(contextCandidates[contextIndex]);
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setContextQuery(null);
+                return;
+            }
+        }
+
         // The slash menu owns these keys while it has something to offer, and is tested before
         // the mention menu because a `/` token and an `@` token cannot both be under the caret.
         if (slashResults.length > 0) {
@@ -1136,6 +1478,33 @@ export function Composer() {
                         />
                     )}
 
+                    {contextQuery && !pickerOpen && (
+                        <ContextMenu
+                            candidates={contextCandidates}
+                            loading={contextLoading}
+                            activeIndex={contextIndex}
+                            selectedKeys={contextKeys}
+                            onSelect={applyContextCandidate}
+                        />
+                    )}
+
+                    {pickerOpen && (
+                        <DocumentPickerPopover
+                            scope={searchScope}
+                            searchAll={options.documentSearch}
+                            selectedKeys={contextKeys}
+                            onToggleSearchAll={() =>
+                                setOptions((current) => ({
+                                    ...current,
+                                    documentSearch: !current.documentSearch,
+                                }))
+                            }
+                            onToggle={toggleContextCandidate}
+                            onClear={clearContextChips}
+                            onClose={() => setPickerOpen(false)}
+                        />
+                    )}
+
                     {replyTo && (
                         <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
                             <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
@@ -1159,43 +1528,67 @@ export function Composer() {
                     <label htmlFor="composer-input" className="sr-only">
                         Message
                     </label>
-                    <textarea
-                        id="composer-input"
-                        ref={textareaRef}
-                        rows={1}
-                        value={text}
-                        disabled={!canPost}
-                        onChange={(event) => {
-                            setText(event.target.value);
-                            syncMention(event.target);
-                            syncSlash(event.target);
-                            noteTyping(event.target.value);
-                        }}
-                        // The caret can move without the value changing — clicking, or an
-                        // arrow key — and the token under it changes with it.
-                        onSelect={(event) => {
-                            syncMention(event.currentTarget);
-                            syncSlash(event.currentTarget);
-                        }}
-                        onBlur={stopTyping}
-                        onKeyDown={onKeyDown}
-                        placeholder={
-                            checkingAccess
-                                ? 'Checking your access to this conversation…'
-                                : awaitingInvite
-                                  ? 'Join this conversation to reply'
-                                  : !canPost
-                                    ? 'You do not have permission to write in this conversation'
-                                    : shared
-                                      ? 'Message the group, or @mention a model or agent to ask the assistant…'
-                                      : 'Send a message…'
-                        }
-                        className={clsx(
-                            'w-full resize-none bg-transparent px-3 py-2.5 text-[15px] leading-relaxed',
-                            'text-text-1 placeholder:text-text-3 focus:outline-none',
-                            'disabled:cursor-not-allowed',
-                        )}
+
+                    <ContextChips
+                        items={contextItems}
+                        onRemove={removeContextChip}
+                        onRemoveAll={removeContextChips}
+                        onClear={clearContextChips}
                     />
+
+                    {/* The backdrop is positioned against this wrapper rather than the whole
+                        composer, so it lines up with the textarea and not with the toolbar
+                        below it. */}
+                    <div className="relative">
+                        <ComposerHighlight
+                            text={text}
+                            tokens={contextTokens}
+                            backdropRef={backdropRef}
+                        />
+                        <textarea
+                            id="composer-input"
+                            ref={textareaRef}
+                            rows={1}
+                            value={text}
+                            disabled={!canPost}
+                            onChange={(event) => {
+                                applyText(event.target.value);
+                                syncMention(event.target);
+                                syncSlash(event.target);
+                                syncContext(event.target);
+                                noteTyping(event.target.value);
+                            }}
+                            // The caret can move without the value changing — clicking, or an
+                            // arrow key — and the token under it changes with it.
+                            onSelect={(event) => {
+                                syncMention(event.currentTarget);
+                                syncSlash(event.currentTarget);
+                                syncContext(event.currentTarget);
+                            }}
+                            onBlur={stopTyping}
+                            onKeyDown={onKeyDown}
+                            placeholder={
+                                checkingAccess
+                                    ? 'Checking your access to this conversation…'
+                                    : awaitingInvite
+                                      ? 'Join this conversation to reply'
+                                      : !canPost
+                                        ? 'You do not have permission to write in this conversation'
+                                        : shared
+                                          ? 'Message the group, or @mention a model or agent to ask the assistant…'
+                                          : 'Send a message, or type # to add a document…'
+                            }
+                            // Metrics come from the shared constant so the backdrop cannot
+                            // drift out of step with the text it is drawing behind.
+                            className={clsx(
+                                COMPOSER_TEXT_CLASS,
+                                'relative resize-none bg-transparent',
+                                'placeholder:text-text-3 focus:outline-none',
+                                'selection:bg-accent-soft disabled:cursor-not-allowed',
+                            )}
+                            style={COMPOSER_TRANSPARENT_TEXT_STYLE}
+                        />
+                    </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
                         {orchestrationAvailable && (
@@ -1324,16 +1717,15 @@ export function Composer() {
                                 <span className="mx-0.5 h-6 w-px bg-edge-strong" aria-hidden="true" />
 
                                 <ToolToggle
-                                    active={options.documentSearch}
+                                    active={options.documentSearch || contextItems.length > 0}
                                     disabled={gating.disabledByImageGeneration}
-                                    onClick={() =>
-                                        setOptions((current) => ({
-                                            ...current,
-                                            documentSearch: !current.documentSearch,
-                                        }))
-                                    }
+                                    onClick={() => setPickerOpen((open) => !open)}
                                     icon={<Search size={15} />}
-                                    label="Documents"
+                                    label={
+                                        contextItems.length > 0
+                                            ? `Documents · ${contextItems.length}`
+                                            : 'Documents'
+                                    }
                                 />
 
                                 {gating.showWeb && (
