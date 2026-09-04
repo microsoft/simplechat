@@ -48,6 +48,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   It now sits with the agent runtime settings as a read-only entry that reports the current mode.
     *   (Ref: `enable_multi_agent_orchestration`, `admin_settings_fields.py`)
 
+*   **Defects Found While Combining The Admin Settings Groups**
+    *   Six efforts described different admin settings groups at the same time, all writing into the same registries. Combining them surfaced four faults that produced code which parsed, imported and ran — three would have shipped silently.
+    *   **Nine settings sections were declared twice.** Python keeps the last definition of a duplicate key, so nothing failed; the new registry integrity test caught it on its first run.
+    *   **A section emptied earlier had quietly gained a new setting.** The Actions Configuration section was emptied when the Text action moved in with the other built-in actions, and the Default Embedding Model action was moved into it afterwards. A check now confirms that emptying a section never takes a setting with it.
+    *   **Fact Memory was declared as editable in two places at once.** It is a chat capability that also decides whether agents get a memory action, so it appears in both surfaces; only the Chat declaration may be the editable one, or which control governs saving depends on declaration order.
+    *   **A test crashed once a duplicate was resolved.** A workflow check read a setting's dependency as a single condition rather than a chain. The chained setting had existed for some time but was masked by a duplicate section declaration; fixing the duplicate made it visible.
+    *   (Ref: [Admin Settings Registry Merge Fixes](fixes/ADMIN_SETTINGS_REGISTRY_MERGE_FIXES.md))
+
 #### User Interface Enhancements
 
 *   **Agent Orchestration No Longer Shows A Choice That Does Not Exist**
