@@ -16,6 +16,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Choose Which Documents A Message Uses, And See The Choice**
+    *   The **Documents** button was previously a plain on/off: it meant "search my documents", with no way to say *which* ones and nothing on screen describing what a message would actually look at.
+    *   **You can now name them three ways.** Type `#` in the message box and search; open the Documents picker and tick them; or select documents in your workspace and press **Chat**. Tags have a chat action of their own now too.
+    *   **A reference shows up in two places on purpose.** It becomes a removable chip above the message box, grouped by workspace, and it stays inside your message as `#[Q3 Contract.pdf]` — rendered as a chip rather than raw brackets — so "compare `#[Q3 Contract.pdf]` against `#[Q2 Contract.pdf]`" still reads as a sentence after it is sent. Removing the chip removes the text, and editing the text retires the chip.
+    *   **The row condenses as it fills.** Up to five references show by name; beyond that each workspace collapses to a count you can open, so a long selection does not push the message box off the screen.
+    *   **The `#` menu searches everywhere at once** — your personal workspace, every group you belong to, and every visible public workspace — plus tags and whole workspaces. A scope that is briefly unavailable no longer empties the menu of everything else.
+    *   **The Documents picker opens upward and has a search box**, which the V2 dropdowns did not, and groups results by workspace. The original "search all my documents" behaviour is still there as the first row.
+    *   Documents and tags chosen together are now combined additively, so a document chip beside an unrelated tag chip no longer matches nothing. Selecting several tags still requires a document to carry all of them.
+    *   (Ref: `lib/chatContext.ts`, `lib/chatContextTokens.ts`, `lib/contextMentions.ts`, `components/chat/ContextChips.tsx`, `components/chat/DocumentPickerPopover.tsx`, [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
+
 *   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
     *   Image generation previously required a dedicated `gpt-image` or DALL-E deployment. A deployment like that is separately approved and is not offered in every subscription or region, so a tenant without one could not switch image generation on at all — the deployment list was filtered to image models, and nothing appeared to select.
     *   A chat deployment such as `gpt-5.6` can now be selected instead. It has no image endpoint, so SimpleChat asks it through the Responses API's image generation tool rather than the images endpoint, and works out which of the two applies from the model behind the deployment you chose. There is no new setting to configure.
@@ -43,14 +53,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   All sixteen are now configurable, grouped as Approval, Capabilities, Limits and Planner Model.
     *   (Ref: `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md))
 
-#### User Interface Enhancements
-
-*   **The Redundant API Management Switch Is Gone From AI Models**
-    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
-    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
-    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](../admin/ai-models.md))
-
 #### Bug Fixes
+
+*   **Chat From The Workspace Left The V2 Interface**
+    *   Selecting documents in the V2 workspace and pressing **Chat** performed a full page load into the *classic* chat page, quietly moving the user out of V2 by the action most likely to follow choosing a document. It now opens the V2 composer with those documents already referenced.
+    *   (Ref: `DocumentExplorer.onChat`, `lib/chatContextHandoff.ts`)
+
+*   **Retrying A Tag-Filtered Message Searched More Widely Than The Original**
+    *   The streaming chat path — the one the V2 interface uses — recorded which documents a message searched but not which tags, while the non-streaming path recorded both. Retrying or editing such a message therefore replayed a broader search than the one that produced the original answer, which reads as the assistant answering a different question the second time it is asked.
+    *   (Ref: `route_backend_chats.py` `workspace_search` metadata, `route_backend_conversations._build_replayed_document_context`)
+
+*   **Planned Documents Were Listed As Raw Identifiers**
+    *   Each step of an orchestration plan listed the documents it would read as bare uuids. Deciding whether the planner picked the right document is the entire purpose of showing the plan before it runs, and `8f14e45f-ceea-467a-…` does not support that decision. Steps now list documents by name, falling back to the id only when the document can no longer be read.
+    *   (Ref: `lib/documentTitles.ts`, `components/chat/OrchestrationRunView.tsx`)
 
 *   **Documents An Orchestrated Answer Used Now Appear In The Documents Tab**
     *   A plan would search, find the right material, and cite it correctly in its answer — and the Documents tab would still say "No documents used yet".
@@ -61,6 +76,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **The Plan Bar No Longer Lingers After A Run Finishes**
     *   A collapsed plan summary stayed pinned in the conversation after its run had settled, competing with the answer it had produced. It is now removed once the run is complete; the full plan remains in the side panel, where it can be reopened.
     *   (Ref: `OrchestrationPlanCard.tsx`)
+
+#### User Interface Enhancements
+
+*   **The Redundant API Management Switch Is Gone From AI Models**
+    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
+    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
+    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](../admin/ai-models.md))
 
 ### **(v0.261.086)**
 
