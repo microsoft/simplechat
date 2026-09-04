@@ -16,6 +16,15 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
+    *   Image generation previously required a dedicated `gpt-image` or DALL-E deployment. A deployment like that is separately approved and is not offered in every subscription or region, so a tenant without one could not switch image generation on at all — the deployment list was filtered to image models, and nothing appeared to select.
+    *   A chat deployment such as `gpt-5.6` can now be selected instead. It has no image endpoint, so SimpleChat asks it through the Responses API's image generation tool rather than the images endpoint, and works out which of the two applies from the model behind the deployment you chose. There is no new setting to configure.
+    *   **Fetch deployments** now lists chat models alongside image models, and excludes embedding deployments, which can produce an image either way.
+    *   A chat deployment offers whole-image regeneration only. Changing part of an image needs the images API, and the editor says so before you paint a region rather than after.
+    *   Existing configurations are untouched. Every deployment that could be selected before still takes the route it always did, including one whose model name was never recorded and one reached through API Management.
+    *   Worth one test generation after selecting a chat deployment: the tool is served by an image model behind the scenes, so a subscription with no image capability at all may still be refused.
+    *   (Ref: `functions_image_api_route.py`, `functions_image_generation.request_generated_image_source`, `/api/models/image`, [Image generation through Responses-capable chat models](features/IMAGE_GENERATION_RESPONSES_MODELS.md))
+
 *   **Orchestration Can Now Reach Agents, Linked Pages And Deep Research**
     *   Orchestration could plan around a smaller world than you could reach by hand. Three things sitting in the composer as buttons — your agents, reading the links you pasted, and deep research — were invisible to the planner, so asking for them in plain language got you a plan that quietly did something simpler.
     *   **Your agents can now be part of a plan.** The planner is shown the agents you can reach and picks one where the question calls for it. Picking an agent yourself still wins outright: a plan built around your choice rather than around a guess at it.
@@ -33,6 +42,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The new admin interface offered exactly one orchestration setting — the on switch — while the classic interface had sixteen. Approval mode, the countdown, the capability list, every limit and the planner model were all unreachable, so turning orchestration on there meant accepting whatever the defaults happened to be.
     *   All sixteen are now configurable, grouped as Approval, Capabilities, Limits and Planner Model.
     *   (Ref: `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md))
+
+#### User Interface Enhancements
+
+*   **The Redundant API Management Switch Is Gone From AI Models**
+    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
+    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
+    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](../admin/ai-models.md))
 
 #### Bug Fixes
 
