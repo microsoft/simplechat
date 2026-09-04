@@ -29,6 +29,9 @@ from model_endpoint_clients import (
     build_anthropic_chat_client,
     build_openai_style_chat_client,
     infer_model_endpoint_protocol,
+    normalize_anthropic_messages_url,
+    normalize_openai_style_base_url,
+    resolve_custom_openai_base_url,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import DefaultAzureCredential, ClientSecretCredential, get_bearer_token_provider
@@ -320,6 +323,7 @@ def register_route_backend_models(bp):
         deployment_name="",
         api_type="",
         anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+        url_mode="",
     ):
         client, runtime_protocol = build_model_endpoint_sync_chat_client(
             auth_settings,
@@ -328,6 +332,7 @@ def register_route_backend_models(bp):
             api_version,
             deployment_name=deployment_name,
             api_type=api_type,
+            url_mode=url_mode,
             anthropic_version=anthropic_version,
             allow_private_custom_endpoints=bool(
                 get_settings().get("allow_private_custom_model_endpoints", False)
@@ -337,6 +342,22 @@ def register_route_backend_models(bp):
             f"Inference client provider={provider} protocol={runtime_protocol}"
         )
         return client
+
+    def describe_resolved_request_url(provider, endpoint, api_type, url_mode, runtime_protocol):
+        """Return the URL SimpleChat actually calls, for display after a test."""
+        try:
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
+                return normalize_anthropic_messages_url(
+                    endpoint,
+                    direct_custom=provider == MODEL_ENDPOINT_PROVIDER_CUSTOM,
+                )
+            if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+                if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+                    return resolve_custom_openai_base_url(endpoint, api_type, url_mode)
+                return normalize_openai_style_base_url(endpoint)
+            return str(endpoint or "")
+        except Exception:
+            return str(endpoint or "")
 
     def fetch_foundry_project_deployments(endpoint, api_version, auth_settings, project_name=None):
         if not endpoint:
@@ -543,6 +564,7 @@ def register_route_backend_models(bp):
                 deployment_name=request_model,
                 api_type=api_type,
                 anthropic_version=anthropic_version,
+                url_mode=connection.get("url_mode") or "",
             )
             response = gpt_client.chat.completions.create(
                 model=request_model,
@@ -550,7 +572,24 @@ def register_route_backend_models(bp):
             )
 
             if response:
-                return jsonify({"success": True}), 200
+                # Report what was actually called. URL normalization can rewrite
+                # the configured endpoint, and that rewrite was previously
+                # invisible, so a working test could still hide a surprise.
+                return jsonify({
+                    "success": True,
+                    "resolved": {
+                        "request_url": describe_resolved_request_url(
+                            provider,
+                            endpoint,
+                            api_type,
+                            connection.get("url_mode") or "",
+                            runtime_protocol,
+                        ),
+                        "protocol": runtime_protocol,
+                        "api_type": api_type,
+                        "request_model": request_model,
+                    },
+                }), 200
 
             return jsonify({"error": "No response returned from model."}), 400
 

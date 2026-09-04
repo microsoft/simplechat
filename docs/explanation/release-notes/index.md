@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.014 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.013 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.012 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -79,6 +80,17 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.014)**
+
+#### Bug Fixes
+
+*   **Custom Endpoint URLs Are No Longer Rewritten Into 404s**
+    *   SimpleChat appended `/v1` to every Custom OpenAI-compatible endpoint, even when the configured URL already said where the API lived. A gateway at `https://apim.example.com/inference/chat/completions` was called at `https://apim.example.com/inference/v1/`, and any base carrying its own version segment, such as `/v1beta` or `/v2`, was broken the same way.
+    *   `/v1` is now appended only when the URL does not already name the API surface. A path whose last segment is a version is left alone, and a full operation URL is treated as stating the base exactly.
+    *   Added a **Use this URL exactly as entered** option for gateways that serve the API at a path SimpleChat cannot infer.
+    *   **Test Connection now reports the URL that was actually called.** URL normalization rewrites the configured endpoint, and that rewrite was previously invisible, so a misdirected request looked identical to a correct one.
+    *   (Ref: `model_endpoint_clients.py`, `route_backend_models.py`, `_multiendpoint_modal.html`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
 ### **(v0.261.013)**
 

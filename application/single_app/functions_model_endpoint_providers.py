@@ -30,7 +30,6 @@ validation, and route layers without creating import cycles.
 
 from typing import Any, Dict, Tuple
 
-
 MODEL_ENDPOINT_PROVIDER_CUSTOM = "custom"
 
 MODEL_ENDPOINT_API_TYPE_OPENAI = "openai"
@@ -49,6 +48,19 @@ URL_POLICY_APPEND_V1_IF_MISSING = "append_v1_if_missing"
 URL_POLICY_AS_GIVEN = "as_given"
 URL_POLICY_AZURE_DEPLOYMENT = "azure_deployment"
 URL_POLICY_ANTHROPIC_MESSAGES = "anthropic_messages"
+
+# An administrator can override the provider's URL policy per endpoint. "auto"
+# uses the provider policy; "exact" forces the URL to be used exactly as entered,
+# which covers gateways that mount the API at a path SimpleChat cannot infer.
+CUSTOM_ENDPOINT_URL_MODE_AUTO = "auto"
+CUSTOM_ENDPOINT_URL_MODE_EXACT = "exact"
+CUSTOM_ENDPOINT_URL_MODES = (CUSTOM_ENDPOINT_URL_MODE_AUTO, CUSTOM_ENDPOINT_URL_MODE_EXACT)
+
+
+def normalize_custom_endpoint_url_mode(url_mode: Any) -> str:
+    """Return a supported URL mode, defaulting to the provider's own policy."""
+    normalized = str(url_mode or "").strip().lower()
+    return normalized if normalized in CUSTOM_ENDPOINT_URL_MODES else CUSTOM_ENDPOINT_URL_MODE_AUTO
 
 # Which model record field carries the identifier sent on the wire.
 MODEL_IDENTIFIER_MODEL_NAME = "model_name"

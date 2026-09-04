@@ -41,6 +41,7 @@ from functions_model_endpoint_providers import (
     URL_POLICY_AS_GIVEN,
     get_model_endpoint_provider,
     get_model_endpoint_provider_ui_options,
+    normalize_custom_endpoint_url_mode,
 )
 from functions_model_endpoint_types import (
     normalize_model_endpoint_api_type,
@@ -247,11 +248,74 @@ def test_ui_descriptors_are_complete():
         return False
 
 
+def test_url_policy_respects_existing_version_and_operation_paths():
+    """"/v1" must be appended only when the URL does not already say where the API lives."""
+    print("Testing URL append policy...")
+    try:
+        cases = [
+            # (configured URL, expected resolved base)
+            ("https://api.openai.com/v1", "https://api.openai.com/v1/"),
+            ("https://api.openai.com", "https://api.openai.com/v1/"),
+            ("https://api.gen.ai.mil", "https://api.gen.ai.mil/v1/"),
+            ("https://vllm.corp.example.com/v1", "https://vllm.corp.example.com/v1/"),
+            # A version segment already names the API surface.
+            ("https://gw.example.com/api/v2", "https://gw.example.com/api/v2/"),
+            ("https://x.example.com/v1beta", "https://x.example.com/v1beta/"),
+            # A full operation URL states the base exactly, so it must not gain /v1.
+            (
+                "https://apim.example.com/inference/chat/completions",
+                "https://apim.example.com/inference/",
+            ),
+        ]
+        for configured, expected in cases:
+            resolved = resolve_custom_openai_base_url(configured, MODEL_ENDPOINT_API_TYPE_OPENAI)
+            assert resolved == expected, (
+                f"{configured} resolved to {resolved}, expected {expected}"
+            )
+
+        print(f"URL append policy correct for {len(cases)} endpoint shapes")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
+def test_exact_url_mode_escape_hatch():
+    """url_mode "exact" must disable rewriting for any API type."""
+    print("Testing exact URL escape hatch...")
+    try:
+        assert normalize_custom_endpoint_url_mode("exact") == "exact"
+        assert normalize_custom_endpoint_url_mode("") == "auto"
+        assert normalize_custom_endpoint_url_mode("nonsense") == "auto"
+
+        gateway = "https://gw.example.com/llm/openai"
+        # Auto mode appends, because the path does not name a version.
+        assert resolve_custom_openai_base_url(
+            gateway, MODEL_ENDPOINT_API_TYPE_OPENAI
+        ) == f"{gateway}/v1/"
+        # Exact mode leaves it alone.
+        assert resolve_custom_openai_base_url(
+            gateway, MODEL_ENDPOINT_API_TYPE_OPENAI, "exact"
+        ) == f"{gateway}/"
+
+        print("Exact URL escape hatch passed")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
 def test_version_bumped():
     """The provider registry ships at or after its implementation version."""
     print("Testing config version...")
     try:
-        assert_app_version_at_least("0.261.012")
+        assert_app_version_at_least("0.261.014")
         print("Config version check passed")
         return True
     except Exception as e:
@@ -268,6 +332,8 @@ if __name__ == "__main__":
         test_every_registered_provider_is_reachable,
         test_unregistered_api_type_is_rejected,
         test_gemini_base_url_is_not_mangled,
+        test_url_policy_respects_existing_version_and_operation_paths,
+        test_exact_url_mode_escape_hatch,
         test_ui_descriptors_are_complete,
         test_version_bumped,
     ]

@@ -69,10 +69,39 @@ produces `…/v1beta/openai/v1/` and a 404.
 
 | Policy | Behaviour |
 |---|---|
-| `append_v1_if_missing` | Strip a trailing operation path, then append `/v1` unless the base already ends in `/v1` |
+| `append_v1_if_missing` | Append `/v1` only when the URL does not already name the API surface |
 | `as_given` | Use the configured URL exactly, normalizing only the trailing slash |
 | `azure_deployment` | Pass to the Azure OpenAI SDK as the resource endpoint |
 | `anthropic_messages` | Normalize to the Anthropic `/v1/messages` URL |
+
+`append_v1_if_missing` does not append when either of these is true:
+
+- **The last path segment is already a version**, matching `v` followed by digits
+  and optional qualifiers — `v1`, `v2`, `v1beta`, `v1alpha`.
+- **The URL is a full operation URL**, ending in `/chat/completions`,
+  `/responses`, or `/models`. Such a URL states the base exactly, so the
+  operation suffix is stripped and the remainder is used as given.
+
+Worked examples:
+
+| Configured | Resolved |
+|---|---|
+| `https://api.openai.com` | `https://api.openai.com/v1/` |
+| `https://api.gen.ai.mil/v1` | `https://api.gen.ai.mil/v1/` |
+| `https://gw.example.com/api/v2` | `https://gw.example.com/api/v2/` |
+| `https://apim.example.com/inference/chat/completions` | `https://apim.example.com/inference/` |
+| `https://generativelanguage.googleapis.com/v1beta/openai` | unchanged (`as_given`) |
+
+### The exact-URL escape hatch
+
+Some gateways mount the OpenAI surface at a path SimpleChat cannot infer, such as
+`https://gw.example.com/llm/openai`, where the API may live at that path or at
+`…/openai/v1`. Rather than guess, the endpoint editor offers **Use this URL
+exactly as entered**, stored as `connection.url_mode = "exact"`, which forces the
+`as_given` policy for any API type.
+
+Because the resolved URL is otherwise invisible, **Test Connection reports the
+URL that was actually called**, so a rewrite is always verifiable.
 
 ### Transport tiers
 
@@ -145,6 +174,9 @@ third-party or CDN asset is involved.
 - unregistered API types still being rejected, including by protocol inference;
 - Gemini's base URL not gaining a second `/v1`, while plain OpenAI keeps the
   appending behaviour;
+- the append rule leaving existing version segments and full operation URLs
+  alone, across seven real endpoint shapes;
+- the exact-URL escape hatch disabling rewriting for any API type;
 - every UI descriptor carrying the fields the admin JavaScript reads.
 
 `functional_tests/test_custom_model_endpoint_provider.py` additionally asserts

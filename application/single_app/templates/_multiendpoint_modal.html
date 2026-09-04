@@ -59,6 +59,17 @@
                         <label for="model-endpoint-endpoint" class="form-label" id="model-endpoint-endpoint-label">Endpoint Fully Qualified Domain Name (FQDN)</label>
                         <input type="text" class="form-control" id="model-endpoint-endpoint" />
                         <div class="form-text" id="model-endpoint-endpoint-help">For Azure OpenAI, paste the resource endpoint.</div>
+                        <div class="form-check mt-2 d-none" id="model-endpoint-url-mode-group">
+                            <input class="form-check-input" type="checkbox" id="model-endpoint-url-mode-exact" />
+                            <label class="form-check-label" for="model-endpoint-url-mode-exact">
+                                Use this URL exactly as entered
+                            </label>
+                            <div class="form-text">
+                                SimpleChat normally appends <code>/v1</code> when the URL does not already
+                                say where the API lives. Select this when your gateway serves the API at a
+                                path that cannot be inferred. Test Connection reports the URL actually called.
+                            </div>
+                        </div>
                     </div>
                     <div class="col-md-3" id="model-endpoint-project-api-version-group">
                         <label for="model-endpoint-project-api-version" class="form-label">Project API Version</label>

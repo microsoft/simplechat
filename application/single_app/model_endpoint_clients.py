@@ -3,6 +3,7 @@
 
 import json
 import asyncio
+import re
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Iterator, List
 from urllib.parse import urlparse
@@ -34,6 +35,7 @@ from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutio
 from functions_debug import debug_print
 from functions_model_endpoint_diagnostics import build_sanitized_model_endpoint_error
 from functions_model_endpoint_providers import (
+    CUSTOM_ENDPOINT_URL_MODE_EXACT,
     URL_POLICY_APPEND_V1_IF_MISSING,
     URL_POLICY_AS_GIVEN,
     get_model_endpoint_provider,
@@ -212,34 +214,65 @@ def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
     return endpoint.rstrip("/") + "/openai/v1/"
 
 
+CUSTOM_OPENAI_OPERATION_SUFFIXES = ("/chat/completions", "/responses", "/models")
+CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
+
+
+def _endpoint_path_names_a_version(endpoint: str) -> bool:
+    """Return whether the endpoint's last path segment is already a version."""
+    try:
+        path = urlparse(endpoint).path
+    except ValueError:
+        return False
+    segments = [segment for segment in path.split("/") if segment]
+    if not segments:
+        return False
+    return bool(CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN.fullmatch(segments[-1]))
+
+
 def normalize_custom_openai_base_url(raw_endpoint: Any) -> str:
-    """Normalize a Custom OpenAI-compatible endpoint to its v1 base URL."""
+    """Normalize a Custom OpenAI-compatible endpoint to its base URL.
+
+    "/v1" is appended only when the configured URL does not already say where the
+    API lives. It is not appended when the last path segment is already a version
+    such as "v1", "v2", or "v1beta", and it is not appended when the administrator
+    pasted a full operation URL, because that URL states the base exactly.
+    """
     endpoint = normalize_endpoint_text(raw_endpoint)
     if not endpoint:
         raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
 
     lowered_endpoint = endpoint.lower()
-    for suffix in ("/chat/completions", "/responses", "/models"):
+    for suffix in CUSTOM_OPENAI_OPERATION_SUFFIXES:
         if lowered_endpoint.endswith(suffix):
-            endpoint = endpoint[: -len(suffix)].rstrip("/")
-            lowered_endpoint = endpoint.lower()
-            break
+            # A full operation URL states the base exactly, so trust it as given.
+            return endpoint[: -len(suffix)].rstrip("/") + "/"
 
-    if lowered_endpoint.endswith("/v1"):
+    if _endpoint_path_names_a_version(endpoint):
         return endpoint.rstrip("/") + "/"
     return endpoint.rstrip("/") + "/v1/"
 
 
-def resolve_custom_openai_base_url(raw_endpoint: Any, api_type: Any = "") -> str:
-    """Resolve a Custom endpoint base URL using the registered provider's URL policy.
+def resolve_custom_openai_base_url(
+    raw_endpoint: Any,
+    api_type: Any = "",
+    url_mode: Any = "",
+) -> str:
+    """Resolve a Custom endpoint base URL using the provider's URL policy.
 
     Appending "/v1" is correct for OpenAI and OpenAI-compatible gateways, but wrong
     for surfaces that already carry their own version segment. Google Gemini's
     compatible base ends in "/v1beta/openai/", and appending "/v1" to it produces a
     404, so that provider declares the as-given policy instead.
+
+    An administrator can also force the as-given policy for any API type by setting
+    the endpoint's url_mode to "exact", which covers gateways that mount the
+    OpenAI surface at a path SimpleChat cannot infer.
     """
     provider = get_model_endpoint_provider(api_type)
     url_policy = provider.url_policy if provider else URL_POLICY_APPEND_V1_IF_MISSING
+    if str(url_mode or "").strip().lower() == CUSTOM_ENDPOINT_URL_MODE_EXACT:
+        url_policy = URL_POLICY_AS_GIVEN
 
     if url_policy == URL_POLICY_AS_GIVEN:
         endpoint = normalize_endpoint_text(raw_endpoint)
@@ -481,13 +514,14 @@ def build_openai_style_chat_client(
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
     api_type: Any = "",
+    url_mode: Any = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
     client_kwargs: Dict[str, Any] = {
         "api_key": token_or_key,
         "base_url": (
-            resolve_custom_openai_base_url(base_url, api_type)
+            resolve_custom_openai_base_url(base_url, api_type, url_mode)
             if direct_custom
             else normalize_openai_style_base_url(base_url)
         ),

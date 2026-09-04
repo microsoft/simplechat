@@ -44,6 +44,8 @@ const endpointIdInput = document.getElementById("model-endpoint-id");
 const endpointNameInput = document.getElementById("model-endpoint-name");
 const endpointProviderSelect = document.getElementById("model-endpoint-provider");
 const endpointApiTypeGroup = document.getElementById("model-endpoint-api-type-group");
+const endpointUrlModeGroup = document.getElementById("model-endpoint-url-mode-group");
+const endpointUrlModeExactInput = document.getElementById("model-endpoint-url-mode-exact");
 const endpointApiTypeSelect = document.getElementById("model-endpoint-api-type");
 const endpointUrlInput = document.getElementById("model-endpoint-endpoint");
 const endpointUrlLabel = document.getElementById("model-endpoint-endpoint-label");
@@ -870,6 +872,12 @@ function updateAuthVisibility() {
         endpointAuthTypeSelect.disabled = customProvider;
     }
     setElementVisibility(endpointApiTypeGroup, customProvider);
+    // The exact-URL escape hatch only applies to URL-built protocols, not to the
+    // Azure resource endpoint, which the SDK consumes as given.
+    setElementVisibility(
+        endpointUrlModeGroup,
+        customProvider && customApiTypeVersionField(getCustomApiType()) !== "api_version"
+    );
 
     const apiType = getCustomApiType();
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
@@ -975,6 +983,9 @@ function openModalForEndpoint(endpoint) {
         if (endpointNameInput) endpointNameInput.value = endpoint.name || "";
         if (endpointProviderSelect) endpointProviderSelect.value = endpoint.provider || "aoai";
         if (endpointApiTypeSelect) endpointApiTypeSelect.value = endpoint.api_type || "openai";
+        if (endpointUrlModeExactInput) {
+            endpointUrlModeExactInput.checked = (endpoint.connection?.url_mode || "") === "exact";
+        }
         if (endpointUrlInput) endpointUrlInput.value = endpoint.connection?.endpoint || "";
         if (endpointProjectInput) endpointProjectInput.value = endpoint.connection?.project_name || "";
         setSelectedVersionValue(
@@ -1471,7 +1482,15 @@ async function testModelConnection(model) {
         if (!response.ok) {
             throw new Error(data.error || "Connection test failed.");
         }
-        showToast("Model connection successful.", "success");
+        // Report the URL that was actually called. Normalization can rewrite the
+        // configured endpoint, and that rewrite was previously invisible.
+        const resolvedUrl = data.resolved?.request_url || "";
+        showToast(
+            resolvedUrl
+                ? `Model connection successful. Called ${resolvedUrl}`
+                : "Model connection successful.",
+            "success"
+        );
     } catch (error) {
         console.error("Model connection failed", error);
         showToast(error.message || "Model connection failed.", "danger");
@@ -1652,6 +1671,9 @@ function buildEndpointPayload() {
 
     const connection = { endpoint };
     const versionField = customProvider ? customApiTypeVersionField(apiType) : "";
+    if (customProvider && endpointUrlModeExactInput?.checked) {
+        connection.url_mode = "exact";
+    }
     if (customProvider && versionField === "api_version") {
         connection.api_version = openAiApiVersion;
     } else if (customProvider && versionField === "anthropic_version") {

@@ -8,6 +8,7 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAICha
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_providers import normalize_custom_endpoint_url_mode
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
@@ -152,6 +153,7 @@ def build_model_endpoint_sync_chat_client(
     deployment_name='',
     *,
     api_type='',
+    url_mode='',
     anthropic_version=DEFAULT_ANTHROPIC_VERSION,
     allow_private_custom_endpoints=False,
     settings=None,
@@ -204,6 +206,7 @@ def build_model_endpoint_sync_chat_client(
                 allow_private_custom_endpoints=allow_private_custom_endpoints,
                 default_headers=extra_headers,
                 api_type=api_type,
+                url_mode=url_mode,
             ), runtime_protocol
         client_kwargs = {
             'api_version': api_version,
@@ -362,6 +365,7 @@ def build_semantic_kernel_chat_service_for_model(
     endpoint = str(model_context.get('endpoint') or '').strip()
     api_version = str(model_context.get('api_version') or '').strip()
     api_type = str(model_context.get('api_type') or '').strip().lower()
+    url_mode = normalize_custom_endpoint_url_mode(model_context.get('url_mode'))
     anthropic_version = str(
         model_context.get('anthropic_version')
         or DEFAULT_ANTHROPIC_VERSION
@@ -379,6 +383,9 @@ def build_semantic_kernel_chat_service_for_model(
         connection = resolved_model_endpoint.get('connection', {}) or {}
         endpoint = str(connection.get('endpoint') or endpoint).strip()
         api_type = get_model_endpoint_api_type(resolved_model_endpoint) or api_type
+        url_mode = normalize_custom_endpoint_url_mode(
+            connection.get('url_mode') or url_mode
+        )
         api_version = str(
             connection.get('openai_api_version')
             or connection.get('api_version')
@@ -459,7 +466,7 @@ def build_semantic_kernel_chat_service_for_model(
                 client_kwargs = {
                     'api_key': api_key,
                     'base_url': (
-                        resolve_custom_openai_base_url(endpoint, api_type)
+                        resolve_custom_openai_base_url(endpoint, api_type, url_mode)
                         if direct_custom
                         else normalize_openai_style_base_url(endpoint)
                     ),
