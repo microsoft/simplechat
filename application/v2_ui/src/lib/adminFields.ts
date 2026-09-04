@@ -20,6 +20,7 @@ export type AdminFieldType =
     | 'number'
     | 'image'
     | 'link_list'
+    | 'id_list'
     | 'component';
 
 export interface AdminFieldOption {
@@ -65,6 +66,17 @@ export interface AdminField {
     min_selected?: number;
     fallback_when_empty?: boolean;
     item_fields?: AdminField[];
+    /** `id_list` only: the admin search endpoint that finds assignable records. */
+    search_endpoint?: string;
+    /** `id_list` only: query parameter the endpoint reads the search term from. */
+    search_param?: string;
+    /** `id_list` only: fixed query parameters sent with every search. */
+    search_extra?: Record<string, string>;
+    /** `id_list` only: property on the response holding the result array. */
+    results_key?: string;
+    /** `id_list` only: what one assignable record is called, for summaries. */
+    item_noun?: string;
+    item_noun_plural?: string;
     /** Image fields only: which branding slot the upload endpoint should write. */
     upload_target?: 'logo' | 'logo_dark' | 'favicon';
     accept?: string;
@@ -199,4 +211,59 @@ export function fieldSearchText(field: AdminField): string {
     return [field.key ?? '', field.label, field.help ?? '', field.component ?? '']
         .join(' ')
         .toLowerCase();
+}
+
+/** Settings that gate a capability behind an Entra app role. */
+export const APP_ROLE_KEY_PREFIX = 'require_member_of_';
+
+/** One app role requirement, with the section that owns its primary control. */
+export interface AppRoleEntry {
+    key: string;
+    label: string;
+    help?: string;
+    groupLabel: string;
+    tabLabel: string;
+    sectionLabel: string;
+}
+
+/**
+ * Collect every declared app role requirement, in navigation order.
+ *
+ * The roster in Security mirrors switches that live on other tabs, so it has to know
+ * where each one really belongs -- an administrator who flips a role here should be able
+ * to find the feature it governs. Walking the navigation rather than the schema dict is
+ * what puts the entries in the order the rest of the page uses, and it silently drops a
+ * field filed under a section navigation does not define, which could never be reached.
+ *
+ * Only declared fields are visible: the page's `enable_*` fallback scan cannot see a
+ * `require_member_of_*` key, so an undeclared role requirement appears nowhere at all and
+ * would be missing from the roster for the same reason.
+ */
+export function collectAppRoleEntries(
+    nav: import('./types').AdminNavGroup[],
+    schema: AdminFieldSchema,
+): AppRoleEntry[] {
+    const entries: AppRoleEntry[] = [];
+
+    for (const group of nav) {
+        for (const tab of group.tabs) {
+            for (const section of tab.sections) {
+                for (const field of schema[section.id] ?? []) {
+                    if (!field.key?.startsWith(APP_ROLE_KEY_PREFIX)) {
+                        continue;
+                    }
+                    entries.push({
+                        key: field.key,
+                        label: field.label,
+                        help: field.help,
+                        groupLabel: group.label,
+                        tabLabel: tab.label,
+                        sectionLabel: section.label,
+                    });
+                }
+            }
+        }
+    }
+
+    return entries;
 }

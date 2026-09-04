@@ -2,6 +2,44 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.059)**
+
+#### New Features
+
+*   **The Whole Workspaces Group Is Now Editable In The New Interface**
+    *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.
+    *   **Everything that was missing is now there**: personal, group and public workspace downloads, both "require assignment" rules and the group and public workspace pickers that go with them, the public workspace end-user display name, shared conversation file approvals, the CreateGroups and CreatePublicWorkspaces role requirements, and the owner-only restriction on group agents and actions.
+    *   **The four toggles that were already visible now explain themselves.** They were previously drawn from the flag name alone — "Group creation", with no help text and no indication that it does nothing while group workspaces are off. Each now carries a written explanation of what it does and when you would want it.
+    *   **Settings that do nothing are hidden rather than shown as inert.** Requiring a group assignment only appears once group downloads are enabled, and the group picker only appears once the assignment is required, so what is on screen is what currently has an effect.
+    *   (Ref: `admin_settings_fields.py`, `AssignmentPicker.tsx`, `AdminSettingsPage.tsx`, [V2 Workspaces Admin Settings](features/V2_WORKSPACES_ADMIN_SETTINGS.md))
+
+*   **Every App Role Requirement, Readable In One Place**
+    *   Ten settings in SimpleChat can demand an Entra app role, spread across six tabs. None of them appeared in the new interface at all, because the fallback scan that was drawing those pages could only see on/off capability flags.
+    *   All ten are now on the tab that owns them, and **Security > App Role Requirements** additionally gathers them into one list. Each switch there is the same value as the one on its own tab, not a copy, so changing it in either place is the same change.
+    *   Each entry names the group, tab and section the setting really lives on, and the list reports how many of the ten are currently being enforced — so the deployment's access policy can be read as a whole rather than reconstructed tab by tab.
+    *   (Ref: `collectAppRoleEntries`, `AppRoleRoster.tsx`, `admin_access_roles_roster.js`)
+
+*   **Global Identities Explain What They Are, And Sit Somewhere Sensible**
+    *   Global Identities are saved credentials for the systems SimpleChat connects out to, used by File Sync sources and actions. They were filed under Workspaces, which owns neither, and the tab in the new interface was empty.
+    *   The tab has moved to **Security**, next to Key Vault — which is where each identity's secret is actually stored — and now lists what exists with its sign-in type, alongside a link to the classic page for adding or editing one. Existing links to the tab still work.
+    *   (Ref: `admin_settings_nav.py`, `GlobalIdentitiesList.tsx`)
+
+#### User Interface Enhancements
+
+*   **Maximum File Size Moved To Knowledge**
+    *   The upload ceiling applies to chat attachments as well as workspace documents, and it is checked before extraction runs, so Workspaces only ever described half of what it does. It now sits in **Knowledge > Document Extraction** beside Chunk Sizes, and its description says plainly that it covers both upload paths.
+    *   (Ref: `max_file_size_mb`, `functions_documents.py`, `route_frontend_chats.py`)
+
+*   **Group Creation Reads The Right Way Round**
+    *   The classic page asks you to tick "Disable Group Creation" to prevent it — a double negative over a setting that is stored as *enable* group creation. The new interface presents it as **Allow Users to Create Groups**, where on means users can create groups.
+    *   The wording also now says what was previously undocumented: switching it off freezes the group list without disabling existing groups, and overrides the CreateGroups role requirement entirely.
+    *   The classic page is unchanged, so nothing about an existing deployment moves.
+    *   (Ref: `enable_group_creation`, `LEGACY_FIELD_NAMES`)
+
+*   **Workspaces, Knowledge And Security Documentation Rewritten**
+    *   The Workspaces admin page described its sections with a repeated sentence that said only which tab they belonged to. It now explains what each workspace type means for who can read a document, how the three group-creation controls stack, and why downloads default to off, with troubleshooting for the cases where a setting appears to have no effect.
+    *   (Ref: `docs/admin/workspaces.md`, `docs/admin/knowledge.md`, `docs/admin/security.md`)
+
 ### **(v0.261.058)**
 
 #### New Features
