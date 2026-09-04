@@ -1,6 +1,6 @@
 # Workspaces Admin Settings in the V2 Interface
 
-**Implemented in version: 0.261.059**
+**Implemented in version: 0.261.060**
 
 ## Overview
 

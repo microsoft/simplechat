@@ -142,23 +142,46 @@ def test_assignment_lists_are_deduplicated_and_typed():
     """A download policy keyed on a blank or repeated id would grant the wrong set."""
     print("\nTesting assignment list handling...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.060")
 
     normalized, errors, _ = normalize(
         {
             "file_download_allowed_group_ids": [
-                " group-a ",
-                "group-b",
-                "group-a",
+                " 3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73 ",
+                "9d4b2e18-7a35-4c69-b0f2-1e8c5a6d3f40",
+                "3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73",
+                "not-a-uuid",
                 "",
                 None,
             ]
         }
     )
     assert not errors, errors
-    assert normalized["file_download_allowed_group_ids"] == ["group-a", "group-b"], (
-        normalized
+    # The application's own normalizer requires canonical group UUIDs and silently
+    # drops anything else, so V2 must too. Storing "not-a-uuid" here would grant a
+    # download policy an id the server-rendered form would have discarded.
+    assert normalized["file_download_allowed_group_ids"] == [
+        "3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73",
+        "9d4b2e18-7a35-4c69-b0f2-1e8c5a6d3f40",
+    ], normalized
+
+    # Public workspace ids are not UUID-constrained; their normalizer only trims and
+    # deduplicates, so imposing a UUID check would reject valid assignments.
+    normalized, errors, _ = normalize(
+        {
+            "file_download_allowed_public_workspace_ids": [
+                " ws-alpha ",
+                "ws-beta",
+                "ws-alpha",
+                "",
+            ]
+        }
     )
+    assert not errors, errors
+    assert normalized["file_download_allowed_public_workspace_ids"] == [
+        "ws-alpha",
+        "ws-beta",
+    ], normalized
 
     # V1 round-trips this through a hidden textarea and accepts a JSON string. V2
     # always sends a real array, and accepting a string here would mean two shapes
@@ -166,7 +189,7 @@ def test_assignment_lists_are_deduplicated_and_typed():
     _, errors, _ = normalize({"file_download_allowed_public_workspace_ids": "ws-a,ws-b"})
     assert "file_download_allowed_public_workspace_ids" in errors, errors
 
-    print("  Assignment lists are deduplicated, trimmed and reject non-list input.")
+    print("  Assignment lists match the normalizer the application already uses.")
     return True
 
 

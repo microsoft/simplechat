@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.059)**
+### **(v0.261.060)**
 
 #### New Features
 
@@ -39,6 +39,25 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Workspaces, Knowledge And Security Documentation Rewritten**
     *   The Workspaces admin page described its sections with a repeated sentence that said only which tab they belonged to. It now explains what each workspace type means for who can read a document, how the three group-creation controls stack, and why downloads default to off, with troubleshooting for the cases where a setting appears to have no effect.
     *   (Ref: `docs/admin/workspaces.md`, `docs/admin/knowledge.md`, `docs/admin/security.md`)
+
+### **(v0.261.059)**
+
+#### Bug Fixes
+
+*   **Workflow Settings Are Reachable In The New Admin Interface**
+    *   The **Workflow** group in the new admin interface was empty. Selecting it showed no controls at all — not a missing toggle here or there, but the whole group. Enabling workflows meant going back to the classic admin page.
+    *   The cause was one thing, not seven. The new admin interface draws a section either from a description of its controls, or by scanning for settings whose names begin with `enable_`. Workflow had no description, and not one of its settings is named that way — they are `allow_user_workflows`, `allow_group_workflows`, `workflow_max_tasks` and so on — so the scan found nothing and the section was dropped for being empty.
+    *   All seven settings are now present: **Enable Personal Workflows**, **Require WorkflowUser App Role**, **Enable Group Workflows**, **Require Group Assignment to Use Workflow**, **Assigned Groups**, **Workflow Agent Action Limit** and **Workflow Task Limit**.
+    *   **Sub-settings stay out of the way until they apply.** The `WorkflowUser` role requirement appears once personal workflows are on, and the group allow list appears once group assignment is required. The two run limits are always shown, because they bound personal and group runs alike.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, [V2 Admin Workflow Settings Parity](fixes/V2_ADMIN_WORKFLOW_SETTINGS_PARITY_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Assigned Groups Are Shown By Name Instead Of Counted**
+    *   The classic admin page could only report "3 groups assigned". Finding out *which* three meant opening a modal and searching for them again, and a group that had since been deleted left an id in the list that nothing on screen ever mentioned.
+    *   In the new interface the assignment is visible: each assigned group appears as a named chip you can remove, search is inline and filters as you type rather than waiting behind a Search button, and an assignment pointing at a group that no longer exists is marked **Not found** so it can be cleared out.
+    *   The list saves with the toggle that gates it, so requiring assignment and choosing the groups is one save rather than two.
+    *   (Ref: `GroupAssignmentField.tsx`, `/api/v2/admin/groups`)
 
 ### **(v0.261.058)**
 

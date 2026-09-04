@@ -39,6 +39,7 @@ import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
+import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingField } from '../components/admin/fields';
 import {
@@ -562,6 +563,19 @@ export function AdminSettingsPage() {
         if (field.type === 'id_list') {
             return (
                 <AssignmentPicker
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'group_picker') {
+            return (
+                <GroupAssignmentField
                     key={key}
                     field={field}
                     value={value}
