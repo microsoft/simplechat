@@ -30,6 +30,7 @@ def test_dockerfile_packages_odbc_runtime() -> bool:
         "tdnf install -y unixODBC unixODBC-devel msodbcsql18",
         "COPY --from=builder /odbc-runtime/ /",
         'LD_LIBRARY_PATH="/usr/lib64:/opt/microsoft/msodbcsql18/lib64"',
+        "mkdir -p /odbc-runtime/usr/lib /odbc-runtime/opt",
         'driver_config_path="$(odbcinst -j | while IFS= read -r line; do case "$line" in DRIVERS*) printf \'%s\\n\' "${line##*: }"; break ;; esac; done)"',
         'test -n "${driver_config_path}"',
         'case "${driver_config_path}" in',
@@ -39,6 +40,8 @@ def test_dockerfile_packages_odbc_runtime() -> bool:
         'test -f "${driver_config_file}"',
         'cp -a "${driver_config_file}" "/odbc-runtime${driver_config_dir}/"',
         'if [ "${driver_config_dir}" != "/etc" ]; then cp -a "${driver_config_file}" /odbc-runtime/etc/; fi;',
+        'for lib in /usr/lib64/libodbc.so* /usr/lib/libodbc.so* /usr/lib64/libodbcinst.so* /usr/lib/libodbcinst.so* /usr/lib64/libodbccr.so* /usr/lib/libodbccr.so* /usr/lib64/libltdl.so* /usr/lib/libltdl.so*; do',
+        'if [ -e "${lib}" ]; then cp -a "${lib}" /odbc-runtime/usr/lib/; fi;',
     ]
 
     missing = [snippet for snippet in expected_snippets if snippet not in dockerfile]
@@ -59,10 +62,10 @@ def test_sql_defaults_use_odbc_driver_18() -> bool:
     print("🔍 Testing SQL defaults use ODBC Driver 18...")
 
     expected_defaults = {
-        "application/single_app/route_backend_plugins.py": "driver or 'ODBC Driver 18 for SQL Server'",
-        "application/single_app/semantic_kernel_plugins/sql_query_plugin.py": "'default_driver': 'ODBC Driver 18 for SQL Server'",
-        "application/single_app/semantic_kernel_plugins/sql_schema_plugin.py": "'default_driver': 'ODBC Driver 18 for SQL Server'",
-        "application/single_app/semantic_kernel_plugins/sql_plugin_factory.py": '"driver": "ODBC Driver 18 for SQL Server"',
+        "application/single_app/route_backend_plugins.py": "driver=driver or DEFAULT_SQL_SERVER_ODBC_DRIVER",
+        "application/single_app/semantic_kernel_plugins/sql_query_plugin.py": "'default_driver': DEFAULT_SQL_SERVER_ODBC_DRIVER",
+        "application/single_app/semantic_kernel_plugins/sql_schema_plugin.py": "'default_driver': DEFAULT_SQL_SERVER_ODBC_DRIVER",
+        "application/single_app/semantic_kernel_plugins/sql_plugin_factory.py": '"driver": DEFAULT_SQL_SERVER_ODBC_DRIVER',
         "application/single_app/static/js/plugin_modal_stepper.js": "additionalFields.driver || 'ODBC Driver 18 for SQL Server'",
         "application/single_app/semantic_kernel_plugins/SQL_Plugins_Configuration_Guide.md": 'DRIVER={ODBC Driver 18 for SQL Server}',
     }
