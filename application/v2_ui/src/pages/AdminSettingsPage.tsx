@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { ChevronRight, Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -41,13 +41,17 @@ import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
+import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
+import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
+import { OrchestrationCard } from '../components/admin/OrchestrationCard';
+import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingField } from '../components/admin/fields';
@@ -59,12 +63,15 @@ import {
     asBoolean,
     asNumber,
     asString,
+    buildFieldIndex,
+    buildSectionBlocks,
     collectAppRoleEntries,
     evaluateSectionStatus,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
     isFieldVisible,
+    isSectionVisible,
     readFieldValue,
     type AdminField,
     type AdminSettingsPatchResponse,
@@ -122,29 +129,6 @@ function SectionStatusPill({ status }: { status: SectionStatus }) {
             {presentation.label}
         </span>
     );
-}
-
-/**
- * Split a section's fields into the labelled runs its schema asks for.
- *
- * A section with eleven controls reads as one undifferentiated list, which is how the
- * Key Vault connection settings and its expiration reminder settings ended up looking
- * like one decision. Consecutive fields sharing a `group` become a labelled run; fields
- * with no `group` keep the plain layout, so nothing changes for sections that never
- * asked for this.
- */
-function groupFields(fields: AdminField[]): { group: string | null; fields: AdminField[] }[] {
-    const runs: { group: string | null; fields: AdminField[] }[] = [];
-    for (const field of fields) {
-        const group = field.group ?? null;
-        const last = runs[runs.length - 1];
-        if (last && last.group === group) {
-            last.fields.push(field);
-        } else {
-            runs.push({ group, fields: [field] });
-        }
-    }
-    return runs;
 }
 
 /**
@@ -309,6 +293,7 @@ export function AdminSettingsPage() {
 
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+    const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
     const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
@@ -322,6 +307,10 @@ export function AdminSettingsPage() {
         }
         return keys;
     }, [schema]);
+
+    // A gate may live inside a nested settings object, so resolving a dependency
+    // needs the schema rather than the key alone.
+    const fieldsByKey = useMemo(() => buildFieldIndex(schema), [schema]);
 
     const suppressedKeys = useMemo(
         () => new Set(data?.suppressed_capabilities ?? []),
@@ -361,9 +350,25 @@ export function AdminSettingsPage() {
         for (const group of data.admin_nav) {
             for (const tab of group.tabs) {
                 for (const section of tab.sections) {
-                    const fields = schema[section.id] ?? [];
                     const capabilities = capabilitiesBySection.get(section.id) ?? [];
                     capabilitiesBySection.delete(section.id);
+
+                    // A section can be conditional on a settings key or a runtime
+                    // flag -- workspace agent permissions only exist while Workspace
+                    // Mode is on, and Inbound MCP only while its App Service setting
+                    // is present. The server-rendered page already honours this; V2
+                    // used to draw the section regardless.
+                    if (!isSectionVisible(section.condition, settings, draft, runtimeFlags, fieldsByKey)) {
+                        continue;
+                    }
+
+                    // Fields whose own dependencies are unmet are dropped here rather
+                    // than at render time, so a section left with nothing to show
+                    // disappears instead of leaving an empty titled panel behind.
+                    const fields = (schema[section.id] ?? []).filter((field) =>
+                        isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags),
+                    );
+
                     if (!fields.length && !capabilities.length) {
                         continue;
                     }
@@ -394,7 +399,7 @@ export function AdminSettingsPage() {
         }
 
         return rendered;
-    }, [data, schema, capabilityRows]);
+    }, [data, schema, capabilityRows, settings, draft, runtimeFlags, fieldsByKey]);
 
     const visibleSections = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -649,7 +654,7 @@ export function AdminSettingsPage() {
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft)) {
+        if (!isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)) {
             return null;
         }
 
@@ -684,6 +689,19 @@ export function AdminSettingsPage() {
                     field={field}
                     value={value}
                     error={error}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'entry_list') {
+            return (
+                <EntryListEditor
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
                     onChange={(next) => field.key && setValue(field.key, next)}
                 />
             );
@@ -736,6 +754,10 @@ export function AdminSettingsPage() {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'agent-orchestration':
+                    return <OrchestrationCard key={key} help={field.help} />;
+                case 'inbound-mcp-disabled-notice':
+                    return <InboundMcpNotice key={key} />;
                 case 'model-connections-manager':
                     return <ModelConnectionsManager key={key} help={field.help} />;
                 case 'chat-mode-notice': {
@@ -797,6 +819,17 @@ export function AdminSettingsPage() {
                     );
                 case 'global-identities-list':
                     return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'promoted-popular-agents':
+                    return (
+                        <PromotedAgentsEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
                 case 'app-role-requirements-roster':
                     return (
                         <AppRoleRoster
@@ -904,6 +937,41 @@ export function AdminSettingsPage() {
         }
 
         return <div key={key}>{control}</div>;
+    };
+
+    /**
+     * Render a section's fields, wrapping any declared group in a disclosure.
+     *
+     * A collapsed group is opened while a search is running, because a match hidden
+     * behind a closed disclosure looks exactly like no match at all.
+     */
+    const renderBlocks = (fields: AdminField[]) => {
+        const searching = query.trim().length > 0;
+
+        return buildSectionBlocks(fields).map((block) => {
+            if (block.kind === 'field') {
+                return renderField(block.field);
+            }
+            return (
+                <details
+                    key={`group-${block.name}`}
+                    open={searching || !block.collapsed}
+                    className="group py-2"
+                >
+                    <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold tracking-wide text-text-2 uppercase [&::-webkit-details-marker]:hidden">
+                        <ChevronRight
+                            size={13}
+                            aria-hidden="true"
+                            className="shrink-0 transition-transform group-open:rotate-90"
+                        />
+                        {block.name}
+                    </summary>
+                    <div className="mt-1 divide-y divide-edge border-l border-edge pl-3">
+                        {block.fields.map(renderField)}
+                    </div>
+                </details>
+            );
+        });
     };
 
     if (!isAdmin) {
@@ -1028,7 +1096,6 @@ export function AdminSettingsPage() {
                                     settings,
                                     draft,
                                 );
-                                const runs = groupFields(section.fields);
 
                                 return (
                                     <GlassPanel
@@ -1052,18 +1119,9 @@ export function AdminSettingsPage() {
                                             {status ? <SectionStatusPill status={status} /> : null}
                                         </div>
 
-                                        {runs.map((run, index) => (
-                                            <div key={run.group ?? `ungrouped-${index}`}>
-                                                {run.group ? (
-                                                    <h3 className="mt-3 mb-1 border-t border-edge pt-3 text-xs font-semibold tracking-wide text-text-2 uppercase">
-                                                        {run.group}
-                                                    </h3>
-                                                ) : null}
-                                                <div className="divide-y divide-edge">
-                                                    {run.fields.map(renderField)}
-                                                </div>
-                                            </div>
-                                        ))}
+                                        <div className="divide-y divide-edge">
+                                            {renderBlocks(section.fields)}
+                                        </div>
 
                                         {section.capabilities.length > 0 && (
                                             <div className="divide-y divide-edge">

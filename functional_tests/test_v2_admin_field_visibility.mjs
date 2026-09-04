@@ -233,16 +233,16 @@ check('a null or missing dependency value does not accidentally match', () => {
     // The risk is a comparison that coerces both sides and lets a nullish value through.
     const field = fieldsByKey.azure_openai_embedding_key;
     assert.equal(
-        isFieldVisible(field, { azure_openai_embedding_authentication_type: null }, {}, []),
+        isFieldVisible(field, { azure_openai_embedding_authentication_type: null }, {}),
         false,
     );
     assert.equal(
-        isFieldVisible(field, { azure_openai_embedding_authentication_type: '' }, {}, []),
+        isFieldVisible(field, { azure_openai_embedding_authentication_type: '' }, {}),
         false,
     );
     // With no siblings there is no declared default to fall back to, so an absent value
     // must not match either.
-    assert.equal(isFieldVisible(field, {}, {}, []), false);
+    assert.equal(isFieldVisible(field, {}, {}), false);
 });
 
 check('a string dependency is case sensitive and not a prefix match', () => {
@@ -256,7 +256,6 @@ check('a string dependency is case sensitive and not a prefix match', () => {
                     azure_openai_embedding_authentication_type: nearMiss,
                 },
                 {},
-                embeddingFields(),
             ),
             false,
             `${nearMiss} matched a condition on 'key'`,
@@ -276,7 +275,7 @@ check('a boolean dependency is unaffected by the string branch', () => {
         [undefined, false],
     ]) {
         assert.equal(
-            isFieldVisible(apimField, { enable_embedding_apim: stored }, {}, []),
+            isFieldVisible(apimField, { enable_embedding_apim: stored }, {}),
             expected,
             `enable_embedding_apim=${JSON.stringify(stored)}`,
         );

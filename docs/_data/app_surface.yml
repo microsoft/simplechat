@@ -4,7 +4,7 @@ counts:
   capabilities: 112
   admin_groups: 14
   admin_tabs: 46
-  admin_sections: 97
+  admin_sections: 101
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -469,15 +469,23 @@ admin_sections:
   tab: access-roles
   group: security
 - id: actions-config
-  label: Actions Configuration
+  label: Global Actions
   tab: actions
   group: agents-actions
 - id: agent-template-approvals-section
   label: Agent Template Approvals
   tab: agents
   group: agents-actions
+- id: agent-toggles-card
+  label: Workspace Agent Permissions
+  tab: agents
+  group: agents-actions
 - id: agents-config
-  label: Agents Configuration
+  label: Agent Runtime
+  tab: agents
+  group: agents-actions
+- id: agents-page-customization-card
+  label: Agents Page
   tab: agents
   group: agents-actions
 - id: ai-notice-section
@@ -548,6 +556,10 @@ admin_sections:
   label: Conversation History
   tab: chat-experience
   group: chat
+- id: core-plugin-toggles
+  label: Built-in Actions
+  tab: actions
+  group: agents-actions
 - id: cosmos-maintenance-section
   label: Cosmos Maintenance
   tab: cosmos
@@ -617,7 +629,7 @@ admin_sections:
   tab: cosmos
   group: scale
 - id: document-action-capabilities-card
-  label: Document Action Capabilities
+  label: Document Actions
   tab: actions
   group: agents-actions
 - id: document-classification-section
@@ -756,6 +768,10 @@ admin_sections:
   label: Personal Workspaces
   tab: workspace-types
   group: workspaces
+- id: plugin-feature-toggles
+  label: Workspace Action Permissions
+  tab: actions
+  group: agents-actions
 - id: processing-thoughts-section
   label: Processing Thoughts
   tab: chat-experience
