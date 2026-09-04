@@ -13,7 +13,35 @@ from urllib3 import connection as urllib3_connection
 from urllib3 import connectionpool as urllib3_connectionpool
 from urllib3 import poolmanager as urllib3_poolmanager
 from urllib3.util import connection as urllib3_util_connection
-from urllib3.util.timeout import _DEFAULT_TIMEOUT
+from urllib3.util.timeout import Timeout as _Urllib3Timeout
+
+
+# urllib3 uses a sentinel to mean "leave the socket on its default timeout instead of
+# calling settimeout()". That sentinel is only exposed privately, and under a different
+# name per major version: urllib3 2.x has urllib3.util.timeout._DEFAULT_TIMEOUT while
+# urllib3 1.x uses socket._GLOBAL_DEFAULT_TIMEOUT. Timeout.DEFAULT_TIMEOUT is the public
+# alias and is the identical object on both, so resolving it here keeps the connect
+# behavior byte-for-byte the same without importing a private, version-specific symbol
+# on the DLP request path.
+try:
+    PRESIDIO_DEFAULT_SOCKET_TIMEOUT = _Urllib3Timeout.DEFAULT_TIMEOUT
+except AttributeError:  # pragma: no cover - only if urllib3 drops the public alias
+    PRESIDIO_DEFAULT_SOCKET_TIMEOUT = socket._GLOBAL_DEFAULT_TIMEOUT
+
+
+def _build_presidio_name_resolution_error(connection, exc):
+    """Return the urllib3 DNS failure error for the installed urllib3 version.
+
+    urllib3 2.x raises NameResolutionError, which does not exist on 1.x. It subclasses
+    NewConnectionError, so callers that catch the base class behave the same either way.
+    """
+    name_resolution_error = getattr(urllib3_connection, "NameResolutionError", None)
+    if name_resolution_error is not None:
+        return name_resolution_error(connection.host, connection, exc)
+    return urllib3_connection.NewConnectionError(
+        connection,
+        f"Failed to resolve {connection.host}: {exc}",
+    )
 
 
 DEFAULT_PRESIDIO_TIMEOUT_SECONDS = 5
@@ -227,7 +255,7 @@ def _create_presidio_safe_socket_connection(host, port, timeout, source_address,
         try:
             sock = socket.socket(family, socktype, proto)
             _set_socket_options(sock, socket_options)
-            if timeout is not _DEFAULT_TIMEOUT:
+            if timeout is not PRESIDIO_DEFAULT_SOCKET_TIMEOUT:
                 sock.settimeout(timeout)
             if source_address:
                 sock.bind(source_address)
@@ -258,7 +286,7 @@ class _PresidioSSRFConnectionMixin:
                 self.presidio_allowed_private_hosts,
             )
         except socket.gaierror as exc:
-            raise urllib3_connection.NameResolutionError(self.host, self, exc) from exc
+            raise _build_presidio_name_resolution_error(self, exc) from exc
         except urllib3_connection.SocketTimeout as exc:
             raise urllib3_connection.ConnectTimeoutError(
                 self,

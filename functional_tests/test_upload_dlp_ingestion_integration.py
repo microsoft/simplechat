@@ -13,6 +13,7 @@ import ast
 import os
 import sys
 import types
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
@@ -54,6 +55,10 @@ def import_functions_documents_for_helper_tests():
         "functions_authentication": types.ModuleType("functions_authentication"),
         "functions_debug": types.ModuleType("functions_debug"),
         "functions_keyvault": types.ModuleType("functions_keyvault"),
+        "functions_document_access_index": types.ModuleType("functions_document_access_index"),
+        "functions_data_management_search_write_fence": types.ModuleType(
+            "functions_data_management_search_write_fence"
+        ),
         "azure": types.ModuleType("azure"),
         "azure.cognitiveservices": types.ModuleType("azure.cognitiveservices"),
         "azure.cognitiveservices.speech": types.ModuleType("azure.cognitiveservices.speech"),
@@ -66,6 +71,30 @@ def import_functions_documents_for_helper_tests():
     stub_modules["functions_logging"].log_event = lambda *args, **kwargs: None
     stub_modules["functions_keyvault"].SecretReturnType = types.SimpleNamespace(VALUE="value")
     stub_modules["functions_keyvault"].keyvault_model_endpoint_get_helper = lambda endpoint, return_type=None: endpoint
+
+    # The document access index and the Search write fence reach into Cosmos containers that
+    # this test never exercises, so stub the surface functions_documents imports from them.
+    access_index_stub = stub_modules["functions_document_access_index"]
+    access_index_stub.DOCUMENT_ACCESS_SCOPE_GROUP = "group"
+    access_index_stub.DOCUMENT_ACCESS_SCOPE_PERSONAL = "personal"
+    access_index_stub.DOCUMENT_ACCESS_SCOPE_PUBLIC = "public"
+    access_index_stub.delete_document_access_index_for_document_fail_open = lambda *args, **kwargs: None
+    access_index_stub.is_document_access_shadow_validation_enabled = lambda *args, **kwargs: False
+    access_index_stub.query_items_with_cosmos_diagnostics = lambda *args, **kwargs: ([], {})
+    access_index_stub.sync_document_access_index_for_document_fail_open = lambda *args, **kwargs: None
+    access_index_stub.validate_document_access_index_shadow = lambda *args, **kwargs: None
+
+    write_fence_stub = stub_modules["functions_data_management_search_write_fence"]
+
+    class _StubSearchWritesFrozenError(Exception):
+        """Stand-in for the frozen-writes error raised by the real write fence."""
+
+    @contextmanager
+    def _stub_hold_search_write_slot(container):
+        yield None
+
+    write_fence_stub.DataManagementSearchWritesFrozenError = _StubSearchWritesFrozenError
+    write_fence_stub.hold_data_management_search_write_slot = _stub_hold_search_write_slot
 
     original_modules = {module_name: sys.modules.get(module_name) for module_name in stub_modules}
     try:
@@ -145,14 +174,21 @@ def test_single_chunk_uses_sanitized_text_for_embedding_and_indexing():
 
     dlp_index = save_chunks_source.find("_evaluate_upload_dlp_text(")
     sanitized_index = save_chunks_source.find('sanitized_chunk_text = upload_dlp_result.get("sanitized_text", enhanced_chunk_text)')
-    embedding_index = save_chunks_source.find("generate_embedding(sanitized_chunk_text)")
+    # The embedding input is seeded from the sanitized text and may then be clamped to the
+    # embedding character budget, so the only permitted source is still the sanitized text.
+    embedding_input_index = save_chunks_source.find("embedding_input = sanitized_chunk_text")
+    embedding_index = save_chunks_source.find("generate_embedding(embedding_input)")
     index_payload_index = save_chunks_source.find('"chunk_text": sanitized_chunk_text')
 
     assert dlp_index != -1
     assert sanitized_index > dlp_index
-    assert embedding_index > sanitized_index
+    assert embedding_input_index > sanitized_index
+    assert embedding_index > embedding_input_index
     assert index_payload_index > embedding_index
     assert "generate_embedding(page_text_content)" not in save_chunks_source
+    assert "generate_embedding(enhanced_chunk_text)" not in save_chunks_source
+    # The clamp may only ever narrow the sanitized text, never re-source raw content.
+    assert "embedding_input = embedding_input[:max_embedding_characters]" in save_chunks_source
     assert RAW_VALUE not in save_chunks_source
 
 
