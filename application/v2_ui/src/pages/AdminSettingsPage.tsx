@@ -45,6 +45,7 @@ import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
+import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -704,6 +705,8 @@ export function AdminSettingsPage() {
                     return <OrchestrationCard key={key} help={field.help} />;
                 case 'inbound-mcp-disabled-notice':
                     return <InboundMcpNotice key={key} />;
+                case 'model-connections-manager':
+                    return <ModelConnectionsManager key={key} help={field.help} />;
                 case 'global-identities-list':
                     return <GlobalIdentitiesList key={key} help={field.help} />;
                 case 'promoted-popular-agents':
