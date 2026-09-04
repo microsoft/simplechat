@@ -26,19 +26,22 @@ import {
 /** Fence language the chart action writes, from functions_chart_operations.py. */
 export const INLINE_CHART_LANGUAGE = 'simplechart';
 
-const ALLOWED_KINDS = new Set([
-    'line',
+/** Chart kinds this client can draw, in the order the type picker offers them. */
+export const CHART_KINDS = [
     'bar',
+    'stacked_bar',
+    'line',
+    'area',
+    'stacked_line',
+    'radar',
     'pie',
     'doughnut',
-    'scatter',
-    'area',
-    'bubble',
-    'radar',
-    'stacked_bar',
-    'stacked_line',
     'polar_area',
-]);
+    'scatter',
+    'bubble',
+] as const;
+
+const ALLOWED_KINDS = new Set<string>(CHART_KINDS);
 
 /** Series colours, matching chat-inline-charts.js so a chart looks the same in both clients. */
 const DEFAULT_PALETTE = [
@@ -86,6 +89,7 @@ export interface ChartDataset {
     data: (number | null)[] | ChartPoint[];
     fill?: boolean;
     tension?: number;
+    pointRadius?: number;
     type?: 'line' | 'bar';
 }
 
@@ -94,6 +98,18 @@ export interface ChartTable {
     rows: unknown[][];
 }
 
+/**
+ * Everything about a chart that is not its numbers.
+ *
+ * The first eleven come from the chart action's own payload and are shared with the classic
+ * client and the server-side export renderer. The rest were added for the chart editor, are
+ * absent from every chart generated before it, and therefore all default to what those charts
+ * already did.
+ *
+ * `yMin`, `yMax`, `yScale` and `beginAtZero` describe the *value* axis rather than literally the
+ * y axis, because a horizontal bar chart draws its values along the bottom. The same is true of
+ * `yAxisLabel`, which the server-side export has always swapped for horizontal bars.
+ */
 export interface ChartSpecOptions {
     legendPosition: 'top' | 'bottom' | 'left' | 'right';
     showLegend: boolean;
@@ -106,7 +122,40 @@ export interface ChartSpecOptions {
     xAxisLabel: string;
     yAxisLabel: string;
     cutout: string;
+    /** Explicit value-axis bounds, or null to let the chart choose them from the data. */
+    yMin: number | null;
+    yMax: number | null;
+    yScale: 'linear' | 'logarithmic';
+    /** Category label rotation in degrees, for axes too crowded to read straight. */
+    xTickRotation: number;
+    /** Most category ticks to draw before thinning them out, or null for all of them. */
+    xTickLimit: number | null;
+    /** Share of its slot a bar fills, matching Chart.js `barPercentage`. */
+    barWidth: number;
+    /** Series stroke width. */
+    lineWidth: number;
+    /** Point marker radius on line, area and scatter charts. */
+    pointRadius: number;
+    showGridX: boolean;
+    showGridY: boolean;
 }
+
+/** Value-axis scales a chart may use. */
+export const CHART_SCALE_TYPES = ['linear', 'logarithmic'] as const;
+
+/** What each added option means when the payload does not mention it. */
+export const CHART_OPTION_DEFAULTS = {
+    yMin: null,
+    yMax: null,
+    yScale: 'linear',
+    xTickRotation: 0,
+    xTickLimit: null,
+    barWidth: 0.9,
+    lineWidth: 2,
+    pointRadius: 3,
+    showGridX: true,
+    showGridY: true,
+} as const;
 
 export interface ChartSpec {
     version: number;
@@ -140,6 +189,20 @@ function sanitizeNumber(value: unknown): number | null {
     }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** A number clamped into a range, falling back when the payload did not give a usable one. */
+function sanitizeBoundedNumber(
+    value: unknown,
+    minimum: number,
+    maximum: number,
+    fallback: number,
+): number {
+    const parsed = sanitizeNumber(value);
+    if (parsed === null) {
+        return fallback;
+    }
+    return Math.min(Math.max(parsed, minimum), maximum);
 }
 
 function sanitizeColor(value: unknown, fallback: string): string {
@@ -300,8 +363,11 @@ function assignLooseChartOption(
  *
  * The chart action always emits strict JSON, so this only matters for hand-written blocks —
  * but without it those render as a wall of raw text, which is the problem being solved.
+ *
+ * Exported for the editor, which has to be able to read a hand-written payload before it can
+ * offer to change anything in it.
  */
-function parseLooseChartSpec(payloadText: string): LooseRecord {
+export function parseLooseChartSpec(payloadText: string): LooseRecord {
     const data: LooseRecord = { datasets: [] as LooseRecord[] };
     const options: LooseRecord = {};
     const spec: LooseRecord = { data, options };
@@ -405,7 +471,20 @@ function normalizePoint(point: unknown, kind: string): ChartPoint | null {
     return { x, y };
 }
 
-function normalizeDatasets(kind: string, rawDatasets: unknown, labels: string[]): ChartDataset[] {
+/**
+ * Turn the payload's datasets into ones a chart can be built from.
+ *
+ * `options` is passed in because three of its entries describe the series rather than the
+ * chart — smoothing, fill and stroke width — and a chart-wide choice has to be reconciled with
+ * whatever the individual dataset asked for. The chart-wide value wins where it was set
+ * deliberately, which is what makes those controls do anything at all.
+ */
+function normalizeDatasets(
+    kind: string,
+    rawDatasets: unknown,
+    labels: string[],
+    options: ChartSpecOptions,
+): ChartDataset[] {
     if (!Array.isArray(rawDatasets) || rawDatasets.length === 0) {
         return [];
     }
@@ -420,7 +499,7 @@ function normalizeDatasets(kind: string, rawDatasets: unknown, labels: string[])
                 label: sanitizeText(source.label || `Series ${index + 1}`, 80),
                 borderColor: sanitizeColor(source.borderColor, palette.border),
                 backgroundColor: sanitizeColor(source.backgroundColor, palette.background),
-                borderWidth: 2,
+                borderWidth: options.lineWidth,
                 data: [],
             };
 
@@ -437,12 +516,19 @@ function normalizeDatasets(kind: string, rawDatasets: unknown, labels: string[])
             }
 
             if (kind === 'line' || kind === 'area' || kind === 'stacked_line') {
-                dataset.fill = source.fill === true || kind === 'area';
-                dataset.tension = source.tension === 0 ? 0 : 0.35;
+                dataset.fill = source.fill === true || options.fill || kind === 'area';
+                // Smoothing off is a deliberate chart-wide choice and overrides the dataset;
+                // smoothing on leaves a dataset that asked for straight segments alone.
+                dataset.tension = !options.smooth || source.tension === 0 ? 0 : 0.35;
             }
 
             if (kind === 'radar') {
-                dataset.fill = source.fill === true;
+                dataset.fill = source.fill === true || options.fill;
+            }
+
+            // Bubbles are sized by each point's own radius, so a marker size would fight it.
+            if (kind !== 'bubble' && kind !== 'bar' && kind !== 'stacked_bar') {
+                dataset.pointRadius = options.pointRadius;
             }
 
             // Part-to-whole charts colour each slice rather than each series.
@@ -524,10 +610,6 @@ function normalizeChartSpec(rawSpec: unknown): ChartSpec | null {
     const labels = Array.isArray(dataSource.labels)
         ? dataSource.labels.slice(0, 200).map((label) => sanitizeText(label, 80))
         : [];
-    const datasets = normalizeDatasets(kind, dataSource.datasets, labels);
-    if (!datasets.length) {
-        return null;
-    }
 
     const rawOptions =
         source.options && typeof source.options === 'object' && !Array.isArray(source.options)
@@ -547,6 +629,8 @@ function normalizeChartSpec(rawSpec: unknown): ChartSpec | null {
         rawOptions.legendPosition || rawLegend.position || 'top',
         10,
     ).toLowerCase();
+    const scaleType = sanitizeText(rawOptions.yScale, 20).toLowerCase();
+    const tickLimit = sanitizeNumber(rawOptions.xTickLimit);
 
     const options: ChartSpecOptions = {
         legendPosition: (['top', 'bottom', 'left', 'right'] as const).includes(
@@ -564,7 +648,23 @@ function normalizeChartSpec(rawSpec: unknown): ChartSpec | null {
         xAxisLabel: sanitizeText(rawOptions.xAxisLabel, 80),
         yAxisLabel: sanitizeText(rawOptions.yAxisLabel, 80),
         cutout: sanitizeText(rawOptions.cutout || '60%', 20),
+        yMin: sanitizeNumber(rawOptions.yMin),
+        yMax: sanitizeNumber(rawOptions.yMax),
+        yScale: scaleType === 'logarithmic' ? 'logarithmic' : 'linear',
+        xTickRotation: sanitizeBoundedNumber(rawOptions.xTickRotation, 0, 90, 0),
+        // A limit below two would leave an axis with nothing readable on it.
+        xTickLimit: tickLimit === null ? null : Math.min(Math.max(Math.round(tickLimit), 2), 200),
+        barWidth: sanitizeBoundedNumber(rawOptions.barWidth, 0.1, 1, 0.9),
+        lineWidth: sanitizeBoundedNumber(rawOptions.lineWidth, 0, 10, 2),
+        pointRadius: sanitizeBoundedNumber(rawOptions.pointRadius, 0, 20, 3),
+        showGridX: rawOptions.showGridX !== false,
+        showGridY: rawOptions.showGridY !== false,
     };
+
+    const datasets = normalizeDatasets(kind, dataSource.datasets, labels, options);
+    if (!datasets.length) {
+        return null;
+    }
 
     return {
         version: Number(source.version) || 1,
@@ -829,32 +929,73 @@ export function buildChartConfig(
     const options = config.options as Record<string, unknown>;
 
     if (['bar', 'line', 'scatter', 'bubble'].includes(baseType)) {
-        options.scales = {
-            x: {
-                stacked: spec.options.stacked,
-                ticks: { color: text },
-                grid: { color: grid },
-                title: {
-                    display: Boolean(spec.options.xAxisLabel),
-                    text: spec.options.xAxisLabel,
-                    color: text,
-                },
+        const horizontal = spec.options.horizontal && baseType === 'bar';
+        // A horizontal bar chart draws its values along the bottom, so the axis the value
+        // options describe is x rather than y. The server-side export has always swapped the
+        // axis titles for this case; everything else about the value axis is swapped here too,
+        // so a range or a log scale lands on the axis that actually carries the numbers.
+        const valueAxis = horizontal ? 'x' : 'y';
+        const categoryAxis = horizontal ? 'y' : 'x';
+
+        // A logarithmic axis cannot show zero, so the "start at zero" request is dropped rather
+        // than producing an axis Chart.js refuses to draw.
+        const logarithmic = spec.options.yScale === 'logarithmic';
+
+        const valueScale: Record<string, unknown> = {
+            stacked: spec.options.stacked,
+            beginAtZero: !logarithmic && spec.options.beginAtZero,
+            ticks: { color: text },
+            grid: {
+                color: grid,
+                display: horizontal ? spec.options.showGridX : spec.options.showGridY,
             },
-            y: {
-                stacked: spec.options.stacked,
-                beginAtZero: spec.options.beginAtZero,
-                ticks: { color: text },
-                grid: { color: grid },
-                title: {
-                    display: Boolean(spec.options.yAxisLabel),
-                    text: spec.options.yAxisLabel,
-                    color: text,
-                },
+            title: {
+                display: Boolean(spec.options.yAxisLabel),
+                text: spec.options.yAxisLabel,
+                color: text,
+            },
+        };
+        if (logarithmic) {
+            valueScale.type = 'logarithmic';
+        }
+        if (spec.options.yMin !== null && (!logarithmic || spec.options.yMin > 0)) {
+            valueScale.min = spec.options.yMin;
+        }
+        if (spec.options.yMax !== null) {
+            valueScale.max = spec.options.yMax;
+        }
+
+        const categoryTicks: Record<string, unknown> = { color: text };
+        if (spec.options.xTickRotation > 0) {
+            categoryTicks.minRotation = spec.options.xTickRotation;
+            categoryTicks.maxRotation = spec.options.xTickRotation;
+        }
+        if (spec.options.xTickLimit !== null) {
+            categoryTicks.maxTicksLimit = spec.options.xTickLimit;
+        }
+
+        const categoryScale: Record<string, unknown> = {
+            stacked: spec.options.stacked,
+            ticks: categoryTicks,
+            grid: {
+                color: grid,
+                display: horizontal ? spec.options.showGridY : spec.options.showGridX,
+            },
+            title: {
+                display: Boolean(spec.options.xAxisLabel),
+                text: spec.options.xAxisLabel,
+                color: text,
             },
         };
 
-        if (spec.options.horizontal && baseType === 'bar') {
+        options.scales = { [valueAxis]: valueScale, [categoryAxis]: categoryScale };
+
+        if (horizontal) {
             options.indexAxis = 'y';
+        }
+
+        if (baseType === 'bar') {
+            options.barPercentage = spec.options.barWidth;
         }
     }
 
@@ -866,9 +1007,11 @@ export function buildChartConfig(
         options.scales = {
             r: {
                 beginAtZero: spec.options.beginAtZero,
+                ...(spec.options.yMin !== null ? { min: spec.options.yMin } : {}),
+                ...(spec.options.yMax !== null ? { max: spec.options.yMax } : {}),
                 ticks: { color: text, backdropColor: 'transparent' },
-                grid: { color: grid },
-                angleLines: { color: grid },
+                grid: { color: grid, display: spec.options.showGridY },
+                angleLines: { color: grid, display: spec.options.showGridX },
                 pointLabels: { color: text },
             },
         };
