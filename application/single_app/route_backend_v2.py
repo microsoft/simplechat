@@ -90,6 +90,9 @@ from route_frontend_chats import (
     _build_initial_chat_model_selection,
     _is_chat_agent_allowed_by_governance,
 )
+# Shared with the server-rendered admin page so both interfaces run the same
+# connection tests rather than maintaining two lists of what can be tested.
+from route_backend_settings import run_admin_settings_connection_test
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from config import VERSION
@@ -760,6 +763,38 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to update settings"}), 500
+
+    @bp.route("/api/v2/admin/settings/test-connection", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_test_connection():
+        """Run one connection test against the values currently on screen.
+
+        Endpoints and credentials are worth nothing if they are wrong, and the only
+        way to find out is to try them. The server-rendered page has always offered
+        this; without it here, configuring a connection in the V2 surface would mean
+        saving blind and waiting for a user to hit the failure.
+
+        Testing before saving is the point, so the payload carries the draft values
+        rather than the stored ones. The one thing the browser cannot supply is a
+        credential it was never sent: a stored secret arrives as the redaction
+        placeholder and is resolved server-side by the shared dispatcher.
+
+        The dispatcher is shared with ``/api/admin/settings/test_connection`` so both
+        interfaces support exactly the same set of tests.
+        """
+        payload = request.get_json(silent=True) or {}
+
+        test_type = str(payload.get("test_type") or "").strip()
+        if not test_type:
+            return jsonify({"error": "No test_type supplied"}), 400
+
+        log_event(
+            f"[V2_ADMIN_SETTINGS] Running '{test_type}' connection test",
+            level=logging.INFO,
+        )
+        return run_admin_settings_connection_test(payload)
 
     @bp.route("/api/v2/admin/settings/branding-image", methods=["POST"])
     @swagger_route(security=get_auth_security())

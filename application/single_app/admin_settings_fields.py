@@ -110,6 +110,13 @@ NON_PATCHABLE_TYPES = ("image", "component", "status")
 # an unconfigured capability needs the connection, not the tuning knobs.
 GROUP_VARIANTS = ("connection", "behavior", "limits", "access", "advanced")
 
+# Roles a field can play in its section's header rather than its body.
+#
+# "capability" marks the switch that turns the whole section on. The renderer
+# lifts it into the section header next to the status, so the one control that
+# decides whether anything else matters is never buried among forty others.
+FIELD_ROLES = ("capability",)
+
 # Modes for a cross-section prerequisite, matching the server-rendered
 # `data-requires-mode` contract in admin_settings_dependencies.js.
 #   block  disables the dependent controls until the prerequisite is on
@@ -676,6 +683,131 @@ ADMIN_SETTINGS_FIELDS = {
                 "storage, knowledge bases and personal AI interactions."
             ),
             "default": True,
+        },
+    ],
+    # The first Knowledge section described, and the reference for the rest.
+    #
+    # Azure AI Search can be reached directly or through API Management, and the
+    # server-rendered pane shows that as two sibling blocks with a switch above
+    # them, so an administrator sees fields for the path they are not using and
+    # has to work out which half matters. Declaring it as one connection choice
+    # with two branches means only the path in use is on screen.
+    #
+    # There is no capability toggle here. Search is core infrastructure rather
+    # than an optional feature, so the section reports configured or not on the
+    # strength of its connection fields alone.
+    "azure-ai-search-section": [
+        {
+            "key": "enable_ai_search_apim",
+            "type": "switch",
+            "label": "Route through API Management",
+            "help": (
+                "Send Azure AI Search requests through API Management for centralized "
+                "monitoring and control instead of reaching the service directly."
+            ),
+            "default": False,
+            "group": {
+                "id": "connection",
+                "label": "Connection",
+                "variant": "connection",
+                "help": (
+                    "Where the application sends search requests, and how it "
+                    "authenticates to them."
+                ),
+            },
+        },
+        {
+            "key": "azure_ai_search_endpoint",
+            "type": "text",
+            "label": "Search Endpoint",
+            "help": "For example https://your-service.search.windows.net.",
+            "default": "",
+            "required": True,
+            "placeholder": "https://your-service.search.windows.net",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": False},
+        },
+        {
+            "key": "azure_ai_search_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a key, and requires the app identity to "
+                "hold a Search Index Data Contributor role on the service."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": False},
+        },
+        {
+            "key": "azure_ai_search_key",
+            "type": "secret",
+            "label": "Search Key",
+            "help": "An admin key for the search service.",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "enable_ai_search_apim", "equals": False},
+                    {"key": "azure_ai_search_authentication_type", "equals": "key"},
+                ]
+            },
+        },
+        {
+            "key": "azure_apim_ai_search_endpoint",
+            "type": "text",
+            "label": "API Management Endpoint",
+            "help": "The API Management URL that fronts Azure AI Search.",
+            "default": "",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_ai_search_subscription_key",
+            "type": "secret",
+            "label": "API Management Subscription Key",
+            "required": True,
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+            "depends_on": {"key": "enable_ai_search_apim", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "label": "Test search connection",
+            "help": (
+                "Runs against the values above, so a connection can be checked before it "
+                "is saved."
+            ),
+            "test_type": "azure_ai_search",
+            "test_payload": {
+                "enable_apim": {"key": "enable_ai_search_apim"},
+                "direct.endpoint": {
+                    "key": "azure_ai_search_endpoint",
+                    "when": {"key": "enable_ai_search_apim", "equals": False},
+                },
+                "direct.auth_type": {
+                    "key": "azure_ai_search_authentication_type",
+                    "when": {"key": "enable_ai_search_apim", "equals": False},
+                },
+                "direct.key": {
+                    "key": "azure_ai_search_key",
+                    "when": {"key": "enable_ai_search_apim", "equals": False},
+                },
+                "apim.endpoint": {
+                    "key": "azure_apim_ai_search_endpoint",
+                    "when": {"key": "enable_ai_search_apim", "equals": True},
+                },
+                "apim.subscription_key": {
+                    "key": "azure_apim_ai_search_subscription_key",
+                    "when": {"key": "enable_ai_search_apim", "equals": True},
+                },
+            },
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
         },
     ],
     "actions-config": [
