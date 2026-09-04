@@ -2,8 +2,8 @@
 # test_v2_admin_settings_secret_redaction.py
 """
 Functional test that the V2 admin settings endpoint never ships a stored secret.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.063
+Implemented in: 0.261.063
 
 ``GET /api/v2/admin/settings`` returns the settings document so an administrator can
 edit it. Admin settings are deliberately not passed through
@@ -77,7 +77,7 @@ def test_api_secret_list_covers_every_known_credential():
     """A key missing from the list is a key the endpoint returns as stored."""
     print("Testing the API secret field list...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.063")
 
     covered = read_secret_field_tuple("ADMIN_SETTINGS_FORM_SECRET_FIELDS") | (
         read_secret_field_tuple("ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS")

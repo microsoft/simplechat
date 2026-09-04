@@ -2,8 +2,8 @@
 # test_v2_admin_security_parity.py
 """
 Functional test pinning V1/V2 parity for the Admin Settings Security group.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.063
+Implemented in: 0.261.063
 
 The V2 React admin surface renders from ``admin_settings_fields.py`` rather than
 from the server-rendered panes, so the two descriptions of the same settings can
@@ -149,7 +149,7 @@ def test_security_panes_match_navigation():
     """The panes this test reads must be the ones ADMIN_NAV puts in the group."""
     print("Testing Security pane list against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.063")
 
     group = next((g for g in ADMIN_NAV if g["id"] == SECURITY_GROUP_ID), None)
     assert group, "ADMIN_NAV no longer defines a 'security' group."

@@ -11,7 +11,7 @@ work describes all six Security tabs, adds the generic schema capabilities that
 description required, replaces the DOM-scraped app role roster with a declared registry,
 and closes a secret exposure in the V2 settings endpoint.
 
-**Implemented in version:** 0.261.059
+**Implemented in version:** 0.261.063
 
 **Dependencies:** `admin_settings_nav.py` for section ids, the existing
 `/api/admin/settings/test_connection` and `/api/admin/settings/key-vault/secret-reminders`
@@ -43,7 +43,6 @@ All of these are generic and available to every group.
 | Addition | Purpose |
 | --- | --- |
 | `secret` field type | Write-only credential; the browser receives a placeholder |
-| `note` field type | Standing `info` or `warning` prose declared by the schema |
 | `string_list` field type | Comma-edited list stored as an array |
 | `input_type` on `text` | `email` or `url` input semantics |
 | `group` on a field | Labelled sub-section inside one card |
@@ -100,6 +99,13 @@ The server-rendered page builds its roster by scanning for
 in one document, and it silently misses `file_sync_personal_require_app_role`, whose key
 does not match the prefix. The registry covers all eleven.
 
+The roster itself is built by `collectAppRoleEntries`, which walks the navigation and the
+field schema so each row knows which tab really owns it, then merges the registry in by
+settings key. The two halves answer different questions and neither is redundant: the
+schema says which requirements exist and where their controls live, the registry says what
+each one means. A requirement the registry does not describe still renders, without the
+role value and the before/after copy.
+
 ### Secret handling
 
 `GET /api/v2/admin/settings` previously returned `get_settings()` unmodified, so every
@@ -134,7 +140,7 @@ what removes a secret.
 
 | Component | File | Backing endpoint |
 | --- | --- | --- |
-| `app-role-requirements` | `AppRoleRequirements.tsx` | none; registry in the settings payload |
+| `app-role-requirements-roster` | `AppRoleRoster.tsx` | none; registry in the settings payload |
 | `key-vault-secret-reminders` | `KeyVaultReminders.tsx` | `/api/admin/settings/key-vault/secret-reminders` |
 | `connection-test` | `ConnectionTest.tsx` | `/api/admin/settings/test_connection` |
 | `front-door-redirect-preview` | `FrontDoorRedirectPreview.tsx` | none; derived from the draft |
@@ -181,8 +187,8 @@ application/single_app/
 
 application/v2_ui/src/
   lib/adminFields.ts                 # types, multi-condition visibility, status
-  components/admin/fields.tsx        # secret, note, string_list controls
-  components/admin/AppRoleRequirements.tsx
+  components/admin/fields.tsx        # secret and string_list controls
+  components/admin/AppRoleRoster.tsx
   components/admin/ConnectionTest.tsx
   components/admin/FrontDoorRedirectPreview.tsx
   components/admin/KeyVaultReminders.tsx

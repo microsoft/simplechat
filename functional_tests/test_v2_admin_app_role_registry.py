@@ -2,8 +2,8 @@
 # test_v2_admin_app_role_registry.py
 """
 Functional test that the app role registry describes every role requirement.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.063
+Implemented in: 0.261.063
 
 Admin Settings gathers every "require an Entra app role" switch into one place so
 the access policy can be read as a whole. The server-rendered page builds that
@@ -77,7 +77,7 @@ def test_every_role_setting_is_registered():
     """An unregistered requirement is invisible in the access policy view."""
     print("Testing that every role-shaped setting is registered...")
 
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.063")
 
     candidates = {
         key for key in read_setting_keys() if roles_module.is_app_role_setting_key(key)
