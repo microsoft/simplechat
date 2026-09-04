@@ -26,64 +26,132 @@ Agents and actions can call tools, inspect documents, and automate work. Expose 
 
 ## Before you change anything
 
-- Decide whether personal, group, or global agents are allowed.
+- **Enable Agents** gates this entire group. Decide whether you want agents at all before configuring anything below it.
+- Decide whether agents come from one shared global set or from each user's own workspace, because that choice changes which other settings do anything.
 - Confirm action dependencies before enabling a plugin.
 - Configure App Service Authentication excluded paths before exposing inbound MCP.
 
 ## Agents {#agents}
 
-### Agents Configuration {#agents-config}
+### Agent Runtime {#agents-config}
 
-The Agents Configuration section belongs to the Agents tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+This is where you decide whether agents run at all, and where they come from.
 
-### Agent Template Approvals {#agent-template-approvals-section}
+**Enable Agents** starts the Semantic Kernel runtime. It is the gate for
+everything else in this group. While it is off, the Agents catalog page is not
+served, no global agent or action is loaded, and the workspace permissions have
+nothing to apply to.
 
-The Agent Template Approvals section belongs to the Agents tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+**Workspace Mode** answers a question that determines most of the rest of your
+configuration: does everyone share one set of agents, or does each user and group
+keep their own?
+
+- **Off** — one global set, curated by administrators. You choose the single
+  agent that answers, and users pick from what you publish. Use this when agent
+  behaviour has to be reviewable and consistent.
+- **On** — each user and each group owns a collection. The workspace permissions
+  section appears, and the global set is no longer used on its own. Use this when
+  people need to build agents for their own work.
+
+**Add Global Agents and Actions to Workspaces** matters only in Workspace Mode.
+Turning Workspace Mode on otherwise hides the global set entirely, which is
+rarely what an administrator intends; this setting folds the shared agents back
+in alongside each person's own.
+
+**Agent Orchestration** appears only when the deployment offers more than one
+orchestration mode. This build ships a single mode, single-agent, so the control
+is not shown. Orchestration settings save through their own endpoint rather than
+with the rest of the page.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Hero Title | Provides displayed text that users see in the affected interface. | Find your next AI partner | `agents_page_title` |
-| Hero Subtitle | Provides displayed text that users see in the affected interface. | Explore specialized agents built to accelerate how you work. | `agents_page_subtitle` |
-| Hero Color Mode | Defines behavior for the related admin workflow; verify the affected feature after saving. | single | `agents_page_hero_color_mode` |
-| Primary Color | Defines behavior for the related admin workflow; verify the affected feature after saving. | #0f172a | `agents_page_hero_primary_color` |
-| Secondary Color | Defines behavior for the related admin workflow; verify the affected feature after saving. | #1e293b | `agents_page_hero_secondary_color` |
-| Disclaimer / Guidance Text (Markdown supported) | Shown below the Agents page hero. Use this for contact details, request guidance, or governance reminders. | Empty | `agents_page_disclaimer_markdown` |
-| Show agent instructions in Agents page details | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agents_page_show_instructions_in_details` |
-| Agents Page Promoted Popular Agents Json | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `agents_page_promoted_popular_agents_json` |
-| Placement | Defines behavior for the related admin workflow; verify the affected feature after saving. | before | `agents_page_promoted_popular_order` |
-| Promoted Tag Label | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `agents_page_promoted_popular_tag_label` |
-| Show promoted tag | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agents_page_promoted_popular_tag_enabled` |
-| Add Agent | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Enable Agents | Enables the agent and action runtime so users can work with configured agents instead of only the base chat experience. | Off | `enable_semantic_kernel`; capability toggle |
-| Workspace Mode (workspace-specific agents/plugins and disables global configuration) | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `per_user_semantic_kernel` |
-| Allow User Agents | Permits user agents when the related workspace or agent feature is enabled. | Off | `allow_user_agents` |
-| Allow Group Agents | Permits group agents when the related workspace or agent feature is enabled. | Off | `allow_group_agents` |
-| Allow User Custom Endpoints | Permits user custom endpoints when the related workspace or agent feature is enabled. | Off | `allow_user_custom_endpoints` |
-| Allow Group Custom Endpoints | Permits group custom endpoints when the related workspace or agent feature is enabled. | Off | `allow_group_custom_endpoints` |
-| Merge Global Agents/Plugins into Workspace | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `merge_global_semantic_kernel_with_workspace` |
-| Enable Agent Template Gallery | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_agent_template_gallery`; capability toggle |
-| Orchestration Type | Defines behavior for the related admin workflow; verify the affected feature after saving. | default_agent | `orchestration_type` |
-| Multi-agent orchestration | Derived from **Orchestration Type**; enables group-chat orchestration paths when the selected orchestration mode is multi-agent, so the runtime can coordinate multiple configured agents instead of routing to a single default agent. | Off | `enable_multi_agent_orchestration`; saved by orchestration settings API |
-| Max Rounds Per Agent (Group Chat) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 1 | `max_rounds_per_agent` |
-| Selected Agent: | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Allow User Template Submissions | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agent_templates_allow_user_submission` |
-| Require Admin Approval | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agent_templates_require_approval` |
-| Enable tool throttles | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_inbound_mcp_rate_limits`; capability toggle |
-| Value | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Description | Use descriptions to explain who owns this app, tenant, or source value without making the value easy to guess. | Not specified in defaults | Runtime UI control |
-| I have added the required App Service Authentication excluded paths for this SimpleChat App Service. | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
+| Enable Agents | Starts the agent runtime. Gates the Agents catalog page, the global agent and action tables, and every workspace permission in this group. | Off | `enable_semantic_kernel`; capability toggle |
+| Workspace Mode | Chooses between one shared global set of agents and actions, and a separate collection per user and group. | Off | `per_user_semantic_kernel` |
+| Add Global Agents and Actions to Workspaces | Includes the global set in every workspace collection, so people see both what they built and what you publish. | Off | `merge_global_semantic_kernel_with_workspace`; only applies in Workspace Mode |
+| Orchestration Type | Selects how a chat is routed across agents. Hidden while only one mode is available. | default_agent | `orchestration_type`; saved by the orchestration settings API |
+| Max Rounds Per Agent | Caps how many turns each agent takes in a multi-agent conversation, which bounds the model calls one message can trigger. | 1 | `max_rounds_per_agent`; forced to 1 outside multi-agent modes |
+
+### Workspace Agent Permissions {#agent-toggles-card}
+
+Shown only in Workspace Mode, because outside it nothing reads these.
+
+Custom endpoints deserve particular attention: they let an agent send prompts to
+a model endpoint that the agent's owner configured, rather than one you
+administer. Enable them when teams genuinely need their own models, and pair them
+with an endpoint governance policy when only some of them should.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Allow Personal Agents | Lets people build and keep agents in their own workspace. | Off | `allow_user_agents`; pair with a personal agent governance policy |
+| Allow Group Agents | Lets a group own agents its members share. | Off | `allow_group_agents`; group workspaces must also be enabled |
+| Allow Personal Custom Endpoints | Lets people point their own agents at a model endpoint they configure, instead of the deployment's shared models. | Off | `allow_user_custom_endpoints` |
+| Allow Group Custom Endpoints | The same for group-owned agents. | Off | `allow_group_custom_endpoints`; group workspaces must also be enabled |
+| Enable Agent Template Gallery | Gives workspace users approved agents to start from rather than a blank editor, and adds the Agent Template Approvals section. | On | `enable_agent_template_gallery`; capability toggle |
+
+### Agents Page {#agents-page-customization-card}
+
+Controls how the Agents catalog page presents itself. That page is served behind
+**Enable Agents**, so none of this applies while agents are off.
+
+The promotion controls exist because the Popular tab ranks agents by how often
+people run them, which leaves a newly published agent unable to be found: nothing
+becomes popular until it is already popular. Promoting an agent places it in that
+tab regardless of usage. People only ever see promoted agents that are already
+visible to them, so a promotion cannot leak an agent someone has no access to.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Hero Title | Headline at the top of the Agents catalog page. Reverts to the default when left empty. | Find your next AI partner | `agents_page_title` |
+| Hero Subtitle | Supporting line under the headline. Reverts to the default when left empty. | Explore specialized agents built to accelerate how you work. | `agents_page_subtitle` |
+| Hero Color Mode | Draws the hero as a flat colour or as a gradient between the two colours below. | single | `agents_page_hero_color_mode` |
+| Primary Color | Hero background, and the first stop of the gradient. | #0f172a | `agents_page_hero_primary_color` |
+| Secondary Color | Second stop of the gradient. Only used in two-tone mode. | #1e293b | `agents_page_hero_secondary_color` |
+| Disclaimer or Guidance Text | Markdown shown under the hero. Use it for who to contact about a new agent, or the governance reminder people need before choosing one. | Empty | `agents_page_disclaimer_markdown` |
+| Show Agent Instructions in Details | Reveals an agent's system prompt in its details popup and in the catalog API response. Turn it off when instructions carry wording or internal references you would rather not publish. | On | `agents_page_show_instructions_in_details` |
+| Promoted Placement | Positions promoted agents before, after, or mixed in with the agents that earned their place through usage. | before | `agents_page_promoted_popular_order` |
+| Show Promoted Tag | Marks promoted agents so their placement is not mistaken for genuine usage. | On | `agents_page_promoted_popular_tag_enabled` |
+| Promoted Tag Label | Wording of that tag. | Promoted | `agents_page_promoted_popular_tag_label` |
+| Promoted Agents | The agents placed in the Popular tab regardless of usage, and which time window each promotion applies to. | None | `agents_page_promoted_popular_agents` |
+
+### Agent Template Approvals {#agent-template-approvals-section}
+
+Shown only while the Agent Template Gallery is enabled. Submissions are reviewed
+on the shared [approvals queue]({{ '/admin/governance/' | relative_url }}) rather
+than here.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Allow User Template Submissions | Lets workspace users offer an agent they built as a template for everyone else, which is how a gallery grows without an administrator authoring every entry. | On | `agent_templates_allow_user_submission` |
+| Require Admin Approval | Holds submissions in the approvals queue instead of publishing them straight into the gallery. | On | `agent_templates_require_approval` |
 
 ## Actions {#actions}
 
-### Document Action Capabilities {#document-action-capabilities-card}
+### Document Actions {#document-action-capabilities-card}
 
 The Document Action Capabilities section belongs to the Actions tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
-### Actions Configuration {#actions-config}
+### Workspace Action Permissions {#plugin-feature-toggles}
 
-The Actions Configuration section belongs to the Actions tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Shown only in Workspace Mode. Whether people may build their own actions, which
+is a larger grant than building their own agents: an action carries an endpoint
+and its credentials.
+
+### Built-in Actions {#core-plugin-toggles}
+
+The small set of general-purpose actions that ship with the runtime.
+
+### Global Actions {#actions-config}
+
+The actions published to everyone, and the workspace action permissions that sit
+alongside them.
 
 #### Settings
 

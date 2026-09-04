@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
+import { ChevronRight, Loader2, Search, ShieldAlert, TriangleAlert } from 'lucide-react';
 import { ApiError, api } from '../lib/apiClient';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { PageHeader } from '../components/layout/PageHeader';
@@ -36,6 +36,8 @@ import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { OrchestrationCard } from '../components/admin/OrchestrationCard';
+import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingField } from '../components/admin/fields';
 import {
@@ -46,10 +48,12 @@ import {
     asBoolean,
     asNumber,
     asString,
+    buildSectionBlocks,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
     isFieldVisible,
+    isSectionVisible,
     readFieldValue,
     type AdminField,
     type AdminSettingsPatchResponse,
@@ -241,6 +245,7 @@ export function AdminSettingsPage() {
 
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+    const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
@@ -279,9 +284,25 @@ export function AdminSettingsPage() {
         for (const group of data.admin_nav) {
             for (const tab of group.tabs) {
                 for (const section of tab.sections) {
-                    const fields = schema[section.id] ?? [];
                     const capabilities = capabilitiesBySection.get(section.id) ?? [];
                     capabilitiesBySection.delete(section.id);
+
+                    // A section can be conditional on a settings key or a runtime
+                    // flag -- workspace agent permissions only exist while Workspace
+                    // Mode is on, and Inbound MCP only while its App Service setting
+                    // is present. The server-rendered page already honours this; V2
+                    // used to draw the section regardless.
+                    if (!isSectionVisible(section.condition, settings, draft, runtimeFlags)) {
+                        continue;
+                    }
+
+                    // Fields whose own dependencies are unmet are dropped here rather
+                    // than at render time, so a section left with nothing to show
+                    // disappears instead of leaving an empty titled panel behind.
+                    const fields = (schema[section.id] ?? []).filter((field) =>
+                        isFieldVisible(field, settings, draft),
+                    );
+
                     if (!fields.length && !capabilities.length) {
                         continue;
                     }
@@ -312,7 +333,7 @@ export function AdminSettingsPage() {
         }
 
         return rendered;
-    }, [data, schema, capabilityRows]);
+    }, [data, schema, capabilityRows, settings, draft, runtimeFlags]);
 
     const visibleSections = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -536,6 +557,19 @@ export function AdminSettingsPage() {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'agent-orchestration':
+                    return <OrchestrationCard key={key} help={field.help} />;
+                case 'promoted-popular-agents':
+                    return (
+                        <PromotedAgentsEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
@@ -601,6 +635,41 @@ export function AdminSettingsPage() {
         }
 
         return <div key={key}>{control}</div>;
+    };
+
+    /**
+     * Render a section's fields, wrapping any declared group in a disclosure.
+     *
+     * A collapsed group is opened while a search is running, because a match hidden
+     * behind a closed disclosure looks exactly like no match at all.
+     */
+    const renderBlocks = (fields: AdminField[]) => {
+        const searching = query.trim().length > 0;
+
+        return buildSectionBlocks(fields).map((block) => {
+            if (block.kind === 'field') {
+                return renderField(block.field);
+            }
+            return (
+                <details
+                    key={`group-${block.name}`}
+                    open={searching || !block.collapsed}
+                    className="group py-2"
+                >
+                    <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-semibold tracking-wide text-text-2 uppercase [&::-webkit-details-marker]:hidden">
+                        <ChevronRight
+                            size={13}
+                            aria-hidden="true"
+                            className="shrink-0 transition-transform group-open:rotate-90"
+                        />
+                        {block.name}
+                    </summary>
+                    <div className="mt-1 divide-y divide-edge border-l border-edge pl-3">
+                        {block.fields.map(renderField)}
+                    </div>
+                </details>
+            );
+        });
     };
 
     if (!isAdmin) {
@@ -732,7 +801,7 @@ export function AdminSettingsPage() {
                                     </div>
 
                                     <div className="divide-y divide-edge">
-                                        {section.fields.map(renderField)}
+                                        {renderBlocks(section.fields)}
 
                                         {section.capabilities.map((row) => (
                                             <div key={row.key} className="py-1">

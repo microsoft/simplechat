@@ -200,19 +200,33 @@ def test_dependencies_reference_real_fields():
     checked = 0
 
     for section_id, field in fields_module.iter_fields():
-        depends_on = field.get("depends_on")
-        if not depends_on:
-            continue
-        checked += 1
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        if "key" not in depends_on:
-            problems.append(f"{identity}: depends_on has no key")
-            continue
-        if depends_on["key"] not in declared:
-            problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
-        if field.get("key") == depends_on["key"]:
-            problems.append(f"{identity}: depends on itself")
+        # ``depends_on`` may be one condition or a chain of them, so the schema
+        # exposes an iterator rather than each caller re-deriving the shape.
+        for depends_on in fields_module.iter_dependencies(field):
+            checked += 1
+
+            if "key" not in depends_on:
+                problems.append(f"{identity}: depends_on has no key")
+                continue
+            if depends_on["key"] not in declared:
+                problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
+            if field.get("key") == depends_on["key"]:
+                problems.append(f"{identity}: depends on itself")
+
+            # A string comparison only makes sense against a value the gating
+            # field can actually hold, and a typo there hides the dependent
+            # field for good.
+            expected = depends_on.get("equals", True)
+            if isinstance(expected, str):
+                gate = fields_module.get_field_definition(depends_on["key"]) or {}
+                allowed = {option["value"] for option in gate.get("options", [])}
+                if allowed and expected not in allowed:
+                    problems.append(
+                        f"{identity}: depends on {depends_on['key']!r} == {expected!r}, "
+                        f"which is not one of {sorted(allowed)}"
+                    )
 
     assert not problems, (
         "These visibility dependencies are broken:\n  " + "\n  ".join(problems)
