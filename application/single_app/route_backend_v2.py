@@ -28,7 +28,9 @@ from admin_settings_fields import (
     LOGO_SCALE_DEFAULT_PERCENT,
     LOGO_SCALE_MAX_PERCENT,
     LOGO_SCALE_MIN_PERCENT,
+    SECRET_REDACTED_VALUE,
     get_admin_settings_fields,
+    get_secret_setting_keys,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
 )
@@ -73,6 +75,7 @@ from functions_settings import (
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
+    redact_admin_settings_secrets_for_form,
     sanitize_settings_for_user,
     update_settings,
 )
@@ -607,16 +610,38 @@ def register_route_backend_v2(bp):
 
 
 def register_route_backend_v2_admin(bp):
+    def _redact_admin_settings_for_v2(settings):
+        """Replace stored credentials with the redaction placeholder.
+
+        Two lists feed this. ``redact_admin_settings_secrets_for_form`` covers the keys
+        the server-rendered form already protects, including the nested Foundry client
+        secret. ``get_secret_setting_keys`` adds anything the V2 schema declares as a
+        secret, so declaring a new credential field protects it without a second edit
+        here.
+        """
+        redacted = redact_admin_settings_secrets_for_form(settings)
+        for key in get_secret_setting_keys():
+            if redacted.get(key):
+                redacted[key] = SECRET_REDACTED_VALUE
+        return redacted
+
     @bp.route("/api/v2/admin/settings", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
     @admin_required
     def v2_admin_get_settings():
-        """Return the raw settings document, the admin navigation and the field schema.
+        """Return the settings document, the admin navigation and the field schema.
 
-        Admin settings are not sanitized. Sanitization removes keys, secrets and endpoint
-        configuration, which are exactly the values an administrator is here to manage.
-        Access is restricted to the Admin role by the blueprint guard and the decorator.
+        Admin settings are not sanitized the way a user-facing payload is. Sanitization
+        removes endpoint configuration and feature state, which are exactly the values an
+        administrator is here to manage, and access is restricted to the Admin role by
+        the blueprint guard and the decorator.
+
+        Credentials are the exception. They are replaced with the same redaction
+        placeholder the server-rendered form uses, so an administrator who only needs to
+        flip a toggle never has every stored key delivered to their browser. Submitting
+        the placeholder back means "unchanged"; ``normalize_admin_settings_updates`` drops
+        it rather than writing it.
 
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
@@ -627,7 +652,7 @@ def register_route_backend_v2_admin(bp):
             return (
                 jsonify(
                     {
-                        "settings": settings,
+                        "settings": _redact_admin_settings_for_v2(settings),
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "branding_assets": _build_branding_assets(settings),
@@ -687,7 +712,20 @@ def register_route_backend_v2_admin(bp):
                 )
 
             if not normalized:
-                return jsonify({"error": "No settings supplied"}), 400
+                # Every supplied key normalized away. In practice that means the payload
+                # held nothing but untouched credentials, which is a no-op rather than a
+                # mistake, so it succeeds with an empty result instead of a 400.
+                return (
+                    jsonify(
+                        {
+                            "success": True,
+                            "updated_keys": [],
+                            "settings": {},
+                            "warnings": warnings,
+                        }
+                    ),
+                    200,
+                )
 
             update_settings(normalized)
             log_event(
@@ -706,7 +744,10 @@ def register_route_backend_v2_admin(bp):
                     {
                         "success": True,
                         "updated_keys": sorted(normalized.keys()),
-                        "settings": normalized,
+                        # The browser merges this into its copy of the document, so a
+                        # credential that was just set has to come back redacted rather
+                        # than echoing the value straight out again.
+                        "settings": _redact_admin_settings_for_v2(normalized),
                         "warnings": warnings,
                     }
                 ),

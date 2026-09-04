@@ -33,6 +33,7 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
+import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
@@ -527,6 +528,19 @@ export function AdminSettingsPage() {
                     field={field}
                     value={value}
                     error={error}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'id_list') {
+            return (
+                <AssignmentPicker
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
                     onChange={(next) => field.key && setValue(field.key, next)}
                 />
             );

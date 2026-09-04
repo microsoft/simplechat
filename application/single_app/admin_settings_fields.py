@@ -30,6 +30,27 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
+Beyond a field's type, three optional descriptors shape how a section reads:
+
+``group``
+    Names the cluster a field belongs to, with a variant from ``GROUP_VARIANTS``.
+    The renderer opens the ``connection`` group first, because an administrator
+    arriving at an unconfigured capability needs the endpoint before the tuning
+    knobs. Without this, a section like Document Intelligence is a flat run of
+    forty controls in which the credential that makes the rest work is simply
+    the last one.
+
+``depends_on``
+    Shows a field only while a condition holds. See ``evaluate_dependency`` for
+    the supported shapes; ``any_of`` exists because the Speech resource block is
+    revealed by any of three independent capability toggles.
+
+``requires``
+    Declares a prerequisite owned by a different section, mirroring the
+    ``data-requires`` attributes ``admin_settings_dependencies.js`` reads. File
+    Sync needs Redis Cache, which lives under Scale, and saying so where the
+    dependency is felt beats discovering it from a flash message after saving.
+
 Only the Appearance group is described in full so far. Sections with no entry
 here fall back to the V2 surface's ``enable_*`` scan, so undescribed groups keep
 working exactly as they did. A handful of individual fields outside Appearance
@@ -37,6 +58,7 @@ are also declared: that scan places a key by guessing from shared word stems,
 and declaring a field is the only way to stop it guessing wrong.
 """
 
+import json
 import re
 from urllib.parse import urlparse
 
@@ -72,11 +94,27 @@ FIELD_TYPES = (
     "image",
     "link_list",
     "component",
+    "secret",
+    "string_list",
+    "id_list",
+    "status",
 )
 
 # Types that own their persistence outside the settings PATCH: image uploads go
-# through the multipart branding endpoint, and components talk to their own API.
-NON_PATCHABLE_TYPES = ("image", "component")
+# through the multipart branding endpoint, components talk to their own API, and
+# a status readout is computed by the server rather than stored at all.
+NON_PATCHABLE_TYPES = ("image", "component", "status")
+
+# Group variants. A section orders its fields into groups, and the variant is
+# what the renderer uses to decide which group opens first: an admin arriving at
+# an unconfigured capability needs the connection, not the tuning knobs.
+GROUP_VARIANTS = ("connection", "behavior", "limits", "access", "advanced")
+
+# Modes for a cross-section prerequisite, matching the server-rendered
+# `data-requires-mode` contract in admin_settings_dependencies.js.
+#   block  disables the dependent controls until the prerequisite is on
+#   warn   leaves them usable, for prerequisites the backend accepts as intent
+REQUIRES_MODES = ("block", "warn")
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
 USER_AGREEMENT_APPLY_TO_VALUES = ("personal", "group", "public", "chat")
@@ -97,6 +135,26 @@ CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
 # into an anchor href, so allowing arbitrary schemes would let a saved link
 # carry javascript: into every page's navigation.
 EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
+
+# Placeholder a stored secret is replaced with before it is sent to a browser.
+#
+# This mirrors ``functions_settings.ADMIN_SETTINGS_SECRET_REDACTED_VALUE`` rather
+# than importing it. This module is a pure declaration that several functional
+# tests import directly, and ``functions_settings`` reaches ``config``, which
+# builds a Cosmos client at import time. The schema test pins the two values
+# together, so the duplication cannot drift.
+SECRET_REDACTED_VALUE = "***REDACTED***"
+
+# Longest value accepted for a secret. Generous enough for a certificate-bearing
+# connection string, short enough that a paste accident is refused rather than
+# stored.
+SECRET_MAX_LENGTH = 4096
+
+# Returned by the secret normalizer when the submitted value is the redaction
+# placeholder, meaning the administrator never touched the field. The update is
+# then dropped rather than written, so a save that touches one toggle cannot
+# overwrite every key on the page with "***REDACTED***".
+SECRET_UNCHANGED = object()
 
 
 ADMIN_SETTINGS_FIELDS = {
@@ -704,6 +762,67 @@ def get_legacy_field_names():
     return claimed
 
 
+def get_secret_setting_keys():
+    """Return every settings key the schema declares as a credential.
+
+    The V2 settings endpoint uses this to replace stored secrets with
+    ``SECRET_REDACTED_VALUE`` before the document reaches a browser, which is the
+    same protection the server-rendered form gets from
+    ``redact_admin_settings_secrets_for_form``.
+    """
+    return {
+        field["key"]
+        for _section_id, field in iter_fields()
+        if field.get("type") == "secret" and field.get("key")
+    }
+
+
+def evaluate_dependency(dependency, read_value):
+    """Whether a ``depends_on`` condition holds, given a value reader.
+
+    ``read_value`` takes a settings key and returns its current value, so the
+    same rules apply whether the caller is reading a stored document or a draft
+    that has not been saved yet.
+
+    Four shapes are supported, and they compose:
+
+    ``{"key": k, "equals": v}``      k currently equals v
+    ``{"key": k, "not_equals": v}``  k currently differs from v
+    ``{"any_of": [...]}``            at least one nested condition holds
+    ``{"all_of": [...]}``            every nested condition holds
+
+    ``equals`` against a boolean compares truthiness rather than identity,
+    because a settings document written by the server-rendered form stores
+    checkbox state as the string ``"on"``.
+    """
+    if not dependency:
+        return True
+
+    if "any_of" in dependency:
+        return any(
+            evaluate_dependency(nested, read_value) for nested in dependency["any_of"]
+        )
+
+    if "all_of" in dependency:
+        return all(
+            evaluate_dependency(nested, read_value) for nested in dependency["all_of"]
+        )
+
+    current = read_value(dependency["key"])
+
+    if "not_equals" in dependency:
+        return not _dependency_values_match(current, dependency["not_equals"])
+
+    return _dependency_values_match(current, dependency.get("equals", True))
+
+
+def _dependency_values_match(current, expected):
+    """Compare a stored value against a declared one, tolerating form shapes."""
+    if isinstance(expected, bool):
+        return _coerce_bool(current) is expected
+    return str(current if current is not None else "").strip() == str(expected)
+
+
 def _coerce_bool(value):
     """Coerce a JSON or form-shaped truthy value into a bool."""
     if isinstance(value, bool):
@@ -813,6 +932,97 @@ def _normalize_number(value, field):
     return number, None
 
 
+def is_redacted_secret(value):
+    """Whether a submitted value is the placeholder shown in place of a secret."""
+    return str(value if value is not None else "").strip() == SECRET_REDACTED_VALUE
+
+
+def _normalize_secret(value, field):
+    """Return ``(secret, error)`` for a credential field.
+
+    A browser is never sent a stored secret; it is sent ``SECRET_REDACTED_VALUE``
+    instead. Submitting that placeholder back therefore means "unchanged", and
+    the only safe response is to drop the key from the update entirely. Writing
+    the placeholder through would destroy the credential, and writing the
+    resolved value through would echo the real secret in the PATCH response.
+    """
+    if is_redacted_secret(value):
+        return SECRET_UNCHANGED, None
+
+    secret = str(value if value is not None else "").strip()
+    if len(secret) > SECRET_MAX_LENGTH:
+        return None, f"Value is longer than {SECRET_MAX_LENGTH} characters."
+    return secret, None
+
+
+def _normalize_string_list(value, field):
+    """Return ``(entries, error)`` for a newline-delimited list of strings.
+
+    Stored as a single newline-joined string rather than an array because that is
+    the shape the server-rendered textareas already write, and both interfaces
+    have to read the same setting.
+    """
+    if isinstance(value, list):
+        candidates = [str(item or "") for item in value]
+    else:
+        candidates = str(value if value is not None else "").splitlines()
+
+    entries = []
+    for candidate in candidates:
+        entry = candidate.strip()
+        if not entry or entry in entries:
+            continue
+
+        pattern = field.get("entry_pattern")
+        if pattern and not re.match(pattern, entry):
+            return None, f"{entry!r} is not a valid {field.get('entry_label', 'entry')}."
+
+        entries.append(entry[: field.get("entry_max_length", 253)])
+
+    maximum = field.get("max_entries")
+    if maximum is not None and len(entries) > maximum:
+        return None, f"Enter at most {maximum} entries."
+
+    return "\n".join(entries), None
+
+
+def _normalize_id_list(value, field):
+    """Return ``(ids, error)`` for a list of opaque identifiers.
+
+    Kept as a JSON array, matching the hidden textareas the server-rendered File
+    Sync pane writes, so an assignment saved in one interface is readable in the
+    other.
+    """
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return [], None
+        # The V1 pane stores this as a JSON array inside a textarea, so a string
+        # arriving here is most likely that same serialized form.
+        try:
+            value = json.loads(stripped)
+        except ValueError:
+            return None, "Expected a list of identifiers."
+
+    if not isinstance(value, list):
+        return None, "Expected a list of identifiers."
+
+    ids = []
+    for item in value:
+        if isinstance(item, dict):
+            item = item.get("id")
+        identifier = str(item or "").strip()
+        if not identifier or identifier in ids:
+            continue
+        ids.append(identifier[:200])
+
+    maximum = field.get("max_entries")
+    if maximum is not None and len(ids) > maximum:
+        return None, f"Assign at most {maximum} entries."
+
+    return ids, None
+
+
 # Keys whose normalization already exists elsewhere. Reusing those functions is
 # what stops the two admin surfaces from disagreeing about, for example, which
 # frequency aliases are accepted or how a terms message is trimmed.
@@ -868,6 +1078,18 @@ def _normalize_field_value(key, value, field):
     if field_type == "checkbox_set":
         selection, error = _normalize_checkbox_set(value, field)
         return selection, error, None
+
+    if field_type == "secret":
+        secret, error = _normalize_secret(value, field)
+        return secret, error, None
+
+    if field_type == "string_list":
+        entries, error = _normalize_string_list(value, field)
+        return entries, error, None
+
+    if field_type == "id_list":
+        ids, error = _normalize_id_list(value, field)
+        return ids, error, None
 
     if field_type == "link_list":
         links, error = _normalize_link_list(value)
@@ -974,6 +1196,11 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         if error:
             errors[key] = error
             continue
+        if field_value is SECRET_UNCHANGED:
+            # The administrator never touched this credential. Dropping it keeps
+            # the stored value intact and keeps the real secret out of the
+            # response, which echoes back whatever lands in ``normalized``.
+            continue
         if warning:
             warnings[key] = warning
         normalized[key] = field_value
@@ -989,21 +1216,19 @@ def normalize_admin_settings_updates(updates, current_settings=None):
 
 def _check_minimum_selections(normalized, current_settings, errors):
     """Enforce ``min_selected`` once the merged state of a save is known."""
+    def read_value(key):
+        return normalized[key] if key in normalized else current_settings.get(key)
+
     for _section_id, field in iter_fields():
         key = field.get("key")
         minimum = field.get("min_selected")
         if not key or not minimum:
             continue
 
-        depends_on = field.get("depends_on")
-        if depends_on:
-            gate_key = depends_on["key"]
-            gate_value = (
-                normalized[gate_key] if gate_key in normalized
-                else current_settings.get(gate_key, False)
-            )
-            if _coerce_bool(gate_value) != depends_on.get("equals", True):
-                continue
+        # A constraint on a hidden field would reject a save for a control the
+        # administrator cannot even see.
+        if not evaluate_dependency(field.get("depends_on"), read_value):
+            continue
 
         selection = (
             normalized[key] if key in normalized else current_settings.get(key) or []

@@ -10,14 +10,17 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { AlertCircle, CheckCircle2, ShieldCheck, X } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import {
     asBoolean,
     asNumber,
     asString,
     asStringArray,
     countWords,
+    isRedactedSecret,
+    parseStringList,
+    serializeStringList,
     type AdminField,
 } from '../../lib/adminFields';
 import { Toggle } from '../ui/primitives';
@@ -314,13 +317,17 @@ function CheckboxSetControl({
             <div className="grid gap-1.5 sm:grid-cols-2">
                 {options.map((option) => {
                     const id = `admin-field-${field.key}-${option.value}`;
+                    // An option can be declared but not yet released. Showing it
+                    // disabled says the capability is coming; omitting it would look
+                    // like the option had been removed.
+                    const optionDisabled = disabled || option.disabled;
                     return (
                         <label
                             key={option.value}
                             htmlFor={id}
                             className={clsx(
-                                'flex items-center gap-2 rounded-lg border border-edge px-3 py-2 text-sm',
-                                disabled
+                                'flex items-start gap-2 rounded-lg border border-edge px-3 py-2 text-sm',
+                                optionDisabled
                                     ? 'cursor-not-allowed opacity-60'
                                     : 'cursor-pointer hover:bg-surface-2',
                                 selected.includes(option.value)
@@ -331,12 +338,19 @@ function CheckboxSetControl({
                             <input
                                 id={id}
                                 type="checkbox"
-                                className="accent-[var(--accent)]"
+                                className="mt-0.5 accent-[var(--accent)]"
                                 checked={selected.includes(option.value)}
-                                disabled={disabled}
+                                disabled={optionDisabled}
                                 onChange={(event) => toggle(option.value, event.target.checked)}
                             />
-                            {option.label}
+                            <span>
+                                {option.label}
+                                {option.description ? (
+                                    <span className="block text-xs text-text-3">
+                                        {option.description}
+                                    </span>
+                                ) : null}
+                            </span>
                         </label>
                     );
                 })}
@@ -346,10 +360,258 @@ function CheckboxSetControl({
 }
 
 /**
+ * A credential.
+ *
+ * The server never sends a stored secret; it sends `SECRET_REDACTED_VALUE`. Two things
+ * follow, and both are the point of this control existing separately from `text`:
+ *
+ * Revealing a still-redacted value shows the placeholder, not the credential, so the
+ * button says "Replace" rather than "Show" until the field is edited. Offering "Show"
+ * would promise something it cannot deliver.
+ *
+ * Clearing the box is a real edit -- an administrator removing a key -- so it is
+ * reported upward as an empty string, which the server stores. Only the untouched
+ * placeholder means "leave it alone".
+ */
+function SecretControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const [revealed, setRevealed] = useState(false);
+    const current = asString(value);
+    const stored = isRedactedSecret(current);
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                stored ? (
+                    <span className="flex items-center gap-1 text-xs text-text-3">
+                        <ShieldCheck size={12} />
+                        Stored
+                    </span>
+                ) : null
+            }
+        >
+            <div className="flex items-center gap-2">
+                <input
+                    id={id}
+                    type={revealed && !stored ? 'text' : 'password'}
+                    className={clsx(inputClass, 'font-mono')}
+                    value={current}
+                    placeholder={field.placeholder}
+                    disabled={disabled}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+                <button
+                    type="button"
+                    className={clsx(
+                        'shrink-0 rounded-lg border border-edge px-3 py-2 text-xs',
+                        'text-text-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60',
+                    )}
+                    disabled={disabled}
+                    onClick={() => {
+                        if (stored) {
+                            // Hand the field over for editing. Blanking it first is what
+                            // turns the next keystroke into a real change rather than an
+                            // edit of the placeholder text.
+                            onChange('');
+                            setRevealed(true);
+                        } else {
+                            setRevealed((previous) => !previous);
+                        }
+                    }}
+                >
+                    {stored ? 'Replace' : revealed ? 'Hide' : 'Show'}
+                </button>
+            </div>
+        </FieldShell>
+    );
+}
+
+/**
+ * An editable list of short strings, stored newline-delimited.
+ *
+ * Used for the URL Access allow and block lists. Entries are added one at a time and
+ * removed individually, rather than being edited as free text in a textarea, because a
+ * stray newline in a domain list is invisible and silently widens or narrows a policy.
+ */
+function StringListControl({
+    field,
+    value,
+    error,
+    warning,
+    disabled,
+    onChange,
+}: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const entries = parseStringList(value);
+    const [pending, setPending] = useState('');
+    const [entryError, setEntryError] = useState<string | null>(null);
+
+    const addEntry = () => {
+        const candidate = pending.trim();
+        if (!candidate) {
+            return;
+        }
+        if (entries.includes(candidate)) {
+            setEntryError('That entry is already in the list.');
+            return;
+        }
+        if (field.entry_pattern && !new RegExp(field.entry_pattern).test(candidate)) {
+            setEntryError(`Enter a valid ${field.entry_label ?? 'entry'}.`);
+            return;
+        }
+        if (field.max_entries && entries.length >= field.max_entries) {
+            setEntryError(`Enter at most ${field.max_entries} entries.`);
+            return;
+        }
+        setEntryError(null);
+        setPending('');
+        onChange(serializeStringList([...entries, candidate]));
+    };
+
+    return (
+        <FieldShell
+            field={field}
+            error={error ?? entryError ?? undefined}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                <span className="text-xs tabular-nums text-text-3">
+                    {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
+                </span>
+            }
+        >
+            <div className="flex items-center gap-2">
+                <input
+                    id={id}
+                    type="text"
+                    className={inputClass}
+                    value={pending}
+                    placeholder={field.placeholder}
+                    disabled={disabled}
+                    spellCheck={false}
+                    onChange={(event) => {
+                        setPending(event.target.value);
+                        setEntryError(null);
+                    }}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                            // This control lives inside the settings form; without this
+                            // the key would submit rather than add an entry.
+                            event.preventDefault();
+                            addEntry();
+                        }
+                    }}
+                />
+                <button
+                    type="button"
+                    className={clsx(
+                        'shrink-0 rounded-lg border border-edge px-3 py-2 text-xs',
+                        'text-text-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60',
+                    )}
+                    disabled={disabled || !pending.trim()}
+                    onClick={addEntry}
+                >
+                    Add
+                </button>
+            </div>
+
+            {entries.length ? (
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                    {entries.map((entry) => (
+                        <li
+                            key={entry}
+                            className="flex items-center gap-1.5 rounded-full border border-edge bg-surface-1 py-1 pr-1 pl-3 text-xs text-text-2"
+                        >
+                            <span className="font-mono">{entry}</span>
+                            <button
+                                type="button"
+                                aria-label={`Remove ${entry}`}
+                                className="rounded-full p-0.5 text-text-3 hover:bg-surface-2 hover:text-danger disabled:cursor-not-allowed"
+                                disabled={disabled}
+                                onClick={() =>
+                                    onChange(
+                                        serializeStringList(
+                                            entries.filter((item) => item !== entry),
+                                        ),
+                                    )
+                                }
+                            >
+                                <X size={12} />
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            ) : (
+                <p className="mt-2 text-xs text-text-3">No entries yet.</p>
+            )}
+        </FieldShell>
+    );
+}
+
+/**
+ * A server-computed readout.
+ *
+ * Some of what an administrator needs here is not a setting: whether the FFmpeg audio
+ * runtime is present, which Video Indexer endpoint the cloud selection resolves to,
+ * whether the Playwright runtime can render JavaScript. V1 renders these as loose markup
+ * inside the panes. Declaring them makes them searchable and keeps the reason a control
+ * is unavailable next to the control itself.
+ */
+function StatusControl({ field, value }: FieldControlProps) {
+    const text = asString(value);
+    const tone = statusTone(value);
+
+    return (
+        <div className="py-3">
+            <div className="mb-1.5 text-sm font-medium text-text-1">{field.label}</div>
+            <div
+                className={clsx(
+                    'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+                    tone === 'ok' && 'border-edge bg-surface-1 text-text-2',
+                    tone === 'warn' && 'border-warn/40 bg-warn/5 text-warn',
+                    tone === 'unknown' && 'border-edge bg-surface-1 text-text-3',
+                )}
+            >
+                {tone === 'ok' ? (
+                    <CheckCircle2 size={13} className="mt-0.5 shrink-0" />
+                ) : (
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                )}
+                <span>{text || 'Not checked yet.'}</span>
+            </div>
+            {field.help ? (
+                <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
+            ) : null}
+        </div>
+    );
+}
+
+/**
+ * Read the tone of a status value.
+ *
+ * The server may send either a plain string or `{ ok, message }`. Both shapes appear in
+ * the V1 template context this replaces, so both are accepted rather than requiring the
+ * backend to normalise first.
+ */
+function statusTone(value: unknown): 'ok' | 'warn' | 'unknown' {
+    if (value && typeof value === 'object' && 'ok' in value) {
+        return (value as { ok?: unknown }).ok ? 'ok' : 'warn';
+    }
+    return asString(value) ? 'ok' : 'unknown';
+}
+
+/**
  * Render one declared field.
  *
- * `image`, `link_list` and `component` fields are handled by the page, which owns the
- * upload endpoint and the bespoke widgets, so they are not reached here.
+ * `image`, `link_list`, `id_list` and `component` fields are handled by the page, which
+ * owns the upload endpoint, the search endpoints and the bespoke widgets, so they are
+ * not reached here.
  */
 export function SettingField(props: FieldControlProps) {
     switch (props.field.type) {
@@ -369,6 +631,12 @@ export function SettingField(props: FieldControlProps) {
             return <NumberControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
+        case 'secret':
+            return <SecretControl {...props} />;
+        case 'string_list':
+            return <StringListControl {...props} />;
+        case 'status':
+            return <StatusControl {...props} />;
         default:
             return null;
     }
