@@ -4,7 +4,7 @@ counts:
   capabilities: 113
   admin_groups: 15
   admin_tabs: 47
-  admin_sections: 101
+  admin_sections: 108
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -320,6 +320,7 @@ admin_groups:
   - rate-limiting
   - secrets
   - session
+  - workspace-identities
 - id: workflow
   label: Workflow
   tabs:
@@ -328,7 +329,6 @@ admin_groups:
   label: Workspaces
   tabs:
   - files-sharing
-  - workspace-identities
   - workspace-types
 admin_tabs:
 - id: access-roles
@@ -422,7 +422,7 @@ admin_tabs:
   label: Migrate
   group: backup-recovery
 - id: model-endpoints
-  label: Model Endpoints
+  label: Connections
   group: ai-models
 - id: network
   label: Network
@@ -468,7 +468,7 @@ admin_tabs:
   group: workflow
 - id: workspace-identities
   label: Global Identities
-  group: workspaces
+  group: security
 - id: workspace-types
   label: Workspace Types
   group: workspaces
@@ -478,15 +478,23 @@ admin_sections:
   tab: access-roles
   group: security
 - id: actions-config
-  label: Actions Configuration
+  label: Global Actions
   tab: actions
   group: agents-actions
 - id: agent-template-approvals-section
   label: Agent Template Approvals
   tab: agents
   group: agents-actions
+- id: agent-toggles-card
+  label: Workspace Agent Permissions
+  tab: agents
+  group: agents-actions
 - id: agents-config
-  label: Agents Configuration
+  label: Agent Runtime
+  tab: agents
+  group: agents-actions
+- id: agents-page-customization-card
+  label: Agents Page
   tab: agents
   group: agents-actions
 - id: ai-notice-section
@@ -553,6 +561,10 @@ admin_sections:
   label: Content Safety
   tab: content-safety
   group: security
+- id: content-understanding-section
+  label: Content Understanding
+  tab: extraction
+  group: knowledge
 - id: control-center-auto-refresh-section
   label: Automatic Data Refresh
   tab: control-center-config
@@ -577,6 +589,10 @@ admin_sections:
   label: Conversation History
   tab: chat-experience
   group: chat
+- id: core-plugin-toggles
+  label: Built-in Actions
+  tab: actions
+  group: agents-actions
 - id: cosmos-maintenance-section
   label: Cosmos Maintenance
   tab: cosmos
@@ -646,7 +662,7 @@ admin_sections:
   tab: cosmos
   group: scale
 - id: document-action-capabilities-card
-  label: Document Action Capabilities
+  label: Document Actions
   tab: actions
   group: agents-actions
 - id: document-classification-section
@@ -687,8 +703,8 @@ admin_sections:
   group: workspaces
 - id: file-size-limit-section
   label: Maximum File Size
-  tab: files-sharing
-  group: workspaces
+  tab: extraction
+  group: knowledge
 - id: file-sync-group-section
   label: Group Workspace Sync
   tab: file-sync
@@ -734,7 +750,7 @@ admin_sections:
   tab: mcp-governance
   group: governance
 - id: gpt-config
-  label: Chat Model
+  label: Chat
   tab: model-endpoints
   group: ai-models
 - id: group-workspaces-section
@@ -770,11 +786,15 @@ admin_sections:
   tab: extraction
   group: knowledge
 - id: multi-endpoint-configuration
-  label: Model Endpoints
+  label: Connections
   tab: model-endpoints
   group: ai-models
 - id: multimodal-vision-section
   label: Multi-Modal Vision Analysis
+  tab: extraction
+  group: knowledge
+- id: office-embedded-image-section
+  label: Images Inside Office Files
   tab: extraction
   group: knowledge
 - id: permissions-section
@@ -785,6 +805,10 @@ admin_sections:
   label: Personal Workspaces
   tab: workspace-types
   group: workspaces
+- id: plugin-feature-toggles
+  label: Workspace Action Permissions
+  tab: actions
+  group: agents-actions
 - id: processing-thoughts-section
   label: Processing Thoughts
   tab: chat-experience
@@ -873,6 +897,10 @@ admin_sections:
   label: Workflow
   tab: workflow
   group: workflow
+- id: workspace-identities-section
+  label: Global Identities
+  tab: workspace-identities
+  group: security
 - id: workspace-scope-lock-section
   label: Workspace Scope Lock
   tab: chat-experience

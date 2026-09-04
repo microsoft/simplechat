@@ -637,6 +637,12 @@ export interface AdminNavSection {
     id: string;
     label: string;
     icon?: string;
+    /**
+     * Names a settings key or runtime flag that must be true for the section to
+     * apply. Workspace agent permissions, for instance, only exist while
+     * Workspace Mode is on.
+     */
+    condition?: string;
 }
 
 export interface AdminNavTab {

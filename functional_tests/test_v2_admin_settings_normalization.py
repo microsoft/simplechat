@@ -25,6 +25,90 @@ fields_module = import_app_module("admin_settings_fields")
 normalize = fields_module.normalize_admin_settings_updates
 
 
+def test_dependency_conditions_compare_by_declared_type():
+    """A string condition compared for truthiness would match every non-empty choice."""
+    print("Testing depends_on comparison semantics...")
+
+    assert_app_version_at_least("0.261.083")
+
+    satisfied = fields_module._dependency_is_satisfied
+
+    # Boolean dependencies keep working exactly as they did.
+    assert satisfied({"key": "flag", "equals": True}, {"flag": True}) is True
+    assert satisfied({"key": "flag", "equals": True}, {"flag": False}) is False
+    assert satisfied({"key": "flag", "equals": False}, {"flag": False}) is True
+    # Including the form-shaped truthiness a stored document may carry.
+    assert satisfied({"key": "flag", "equals": True}, {"flag": "on"}) is True
+
+    # An omitted ``equals`` still means True, which is the historical default.
+    assert satisfied({"key": "flag"}, {"flag": True}) is True
+
+    auth = {"key": "azure_openai_embedding_authentication_type", "equals": "key"}
+
+    # Exact equality only. "managed_identity" is truthy, so a boolean comparison here
+    # would show an API key field for a route that stores no key.
+    assert satisfied(auth, {"azure_openai_embedding_authentication_type": "key"}) is True
+    assert (
+        satisfied(auth, {"azure_openai_embedding_authentication_type": "managed_identity"})
+        is False
+    )
+
+    # A near miss must not match: no prefix, substring or case folding.
+    for near_miss in ("keys", "ke", "KEY", "Key", " key", "key "):
+        assert satisfied(auth, {"azure_openai_embedding_authentication_type": near_miss}) is False, (
+            f"{near_miss!r} matched a condition on 'key'"
+        )
+
+    # A missing or null value must not match a string condition by accident.
+    for absent in ({}, {"azure_openai_embedding_authentication_type": None}):
+        assert satisfied(auth, absent) is False, absent
+
+    print("  Boolean conditions unchanged; string conditions match on exact equality.")
+    return True
+
+
+def test_every_condition_must_hold_for_a_multi_gated_field():
+    """A field inside two nested blocks is only visible while both are open."""
+    print("Testing multi-condition visibility...")
+
+    # The Azure OpenAI embedding key sits inside the direct-connection card and the
+    # key-authentication card within it, so it declares both conditions. Judging only
+    # one would leave a direct-connection credential on screen under APIM.
+    field = fields_module.get_field_definition("azure_openai_embedding_key")
+    conditions = list(fields_module.iter_field_dependencies(field))
+    assert len(conditions) == 2, conditions
+
+    holds = fields_module.field_dependencies_are_satisfied
+
+    assert holds(field, {
+        "enable_embedding_apim": False,
+        "azure_openai_embedding_authentication_type": "key",
+    }) is True
+
+    # Either condition failing is enough to hide it.
+    assert holds(field, {
+        "enable_embedding_apim": True,
+        "azure_openai_embedding_authentication_type": "key",
+    }) is False
+    assert holds(field, {
+        "enable_embedding_apim": False,
+        "azure_openai_embedding_authentication_type": "managed_identity",
+    }) is False
+
+    # Image generation adds a third: the capability toggle above the APIM switch.
+    image_key = fields_module.get_field_definition("azure_openai_image_gen_key")
+    assert len(list(fields_module.iter_field_dependencies(image_key))) == 3
+
+    assert holds(image_key, {
+        "enable_image_generation": False,
+        "enable_image_gen_apim": False,
+        "azure_openai_image_gen_authentication_type": "key",
+    }) is False
+
+    print("  Every declared condition has to hold before a field is shown.")
+    return True
+
+
 def test_numeric_values_are_clamped_to_declared_bounds():
     """An out-of-range logo scale would render an unusable home page."""
     print("Testing numeric clamping...")
@@ -135,6 +219,61 @@ def test_checkbox_sets_are_ordered_and_bounded():
     assert "user_agreement_apply_to" in errors, errors
 
     print("  Selections are ordered, validated and bounded by the capability toggle.")
+    return True
+
+
+def test_assignment_lists_are_deduplicated_and_typed():
+    """A download policy keyed on a blank or repeated id would grant the wrong set."""
+    print("\nTesting assignment list handling...")
+
+    assert_app_version_at_least("0.261.060")
+
+    normalized, errors, _ = normalize(
+        {
+            "file_download_allowed_group_ids": [
+                " 3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73 ",
+                "9d4b2e18-7a35-4c69-b0f2-1e8c5a6d3f40",
+                "3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73",
+                "not-a-uuid",
+                "",
+                None,
+            ]
+        }
+    )
+    assert not errors, errors
+    # The application's own normalizer requires canonical group UUIDs and silently
+    # drops anything else, so V2 must too. Storing "not-a-uuid" here would grant a
+    # download policy an id the server-rendered form would have discarded.
+    assert normalized["file_download_allowed_group_ids"] == [
+        "3f1a7c64-9b2e-4d58-8a11-6c0f2e5d4b73",
+        "9d4b2e18-7a35-4c69-b0f2-1e8c5a6d3f40",
+    ], normalized
+
+    # Public workspace ids are not UUID-constrained; their normalizer only trims and
+    # deduplicates, so imposing a UUID check would reject valid assignments.
+    normalized, errors, _ = normalize(
+        {
+            "file_download_allowed_public_workspace_ids": [
+                " ws-alpha ",
+                "ws-beta",
+                "ws-alpha",
+                "",
+            ]
+        }
+    )
+    assert not errors, errors
+    assert normalized["file_download_allowed_public_workspace_ids"] == [
+        "ws-alpha",
+        "ws-beta",
+    ], normalized
+
+    # V1 round-trips this through a hidden textarea and accepts a JSON string. V2
+    # always sends a real array, and accepting a string here would mean two shapes
+    # to keep in step for no gain.
+    _, errors, _ = normalize({"file_download_allowed_public_workspace_ids": "ws-a,ws-b"})
+    assert "file_download_allowed_public_workspace_ids" in errors, errors
+
+    print("  Assignment lists match the normalizer the application already uses.")
     return True
 
 
@@ -299,10 +438,13 @@ def test_switches_coerce_form_shaped_truthiness():
 
 if __name__ == "__main__":
     tests = [
+        test_dependency_conditions_compare_by_declared_type,
+        test_every_condition_must_hold_for_a_multi_gated_field,
         test_numeric_values_are_clamped_to_declared_bounds,
         test_colours_must_be_hex,
         test_external_links_reject_unsafe_urls,
         test_checkbox_sets_are_ordered_and_bounded,
+        test_assignment_lists_are_deduplicated_and_typed,
         test_selects_reject_unknown_values_but_reuse_shared_aliases,
         test_redirect_url_refuses_unsafe_targets,
         test_text_is_bounded_and_falls_back_when_empty,

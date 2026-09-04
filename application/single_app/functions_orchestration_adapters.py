@@ -36,7 +36,7 @@ otherwise make this module unimportable without Azure and config -- and ``perfor
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.059
+Version: 0.261.085
 """
 
 import logging

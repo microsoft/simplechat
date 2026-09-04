@@ -11,6 +11,15 @@ from functions_content_safety import (
 )
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
+# Re-exported so callers keep importing these from functions_settings. They live
+# in a leaf module because admin_settings_fields needs them and cannot import
+# this one, which builds a Cosmos client at import time through config.
+from functions_group_assignment_ids import (
+    GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT,
+    _iter_group_workflow_allowed_group_id_candidates,
+    normalize_group_workflow_allowed_group_id,
+    normalize_group_workflow_allowed_group_ids,
+)
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_model_endpoint_identity_header import (
@@ -27,6 +36,7 @@ from functions_rate_limit import (
     build_rate_limit_message,
 )
 from functions_service_health import get_default_service_health
+import admin_settings_secret_utils as _secret_utils
 import app_settings_cache
 import inspect
 import copy
@@ -83,32 +93,10 @@ USER_UI_SETTINGS_KEYS = (
     "chatCompletionAudioSound",
     "chatCompletionAudioVolume",
 )
-ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
-ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
-    "azure_openai_gpt_key",
-    "azure_apim_gpt_subscription_key",
-    "azure_openai_embedding_key",
-    "azure_apim_embedding_subscription_key",
-    "azure_openai_image_gen_key",
-    "azure_apim_image_gen_subscription_key",
-    "redis_key",
-    "office_docs_storage_account_url",
-    "office_docs_storage_account_blob_endpoint",
-    "video_files_storage_account_url",
-    "audio_files_storage_account_url",
-    "content_safety_key",
-    "azure_apim_content_safety_subscription_key",
-    "azure_ai_search_key",
-    "azure_apim_ai_search_subscription_key",
-    "azure_document_intelligence_key",
-    "azure_apim_document_intelligence_subscription_key",
-    "azure_content_understanding_key",
-    "speech_service_key",
-    "model_endpoint_identity_header_hmac_secret",
-)
-ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
-    "web_search_agent.other_settings.azure_ai_foundry.client_secret",
-)
+ADMIN_SETTINGS_SECRET_REDACTED_VALUE = _secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+ADMIN_SETTINGS_FORM_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
+ADMIN_SETTINGS_NESTED_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_NESTED_SECRET_FIELDS
+ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'enable_analysis_deliverable_contract_telemetry',
     'analysis_deliverable_contract_mode',
@@ -151,33 +139,21 @@ PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
 
 
 def is_admin_settings_redacted_secret(value):
-    return str(value or '').strip() == ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+    return _secret_utils.is_admin_settings_redacted_secret(value)
 
 
 def _get_nested_setting_value(settings, field_path):
-    current = settings if isinstance(settings, dict) else {}
-    for part in str(field_path or '').split('.'):
-        if not isinstance(current, dict):
-            return ''
-        current = current.get(part)
-    return current if current is not None else ''
+    return _secret_utils.get_nested_setting_value(settings, field_path)
 
 
 def _set_nested_setting_value(settings, field_path, value):
-    current = settings
-    parts = str(field_path or '').split('.')
-    for part in parts[:-1]:
-        if not isinstance(current.get(part), dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
+    _secret_utils.set_nested_setting_value(settings, field_path, value)
 
 
 def resolve_admin_settings_secret_value(field_name, submitted_value, existing_settings):
-    submitted_text = str(submitted_value or '').strip()
-    if not is_admin_settings_redacted_secret(submitted_text):
-        return submitted_text
-    return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
+    return _secret_utils.resolve_admin_settings_secret_value(
+        field_name, submitted_value, existing_settings
+    )
 
 
 def normalize_public_workspace_display_name(value):
@@ -358,14 +334,15 @@ def normalize_model_endpoint_identity_header_settings(settings):
 
 
 def redact_admin_settings_secrets_for_form(settings):
-    redacted_settings = copy.deepcopy(settings or {})
-    for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
-        if redacted_settings.get(field_name):
-            redacted_settings[field_name] = ADMIN_SETTINGS_SECRET_REDACTED_VALUE
-    for field_path in ADMIN_SETTINGS_NESTED_SECRET_FIELDS:
-        if _get_nested_setting_value(redacted_settings, field_path):
-            _set_nested_setting_value(redacted_settings, field_path, ADMIN_SETTINGS_SECRET_REDACTED_VALUE)
-    return redacted_settings
+    return _secret_utils.redact_admin_settings_secrets_for_form(settings)
+
+
+def get_admin_settings_api_secret_fields():
+    return _secret_utils.get_admin_settings_api_secret_fields()
+
+
+def redact_admin_settings_secrets_for_api(settings):
+    return _secret_utils.redact_admin_settings_secrets_for_api(settings)
 
 
 def _clone_user_settings_doc(doc):
@@ -913,71 +890,6 @@ def has_workflow_user_app_role(user_roles):
     """Return True when authenticated claims include the workflow user app role."""
     normalized_roles = {role.lower() for role in normalize_app_role_claims(user_roles)}
     return WORKFLOW_USER_APP_ROLE.lower() in normalized_roles
-
-
-GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT = 5
-
-
-def _iter_group_workflow_allowed_group_id_candidates(value, depth=0):
-    """Yield raw assignment candidates from legacy text, JSON, and nested JSON strings."""
-    if value is None or depth > GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT:
-        return
-
-    if isinstance(value, str):
-        stripped_value = value.strip()
-        if not stripped_value:
-            return
-
-        if stripped_value.startswith('[') or stripped_value.startswith('"'):
-            try:
-                parsed_value = json.loads(stripped_value)
-            except (TypeError, ValueError):
-                parsed_value = None
-
-            if isinstance(parsed_value, list):
-                for candidate in parsed_value:
-                    yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
-                return
-
-            if isinstance(parsed_value, str) and parsed_value != stripped_value:
-                yield from _iter_group_workflow_allowed_group_id_candidates(parsed_value, depth + 1)
-                return
-
-        for candidate in stripped_value.replace('\r', '\n').replace(',', '\n').replace(';', '\n').split('\n'):
-            yield candidate
-        return
-
-    if isinstance(value, (list, tuple, set)):
-        for candidate in value:
-            yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
-        return
-
-    yield value
-
-
-def normalize_group_workflow_allowed_group_id(value):
-    """Return a canonical SimpleChat group id or an empty string for invalid values."""
-    group_id = str(value or '').strip()
-    if not group_id:
-        return ''
-
-    try:
-        return str(uuid.UUID(group_id))
-    except (AttributeError, TypeError, ValueError):
-        return ''
-
-
-def normalize_group_workflow_allowed_group_ids(value):
-    """Normalize group workflow assignment settings into unique group ids."""
-    normalized_ids = []
-    seen_ids = set()
-    for candidate in _iter_group_workflow_allowed_group_id_candidates(value):
-        group_id = normalize_group_workflow_allowed_group_id(candidate)
-        if not group_id or group_id in seen_ids:
-            continue
-        normalized_ids.append(group_id)
-        seen_ids.add(group_id)
-    return normalized_ids
 
 
 def normalize_group_workflow_assignment_settings(settings):
@@ -2872,6 +2784,161 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         sanitized.append(endpoint_copy)
 
     return sanitized
+
+
+EMPTY_DEFAULT_MODEL_SELECTION = {"endpoint_id": "", "model_id": "", "provider": ""}
+
+
+def normalize_default_model_selection(selection):
+    """Return a default model selection dict with the three expected string fields."""
+    source = selection if isinstance(selection, dict) else {}
+    return {
+        "endpoint_id": str(source.get("endpoint_id") or "").strip(),
+        "model_id": str(source.get("model_id") or "").strip(),
+        "provider": str(source.get("provider") or "").strip().lower(),
+    }
+
+
+def resolve_model_selection(selection, endpoints, multi_endpoint_enabled=True, label="Default model"):
+    """Return a stored model selection that still points at an enabled model.
+
+    A stored selection is a loose reference -- an endpoint id plus a model id -- so it
+    outlives the thing it names. Deleting an endpoint, disabling one, or turning off a
+    single model all leave a selection that resolves to nothing.
+
+    What that costs depends on the selection. A dangling default model makes chat fall
+    back to a different model with no indication that it had; a dangling metadata
+    extraction model makes document ingestion raise instead, and the caller logs the
+    failure rather than surfacing it. Neither is acceptable, so both are re-resolved
+    whenever the endpoint list is written.
+
+    Returns ``(selection, reason)``. ``reason`` is ``None`` when the selection survived,
+    otherwise a short explanation of why it was cleared, which callers with somewhere to
+    put it surface to the administrator.
+    """
+    normalized = normalize_default_model_selection(selection)
+
+    if not multi_endpoint_enabled:
+        # A stored selection would silently come back into force if multi-endpoint mode
+        # were re-enabled later, naming an endpoint nobody has looked at since.
+        return dict(EMPTY_DEFAULT_MODEL_SELECTION), None
+
+    if not normalized["endpoint_id"] or not normalized["model_id"]:
+        return dict(EMPTY_DEFAULT_MODEL_SELECTION), None
+
+    endpoint_list = endpoints if isinstance(endpoints, list) else []
+    endpoint_cfg = next(
+        (
+            endpoint
+            for endpoint in endpoint_list
+            if isinstance(endpoint, dict) and endpoint.get("id") == normalized["endpoint_id"]
+        ),
+        None,
+    )
+    if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            f"{label} endpoint is not available. Please select a valid endpoint.",
+        )
+
+    models = endpoint_cfg.get("models", []) or []
+    model_cfg = next(
+        (
+            model
+            for model in models
+            if isinstance(model, dict) and model.get("id") == normalized["model_id"]
+        ),
+        None,
+    )
+    if not model_cfg or not model_cfg.get("enabled", True):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            f"{label} is not available. Please select a valid model.",
+        )
+
+    endpoint_provider = str(endpoint_cfg.get("provider") or "").strip().lower()
+    if endpoint_provider:
+        normalized["provider"] = endpoint_provider
+    return normalized, None
+
+
+def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the chat default model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Default model"
+    )
+
+
+def resolve_metadata_extraction_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the metadata extraction model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Metadata extraction model"
+    )
+
+
+def build_migrated_model_endpoints_from_legacy(settings):
+    """Seed a connection list from the classic single-endpoint chat configuration.
+
+    Turning connections on is one-way: ``coerce_multi_model_endpoint_enablement`` keeps the
+    flag true once set. A deployment that had a working classic endpoint and then enabled
+    connections without carrying it over would be left with an empty model catalog and no
+    way back, so the existing configuration is migrated into the first connection.
+
+    Returns ``[]`` when there is nothing to migrate, which is the case for a deployment
+    that never configured the classic endpoint.
+    """
+    source = settings if isinstance(settings, dict) else {}
+    gpt_model = source.get("gpt_model") or {}
+    selected_models = gpt_model.get("selected") or [] if isinstance(gpt_model, dict) else []
+
+    migrated_models = []
+    for model in selected_models:
+        if not isinstance(model, dict):
+            continue
+        deployment_name = model.get("deploymentName") or model.get("deployment") or ""
+        if not deployment_name:
+            continue
+        migrated_models.append({
+            "id": str(uuid.uuid4()),
+            "deploymentName": deployment_name,
+            "modelName": model.get("modelName") or model.get("name") or "",
+            "displayName": deployment_name,
+            "description": "",
+            "enabled": True,
+        })
+
+    if not migrated_models:
+        return []
+
+    legacy_auth_type = source.get("azure_openai_gpt_authentication_type", "key")
+    migrated_auth_type = "api_key" if legacy_auth_type == "key" else legacy_auth_type
+
+    return [{
+        "id": str(uuid.uuid4()),
+        "name": "Migrated Azure OpenAI Endpoint",
+        "provider": "aoai",
+        "enabled": True,
+        "auth": {
+            "type": migrated_auth_type,
+            "managed_identity_type": "system_assigned",
+            "managed_identity_client_id": "",
+            "tenant_id": "",
+            "client_id": "",
+            "client_secret": "",
+            "api_key": source.get("azure_openai_gpt_key", ""),
+        },
+        "connection": {
+            "endpoint": source.get("azure_openai_gpt_endpoint", ""),
+            "api_version": source.get("azure_openai_gpt_api_version", ""),
+        },
+        "management": {
+            "subscription_id": source.get("azure_openai_gpt_subscription_id", ""),
+            "resource_group": source.get("azure_openai_gpt_resource_group", ""),
+            "location": "",
+        },
+        "models": migrated_models,
+    }]
+
 
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])

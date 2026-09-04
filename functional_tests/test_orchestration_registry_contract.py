@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the chat orchestration capability registry.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 The registry is the only capability information the planner model ever sees, and it is
 also what the validator checks a plan against. Those two roles have to stay in agreement:
@@ -190,7 +190,7 @@ def test_planner_projection_hides_internals():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.085")
 
     tests = [
         test_descriptors_are_well_formed,

@@ -28,7 +28,7 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.059
+Version: 0.261.085
 """
 
 import logging

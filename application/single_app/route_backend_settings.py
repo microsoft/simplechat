@@ -222,11 +222,58 @@ def _test_enhanced_citations_storage_connection(data):
         }), 400
 
 
+ADMIN_SETTINGS_CONNECTION_TESTS = {
+    'gpt': lambda data: _test_gpt_connection(data),
+    'embedding': lambda data: _test_embedding_connection(data),
+    'image': lambda data: _test_image_gen_connection(data),
+    'safety': lambda data: _test_safety_connection(data),
+    'web_search': lambda data: _test_web_search_connection(data),
+    'url_access_policy': lambda data: _test_url_access_policy(data),
+    'azure_ai_search': lambda data: _test_azure_ai_search_connection(data),
+    'redis': lambda data: _test_redis_connection(data),
+    'azure_doc_intelligence': lambda data: _test_azure_doc_intelligence_connection(data),
+    'content_understanding': lambda data: _test_content_understanding_connection(data),
+    'multimodal_vision': lambda data: _test_multimodal_vision_connection(data),
+    'key_vault': lambda data: _test_key_vault_connection(data),
+    'enhanced_citations_storage': lambda data: _test_enhanced_citations_storage_connection(data),
+    'chunking_api': lambda data: (jsonify({'message': 'Chunking API connection successful'}), 200),
+}
+
+
+def run_admin_settings_connection_test(payload):
+    """Run one administrator-requested connection test and return its response.
+
+    Both admin interfaces reach the same tests: the server-rendered page posts to
+    ``/api/admin/settings/test_connection`` and the V2 surface posts to
+    ``/api/v2/admin/settings/test-connection``. Sharing this dispatcher is what
+    stops the two from supporting different sets of tests, which is how the
+    original page ended up able to test things the newer one could not.
+
+    The payload carries the values currently on screen rather than what is
+    stored, so an administrator can verify a connection before committing it.
+    Credentials are the exception: the browser holds only a redaction
+    placeholder for a stored secret, so ``_resolve_admin_settings_test_secrets``
+    swaps it back for the real value here, server-side.
+    """
+    data = _resolve_admin_settings_test_secrets(payload if isinstance(payload, dict) else {})
+    test_type = str(data.get('test_type') or '').strip()
+
+    runner = ADMIN_SETTINGS_CONNECTION_TESTS.get(test_type)
+    if runner is None:
+        return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
+
+    try:
+        return runner(data)
+    except Exception as exc:
+        # A connection test reaches external services, so a failure here is an
+        # expected outcome to report rather than a server fault to raise.
+        return jsonify({'error': str(exc)}), 500
+
+
 def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
     """
     Automatically fix missing fields in an Azure AI Search index.
-    
-    Args:
+        Args:
         idx_type (str): Type of index ('user', 'group', or 'public')
         user_id (str): User ID triggering the fix
         admin_email (str): Admin email if available
@@ -716,59 +763,7 @@ def register_route_backend_settings(bp):
         data from admin_settings.js. Uses that data to attempt an actual connection
         to GPT, Embeddings, etc., and returns success/failure.
         """
-        data = request.get_json(force=True) or {}
-        data = _resolve_admin_settings_test_secrets(data)
-        test_type = data.get('test_type', '')
-
-        try:
-            if test_type == 'gpt':
-                return _test_gpt_connection(data)
-
-            elif test_type == 'embedding':
-                return _test_embedding_connection(data)
-
-            elif test_type == 'image':
-                return _test_image_gen_connection(data)
-
-            elif test_type == 'safety':
-                return _test_safety_connection(data)
-
-            elif test_type == 'web_search':
-                return _test_web_search_connection(data)
-
-            elif test_type == 'url_access_policy':
-                return _test_url_access_policy(data)
-
-            elif test_type == 'azure_ai_search':
-                return _test_azure_ai_search_connection(data)
-
-            elif test_type == 'redis':
-                return _test_redis_connection(data)
-
-            elif test_type == 'azure_doc_intelligence':
-                return _test_azure_doc_intelligence_connection(data)
-
-            elif test_type == 'content_understanding':
-                return _test_content_understanding_connection(data)
-
-            elif test_type == 'multimodal_vision':
-                return _test_multimodal_vision_connection(data)
-
-            elif test_type == 'chunking_api':
-                # If you have a chunking API test, implement it here.
-                return jsonify({'message': 'Chunking API connection successful'}), 200
-            
-            elif test_type == 'key_vault':
-                return _test_key_vault_connection(data)
-
-            elif test_type == 'enhanced_citations_storage':
-                return _test_enhanced_citations_storage_connection(data)
-
-            else:
-                return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
-
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+        return run_admin_settings_connection_test(request.get_json(force=True) or {})
 
     @bp.route('/api/admin/settings/redis-monitoring/status', methods=['GET'])
     @swagger_route(security=get_auth_security())

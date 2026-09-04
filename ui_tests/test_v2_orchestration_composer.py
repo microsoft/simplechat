@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 Composer's orchestration mode: the toggle, the manual-controls disclosure.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 Orchestration inverts the composer. The Orchestrate toggle appears only where the deployment ships
 the feature, is on by default wherever the deployment offers it, and -- while on -- folds the
@@ -32,7 +32,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 _PAGE = None
 

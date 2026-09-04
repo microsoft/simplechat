@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 chat orchestration plan card: approve, cancel, review, and the timed countdown.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 This test drives the REAL OrchestrationPlanCard component (bundled from application/v2_ui/src by
 fixtures/orchestration/harness_entry.tsx) in a headless browser. It seeds the real orchestration
@@ -32,7 +32,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 # The runner sets this to the live Playwright page for the duration of the browser session, so the
 # zero-argument checks below match the repository's TESTS-list convention.

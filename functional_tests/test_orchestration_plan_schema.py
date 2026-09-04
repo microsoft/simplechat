@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the chat orchestration plan contract and validator.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 Planner output is untrusted input. A plan arrives as JSON written by a language model, and
 naming a capability that does not exist, using one an administrator disabled, referencing
@@ -290,7 +290,7 @@ def test_approval_mode_decides_initial_status():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.085")
 
     tests = [
         test_rejects_unknown_and_disabled_capabilities,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 orchestration drawer: the Run and Map views and pinning from the map.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 The drawer's plan mode shows one run in full (the Run view) or every run as a scannable column (the
 Map view). The discipline the panel keeps is that neither the user's browsing nor the system's work
@@ -30,7 +30,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 _PAGE = None
 

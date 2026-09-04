@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the chat orchestration elicitation contract.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 When the orchestrator cannot plan without more information it asks in an inline card
 rather than in the chat thread. The card is driven by a JSON Schema, and that schema is
@@ -188,7 +188,7 @@ def test_response_validation():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.085")
 
     tests = [
         test_enforces_the_mcp_restriction,

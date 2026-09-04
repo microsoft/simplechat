@@ -97,15 +97,16 @@ ADMIN_NAV = [
         "icon": "bi-cpu",
         "tabs": [
             {
-                # The Chat Model card is reached through the legacy model
-                # settings dialog opened from here, so it is listed with the
-                # endpoints rather than as a tab of its own.
+                # A connection is one Azure OpenAI or Foundry resource. The Chat
+                # Model card configures the classic single-endpoint path, which is
+                # what chat uses when connections are switched off, so it is listed
+                # alongside them.
                 "id": "model-endpoints",
-                "label": "Model Endpoints",
+                "label": "Connections",
                 "icon": "bi-hdd-network",
                 "sections": [
-                    {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
-                    {"id": "gpt-config", "label": "Chat Model", "icon": "bi-chat-square-text"},
+                    {"id": "multi-endpoint-configuration", "label": "Connections", "icon": "bi-hdd-network"},
+                    {"id": "gpt-config", "label": "Chat", "icon": "bi-chat-square-text"},
                 ],
             },
             {
@@ -132,11 +133,18 @@ ADMIN_NAV = [
         "icon": "bi-robot",
         "tabs": [
             {
+                # The nested cards listed here already exist in the V1 pane, so
+                # naming them costs the server-rendered page nothing while giving
+                # the V2 surface -- which draws one section per entry -- somewhere
+                # to put the runtime gate, the workspace permissions and the
+                # Agents page copy instead of one undifferentiated block.
                 "id": "agents",
                 "label": "Agents",
                 "icon": "bi-robot",
                 "sections": [
-                    {"id": "agents-config", "label": "Agents Configuration", "icon": "bi-robot"},
+                    {"id": "agents-config", "label": "Agent Runtime", "icon": "bi-robot"},
+                    {"id": "agent-toggles-card", "label": "Workspace Agent Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
+                    {"id": "agents-page-customization-card", "label": "Agents Page", "icon": "bi-palette"},
                     {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},
                 ],
             },
@@ -145,8 +153,10 @@ ADMIN_NAV = [
                 "label": "Actions",
                 "icon": "bi-plugin",
                 "sections": [
-                    {"id": "document-action-capabilities-card", "label": "Document Action Capabilities", "icon": "bi-files"},
-                    {"id": "actions-config", "label": "Actions Configuration", "icon": "bi-plugin"},
+                    {"id": "document-action-capabilities-card", "label": "Document Actions", "icon": "bi-files"},
+                    {"id": "plugin-feature-toggles", "label": "Workspace Action Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
+                    {"id": "core-plugin-toggles", "label": "Built-in Actions", "icon": "bi-tools"},
+                    {"id": "actions-config", "label": "Global Actions", "icon": "bi-plugin"},
                 ],
             },
             {
@@ -186,14 +196,7 @@ ADMIN_NAV = [
                     {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
                     {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-check2-square"},
-                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                 ],
-            },
-            {
-                "id": "workspace-identities",
-                "label": "Global Identities",
-                "icon": "bi-person-badge",
-                "sections": [],
             },
         ],
     },
@@ -267,7 +270,17 @@ ADMIN_NAV = [
                 "icon": "bi-file-earmark-text",
                 "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
+                    # These two cards have always existed in the extraction pane but
+                    # were absent from this list, so neither interface could
+                    # navigate to them. Their ids are the ones already in the
+                    # markup, so the server-rendered sidebar resolves them as-is.
+                    {"id": "content-understanding-section", "label": "Content Understanding", "icon": "bi-stars"},
+                    {"id": "office-embedded-image-section", "label": "Images Inside Office Files", "icon": "bi-images"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
+                    # The upload ceiling belongs with the extraction pipeline it
+                    # feeds rather than with Workspaces, because it caps chat
+                    # attachments as well as workspace documents.
+                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                     {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
                     {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
                 ],
@@ -319,6 +332,18 @@ ADMIN_NAV = [
                 "icon": "bi-safe",
                 "sections": [
                     {"id": "keyvault-section", "label": "Key Vault", "icon": "bi-safe"},
+                ],
+            },
+            {
+                # Stored credentials for the systems File Sync and Actions reach
+                # out to, not accounts for signing in. They sit with Secrets
+                # because each one keeps its secret in Key Vault; they used to sit
+                # under Workspaces, which owns neither of the things that use them.
+                "id": "workspace-identities",
+                "label": "Global Identities",
+                "icon": "bi-person-badge",
+                "sections": [
+                    {"id": "workspace-identities-section", "label": "Global Identities", "icon": "bi-person-badge"},
                 ],
             },
             {

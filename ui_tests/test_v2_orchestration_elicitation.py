@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 chat orchestration elicitation card: paged schema form and the MCP answer shape.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 When the planner cannot plan without more from the user it returns an elicitation -- a flat
 JSON-Schema object of primitives -- instead of a plan. The card renders it as a short, paged
@@ -32,7 +32,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 _PAGE = None
 

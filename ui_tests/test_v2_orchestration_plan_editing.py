@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for the V2 chat orchestration plan editing: narrowing only, never widening.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 A user may narrow a plan before it runs -- switch a step off, or drop a document from one -- but
 there is deliberately NO affordance to ADD a step, a capability or a document. Widening client-side
@@ -34,7 +34,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 _PAGE = None
 

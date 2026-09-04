@@ -18,7 +18,7 @@ response outlives the request context, so touching ``request`` from inside the g
 raises rather than returning the value it would have had -- a failure that only appears
 once streaming is actually exercised.
 
-Version: 0.261.059
+Version: 0.261.085
 """
 
 import logging

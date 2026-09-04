@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the chat orchestration step executor.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.085
+Implemented in: 0.261.085
 
 The executor is what turns a validated plan into an answer. Its job is almost entirely
 about what it refuses to do: run a step whose dependency failed, run past a cancellation,
@@ -401,7 +401,7 @@ def test_unknown_capability_fails_the_step_not_the_run():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.085")
 
     tests = [
         test_steps_run_in_dependency_order,

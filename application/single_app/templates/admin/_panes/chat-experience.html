@@ -110,6 +110,50 @@
                         </label>
                         <input type="number" class="form-control" id="conversation_history_limit"
                             name="conversation_history_limit" value="{{ settings.conversation_history_limit }}">
+                        <small class="form-text text-muted">
+                            Raising this preserves more context and costs more tokens per turn.
+                        </small>
+                    </div>
+
+                    <hr>
+                    <h6><strong>History Summarization</strong></h6>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_summarize_content_history_beyond_conversation_history_limit"
+                            name="enable_summarize_content_history_beyond_conversation_history_limit"
+                            {% if settings.enable_summarize_content_history_beyond_conversation_history_limit %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_summarize_content_history_beyond_conversation_history_limit">
+                            Summarize Messages Beyond the History Limit
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Replaces messages that fall outside the limit with a running summary instead of dropping them, so older context survives a long conversation."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_summarize_content_history_for_search"
+                            name="enable_summarize_content_history_for_search"
+                            {% if settings.enable_summarize_content_history_for_search %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_summarize_content_history_for_search">
+                            Summarize Conversation History for Search
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Summarizes recent turns into the query used for hybrid document search, so a follow-up question that relies on earlier context still retrieves the right sources."></i>
+                    </div>
+                    <div class="mb-0">
+                        <label for="number_of_historical_messages_to_summarize" class="form-label">
+                            Historical Messages to Summarize
+                        </label>
+                        <input type="number" class="form-control" id="number_of_historical_messages_to_summarize"
+                            name="number_of_historical_messages_to_summarize"
+                            min="1" max="100"
+                            value="{{ settings.number_of_historical_messages_to_summarize | default(10, true) }}">
+                        <small class="form-text text-muted">
+                            How many recent messages are summarized into the search query. Twice this many are read to build the summary.
+                        </small>
                     </div>
                 </div>
 

@@ -33,10 +33,30 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
+import { AppRoleRoster } from '../components/admin/AppRoleRoster';
+import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
+import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
+import { ChatModeNotice } from '../components/admin/ChatModeNotice';
+import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { EnhancedCitationsStorageTest } from '../components/admin/EnhancedCitationsStorageTest';
+import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
+import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
+import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
+import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
+import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
+import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
+import { ModelPicker } from '../components/admin/ModelPicker';
+import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
+import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
+import { OrchestrationCard } from '../components/admin/OrchestrationCard';
+import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
+import { SecretField } from '../components/admin/SecretField';
+import { SettingsSection } from '../components/admin/SettingsSection';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -46,10 +66,13 @@ import {
     asBoolean,
     asNumber,
     asString,
+    buildFieldIndex,
+    collectAppRoleEntries,
     extractFieldErrors,
     fieldSearchText,
     humanizeKey,
     isFieldVisible,
+    isSectionVisible,
     readFieldValue,
     type AdminField,
     type AdminSettingsPatchResponse,
@@ -58,6 +81,8 @@ import {
     type BrandingUploadResponse,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
+import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
+import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
 import type { AdminNavGroup, Json } from '../lib/types';
 
 /** One fallback row: an `enable_*` key with no declared field. */
@@ -92,11 +117,15 @@ const READ_ONLY_REF = (key: string): AdminField => ({ key, type: 'text', label: 
  * belong to them, so keys are matched to the section whose id shares the most leading
  * word stems. Anything with no reasonable match is collected under "Other capabilities"
  * rather than being hidden, because a silently missing toggle is worse than a misfiled one.
+ *
+ * `suppressed` names keys that must not be drawn at all -- derived values and staged
+ * rollout flags, which would render a switch that appears to save and then reverts.
  */
 function buildCapabilityIndex(
     nav: AdminNavGroup[],
     settings: Json,
     declaredKeys: Set<string>,
+    suppressedKeys: Set<string>,
 ): CapabilityRow[] {
     const capabilityKeys = Object.keys(settings)
         .filter(
@@ -105,7 +134,8 @@ function buildCapabilityIndex(
                 typeof settings[key] === 'boolean' &&
                 // A key with a proper field is rendered by the schema path; rendering it
                 // here as well would put two controls on one value.
-                !declaredKeys.has(key),
+                !declaredKeys.has(key) &&
+                !suppressedKeys.has(key),
         )
         .sort();
 
@@ -186,6 +216,7 @@ export function AdminSettingsPage() {
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
+    const [pendingScroll, setPendingScroll] = useState<string | null>(null);
 
     const searchRef = useRef<HTMLInputElement>(null);
 
@@ -241,6 +272,8 @@ export function AdminSettingsPage() {
 
     const settings = useMemo<Json>(() => data?.settings ?? {}, [data]);
     const schema = useMemo(() => data?.field_schema ?? {}, [data]);
+    const runtimeFlags = useMemo(() => data?.runtime_flags ?? {}, [data]);
+    const sectionStatus = useMemo(() => data?.section_status ?? {}, [data]);
 
     const declaredKeys = useMemo(() => {
         const keys = new Set<string>();
@@ -254,9 +287,26 @@ export function AdminSettingsPage() {
         return keys;
     }, [schema]);
 
+    // A gate may live inside a nested settings object, so resolving a dependency
+    // needs the schema rather than the key alone.
+    const fieldsByKey = useMemo(() => buildFieldIndex(schema), [schema]);
+
+    const suppressedKeys = useMemo(
+        () => new Set(data?.suppressed_capabilities ?? []),
+        [data],
+    );
+
     const capabilityRows = useMemo(
-        () => (data ? buildCapabilityIndex(data.admin_nav, data.settings, declaredKeys) : []),
-        [data, declaredKeys],
+        () =>
+            data
+                ? buildCapabilityIndex(
+                      data.admin_nav,
+                      data.settings,
+                      declaredKeys,
+                      suppressedKeys,
+                  )
+                : [],
+        [data, declaredKeys, suppressedKeys],
     );
 
     /** Every section that has something to show, in navigation order. */
@@ -279,9 +329,25 @@ export function AdminSettingsPage() {
         for (const group of data.admin_nav) {
             for (const tab of group.tabs) {
                 for (const section of tab.sections) {
-                    const fields = schema[section.id] ?? [];
                     const capabilities = capabilitiesBySection.get(section.id) ?? [];
                     capabilitiesBySection.delete(section.id);
+
+                    // A section can be conditional on a settings key or a runtime
+                    // flag -- workspace agent permissions only exist while Workspace
+                    // Mode is on, and Inbound MCP only while its App Service setting
+                    // is present. The server-rendered page already honours this; V2
+                    // used to draw the section regardless.
+                    if (!isSectionVisible(section.condition, settings, draft, runtimeFlags, fieldsByKey)) {
+                        continue;
+                    }
+
+                    // Fields whose own dependencies are unmet are dropped here rather
+                    // than at render time, so a section left with nothing to show
+                    // disappears instead of leaving an empty titled panel behind.
+                    const fields = (schema[section.id] ?? []).filter((field) =>
+                        isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags),
+                    );
+
                     if (!fields.length && !capabilities.length) {
                         continue;
                     }
@@ -312,7 +378,7 @@ export function AdminSettingsPage() {
         }
 
         return rendered;
-    }, [data, schema, capabilityRows]);
+    }, [data, schema, capabilityRows, settings, draft, runtimeFlags, fieldsByKey]);
 
     const visibleSections = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -345,6 +411,39 @@ export function AdminSettingsPage() {
     }, [sections, query, activeGroup]);
 
     const settingCount = declaredKeys.size + capabilityRows.length;
+
+    /**
+     * App role requirements, for the roster that mirrors them into Security.
+     *
+     * Built from the navigation and the schema together so each entry can say which tab
+     * really owns it, and so the order matches the rest of the page. The server registry
+     * is merged in for the Entra role value and the before/after description, which the
+     * field schema has nowhere to put.
+     */
+    const appRoleEntries = useMemo(
+        () =>
+            data
+                ? collectAppRoleEntries(data.admin_nav, schema, data.app_role_requirements)
+                : [],
+        [data, schema],
+    );
+
+    const appRoleValues = useMemo(() => {
+        const values: Record<string, boolean> = {};
+        const read = (key: string) =>
+            asBoolean(
+                Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
+            );
+        for (const entry of appRoleEntries) {
+            values[entry.key] = read(entry.key);
+            // The capability each requirement guards, so the roster can say when one is
+            // enforced but currently doing nothing.
+            if (entry.dependsOn) {
+                values[entry.dependsOn] = read(entry.dependsOn);
+            }
+        }
+        return values;
+    }, [appRoleEntries, draft, settings]);
 
     /**
      * Keys that gate a save rather than being stored.
@@ -446,6 +545,17 @@ export function AdminSettingsPage() {
             setDraft({});
             void refreshBootstrap();
 
+            // Enabling connections carries the classic chat endpoint into the connection
+            // list server-side. That write happens here rather than in the connections
+            // section, so nothing else would tell it, or the default model picker, that
+            // the list they are showing is no longer what is stored.
+            if (
+                response.updated_keys.includes('model_endpoints') ||
+                response.updated_keys.includes('enable_multi_model_endpoints')
+            ) {
+                modelConnectionsChanged();
+            }
+
             const warningCount = Object.keys(response.warnings ?? {}).length;
             toast.success(
                 warningCount
@@ -490,14 +600,41 @@ export function AdminSettingsPage() {
     const readSibling = (key: string, fallback = '') =>
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
+    /**
+     * Move the page to a section, from a cross-reference elsewhere on it.
+     *
+     * The role catalog links to settings that live in other groups, so clearing the
+     * filters is part of the jump: with a group selected or a search active, the target
+     * section may not be on screen to scroll to. The scroll itself is deferred to an
+     * effect, because the element only exists once that filter change has rendered.
+     */
+    const goToSection = useCallback((sectionId: string) => {
+        setQuery('');
+        setActiveGroup(null);
+        setPendingScroll(sectionId);
+    }, []);
+
+    useEffect(() => {
+        if (!pendingScroll) {
+            return;
+        }
+        document
+            .getElementById(`admin-section-${pendingScroll}`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setPendingScroll(null);
+    }, [pendingScroll]);
+
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft)) {
+        if (!isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)) {
             return null;
         }
 
-        const key = field.key ?? field.component ?? field.label;
-        const value = readFieldValue(field, settings, draft);
+        const key = field.key ?? field.component ?? field.status_source ?? field.label;
+        const value =
+            field.type === 'status'
+                ? data?.status_readouts?.[field.status_source ?? '']
+                : readFieldValue(field, settings, draft);
         const error = field.key ? fieldErrors[field.key] : undefined;
         const warning = field.key ? fieldWarnings[field.key] : undefined;
 
@@ -532,10 +669,190 @@ export function AdminSettingsPage() {
             );
         }
 
+        if (field.type === 'entry_list') {
+            return (
+                <EntryListEditor
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'secret') {
+            return (
+                <SecretField
+                    key={key}
+                    field={field}
+                    value={value}
+                    // The saved value, not the draft: only that says whether a credential
+                    // exists, which is what tells an empty box apart from a pending delete.
+                    storedValue={field.key ? settings[field.key] : undefined}
+                    error={error}
+                    warning={warning}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'id_list') {
+            return (
+                <AssignmentPicker
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'group_picker') {
+            return (
+                <GroupAssignmentField
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
         if (field.type === 'component') {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'connection-test':
+                    return (
+                        <ConnectionTest
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                        />
+                    );
+                case 'agent-orchestration':
+                    return <OrchestrationCard key={key} help={field.help} />;
+                case 'inbound-mcp-disabled-notice':
+                    return <InboundMcpNotice key={key} />;
+                case 'model-connections-manager':
+                    return <ModelConnectionsManager key={key} help={field.help} />;
+                case 'model-picker':
+                    return (
+                        <ModelPicker
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            warning={warning}
+                            disabled={saving}
+                            models={data?.model_catalog ?? []}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'resource-id-builder':
+                    return (
+                        <ResourceIdBuilder
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            warning={warning}
+                            disabled={saving}
+                            readSibling={readSibling}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'chat-mode-notice': {
+                    // The saved value decides which route is live; the draft value only
+                    // says what a pending save would change it to, so the notice is given
+                    // both rather than the merged reading the other fields use.
+                    const savedEnabled = asBoolean(settings['enable_multi_model_endpoints']);
+                    return (
+                        <ChatModeNotice
+                            key={key}
+                            enabled={savedEnabled}
+                            pending={
+                                Object.prototype.hasOwnProperty.call(
+                                    draft,
+                                    'enable_multi_model_endpoints',
+                                )
+                                    ? asBoolean(draft['enable_multi_model_endpoints'])
+                                    : undefined
+                            }
+                            help={field.help}
+                        />
+                    );
+                }
+                case 'chat-default-model':
+                    return (
+                        <ChatDefaultModel
+                            key={key}
+                            multiEndpointEnabled={asBoolean(
+                                settings['enable_multi_model_endpoints'],
+                            )}
+                            help={field.help}
+                        />
+                    );
+                case 'embedding-model-selection':
+                    return (
+                        <ModelSelectionPicker
+                            key={key}
+                            kind="embedding"
+                            label={field.label}
+                            help={field.help}
+                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
+                                'embedding',
+                                Object.keys(draft),
+                            )}
+                        />
+                    );
+                case 'image-model-selection':
+                    return (
+                        <ModelSelectionPicker
+                            key={key}
+                            kind="image"
+                            label={field.label}
+                            help={field.help}
+                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
+                                'image',
+                                Object.keys(draft),
+                            )}
+                        />
+                    );
+                case 'global-identities-list':
+                    return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'promoted-popular-agents':
+                    return (
+                        <PromotedAgentsEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'app-role-requirements-roster':
+                    return (
+                        <AppRoleRoster
+                            key={key}
+                            entries={appRoleEntries}
+                            values={appRoleValues}
+                            help={field.help}
+                            disabled={saving}
+                            onChange={setValue}
+                            onNavigate={goToSection}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
@@ -553,6 +870,34 @@ export function AdminSettingsPage() {
                         <UserAgreementPreview
                             key={key}
                             text={readSibling('user_agreement_text')}
+                        />
+                    );
+                case 'enhanced-citations-storage-test':
+                    return (
+                        <EnhancedCitationsStorageTest
+                            key={key}
+                            help={field.help}
+                            authenticationType={readSibling(
+                                'office_docs_authentication_type',
+                                'key',
+                            )}
+                            connectionString={readSibling('office_docs_storage_account_url')}
+                            blobEndpoint={readSibling(
+                                'office_docs_storage_account_blob_endpoint',
+                            )}
+                        />
+                    );
+                case 'key-vault-secret-reminders':
+                    return (
+                        <KeyVaultReminders key={key} label={field.label} help={field.help} />
+                    );
+                case 'front-door-redirect-preview':
+                    return (
+                        <FrontDoorRedirectPreview
+                            key={key}
+                            origin={readSibling('front_door_url')}
+                            label={field.label}
+                            help={field.help}
                         />
                     );
                 default:
@@ -720,40 +1065,51 @@ export function AdminSettingsPage() {
                             )}
 
                             {visibleSections.map((section) => (
-                                <GlassPanel key={section.sectionId} edge className="p-4">
-                                    <div className="mb-1">
-                                        <h2 className="text-sm font-semibold text-text-1">
-                                            {section.label}
-                                        </h2>
-                                        <p className="text-xs text-text-3">
-                                            {section.groupLabel}
-                                            {section.tabLabel ? ` · ${section.tabLabel}` : ''}
-                                        </p>
-                                    </div>
-
-                                    <div className="divide-y divide-edge">
-                                        {section.fields.map(renderField)}
-
-                                        {section.capabilities.map((row) => (
-                                            <div key={row.key} className="py-1">
-                                                <Toggle
-                                                    label={row.label}
-                                                    description={row.key}
-                                                    checked={asBoolean(
-                                                        Object.prototype.hasOwnProperty.call(
-                                                            draft,
-                                                            row.key,
-                                                        )
-                                                            ? draft[row.key]
-                                                            : settings[row.key],
-                                                    )}
-                                                    disabled={saving}
-                                                    onChange={(next) => setValue(row.key, next)}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                </GlassPanel>
+                                <SettingsSection
+                                    key={section.sectionId}
+                                    sectionId={section.sectionId}
+                                    label={section.label}
+                                    groupLabel={section.groupLabel}
+                                    tabLabel={section.tabLabel}
+                                    fields={section.fields}
+                                    settings={settings}
+                                    draft={draft}
+                                    // Sections that describe a status rule use it;
+                                    // the rest have their status derived from which
+                                    // of their required fields are filled.
+                                    statusRule={sectionStatus[section.sectionId]}
+                                    renderField={renderField}
+                                    renderCapability={renderField}
+                                    // While a search is filtering, a match inside a
+                                    // collapsed group has to be shown or the card would
+                                    // appear empty.
+                                    forceExpanded={Boolean(query.trim())}
+                                >
+                                    {section.capabilities.length ? (
+                                        <div className="divide-y divide-edge">
+                                            {section.capabilities.map((row) => (
+                                                <div key={row.key} className="py-1">
+                                                    <Toggle
+                                                        label={row.label}
+                                                        description={row.key}
+                                                        checked={asBoolean(
+                                                            Object.prototype.hasOwnProperty.call(
+                                                                draft,
+                                                                row.key,
+                                                            )
+                                                                ? draft[row.key]
+                                                                : settings[row.key],
+                                                        )}
+                                                        disabled={saving}
+                                                        onChange={(next) =>
+                                                            setValue(row.key, next)
+                                                        }
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </SettingsSection>
                             ))}
 
                             {!loading && activeGroupUsesFallback && (
