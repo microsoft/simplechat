@@ -262,7 +262,21 @@ def test_the_agents_gate_chain_is_declared():
         "settings must be too. These are not:\n  " + "\n  ".join(map(str, ungated))
     )
 
-    print("  Gate chain and Agents page dependencies are declared.")
+    derived = next(
+        (
+            field
+            for field in schema["agents-config"]
+            if field.get("key") == "enable_multi_agent_orchestration"
+        ),
+        None,
+    )
+    assert derived is not None and derived.get("readonly"), (
+        "enable_multi_agent_orchestration is written by the orchestration API "
+        "from the chosen mode. Left undeclared it is guessed into AI Models and "
+        "rendered as a switch that does nothing."
+    )
+
+    print("  Gate chain, Agents page dependencies and the derived key are declared.")
     return True
 
 

@@ -688,6 +688,23 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
         {
+            # Derived by POST /api/orchestration_settings from the chosen
+            # orchestration mode. The fallback scan used to render it as a live
+            # switch under AI Models, where setting it did nothing.
+            "key": "enable_multi_agent_orchestration",
+            "type": "switch",
+            "label": "Multi-Agent Orchestration",
+            "help": (
+                "Whether the runtime coordinates several agents rather than "
+                "routing to one. Follows the orchestration mode; this deployment "
+                "offers only single-agent orchestration."
+            ),
+            "default": False,
+            "readonly": True,
+            "managed_by": "Agent Orchestration",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
             # Reads and writes through /api/orchestration_settings rather than the
             # settings PATCH, and draws nothing while the deployment offers a
             # single orchestration type, which is the case today.

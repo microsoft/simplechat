@@ -71,6 +71,7 @@ with the rest of the page.
 | Workspace Mode | Chooses between one shared global set of agents and actions, and a separate collection per user and group. | Off | `per_user_semantic_kernel` |
 | Add Global Agents and Actions to Workspaces | Includes the global set in every workspace collection, so people see both what they built and what you publish. | Off | `merge_global_semantic_kernel_with_workspace`; only applies in Workspace Mode |
 | Orchestration Type | Selects how a chat is routed across agents. Hidden while only one mode is available. | default_agent | `orchestration_type`; saved by the orchestration settings API |
+| Multi-Agent Orchestration | Reports whether the runtime coordinates several agents. Follows the orchestration mode rather than being set directly. | Off | `enable_multi_agent_orchestration`; derived |
 | Max Rounds Per Agent | Caps how many turns each agent takes in a multi-agent conversation, which bounds the model calls one message can trigger. | 1 | `max_rounds_per_agent`; forced to 1 outside multi-agent modes |
 
 ### Workspace Agent Permissions {#agent-toggles-card}

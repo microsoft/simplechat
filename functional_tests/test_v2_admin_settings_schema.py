@@ -214,9 +214,10 @@ def test_setting_keys_have_one_owner():
             field["key"]
             for _section_id, field in fields_module.iter_fields()
             if field.get("readonly") and field.get("key") and field["key"] not in writable
-            # A derived key has no editable declaration anywhere, because the
-            # application recomputes it. Those are named in the mirror's help.
-            and field["key"] not in {"enable_tabular_processing_plugin"}
+            # A derived key has no editable declaration anywhere, because
+            # something else computes it. Those are named in the mirror's help.
+            and field["key"]
+            not in {"enable_tabular_processing_plugin", "enable_multi_agent_orchestration"}
         }
     )
     assert not orphaned, (
