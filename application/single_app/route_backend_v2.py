@@ -99,6 +99,7 @@ from route_backend_settings import run_admin_settings_connection_test
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_model_capabilities import resolve_model_vision_support
+from functions_documents import get_audio_runtime_capabilities
 from config import VERSION
 from swagger_wrapper import get_auth_security, swagger_route
 
@@ -704,7 +705,36 @@ def register_route_backend_v2_admin(bp):
                 "message": "Runtime support could not be checked.",
             }
 
+        try:
+            audio = get_audio_runtime_capabilities()
+            broad = bool(audio.get("broad_transcoding_available"))
+            supported = ", ".join(audio.get("supported_extensions") or []) or "none"
+            message = audio.get("message") or "Audio runtime support has not been checked."
+            readouts["audio_runtime"] = {
+                "ok": broad,
+                "message": f"{message} Accepted uploads: {supported}.",
+            }
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Audio runtime probe failed: {exc}",
+                level=logging.WARNING,
+            )
+            readouts["audio_runtime"] = {
+                "ok": False,
+                "message": "Audio runtime support could not be checked.",
+            }
+
         return readouts
+
+    def _build_endpoint_readouts(settings):
+        """Readouts derived from the settings document rather than from the host."""
+        endpoint = str(settings.get("video_indexer_endpoint") or "").strip()
+        return {
+            "video_indexer_endpoint": {
+                "ok": bool(endpoint),
+                "message": endpoint or "No endpoint resolved yet.",
+            }
+        }
 
     def _redact_admin_settings_for_v2(settings):
         """Replace stored credentials with the redaction placeholder.
@@ -760,7 +790,10 @@ def register_route_backend_v2_admin(bp):
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "branding_assets": _build_branding_assets(settings),
-                        "status_readouts": _build_status_readouts(),
+                        "status_readouts": {
+                            **_build_status_readouts(),
+                            **_build_endpoint_readouts(settings),
+                        },
                         "model_catalog": _build_model_catalog(settings),
                         "version": VERSION,
                     }
