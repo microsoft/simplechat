@@ -1,7 +1,7 @@
 # Chat Orchestration
 
 **Implemented in version: 0.261.086**
-**Knowledge phase added in version: 0.261.087**
+**Knowledge phase added in version: 0.261.088**
 
 ## Overview
 
@@ -124,6 +124,29 @@ So `agent_invoke`, `url_fetch` and `deep_research` produce `notes` and `citation
 This is not a workaround: `RunContext.merge_step_result` already accumulates notes, and the
 respond adapter already folds them into its prompt. A knowledge step that gathers *text*
 rather than *document evidence* reaches the answer through a path that already existed.
+
+### Two levels of gate
+
+A capability is gated twice, and the two answer different questions.
+
+| Gate | Question | Read by |
+|---|---|---|
+| `gate(settings)` | Does this deployment have the capability at all? | The admin page, the bootstrap payload, and planning |
+| `request_gate(settings, context)` | May *this caller, asking this question* use it? | Planning only |
+
+`resolve_available_capabilities` applies request gates **only when a request context is
+given**. That is deliberate: the admin page and the bootstrap payload describe a
+deployment, not a caller, and would be wrong to hide a capability because the administrator
+viewing the page happens to have no agents.
+
+But it means a caller that forgets to pass a context silently gets the deployment answer.
+`plan_request` takes `request_context` and forwards it, so one resolution narrows three
+things at once: what the planner is offered, what the validator accepts, and therefore what
+can reach an adapter. `test_orchestration_adapter_contract.py` asserts that the parameter
+exists, that it is forwarded, and that the route supplies one.
+
+Every request gate **fails closed** — a gate that raises withholds the capability. These
+read app roles, and an error resolving a role is not a reason to assume the caller holds it.
 
 ### Execute
 

@@ -383,6 +383,43 @@ def _request_identity(user_id=None, seeded_agent=None):
     }
 
 
+def _capability_request_context(user_id, identity, user_message, agent_catalog):
+    """Describe this caller, so the capability request gates can answer for them.
+
+    Distinct from the deployment-level gates: those answer "does this installation have
+    URL access at all", these answer "may this person read a URL, and is there one to
+    read". Without it the planner would be offered capabilities the caller cannot use --
+    reading links in a message containing none, or an agent they have none of -- and
+    produce plans whose steps could only fail.
+
+    Built in the route because that is where the request is. The registry stays free of
+    Flask, and the gates stay next to the capabilities they belong to.
+    """
+    identity = identity or {}
+    urls = []
+    try:
+        from functions_source_review import extract_urls_from_text
+
+        urls = extract_urls_from_text(user_message or '') or []
+    except Exception as exc:
+        # No URLs found is the safe reading: url_fetch is withheld rather than offered for
+        # a message we could not scan.
+        log_event(
+            f"[ORCHESTRATION] Could not scan the message for URLs: {exc}",
+            level=logging.WARNING,
+        )
+
+    return {
+        'user_id': user_id,
+        'user_message': user_message or '',
+        'message_urls': urls,
+        'user_roles': identity.get('user_roles') or [],
+        'user_email': identity.get('user_email'),
+        'user_enable_agents': identity.get('user_enable_agents', True),
+        'agent_catalog': list(agent_catalog or ()),
+    }
+
+
 def _partition_citations(citations):
     """Split a run's citations into the document and web buckets chat already uses.
 
@@ -560,6 +597,11 @@ def register_route_backend_orchestration(bp):
             # of asking again. Either way this is a new attempt at the same turn.
             revision += 1
 
+        # Captured on the request thread, before the streamed generator body runs. See
+        # _request_identity: a generator runs after the view returns, when the session is
+        # already gone.
+        identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
+
         def generate():
             try:
                 resolved_conversation_id, created = _ensure_conversation(
@@ -611,18 +653,18 @@ def register_route_backend_orchestration(bp):
                     # conversational message never pays for it: it is a multi-query Cosmos
                     # traversal with no cache, and a trivial reply has no plan for an agent
                     # to appear in. Once per plan, never per step.
-                    #
+                    agent_catalog = resolve_agent_catalog(
+                        user_id, seeds=seeds, settings=settings,
+                        user_groups=seeds.get('active_group_ids') or None,
+                    )
+
                     # The context is rebuilt rather than having 'agents' assigned into it,
                     # because build_planner_context is the single place the catalog is
                     # projected down to its naming fields. Writing the key directly would
                     # put an agent's full instructions in front of the planner.
                     context = build_planner_context(
                         message, candidates=candidates, seeds=seeds, ledger=ledger,
-                        signals=signals,
-                        agents=resolve_agent_catalog(
-                            user_id, seeds=seeds, settings=settings,
-                            user_groups=seeds.get('active_group_ids') or None,
-                        ),
+                        signals=signals, agents=agent_catalog,
                     )
                     if answered:
                         context['answered_now'] = answered
@@ -635,6 +677,13 @@ def register_route_backend_orchestration(bp):
                         replan_hint=replan_hint or None,
                         revision=revision,
                         turn_id=turn_id, seeds=seeds, document_labels=labels,
+                        # Narrows one resolution and thereby three things: what the planner
+                        # is offered, what the validator will accept, and so what can reach
+                        # an adapter. Without it a plan could propose reading links in a
+                        # message that has none, or an agent this user does not have.
+                        request_context=_capability_request_context(
+                            user_id, identity, message, agent_catalog,
+                        ),
                     )
 
                 if kind == 'elicitation':

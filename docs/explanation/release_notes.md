@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.088)**
+
+#### Bug Fixes
+
+*   **Plans No Longer Propose Work The User Cannot Do**
+    *   Whether a capability suits *this person, asking this question* — do they hold the app role, does their message actually contain a link, do they have an agent at all — was described for each capability but never consulted when a plan was made. The planner was shown every capability the deployment allowed, so it could propose reading links in a message containing none, or name an agent the user does not have. The step then failed at the point it ran, having promised something in a plan the user had already approved.
+    *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
+    *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
+    *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
+
 ### **(v0.261.087)**
 
 #### New Features
