@@ -36,6 +36,7 @@ import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingField } from '../components/admin/fields';
 import {
@@ -536,6 +537,8 @@ export function AdminSettingsPage() {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'model-connections-manager':
+                    return <ModelConnectionsManager key={key} help={field.help} />;
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview

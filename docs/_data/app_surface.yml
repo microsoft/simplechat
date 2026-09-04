@@ -413,7 +413,7 @@ admin_tabs:
   label: Migrate
   group: backup-recovery
 - id: model-endpoints
-  label: Model Endpoints
+  label: Connections
   group: ai-models
 - id: network
   label: Network
@@ -705,7 +705,7 @@ admin_sections:
   tab: mcp-governance
   group: governance
 - id: gpt-config
-  label: Chat Model
+  label: Chat
   tab: model-endpoints
   group: ai-models
 - id: group-workspaces-section
@@ -741,7 +741,7 @@ admin_sections:
   tab: extraction
   group: knowledge
 - id: multi-endpoint-configuration
-  label: Model Endpoints
+  label: Connections
   tab: model-endpoints
   group: ai-models
 - id: multimodal-vision-section

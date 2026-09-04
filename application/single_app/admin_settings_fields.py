@@ -45,6 +45,12 @@ from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
 )
+from functions_model_endpoint_identity_header import (
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+    normalize_model_endpoint_identity_header_name,
+    normalize_model_endpoint_identity_header_value_type,
+)
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
     TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH,
@@ -620,6 +626,72 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    "multi-endpoint-configuration": [
+        {
+            "key": "enable_multi_model_endpoints",
+            "type": "switch",
+            "label": "Use connections for chat",
+            "help": (
+                "Routes chat through the connections listed below, so several Azure "
+                "OpenAI or Foundry resources can serve models at once. When off, chat "
+                "uses the single classic endpoint instead and these connections are "
+                "not consulted."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "model-connections-manager",
+            "label": "Connections",
+            "help": (
+                "Each connection is one Azure OpenAI or Foundry resource: where it is, "
+                "how SimpleChat authenticates to it, and which of its deployed models "
+                "may be used."
+            ),
+        },
+        {
+            "key": "model_endpoint_identity_header_enabled",
+            "type": "switch",
+            "label": "Send an identity header with model requests",
+            "help": (
+                "Adds a header identifying the signed-in user to every model request. "
+                "Gateways in front of a model endpoint use it to attribute usage or "
+                "apply per-user quotas, which they otherwise cannot do because the "
+                "request arrives under SimpleChat's own credentials."
+            ),
+            "default": False,
+        },
+        {
+            "key": "model_endpoint_identity_header_name",
+            "type": "text",
+            "label": "Header name",
+            "help": (
+                "Rejected if it collides with a header the model call already sets, "
+                "such as authorization or api-key."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+        },
+        {
+            "key": "model_endpoint_identity_header_value_type",
+            "type": "select",
+            "label": "Identity sent in the header",
+            "help": (
+                "Object id is stable when a user is renamed; UPN is readable in gateway "
+                "logs. The tenant variants qualify the value for a multi-tenant gateway."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+            "options": [
+                {"value": "user_oid_tenant_id", "label": "Object id and tenant id"},
+                {"value": "user_oid", "label": "Object id"},
+                {"value": "user_upn_tenant_id", "label": "User principal name and tenant id"},
+                {"value": "user_upn", "label": "User principal name"},
+            ],
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -914,6 +986,27 @@ def _validate_redirect_url(value):
     return normalized, None
 
 
+def _validate_identity_header_name(value):
+    """Return ``(normalized, error)`` for the model endpoint identity header name.
+
+    ``normalize_model_endpoint_identity_header_name`` answers "" for a name that
+    collides with a header the model call already sets, such as ``authorization`` or
+    ``api-key``. Storing that silently would turn the header off without saying so, so
+    an explicit save reports the refusal instead.
+    """
+    candidate = str(value or "").strip()
+    if not candidate:
+        return DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME, None
+
+    normalized = normalize_model_endpoint_identity_header_name(candidate)
+    if not normalized:
+        return None, (
+            "That header name is reserved or malformed. Use a token such as "
+            f"{DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME}."
+        )
+    return normalized, None
+
+
 def _check_acknowledgements(updates, current_settings, errors):
     """Enforce the acknowledgements a field requires before it may be enabled."""
     for _section_id, field in iter_fields():
@@ -968,6 +1061,14 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 errors[key] = redirect_error
             else:
                 normalized[key] = redirect_value
+            continue
+
+        if key == "model_endpoint_identity_header_name":
+            header_value, header_error = _validate_identity_header_name(value)
+            if header_error:
+                errors[key] = header_error
+            else:
+                normalized[key] = header_value
             continue
 
         field_value, error, warning = _normalize_field_value(key, value, field)
