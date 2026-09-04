@@ -12,7 +12,13 @@
 // without a renderer.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { FileText, Upload } from 'lucide-react';
+import {
+    buildContextHandoffParams,
+    type ContextHandoffState,
+} from '../../lib/chatContextHandoff';
+import { PERSONAL_SCOPE } from '../../lib/chatContext';
 import type {
     DocumentExplorerPrefs,
     DocumentQuery,
@@ -137,6 +143,7 @@ function saveBlob(blob: Blob, fileName: string) {
 }
 
 export function DocumentExplorer() {
+    const navigate = useNavigate();
     const features = useBootstrapStore((state) => state.data?.features);
     const settings = useBootstrapStore((state) => state.data?.settings);
     const userSettings = useUserSettingsStore((state) => state.settings);
@@ -630,18 +637,37 @@ export function DocumentExplorer() {
         }
     }, []);
 
-    const onChat = useCallback((targets: WorkspaceDocument[]) => {
-        const ids = targets.map(documentId).filter(Boolean);
-        if (ids.length === 0) {
-            return;
-        }
-        const params = new URLSearchParams({
-            search_documents: 'true',
-            doc_scope: 'personal',
-            document_ids: ids.join(','),
-        });
-        window.location.href = `/chats?${params.toString()}`;
-    }, []);
+    /**
+     * Hand the selection to the composer.
+     *
+     * This used to be `window.location.href = '/chats?…'`, which is a full page load into the
+     * *classic* interface: the one action most likely to follow choosing a document quietly
+     * moved the user out of V2. Navigating within the router keeps them here, and the document
+     * records ride along in router state so the composer does not have to fetch back what this
+     * page already has in hand.
+     */
+    const onChat = useCallback(
+        (targets: WorkspaceDocument[]) => {
+            const documents = targets.filter((target) => documentId(target));
+            if (documents.length === 0) {
+                return;
+            }
+
+            const query = buildContextHandoffParams({
+                documentIds: documents.map(documentId),
+                docScope: 'personal',
+            });
+            const state: ContextHandoffState = {
+                contextDocuments: documents.map((document) => ({
+                    document,
+                    scope: PERSONAL_SCOPE,
+                })),
+            };
+
+            navigate(`/chat?${query}`, { state });
+        },
+        [navigate],
+    );
 
     const onExtractMetadata = useCallback(
         async (targets: WorkspaceDocument[]) => {

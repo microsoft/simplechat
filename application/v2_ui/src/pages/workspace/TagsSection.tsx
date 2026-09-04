@@ -12,9 +12,15 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Merge, Plus, Tag as TagIcon, Trash2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Loader2, Merge, MessageSquare, Plus, Tag as TagIcon, Trash2 } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import type { WorkspaceTag } from '../../lib/types';
+import {
+    buildContextHandoffParams,
+    type ContextHandoffState,
+} from '../../lib/chatContextHandoff';
+import { PERSONAL_SCOPE } from '../../lib/chatContext';
+import { clearContextTagCache } from '../../lib/contextMentions';
 import {
     createPersonalDocumentTag,
     deletePersonalDocumentTag,
@@ -46,6 +52,7 @@ function TagRow({
     onRename,
     onRecolour,
     onDelete,
+    onChat,
 }: {
     tag: WorkspaceTag;
     busy: boolean;
@@ -53,6 +60,7 @@ function TagRow({
     onRename: (name: string) => void;
     onRecolour: (color: string) => void;
     onDelete: () => void;
+    onChat: () => void;
 }) {
     const [editing, setEditing] = useState(false);
     const [draftName, setDraftName] = useState(tag.name);
@@ -149,6 +157,23 @@ function TagRow({
                 {tag.count ?? 0} {tag.count === 1 ? 'document' : 'documents'}
             </span>
 
+            {/* Chatting against a tag is the reason most of them exist: it is how a grouping
+                becomes a body of material to ask questions of, rather than a filing label. */}
+            <button
+                type="button"
+                onClick={onChat}
+                disabled={!tag.count}
+                aria-label={`Chat with documents tagged ${tag.name}`}
+                title={
+                    tag.count
+                        ? `Chat with documents tagged ${tag.name}`
+                        : 'No documents carry this tag yet'
+                }
+                className="shrink-0 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-accent-soft hover:text-accent disabled:opacity-40"
+            >
+                <MessageSquare size={15} />
+            </button>
+
             <button
                 type="button"
                 onClick={onDelete}
@@ -164,6 +189,7 @@ function TagRow({
 }
 
 export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean }) {
+    const navigate = useNavigate();
     const [tags, setTags] = useState<WorkspaceTag[]>([]);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
@@ -185,9 +211,38 @@ export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean })
         }
     };
 
+    /**
+     * Reload after a change, and drop the composer's memoized vocabulary with it.
+     *
+     * The `#` menu caches the tag list for a minute so it is not re-fetched on every
+     * keystroke. Without this, a tag created or renamed here would be missing from that menu
+     * -- or offered under its old name -- for up to that long afterwards.
+     */
+    const reload = async () => {
+        clearContextTagCache();
+        await load();
+    };
+
     useEffect(() => {
         void load();
     }, []);
+
+    /**
+     * Take a tag to the composer as a context chip.
+     *
+     * The tag travels as a filter rather than as the documents carrying it, so the message
+     * searches whatever holds the tag when it is sent rather than a list captured here.
+     */
+    const onChat = (tag: WorkspaceTag) => {
+        const query = buildContextHandoffParams({
+            tags: [tag.name],
+            docScope: 'personal',
+        });
+        const state: ContextHandoffState = {
+            contextTags: [{ name: tag.name, scope: PERSONAL_SCOPE }],
+        };
+        navigate(`/chat?${query}`, { state });
+    };
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -209,7 +264,7 @@ export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean })
         try {
             await createPersonalDocumentTag(name, newColor);
             setNewName('');
-            await load();
+            await reload();
             toast.success(`Created "${name}".`);
         } catch (createError) {
             toast.error(errorMessage(createError, 'Could not create the tag.'));
@@ -225,7 +280,7 @@ export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean })
         setBusy(true);
         try {
             const response = await updatePersonalDocumentTag(tag.name, { new_name: name });
-            await load();
+            await reload();
             const updated = response.documents_updated ?? 0;
             toast.success(
                 updated > 0
@@ -249,7 +304,7 @@ export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean })
             await updatePersonalDocumentTag(tag.name, { color });
         } catch (colourError) {
             toast.error(errorMessage(colourError, 'Could not save the colour.'));
-            await load();
+            await reload();
         }
     };
 
@@ -265,7 +320,7 @@ export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean })
         setBusy(true);
         try {
             await deletePersonalDocumentTag(tag.name);
-            await load();
+            await reload();
             toast.success(`Deleted "${tag.name}".`);
         } catch (deleteError) {
             toast.error(errorMessage(deleteError, 'Could not delete the tag.'));
@@ -375,6 +430,7 @@ export function TagsSection({ documentsEnabled }: { documentsEnabled: boolean })
                                 onRename={(name) => void onRename(tag, name)}
                                 onRecolour={(color) => void onRecolour(tag, color)}
                                 onDelete={() => void onDelete(tag)}
+                                onChat={() => onChat(tag)}
                             />
                         ))}
                     </ul>
