@@ -46,7 +46,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Settings No Longer Linger After Their Feature Is Switched Off**
     *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
     *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   The same problem affected three group assignment pickers — group and public workspace file downloads, and group workflows. Turning the capability off left the picker on screen assigning access for a disabled feature.
     *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
+*   **Workflow Settings Were Declared Twice**
+    *   The Workflow section was registered twice, and only the second registration took effect. The two were not identical, so the first was silently dead — and a reordering would have swapped which one applied, dropping six settings from the page.
+    *   The same duplication had begun to affect chat file uploads, where the second registration was overriding the first and hiding the **Enable Chat File Uploads** switch.
+    *   (Ref: `ADMIN_SETTINGS_FIELDS`, `workflow-settings-section`, `chat-file-uploads-section`)
 
 ### **(v0.261.061)**
 
