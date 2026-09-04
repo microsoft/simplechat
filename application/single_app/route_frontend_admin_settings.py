@@ -1069,7 +1069,12 @@ def register_route_frontend_admin_settings(bp):
                 )
             )
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
-            conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
+            conversation_history_limit = max(1, parse_admin_int(
+                form_data.get('conversation_history_limit'),
+                settings.get('conversation_history_limit', 10),
+                'conversation_history_limit',
+                10,
+            ))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
             idle_timeout_minutes = max(10, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
             idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
@@ -2496,7 +2501,12 @@ def register_route_frontend_admin_settings(bp):
                 'enable_extract_meta_data': enable_extract_meta_data,
                 'enable_summarize_content_history_for_search': form_data.get('enable_summarize_content_history_for_search') == 'on',
                 'enable_summarize_content_history_beyond_conversation_history_limit': form_data.get('enable_summarize_content_history_beyond_conversation_history_limit') == 'on',
-                'number_of_historical_messages_to_summarize': int(form_data.get('number_of_historical_messages_to_summarize', 10)),
+                'number_of_historical_messages_to_summarize': min(100, max(1, parse_admin_int(
+                    form_data.get('number_of_historical_messages_to_summarize'),
+                    settings.get('number_of_historical_messages_to_summarize', 10),
+                    'number_of_historical_messages_to_summarize',
+                    10,
+                ))),
                 
                 # *** Document Classification ***
                 'enable_document_classification': enable_document_classification,
@@ -2555,13 +2565,17 @@ def register_route_frontend_admin_settings(bp):
                 'office_docs_storage_account_blob_endpoint': admin_secret('office_docs_storage_account_blob_endpoint'),
                 'office_docs_storage_account_url': admin_secret('office_docs_storage_account_url'),
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
-                'office_docs_key': form_data.get('office_docs_key', '').strip(),
+                # Storage account keys have no input anywhere in the form, so a bare
+                # '' default would overwrite the stored key on every save and break
+                # SAS signing for citation file access. Fall back to the stored value
+                # when the field is absent; an explicit empty submission still clears.
+                'office_docs_key': form_data.get('office_docs_key', settings.get('office_docs_key', '')).strip(),
                 'video_files_storage_account_url': admin_secret('video_files_storage_account_url'),
                 'video_files_authentication_type': form_data.get('video_files_authentication_type', 'key'),
-                'video_files_key': form_data.get('video_files_key', '').strip(),
+                'video_files_key': form_data.get('video_files_key', settings.get('video_files_key', '')).strip(),
                 'audio_files_storage_account_url': admin_secret('audio_files_storage_account_url'),
                 'audio_files_authentication_type': form_data.get('audio_files_authentication_type', 'key'),
-                'audio_files_key': form_data.get('audio_files_key', '').strip(),
+                'audio_files_key': form_data.get('audio_files_key', settings.get('audio_files_key', '')).strip(),
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
