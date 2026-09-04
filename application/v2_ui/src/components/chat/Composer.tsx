@@ -116,17 +116,25 @@ import {
     suggestPromptName,
     type SlashQuery,
 } from '../../lib/promptSlash';
-import { promptNeedsFilling } from '../../lib/promptVariables';
 import { readPromptParam } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
 import { messageToPlainText } from '../../lib/messageText';
-import type { PromptOption, WorkspaceRef } from '../../lib/types';
+import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
+import {
+    attachedPromptContent,
+    attachedPromptIsEdited,
+    buildOutgoingMessage,
+    buildPromptInfo,
+    type AttachedPrompt,
+} from '../../lib/promptRequest';
+import { usePromptVariableValues } from '../../lib/usePromptVariableValues';
 import {
     EMPTY_PROMPT_DRAFT,
     PromptEditorDialog,
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
-import { PromptVariablesDialog, type PromptFillSource } from '../prompts/PromptVariablesDialog';
+import type { PromptFillSource } from '../prompts/PromptVariableField';
+import { AttachedPromptCard } from './AttachedPromptCard';
 import { AiNotice } from './AiNotice';
 import { MentionMenu, useMentionSuggestions } from './MentionMenu';
 import { PromptSlashMenu } from './PromptSlashMenu';
@@ -257,8 +265,14 @@ export function Composer() {
     const [pickerOpen, setPickerOpen] = useState(false);
     const backdropRef = useRef<HTMLDivElement>(null);
 
-    /** The prompt whose variables are being filled in, if any. */
-    const [fillingPrompt, setFillingPrompt] = useState<PromptOption | null>(null);
+    /**
+     * The saved prompt carried by this turn, if any.
+     *
+     * Held as a prompt rather than pasted into the box, so it can be collapsed, re-filled,
+     * edited for this turn and taken off again, and so the message below it stays the
+     * reader's own text right up to the moment the two are combined.
+     */
+    const [attachedPrompt, setAttachedPrompt] = useState<AttachedPrompt | null>(null);
     /** A prompt being saved from what is currently written, if any. */
     const [savingDraft, setSavingDraft] = useState<PromptDraft | null>(null);
     const [savingPrompt, setSavingPrompt] = useState(false);
@@ -497,7 +511,7 @@ export function Composer() {
      * snapshot, so a parameter removed here would simply be restored by that effect.
      *
      * The ref guards against StrictMode running effects twice on mount: a state flag is still
-     * false in the second invocation's closure, so the prompt would be inserted twice.
+     * false in the second invocation's closure, so the prompt would be attached twice.
      */
     const [searchParams, setSearchParams] = useSearchParams();
     const location = useLocation();
@@ -515,7 +529,7 @@ export function Composer() {
             return;
         }
         setOptions((current) => ({ ...current, promptId: prompt.id }));
-        insertPromptIntoComposer(prompt);
+        attachPrompt(prompt);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bootstrap, promptCatalog, linkedPromptId]);
 
@@ -725,13 +739,51 @@ export function Composer() {
     };
 
     /**
+     * The message this turn will send, plus what to tell the server about the prompt behind it.
+     *
+     * Built at send rather than when the prompt was picked. That is what makes `{{composer}}`
+     * mean the message written underneath the card, and it is why editing a variable after
+     * typing changes what is actually sent instead of only what the preview shows.
+     */
+    const buildOutgoing = (): { message: string; promptInfo: Json | null } => {
+        const typed = text.trim();
+        if (!attachedPrompt) {
+            return { message: typed, promptInfo: null };
+        }
+
+        const content = attachedPromptContent(attachedPrompt);
+        const promptText = promptVariables.resolve(promptContext());
+        const outgoing = buildOutgoingMessage(content, promptText, typed);
+
+        return {
+            message: outgoing.message,
+            promptInfo: buildPromptInfo({
+                attached: attachedPrompt,
+                promptText,
+                userText: outgoing.userText,
+                values: promptVariables.values,
+            }),
+        };
+    };
+
+    /**
      * Send, unless the prompt is about to start a long row-level export.
      *
      * The confirmation is raised before anything is sent and before the composer is cleared,
      * so declining leaves the typed prompt exactly where it was to be edited.
      */
     const submit = () => {
-        if (!text.trim() || streaming || !canPost) {
+        if (streaming || !canPost) {
+            return;
+        }
+        // An attached prompt is a complete message on its own, so a turn carrying one may be
+        // sent without anything typed under it.
+        if (!text.trim() && !attachedPrompt) {
+            return;
+        }
+
+        const outgoing = buildOutgoing();
+        if (!outgoing.message) {
             return;
         }
 
@@ -739,17 +791,19 @@ export function Composer() {
         // running a chat stream, so the large-run confirmation — a manual-flow concern about a
         // tabular export the planner has not chosen — does not apply.
         if (orchestrating) {
-            dispatchOrchestration(text);
+            dispatchOrchestration(outgoing.message, outgoing.promptInfo);
             return;
         }
 
-        const estimate = estimateLargeTabularRun(text, tabularRunSettings);
+        // Estimated against the whole message: a prompt that asks for every row is a long run
+        // whether the request came from the card or from the box.
+        const estimate = estimateLargeTabularRun(outgoing.message, tabularRunSettings);
         if (estimate.shouldConfirm) {
             setLargeRun(estimate);
             return;
         }
 
-        dispatch(text);
+        dispatch(outgoing);
     };
 
     /**
@@ -761,20 +815,33 @@ export function Composer() {
      * whose tokens are no longer in the box -- which the next keystroke would reconcile away,
      * so the references would appear to survive the send and then vanish one character into
      * the following message.
+     *
+     * The attached prompt goes with them, for the same reason: it belongs to the turn that was
+     * just sent, and leaving it attached would silently prepend it to the next message too.
      */
     const clearDraft = () => {
         setText('');
         setMention(null);
         setContextQuery(null);
-        setOptions((current) =>
-            current.contextItems.length === 0 ? current : { ...current, contextItems: [] },
-        );
+        setAttachedPrompt(null);
+        setOptions((current) => {
+            const next = current.contextItems.length === 0 ? current : { ...current, contextItems: [] };
+            return next.promptId === undefined ? next : { ...next, promptId: undefined };
+        });
     };
 
-    const dispatch = (message: string) => {
+    const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
+        // Remembered only once the message is actually on its way, so a prompt that was
+        // filled in and then abandoned leaves nothing behind.
+        if (attachedPrompt) {
+            promptVariables.commit();
+        }
         // `options` is read before the clear below replaces it, so the request carries the
         // references this message was written with.
-        void sendMessage(message, options);
+        void sendMessage(outgoing.message, {
+            ...options,
+            promptInfo: outgoing.promptInfo,
+        });
         clearDraft();
         // Sent, so the indicator other people can see must stop now rather than when the
         // idle timer happens to fire.
@@ -790,7 +857,7 @@ export function Composer() {
      * and URL access, so those toggles inform the classic path alone. `buildSelectionFields`
      * keeps the agent-XOR-model exclusivity the chat request already relies on.
      */
-    const buildOrchestrationSeeds = (): Record<string, unknown> => {
+    const buildOrchestrationSeeds = (promptInfo: Json | null = null): Record<string, unknown> => {
         const workspaces = contextScopes(options.contextItems);
         const scope = resolveDocumentScope({
             activeGroupId: bootstrap?.scope?.active_group_id,
@@ -831,28 +898,24 @@ export function Composer() {
                 reasoningEffort: options.reasoningEffort,
             }),
         );
-        if (options.promptId) {
-            const prompt = promptCatalog.find((item) => item.id === options.promptId);
-            if (prompt) {
-                // No shared prompt_info builder exists yet, so the shape is assembled here:
-                // enough for the planner to resolve the saved prompt without re-reading the
-                // catalog it already holds.
-                seeds.prompt_info = {
-                    id: prompt.id,
-                    name: prompt.name,
-                    content: prompt.content,
-                };
-            }
+        if (promptInfo) {
+            // Resolved by the composer rather than re-read from the catalog here: the text the
+            // planner is told about must be the text that was actually sent, variables filled
+            // and any edit for this turn included.
+            seeds.prompt_info = promptInfo;
         }
         return seeds;
     };
 
-    const dispatchOrchestration = (message: string) => {
+    const dispatchOrchestration = (message: string, promptInfo: Json | null = null) => {
+        if (attachedPrompt) {
+            promptVariables.commit();
+        }
         void startOrchestrationPlan({
             conversationId: activeConversationId ?? null,
             message,
             approvalMode: effectiveApprovalMode,
-            seeds: buildOrchestrationSeeds(),
+            seeds: buildOrchestrationSeeds(promptInfo),
         });
         clearDraft();
         stopTyping();
@@ -1223,41 +1286,60 @@ export function Composer() {
         ).filter((source) => source.value.trim().length > 0);
     };
 
-    /** The range a pending fill will be inserted over, captured before the dialog opens. */
-    const fillRangeRef = useRef<{ start: number; end: number } | null>(null);
+    /**
+     * The values behind the attached prompt's placeholders.
+     *
+     * Held here rather than inside the card because the send path needs them: the prompt is
+     * resolved when the message is sent, not when the prompt was picked, which is what makes
+     * `{{composer}}` mean the message written underneath it.
+     *
+     * Called unconditionally with empty strings when nothing is attached, as hooks require.
+     * An empty prompt parses to no variables and recalls nothing.
+     */
+    const promptVariables = usePromptVariableValues({
+        promptId: attachedPrompt?.id ?? '',
+        content: attachedPrompt ? attachedPromptContent(attachedPrompt) : '',
+        context: promptContext(),
+        shared,
+    });
 
     /**
-     * Use a saved prompt, asking for its variables first when it has any.
+     * Attach a saved prompt to this turn.
      *
      * Not named `usePrompt`: React reserves the `use` prefix for hooks, and this is an event
      * handler called conditionally.
+     *
+     * `range` is the `/weekly` token that summoned it, removed here so the token does not
+     * survive as literal text in the message. Nothing is inserted in its place -- the prompt
+     * lives in the card above the box, not in the box.
      */
-    const insertPromptIntoComposer = (
-        prompt: PromptOption,
-        range?: { start: number; end: number },
-    ) => {
+    const attachPrompt = (prompt: PromptOption, range?: { start: number; end: number }) => {
         const content = String(prompt.content ?? '');
         if (!content) {
             return;
         }
-        if (promptNeedsFilling(content)) {
-            fillRangeRef.current = range ?? null;
-            setFillingPrompt(prompt);
-            return;
+        if (range) {
+            insertIntoComposer('', range);
         }
-        insertIntoComposer(content, range);
+        setAttachedPrompt({
+            id: String(prompt.id ?? ''),
+            name: String(prompt.name ?? 'Prompt'),
+            scopeType: prompt.scope_type ? String(prompt.scope_type) : undefined,
+            scopeName: prompt.scope_name ? String(prompt.scope_name) : undefined,
+            originalContent: content,
+            editedContent: null,
+        });
+        window.requestAnimationFrame(() => textareaRef.current?.focus());
     };
 
     const pickSlashPrompt = (prompt: PromptOption) => {
         if (!slash) {
             return;
         }
-        // The `/weekly` token is what the prompt replaces, so it does not survive as literal
-        // text in the message.
         const range = { start: slash.start, end: slash.end };
         setSlash(null);
         setOptions((current) => ({ ...current, promptId: prompt.id }));
-        insertPromptIntoComposer(prompt, range);
+        attachPrompt(prompt, range);
     };
 
     /**
@@ -1421,7 +1503,7 @@ export function Composer() {
         setOptions((current) => ({ ...current, promptId }));
         const prompt = bootstrap?.catalogs?.prompts?.find((item) => item.id === promptId);
         if (prompt) {
-            insertPromptIntoComposer(prompt as PromptOption);
+            attachPrompt(prompt as PromptOption);
         }
     };
 
@@ -1456,7 +1538,7 @@ export function Composer() {
                     estimate={largeRun}
                     onContinue={() => {
                         setLargeRun(null);
-                        dispatch(text);
+                        dispatch(buildOutgoing());
                     }}
                     onCancel={() => setLargeRun(null)}
                 />
@@ -1546,6 +1628,39 @@ export function Composer() {
                         onRemoveAll={removeContextChips}
                         onClear={clearContextChips}
                     />
+
+                    {attachedPrompt ? (
+                        <AttachedPromptCard
+                            name={attachedPrompt.name}
+                            scopeLabel={attachedPrompt.scopeName}
+                            content={attachedPromptContent(attachedPrompt)}
+                            edited={attachedPromptIsEdited(attachedPrompt)}
+                            variableState={promptVariables}
+                            // Nothing is pre-filled in a shared conversation, so the chips are
+                            // how a value gets in: offered, never applied.
+                            sources={promptFillSources()}
+                            disabled={!canPost}
+                            onContentChange={(value) =>
+                                setAttachedPrompt((current) =>
+                                    current ? { ...current, editedContent: value } : current,
+                                )
+                            }
+                            onResetContent={() =>
+                                setAttachedPrompt((current) =>
+                                    current ? { ...current, editedContent: null } : current,
+                                )
+                            }
+                            onRemove={() => {
+                                setAttachedPrompt(null);
+                                setOptions((current) =>
+                                    current.promptId === undefined
+                                        ? current
+                                        : { ...current, promptId: undefined },
+                                );
+                                textareaRef.current?.focus();
+                            }}
+                        />
+                    ) : null}
 
                     {/* The backdrop is positioned against this wrapper rather than the whole
                         composer, so it lines up with the textarea and not with the toolbar
@@ -1877,7 +1992,7 @@ export function Composer() {
                                 <button
                                     type="button"
                                     onClick={submit}
-                                    disabled={!text.trim() || !canPost}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'
@@ -1898,29 +2013,6 @@ export function Composer() {
 
                 <AiNotice />
             </div>
-
-            {fillingPrompt ? (
-                <PromptVariablesDialog
-                    promptId={String(fillingPrompt.id ?? '')}
-                    promptName={String(fillingPrompt.name ?? 'Prompt')}
-                    content={String(fillingPrompt.content ?? '')}
-                    context={promptContext()}
-                    // Nothing is pre-filled in a shared conversation: a value remembered from a
-                    // private chat would become visible to every participant on send.
-                    shared={shared}
-                    sources={promptFillSources()}
-                    onCancel={() => {
-                        fillRangeRef.current = null;
-                        setFillingPrompt(null);
-                    }}
-                    onSubmit={(filled) => {
-                        const range = fillRangeRef.current ?? undefined;
-                        fillRangeRef.current = null;
-                        setFillingPrompt(null);
-                        insertIntoComposer(filled, range);
-                    }}
-                />
-            ) : null}
 
             {savingDraft ? (
                 <PromptEditorDialog

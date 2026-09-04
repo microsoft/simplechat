@@ -27,6 +27,31 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   A document discovered by a search step lost the workspace it came from, because the citation dropped `group_id` and `public_workspace_id` even though the search index returns them. Since context chips are grouped by workspace, a found document had no home to be offered back into.
     *   (Ref: `_citations_from_search_results`)
 
+### **(v0.261.090)**
+
+#### New Features
+
+*   **A Saved Prompt Is Now Attached To Your Message, Not Pasted Into It**
+    *   Picking a prompt in the V2 interface used to paste its text into the message box, where it stopped being a prompt: nothing marked where the standing instructions ended and your own question began, taking it back off meant finding and deleting the right paragraphs, and fixing a variable meant editing prose in the middle of what you were writing.
+    *   **The prompt now sits in a card above the message box**, collapsed to its name, its workspace, and how many variables still need a value. The box below stays yours to type in.
+    *   **Expand it** to fill in variables and read the prompt exactly as it will be sent. **Edit** adjusts the wording for this one message and marks the card *Edited*, with a **Reset** that restores the saved text — the saved prompt is never touched, so a one-off tweak does not change it for everyone else. **Remove** takes it off without disturbing anything you have typed.
+    *   **The prompt is sent first and your message follows it**, which is the order the two are actually written in. A prompt that needs no further input can be sent on its own, so Send now works with an attached prompt and an empty box.
+    *   **Variables are resolved when you send, not when you pick.** `{{composer}}` — "what you have already typed" — used to resolve to nothing, because picking the prompt is the first thing you do. It now means the message you wrote underneath the card. A prompt that positions your text this way is not also sent it a second time.
+    *   **Sent messages show the prompt as a collapsed row** above your own words, expanding to the full text, so a reply can be understood by someone who did not pick the prompt. Copying and exporting still yield the whole message, and older messages render exactly as they did.
+    *   The separate fill-in dialog is gone, folded into the card. Its safety rules came with it: auto-filled values stay badged and clearable, values from the conversation are still only ever offered as chips you click, and nothing is pre-filled at all in a shared conversation.
+    *   (Ref: `components/chat/AttachedPromptCard.tsx`, `lib/usePromptVariableValues.ts`, `lib/promptRequest.ts`, `lib/messagePrompt.ts`, [Prompt Composer Card](features/PROMPT_COMPOSER_CARD.md))
+
+*   **Orchestration Plans Now Read The Prompt You Chose**
+    *   The planner was told a selected prompt's *name* and nothing else. "Quarterly review" says nothing about whether the work involves reading documents, searching the web, or comparing two things, which is exactly what a plan has to decide. It is now given the prompt's wording, capped so a long saved prompt cannot crowd out the rest of the planner's context.
+    *   A selected prompt also now counts as you having pointed at something, alongside a chosen document or agent, so a request carrying one is no longer triaged as a remark to answer off the cuff.
+    *   (Ref: `functions_orchestration_context.py` `_selected_prompt`, `functions_orchestration_planner.py` `triage_request`, `functions_orchestration_schema.py` `build_plan_inputs`)
+
+#### Bug Fixes
+
+*   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
+    *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
+    *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+
 ### **(v0.261.089)**
 
 #### New Features
@@ -57,14 +82,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.088)**
 
-#### Bug Fixes
-
-*   **Plans No Longer Propose Work The User Cannot Do**
-    *   Whether a capability suits *this person, asking this question* — do they hold the app role, does their message actually contain a link, do they have an agent at all — was described for each capability but never consulted when a plan was made. The planner was shown every capability the deployment allowed, so it could propose reading links in a message containing none, or name an agent the user does not have. The step then failed at the point it ran, having promised something in a plan the user had already approved.
-    *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
-    *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
-    *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
-
 #### New Features
 
 *   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
@@ -82,6 +99,14 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
     *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
     *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](../admin/ai-models.md))
+
+#### Bug Fixes
+
+*   **Plans No Longer Propose Work The User Cannot Do**
+    *   Whether a capability suits *this person, asking this question* — do they hold the app role, does their message actually contain a link, do they have an agent at all — was described for each capability but never consulted when a plan was made. The planner was shown every capability the deployment allowed, so it could propose reading links in a message containing none, or name an agent the user does not have. The step then failed at the point it ran, having promised something in a plan the user had already approved.
+    *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
+    *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
+    *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
 
 ### **(v0.261.087)**
 

@@ -9,6 +9,7 @@ import {
     EyeOff,
     FileText,
     ImageOff,
+    Lightbulb,
     PenLine,
     RefreshCw,
     Reply,
@@ -60,6 +61,7 @@ import {
     resolveReplyContext,
 } from '../../lib/sharedMessage';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
+import { readMessagePrompt } from '../../lib/messagePrompt';
 import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
 
 function ThoughtsPanel({ thoughts, live = false }: { thoughts: ThoughtEntry[]; live?: boolean }) {
@@ -331,6 +333,63 @@ function FileMessage({ message }: { message: ChatMessage }) {
     );
 }
 
+/**
+ * The saved prompt a sent message was written with, collapsed.
+ *
+ * Collapsed because it is context rather than content: the message you wrote is the thing to
+ * read, and the standing instructions above it are what you already knew when you sent it.
+ * Kept visible rather than dropped so the reply can still be understood by someone who was not
+ * the one who picked the prompt -- in a shared conversation, that is everybody else.
+ */
+function PromptUsedBlock({
+    name,
+    text,
+    onAccent,
+}: {
+    name: string;
+    text: string;
+    onAccent: boolean;
+}) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <div className="mb-2">
+            <button
+                type="button"
+                onClick={() => setOpen((isOpen) => !isOpen)}
+                aria-expanded={open}
+                className={clsx(
+                    'inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors',
+                    onAccent
+                        ? 'text-on-accent/80 hover:bg-on-accent/10 hover:text-on-accent'
+                        : 'text-text-3 hover:bg-surface-2 hover:text-text-2',
+                )}
+            >
+                <Lightbulb size={13} className="shrink-0" aria-hidden="true" />
+                <span className="truncate">Prompt: {name}</span>
+                <ChevronDown
+                    size={12}
+                    aria-hidden="true"
+                    className={clsx('shrink-0 transition-transform', open && 'rotate-180')}
+                />
+            </button>
+
+            {open && (
+                <pre
+                    className={clsx(
+                        'mt-1.5 max-h-64 overflow-y-auto rounded-lg border px-2.5 py-2 text-xs whitespace-pre-wrap',
+                        onAccent
+                            ? 'border-on-accent/20 bg-on-accent/10 text-on-accent/90'
+                            : 'border-edge bg-surface-sunken text-text-2',
+                    )}
+                >
+                    {text}
+                </pre>
+            )}
+        </div>
+    );
+}
+
 function MessageBubbleInner({
     message,
     proposalImages,
@@ -403,6 +462,17 @@ function MessageBubbleInner({
             ),
         );
     }, [isUser, message.content, masks.ranges]);
+
+    /**
+     * The prompt this message was written with, recovered from its metadata.
+     *
+     * Only attempted when nothing is masked: mask ranges are offsets into the whole content,
+     * and splitting that content would leave them pointing at the wrong characters.
+     */
+    const promptUsed = useMemo(
+        () => (isUser && masks.ranges.length === 0 ? readMessagePrompt(message) : null),
+        [isUser, message, masks.ranges.length],
+    );
 
     if (message.role === 'image') {
         return <ImageMessage message={message} />;
@@ -501,9 +571,24 @@ function MessageBubbleInner({
                         {masks.maskedBy ? ` by ${masks.maskedBy}` : ''}.
                     </p>
                 ) : isUser ? (
-                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
-                        {maskedUserContent}
-                    </p>
+                    promptUsed ? (
+                        <>
+                            <PromptUsedBlock
+                                name={promptUsed.name}
+                                text={promptUsed.promptText}
+                                onAccent={alignRight}
+                            />
+                            {promptUsed.userText && (
+                                <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                                    {promptUsed.userText}
+                                </p>
+                            )}
+                        </>
+                    ) : (
+                        <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                            {maskedUserContent}
+                        </p>
+                    )
                 ) : (
                     <>
                         {message.thoughts && message.thoughts.length > 0 && (
