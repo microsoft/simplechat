@@ -53,6 +53,17 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "secret": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
+    # An id_list resolves names through a search endpoint, so the renderer cannot
+    # draw its picker without knowing where to search and what the response holds.
+    "id_list": (
+        "default",
+        "id_kind",
+        "search_endpoint",
+        "results_key",
+        "item_noun",
+        "item_noun_plural",
+    ),
+    "group_picker": ("default", "search_endpoint"),
     "image": ("upload_target", "accept", "version_key"),
     "component": ("component",),
 }
@@ -68,6 +79,8 @@ EXPECTED_DEFAULT_TYPES = {
     "number": int,
     "checkbox_set": list,
     "link_list": list,
+    "id_list": list,
+    "group_picker": list,
 }
 
 

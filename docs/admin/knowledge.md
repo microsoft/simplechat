@@ -141,18 +141,47 @@ vector is trimmed, and the event is logged.
 Custom sizes apply to new uploads only. Existing documents keep the chunks they were indexed with
 until they are uploaded again.
 
+### Maximum File Size {#file-size-limit-section}
+
+The ceiling applies to every upload, whether a document going into a workspace or a file
+attached to a chat message, and it is checked before any extraction runs. That makes it the
+cheapest control available for protecting the extraction pipeline: an oversized file is
+refused outright rather than consuming Document Intelligence capacity and then failing.
+
+It sits with extraction rather than with Workspaces because both upload paths feed the same
+pipeline, and because the practical ceiling is whatever your extraction and storage tiers can
+absorb rather than a workspace policy decision.
+
 ### Metadata Extraction {#metadata-extraction-section}
 
-The Metadata Extraction section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+After a document is chunked, a further model pass can read it and record structured metadata
+about it -- title, authors, subject, keywords -- which is what makes a citation readable as a
+source rather than as a filename. It runs on upload, so enabling it later does not backfill
+documents that are already indexed.
+
+It costs an extra model call per document, and it needs a deployment selected for it, so it
+is off by default.
 
 ### Multi-Modal Vision Analysis {#multimodal-vision-section}
 
-The Multi-Modal Vision Analysis section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Sends page images to a vision-capable model so the text inside diagrams, screenshots and
+scanned pages becomes searchable alongside the extracted text. Only vision-capable
+deployments are offered for selection, because a text-only model silently returns nothing
+useful here.
+
+This is the most expensive extraction path in the group. Reach for it when the material is
+genuinely visual; for text documents that happen to contain a chart, Document Intelligence
+already captures the surrounding structure.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Maximum File Size (MB) | Rejects an upload larger than this before extraction runs. Applies to workspace documents and chat attachments alike. | 150 | `max_file_size_mb` |
+| Enable Extract Meta Data | Runs a model pass on upload to record title, authors, subject and keywords for each document. | Off | `enable_extract_meta_data`; capability toggle |
+| Extraction Model | The deployment the metadata pass sends its requests to. | Empty | `metadata_extraction_model` |
+| Enable Multi-Modal Vision Analysis | Sends page images to a vision model so text inside diagrams and scans becomes searchable. | Off | `enable_multimodal_vision`; capability toggle |
+| Vision Model | A vision-capable deployment, such as gpt-4o or a supported GPT 5 or later model. Only vision-capable models are offered. | Empty | `multimodal_vision_model` |
 | Require DeepResearchUser App Role | Required app role value: DeepResearchUser. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use Deep Research. | Off | `require_member_of_deep_research_user` |
 | Max User URLs per Turn | Direct URLs beyond this cap are recorded as omitted in the ledger. | 100 | `deep_research_max_user_urls_per_turn` |
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |
