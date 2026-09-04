@@ -39,6 +39,7 @@ import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
+import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingField } from '../components/admin/fields';
 import {
@@ -51,9 +52,11 @@ import {
     asString,
     extractFieldErrors,
     fieldSearchText,
+    hasStoredSecret,
     humanizeKey,
     isFieldVisible,
     readFieldValue,
+    readSecretValue,
     type AdminField,
     type AdminSettingsPatchResponse,
     type AdminSettingsResponse,
@@ -61,6 +64,7 @@ import {
     type BrandingUploadResponse,
 } from '../lib/adminFields';
 import { toast } from '../stores/toastStore';
+import { hasUnsavedDiscoveryEdits } from '../lib/modelSelection';
 import { modelConnectionsChanged } from '../stores/modelConnectionsStore';
 import type { AdminNavGroup, Json } from '../lib/types';
 
@@ -386,6 +390,32 @@ export function AdminSettingsPage() {
     }, []);
 
     /**
+     * Drop a key from the draft entirely, so there is nothing left to save.
+     *
+     * Used when a control returns to the state it started in and that state is not a
+     * value: emptying a password box means "nothing typed", which must not be counted as
+     * a pending change or sent to the server.
+     */
+    const unsetValue = useCallback((key: string) => {
+        setDraft((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, key)) {
+                return current;
+            }
+            const next = { ...current };
+            delete next[key];
+            return next;
+        });
+        setFieldErrors((current) => {
+            if (!(key in current)) {
+                return current;
+            }
+            const next = { ...current };
+            delete next[key];
+            return next;
+        });
+    }, []);
+
+    /**
      * Apply a switch change, intercepting capabilities that require an acknowledgement.
      *
      * Custom Pages does not take full effect until the App Service restarts, so an
@@ -506,13 +536,19 @@ export function AdminSettingsPage() {
         asString(readFieldValue(READ_ONLY_REF(key), settings, draft), fallback);
 
     /** Render one declared field, dispatching the types the page owns. */
-    const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft)) {
+    const renderField = (field: AdminField, siblings: AdminField[]) => {
+        if (!isFieldVisible(field, settings, draft, siblings)) {
             return null;
         }
 
         const key = field.key ?? field.component ?? field.label;
-        const value = readFieldValue(field, settings, draft);
+        // A password field is write-only: seeding it from the settings document would put
+        // a live credential into a form control, where autofill, browser form restore and
+        // a screen recording can all reach it. It shows only what has been typed.
+        const isSecret = field.type === 'password';
+        const value = isSecret
+            ? readSecretValue(field, draft)
+            : readFieldValue(field, settings, draft);
         const error = field.key ? fieldErrors[field.key] : undefined;
         const warning = field.key ? fieldWarnings[field.key] : undefined;
 
@@ -584,6 +620,32 @@ export function AdminSettingsPage() {
                             help={field.help}
                         />
                     );
+                case 'embedding-model-selection':
+                    return (
+                        <ModelSelectionPicker
+                            key={key}
+                            kind="embedding"
+                            label={field.label}
+                            help={field.help}
+                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
+                                'embedding',
+                                Object.keys(draft),
+                            )}
+                        />
+                    );
+                case 'image-model-selection':
+                    return (
+                        <ModelSelectionPicker
+                            key={key}
+                            kind="image"
+                            label={field.label}
+                            help={field.help}
+                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
+                                'image',
+                                Object.keys(draft),
+                            )}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
@@ -615,10 +677,18 @@ export function AdminSettingsPage() {
                 error={error}
                 warning={warning}
                 disabled={saving}
+                hasStoredValue={isSecret ? hasStoredSecret(settings, field.key) : undefined}
                 onChange={(next) => {
                     if (field.type === 'switch') {
                         onSwitchChange(field, asBoolean(next));
-                    } else if (field.key) {
+                    } else if (!field.key) {
+                        // Nothing to record against.
+                    } else if (isSecret && next === '') {
+                        // An empty secret box is "nothing typed", not "clear it", so it
+                        // leaves no pending change behind. Removal is its own action and
+                        // sends null.
+                        unsetValue(field.key);
+                    } else {
                         setValue(field.key, next);
                     }
                 }}
@@ -780,7 +850,16 @@ export function AdminSettingsPage() {
                                     </div>
 
                                     <div className="divide-y divide-edge">
-                                        {section.fields.map(renderField)}
+                                        {/* The section's full declared list, not the
+                                            search-narrowed one: visibility is judged
+                                            against sibling fields, and a filtered list
+                                            would drop the field a condition names. */}
+                                        {section.fields.map((field) =>
+                                            renderField(
+                                                field,
+                                                schema[section.sectionId] ?? section.fields,
+                                            ),
+                                        )}
 
                                         {section.capabilities.map((row) => (
                                             <div key={row.key} className="py-1">

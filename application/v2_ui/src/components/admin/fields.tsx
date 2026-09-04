@@ -10,8 +10,8 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import {
     asBoolean,
     asNumber,
@@ -89,6 +89,8 @@ export interface FieldControlProps {
     error?: string;
     warning?: string;
     disabled?: boolean;
+    /** Password fields only: whether a secret is already stored under this key. */
+    hasStoredValue?: boolean;
     onChange: (next: unknown) => void;
 }
 
@@ -346,6 +348,105 @@ function CheckboxSetControl({
 }
 
 /**
+ * A secret, entered but never displayed.
+ *
+ * The control is write-only: it starts empty whatever is stored, so a live credential is
+ * never placed in a form control where autofill, browser form restore, a password
+ * manager or a screen recording can pick it up. An empty box therefore means "nothing
+ * typed here", and the server keeps the stored secret rather than overwriting it with
+ * nothing.
+ *
+ * That leaves removal with no natural gesture, so it gets an explicit one. The button
+ * sends `null`, which is the only value the server reads as "clear this".
+ *
+ * Reveal shows what has been typed this session, which is the difference between
+ * trusting a paste and re-doing it.
+ */
+function PasswordControl({
+    field,
+    value,
+    error,
+    warning,
+    disabled,
+    hasStoredValue,
+    onChange,
+}: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const [revealed, setRevealed] = useState(false);
+    const pendingRemoval = value === null;
+    const typed = asString(value);
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                hasStoredValue && !pendingRemoval ? (
+                    <button
+                        type="button"
+                        className="text-xs text-text-3 underline hover:text-danger disabled:cursor-not-allowed"
+                        disabled={disabled}
+                        onClick={() => onChange(null)}
+                    >
+                        Remove stored value
+                    </button>
+                ) : null
+            }
+        >
+            <div className="flex items-center gap-2">
+                <input
+                    id={id}
+                    type={revealed ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    className={inputClass}
+                    value={typed}
+                    maxLength={field.max_length}
+                    placeholder={
+                        pendingRemoval
+                            ? 'Will be removed on save'
+                            : hasStoredValue
+                              ? '••••••••  (stored)'
+                              : field.placeholder
+                    }
+                    disabled={disabled}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+                <button
+                    type="button"
+                    aria-label={revealed ? 'Hide value' : 'Show value'}
+                    aria-pressed={revealed}
+                    className={clsx(
+                        'shrink-0 rounded-lg border border-edge bg-surface-1 p-2 text-text-3',
+                        'hover:text-text-1 disabled:cursor-not-allowed disabled:opacity-60',
+                    )}
+                    disabled={disabled}
+                    onClick={() => setRevealed((current) => !current)}
+                >
+                    {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+            </div>
+
+            {pendingRemoval ? (
+                <p className="mt-1.5 flex items-center gap-2 text-xs text-warn">
+                    The stored value is removed when you save.
+                    <button
+                        type="button"
+                        className="underline hover:text-text-1"
+                        disabled={disabled}
+                        onClick={() => onChange('')}
+                    >
+                        Keep it
+                    </button>
+                </p>
+            ) : null}
+        </FieldShell>
+    );
+}
+
+/**
  * Render one declared field.
  *
  * `image`, `link_list` and `component` fields are handled by the page, which owns the
@@ -367,6 +468,8 @@ export function SettingField(props: FieldControlProps) {
             return <RangeControl {...props} />;
         case 'number':
             return <NumberControl {...props} />;
+        case 'password':
+            return <PasswordControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
         default:

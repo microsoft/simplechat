@@ -75,6 +75,7 @@ FIELD_TYPES = (
     "color",
     "range",
     "number",
+    "password",
     "image",
     "link_list",
     "component",
@@ -103,6 +104,14 @@ USER_AGREEMENT_WORD_LIMIT = 200
 
 CLASSIFICATION_BANNER_DEFAULT_COLOR = "#ffc107"
 CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
+
+# The two ways SimpleChat authenticates to an Azure OpenAI resource on the classic
+# single-endpoint routes. Shared by the embedding and image generation sections so the
+# two cannot offer different values for the same question.
+AZURE_OPENAI_AUTH_OPTIONS = [
+    {"value": "key", "label": "Key"},
+    {"value": "managed_identity", "label": "Managed Identity"},
+]
 
 # Schemes permitted for administrator-configured navigation links. These render
 # into an anchor href, so allowing arbitrary schemes would let a saved link
@@ -735,6 +744,297 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
     ],
+    "document-intelligence-section": [
+        # Declared here to take it out of the V2 fallback scan, which matched the token
+        # "image" and filed it under Image Generation -- next to settings about producing
+        # pictures, when it is about reading them out of documents. The scan cannot tell
+        # those apart from the key alone; declaring the field is what stops it guessing.
+        {
+            "key": "enable_office_embedded_image_analysis",
+            "type": "switch",
+            "label": "Analyze images embedded in DOCX and PPTX files",
+            "help": (
+                "Neither extraction engine describes figures inside Word and PowerPoint "
+                "files. With this on, embedded images are pulled out of the file, analyzed "
+                "with whichever engine backs the selected extraction mode, and indexed as "
+                "their own citable chunks. It works with Standard extraction too, using "
+                "Document Intelligence. The minimum image size and the per-document cap "
+                "are on the classic admin page."
+            ),
+            "default": True,
+        },
+    ],
+    "embeddings-config": [
+        {
+            "key": "enable_embedding_apim",
+            "type": "switch",
+            "label": "Use APIM instead of direct to Azure OpenAI endpoint",
+            "help": (
+                "Sends embedding requests to API Management rather than straight to the "
+                "Azure OpenAI resource, so a gateway can apply its own governance and "
+                "monitoring. The two routes are configured separately and only the "
+                "selected one is used."
+            ),
+            "default": False,
+        },
+        {
+            "key": "azure_openai_embedding_endpoint",
+            "type": "text",
+            "label": "Azure OpenAI Embedding Endpoint",
+            "help": (
+                "The Azure OpenAI resource that turns document and query text into "
+                "vectors. Embeddings are not shared with chat: indexing and search use "
+                "this route even when chat is pointed somewhere else entirely."
+            ),
+            "default": "",
+            "placeholder": "https://your-resource.openai.azure.com",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a credential and is what lets SimpleChat "
+                "list the resource's deployments for you. A key authenticates to inference "
+                "only."
+            ),
+            "default": "key",
+            "options": AZURE_OPENAI_AUTH_OPTIONS,
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "help": (
+                "Used to address the resource when listing its deployments. Inference does "
+                "not need it, so an embedding route can work while the model list stays "
+                "empty."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "help": "The other half of the address the deployment list is fetched from.",
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_key",
+            "type": "password",
+            "label": "Azure OpenAI Embedding Key",
+            "help": (
+                "Only used with key authentication. Leave it blank to keep the stored key."
+            ),
+            "default": "",
+            "depends_on": {"key": "azure_openai_embedding_authentication_type", "equals": "key"},
+        },
+        {
+            "key": "embedding_model",
+            "type": "component",
+            "component": "embedding-model-selection",
+            "label": "Embedding model",
+            "help": (
+                "One deployment serves every embedding SimpleChat stores. Changing it does "
+                "not re-embed what is already indexed, so existing chunks keep the "
+                "dimensions of the model that wrote them."
+            ),
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_embedding_api_version",
+            "type": "text",
+            "label": "Azure OpenAI Embedding API Version",
+            "help": (
+                "Pin this only when a deployment needs a version other than the default; "
+                "an unsupported value fails every embedding call rather than degrading."
+            ),
+            "default": "2024-05-01-preview",
+            "depends_on": {"key": "enable_embedding_apim", "equals": False},
+        },
+        {
+            "key": "azure_apim_embedding_endpoint",
+            "type": "text",
+            "label": "Azure APIM Endpoint",
+            "help": "The API Management address that fronts the embedding deployment.",
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_embedding_api_version",
+            "type": "text",
+            "label": "Azure APIM API Version",
+            "help": (
+                "Whatever version the API Management operation expects. There is no "
+                "default here, because a gateway can publish any version it likes."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_embedding_deployment",
+            "type": "text",
+            "label": "Azure APIM Deployment",
+            "help": (
+                "The deployment name to send embedding requests to. Discovery does not "
+                "reach through a gateway, so this is typed rather than picked."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_embedding_subscription_key",
+            "type": "password",
+            "label": "Azure APIM Subscription Key",
+            "help": "Leave it blank to keep the stored key.",
+            "default": "",
+            "depends_on": {"key": "enable_embedding_apim", "equals": True},
+        },
+    ],
+    "image-config": [
+        {
+            "key": "enable_image_generation",
+            "type": "switch",
+            "label": "Enable Image Generation",
+            "help": (
+                "Offers image generation in chat. With it off nothing below is consulted, "
+                "and the rest of this section stays out of the way."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_image_gen_apim",
+            "type": "switch",
+            "label": "Use APIM instead of direct to Azure OpenAI endpoint",
+            "help": (
+                "Sends image requests to API Management rather than straight to the Azure "
+                "OpenAI resource. The two routes are configured separately and only the "
+                "selected one is used."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_image_generation", "equals": True},
+        },
+        {
+            "key": "azure_openai_image_gen_endpoint",
+            "type": "text",
+            "label": "Azure OpenAI Image Generation Endpoint",
+            "help": (
+                "Image models are deployed separately from chat models and are often in a "
+                "different region, so this rarely matches the chat endpoint."
+            ),
+            "default": "",
+            "placeholder": "https://your-resource.openai.azure.com",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_image_gen_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a credential and is what lets SimpleChat "
+                "list the resource's deployments for you. A key authenticates to inference "
+                "only."
+            ),
+            "default": "key",
+            "options": AZURE_OPENAI_AUTH_OPTIONS,
+            "depends_on": {"key": "enable_image_gen_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_image_gen_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "help": (
+                "Used to address the resource when listing its deployments. Inference does "
+                "not need it, so generation can work while the model list stays empty."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_image_gen_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "help": "The other half of the address the deployment list is fetched from.",
+            "default": "",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_image_gen_key",
+            "type": "password",
+            "label": "Azure OpenAI Image Generation Key",
+            "help": (
+                "Only used with key authentication. Leave it blank to keep the stored key."
+            ),
+            "default": "",
+            "depends_on": {"key": "azure_openai_image_gen_authentication_type", "equals": "key"},
+        },
+        {
+            "key": "image_gen_model",
+            "type": "component",
+            "component": "image-model-selection",
+            "label": "Image model",
+            "help": (
+                "The deployment every generated image comes from. Image deployments differ "
+                "in the sizes and quality settings they accept, so a change here can alter "
+                "what the image tool is able to produce."
+            ),
+            "depends_on": {"key": "enable_image_gen_apim", "equals": False},
+        },
+        {
+            "key": "azure_openai_image_gen_api_version",
+            "type": "text",
+            "label": "Azure OpenAI Image Gen API Version",
+            "help": (
+                "Image generation moves on its own API schedule, which is why this defaults "
+                "later than the chat and embedding versions. Change it only for a "
+                "deployment that needs a different one."
+            ),
+            "default": "2024-12-01-preview",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": False},
+        },
+        {
+            "key": "azure_apim_image_gen_endpoint",
+            "type": "text",
+            "label": "Azure APIM Endpoint",
+            "help": "The API Management address that fronts the image deployment.",
+            "default": "",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_image_gen_api_version",
+            "type": "text",
+            "label": "Azure APIM API Version",
+            "help": (
+                "Whatever version the API Management operation expects. There is no "
+                "default here, because a gateway can publish any version it likes."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_image_gen_deployment",
+            "type": "text",
+            "label": "Azure APIM Deployment",
+            "help": (
+                "The deployment name to send image requests to. Discovery does not reach "
+                "through a gateway, so this is typed rather than picked."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": True},
+        },
+        {
+            "key": "azure_apim_image_gen_subscription_key",
+            "type": "password",
+            "label": "Azure APIM Subscription Key",
+            "help": "Leave it blank to keep the stored key.",
+            "default": "",
+            "depends_on": {"key": "enable_image_gen_apim", "equals": True},
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -767,6 +1067,10 @@ LEGACY_FIELD_NAMES = {
     # Same pattern: V1 posts the default model reference as serialized JSON, while V2
     # writes it through /api/v2/admin/default-model.
     "default_model_selection": ["default_model_selection_json"],
+    # And the same again for the embedding and image catalogs, which V1 round-trips
+    # through hidden JSON inputs maintained by script.
+    "embedding_model": ["embedding_model_json"],
+    "image_gen_model": ["image_gen_model_json"],
     # V1 posts the images as part of the settings form; V2 uploads them
     # separately, so the stored keys are what the schema names.
     "custom_logo_base64": ["logo_file"],
@@ -840,6 +1144,31 @@ def _normalize_text(value, field):
     if max_length:
         text = text[:max_length]
     return text
+
+
+def _normalize_password(value):
+    """Return ``(secret, keep_stored)`` for a secret arriving from the browser.
+
+    The V2 password control is write-only: it never renders the stored secret, so an
+    empty box does not mean "the secret is empty", it means "nothing was typed here".
+    Treating that as a value would let saving an unrelated field in the same section
+    wipe a working credential, and the failure would only surface the next time the
+    service was called.
+
+    So an empty submission keeps what is stored, and ``None`` -- which the control only
+    sends when an administrator explicitly removes the secret -- clears it. That leaves
+    both intentions expressible and neither one available by accident.
+
+    Surrounding whitespace is dropped. A key pasted from a portal or a terminal
+    routinely carries a trailing newline, and a credential that fails only because of
+    an invisible character is close to undiagnosable from the outside.
+    """
+    if value is None:
+        return "", False
+    secret = str(value).strip()
+    if not secret:
+        return "", True
+    return secret, False
 
 
 def _validate_external_link_url(url):
@@ -1148,6 +1477,14 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 normalized[key] = enablement
             continue
 
+        if field.get("type") == "password":
+            secret, keep_stored = _normalize_password(value)
+            # Dropped rather than stored, so an untouched secret field cannot reach
+            # ``update_settings`` at all.
+            if not keep_stored:
+                normalized[key] = secret
+            continue
+
         field_value, error, warning = _normalize_field_value(key, value, field)
         if error:
             errors[key] = error
@@ -1165,6 +1502,31 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     return normalized, errors, warnings
 
 
+def _dependency_is_satisfied(depends_on, normalized, current_settings):
+    """Whether a field's ``depends_on`` condition holds for a given save.
+
+    ``equals`` is a boolean for a capability toggle and a string for a choice, such as
+    an authentication type. The comparison follows the declared value's type so a
+    string condition is not collapsed to truthiness, which would make every non-empty
+    choice satisfy every condition.
+    """
+    gate_key = depends_on["key"]
+    if gate_key in normalized:
+        gate_value = normalized[gate_key]
+    elif gate_key in current_settings:
+        gate_value = current_settings[gate_key]
+    else:
+        # A settings document that predates the gate key has no value for it, so the
+        # declared default is what the application would be applying.
+        gate_field = get_field_definition(gate_key) or {}
+        gate_value = gate_field.get("default")
+
+    expected = depends_on.get("equals", True)
+    if isinstance(expected, str):
+        return str(gate_value or "") == expected
+    return _coerce_bool(gate_value) == expected
+
+
 def _check_minimum_selections(normalized, current_settings, errors):
     """Enforce ``min_selected`` once the merged state of a save is known."""
     for _section_id, field in iter_fields():
@@ -1174,14 +1536,10 @@ def _check_minimum_selections(normalized, current_settings, errors):
             continue
 
         depends_on = field.get("depends_on")
-        if depends_on:
-            gate_key = depends_on["key"]
-            gate_value = (
-                normalized[gate_key] if gate_key in normalized
-                else current_settings.get(gate_key, False)
-            )
-            if _coerce_bool(gate_value) != depends_on.get("equals", True):
-                continue
+        if depends_on and not _dependency_is_satisfied(
+            depends_on, normalized, current_settings
+        ):
+            continue
 
         selection = (
             normalized[key] if key in normalized else current_settings.get(key) or []
