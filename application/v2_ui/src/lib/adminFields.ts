@@ -142,6 +142,14 @@ export interface AdminField {
     required?: boolean;
     /** `model-picker` components only: restrict the list to models that read images. */
     requires_vision?: boolean;
+    /**
+     * `resource-id-builder` components only: how to assemble the value.
+     *
+     * `builder_template` holds `{placeholder}` markers, and `builder_sources` maps each
+     * placeholder to the settings key holding its value.
+     */
+    builder_template?: string;
+    builder_sources?: Record<string, string>;
     /** Lifts a field into the section header. See `FIELD_ROLES`. */
     role?: 'capability';
     /**

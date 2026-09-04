@@ -39,6 +39,7 @@ import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { ModelPicker } from '../components/admin/ModelPicker';
+import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingsSection } from '../components/admin/SettingsSection';
 import { SettingField } from '../components/admin/fields';
@@ -576,6 +577,19 @@ export function AdminSettingsPage() {
                             warning={warning}
                             disabled={saving}
                             models={data?.model_catalog ?? []}
+                            onChange={(next) => field.key && setValue(field.key, next)}
+                        />
+                    );
+                case 'resource-id-builder':
+                    return (
+                        <ResourceIdBuilder
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            warning={warning}
+                            disabled={saving}
+                            readSibling={readSibling}
                             onChange={(next) => field.key && setValue(field.key, next)}
                         />
                     );

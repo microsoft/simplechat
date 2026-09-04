@@ -2082,6 +2082,396 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_multimodal_vision", "equals": True},
         },
     ],
+    # ------------------------------------------------------------------
+    # Knowledge / Audio & Video
+    #
+    # Restructured relative to the server-rendered pane in two ways.
+    #
+    # The completion chime is gone from here. `enable_chat_completion_audio_cues`
+    # plays a bundled local sound when a response finishes; its own help text
+    # says it does not use Azure Speech Service, yet it is the first control in
+    # the AI Voice Conversations card, above the Speech resource configuration.
+    # It is declared under Chat > Feedback & Alerts instead, which is where the
+    # rest of the notification settings live. Declaring a key removes it from the
+    # V2 fallback scan, so it cannot appear in both places.
+    #
+    # The shared Speech resource is stated before the toggles rather than after.
+    # Three independent capabilities reveal the same configuration block, and V1
+    # explains that in an alert placed underneath them, so an administrator
+    # enabling the second one is surprised to find it already configured.
+    # ------------------------------------------------------------------
+    "ai-voice-chat-section": [
+        {
+            "key": "speech_service_endpoint",
+            "type": "text",
+            "label": "Speech Endpoint",
+            "help": (
+                "One Speech resource serves all three voice capabilities below. Use the "
+                "resource-specific custom domain endpoint when authenticating with a "
+                "managed identity."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "https://<location>.cognitiveservices.azure.com/",
+            "group": {
+                "id": "speech",
+                "label": "Speech resource",
+                "variant": "connection",
+                "help": (
+                    "Configure this once. Audio file uploads, voice input and voice "
+                    "responses all use it."
+                ),
+            },
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "speech_service_location",
+            "type": "text",
+            "label": "Location",
+            "help": (
+                "Needed for recognition locale defaults, and for text-to-speech when "
+                "using a managed identity."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "eastus",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "speech_service_authentication_type",
+            "type": "select",
+            "label": "Authentication Type",
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "speech_service_key",
+            "type": "secret",
+            "label": "API Key",
+            "required": True,
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {"key": "speech_service_authentication_type", "equals": "key"},
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "default": "",
+            "placeholder": "12345678-1234-1234-1234-123456789abc",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "default": "",
+            "placeholder": "rg-speech-prod",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_resource_name",
+            "type": "text",
+            "label": "Resource Name",
+            "help": (
+                "With a custom-domain Speech endpoint this is usually the first part of "
+                "that hostname."
+            ),
+            "default": "",
+            "placeholder": "my-speech-resource",
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_resource_id",
+            "type": "component",
+            "component": "resource-id-builder",
+            "label": "Speech Resource ID",
+            "help": (
+                "Required for voice responses under a managed identity. Build it from "
+                "the fields above or paste it in full."
+            ),
+            "required": True,
+            "placeholder": (
+                "/subscriptions/<subscription>/resourceGroups/<resource-group>"
+                "/providers/Microsoft.CognitiveServices/accounts/<speech-resource>"
+            ),
+            "builder_template": (
+                "/subscriptions/{subscription}/resourceGroups/{resource_group}"
+                "/providers/Microsoft.CognitiveServices/accounts/{resource_name}"
+            ),
+            "builder_sources": {
+                "subscription": "speech_service_subscription_id",
+                "resource_group": "speech_service_resource_group",
+                "resource_name": "speech_service_resource_name",
+            },
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "all_of": [
+                    {
+                        "key": "speech_service_authentication_type",
+                        "equals": "managed_identity",
+                    },
+                    {
+                        "any_of": [
+                            {"key": "enable_audio_file_support", "equals": True},
+                            {"key": "enable_speech_to_text_input", "equals": True},
+                            {"key": "enable_text_to_speech", "equals": True},
+                        ]
+                    },
+                ]
+            },
+        },
+        {
+            "key": "speech_service_locale",
+            "type": "text",
+            "label": "Locale",
+            "help": "Default recognition locale, for example en-US.",
+            "default": "en-US",
+            "fallback_when_empty": True,
+            "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
+            "depends_on": {
+                "any_of": [
+                    {"key": "enable_audio_file_support", "equals": True},
+                    {"key": "enable_speech_to_text_input", "equals": True},
+                    {"key": "enable_text_to_speech", "equals": True},
+                ]
+            },
+        },
+        {
+            "key": "enable_audio_file_support",
+            "type": "switch",
+            "label": "Audio file upload and transcription",
+            "help": (
+                "Uploaded audio is transcribed and indexed, so recordings of meetings, "
+                "interviews and lectures become searchable and citable."
+            ),
+            "default": False,
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+        },
+        {
+            "key": "enable_speech_to_text_input",
+            "type": "switch",
+            "label": "Voice input (speech-to-text)",
+            "help": "Users can record up to 90 seconds in the chat box instead of typing.",
+            "default": False,
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+        },
+        {
+            "key": "enable_text_to_speech",
+            "type": "switch",
+            "label": "Voice responses (text-to-speech)",
+            "help": "Each message gains a speaker button that reads the response aloud.",
+            "default": False,
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+        },
+        {
+            # V1 prints this under the toggles as loose markup. Declaring it keeps
+            # the reason a format is unsupported next to the capability that
+            # would otherwise silently skip the file.
+            "type": "status",
+            "label": "Audio runtime",
+            "status_source": "audio_runtime",
+            "help": (
+                "Transcoding breadth depends on whether FFmpeg is present in this "
+                "deployment. Without it, only formats that transcribe directly are "
+                "accepted."
+            ),
+            "group": {"id": "capabilities", "label": "Capabilities", "variant": "behavior"},
+            "depends_on": {"key": "enable_audio_file_support", "equals": True},
+        },
+    ],
+    "video-intelligence-section": [
+        {
+            "key": "enable_video_file_support",
+            "type": "switch",
+            "label": "Video file upload and processing",
+            "help": (
+                "Uploaded video is processed by Azure Video Indexer, which extracts "
+                "spoken content, speakers, faces and brands into searchable metadata."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+        {
+            "key": "video_indexer_endpoint",
+            "type": "text",
+            "label": "API Endpoint",
+            "help": (
+                "https://api.videoindexer.ai for Azure Public, or "
+                "https://api.videoindexer.ai.azure.us for Azure Government. Use another "
+                "value only for a non-standard deployment."
+            ),
+            "default": "",
+            "required": True,
+            "placeholder": "https://api.videoindexer.ai",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_subscription_id",
+            "type": "text",
+            "label": "Subscription ID",
+            "default": "",
+            "required": True,
+            "placeholder": "12345678-1234-1234-1234-123456789abc",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_resource_group",
+            "type": "text",
+            "label": "Resource Group",
+            "help": "The resource group containing the Video Indexer account.",
+            "default": "",
+            "required": True,
+            "placeholder": "rg-videoindexer-prod",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_account_name",
+            "type": "text",
+            "label": "Account Name",
+            "default": "",
+            "required": True,
+            "placeholder": "my-video-indexer",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_account_id",
+            "type": "text",
+            "label": "Account ID",
+            "help": "Shown on the Video Indexer account overview page in the Azure portal.",
+            "default": "",
+            "required": True,
+            "placeholder": "12345678-abcd-1234-abcd-123456789abc",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_location",
+            "type": "text",
+            "label": "Location",
+            "help": "The Azure region the account is deployed in, for example eastus.",
+            "default": "",
+            "required": True,
+            "placeholder": "eastus",
+            "group": {"id": "connection", "label": "Connection", "variant": "connection"},
+        },
+        {
+            "key": "video_indexer_arm_api_version",
+            "type": "text",
+            "label": "ARM API Version",
+            "default": "",
+            "fallback_when_empty": True,
+            "group": {"id": "advanced", "label": "Advanced", "variant": "advanced"},
+        },
+        {
+            "key": "video_index_timeout",
+            "type": "number",
+            "label": "Indexing Timeout",
+            "help": "How long to wait for Video Indexer to finish processing one file.",
+            "default": 600,
+            "min": 30,
+            "max": 7200,
+            "suffix": "s",
+            "group": {"id": "advanced", "label": "Advanced", "variant": "advanced"},
+        },
+    ],
+    # Relocated from Knowledge > Audio & Video, where it was the first control in
+    # the AI Voice Conversations card, above the Azure Speech Service
+    # configuration. It plays a bundled local sound and, as its own help text
+    # says, needs no Speech resource at all. Notifications are what it belongs
+    # with. V1 keeps it where it is; declaring the key here removes it from the
+    # V2 fallback scan, so it cannot render in both places.
+    "desktop-notifications-section": [
+        {
+            "key": "enable_chat_completion_audio_cues",
+            "type": "switch",
+            "label": "AI response completion sounds",
+            "help": (
+                "Lets users opt in to a short bundled sound when a response finishes "
+                "while they are looking elsewhere. Played locally by the browser; no "
+                "Azure Speech resource is involved."
+            ),
+            "default": False,
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
