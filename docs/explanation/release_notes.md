@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.011)**
+
+#### New Features
+
+*   **Model Capabilities Now Come From The Model Catalog Instead Of The Model's Name**
+    *   SimpleChat previously worked out what a model could do by pattern-matching its name, so a model the catalog did not know about — an on-premises or customer-supplied model reached through a Custom endpoint — silently received wrong answers for vision, tool calling, streaming, and reasoning. A model named `corp-llm-v2` was treated as having no capabilities at all.
+    *   Capability answers now resolve through a precedence chain: a per-model override, then an endpoint-level override, then the shipped model catalog, then the original name heuristics. Administrators can describe a model the catalog has never heard of without waiting for a catalog update, and models absent from the catalog behave exactly as before.
+    *   The catalog gained `supportsStreaming` and `reasoning` flags for every model, and now covers Google Gemini, which had no entries at all. Claude, Llama 4, and Phi-4 multimodal models are correctly recognised as vision-capable for the first time; the `-chat` variants of the GPT-5.x families are correctly recognised as not vision-capable.
+    *   The catalog is now validated against a published JSON schema, so a malformed or incomplete model record fails a test rather than silently degrading capability answers at runtime.
+    *   (Ref: `functions_model_capabilities.py`, `model_capabilities.json`, `model_capabilities.schema.json`, `MODEL_CAPABILITY_CATALOG.md`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
+
 ### **(v0.261.010)**
 
 #### New Features
