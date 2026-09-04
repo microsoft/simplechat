@@ -25,18 +25,26 @@ could still answer from the others.
 executor merges and the schema owns; an adapter that returned a bare dict would drift from it
 silently.
 
-**Web search is not evidence.** It fits no evidence-envelope engine -- it is neither a
-tabular tool nor a document analysis over an authorized source -- so its results ride
-``notes`` and ``citations`` instead. Forcing it into an envelope would put unauthorized
-web text through the authorized-source coverage ledger, which is exactly the confusion the
-envelope contract exists to prevent.
+**External content is not evidence.** Web search, reading a pasted URL, deep research over
+discovered sources, and an invoked agent's reply all fit no evidence-envelope engine -- none
+is a tabular tool or a document analysis over an authorized source -- so their results ride
+``notes`` and ``citations`` instead. Forcing any of it into an envelope would put unauthorized
+external text through the authorized-source coverage ledger, which is exactly the confusion
+the envelope contract exists to prevent.
 
-The heavy wrapped functions are imported lazily inside each adapter body. Two of them would
+**A run adapter cannot touch Flask.** ``execute_plan`` runs in a worker thread with no request
+context, so an adapter must never read ``g``, ``session`` or ``current_app``. Anything about
+the caller a step needs -- their roles, their email, the agents they may invoke -- is read off
+the ``context`` (a ``RunContext`` the route populated on the request thread), never from Flask.
+The URL and agent adapters below exist precisely because the classic chat path for the same
+work leans on ``g``; they re-express it against the context instead.
+
+The heavy wrapped functions are imported lazily inside each adapter body. Several would
 otherwise make this module unimportable without Azure and config -- and ``perform_web_search``
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.085
+Version: 0.261.087
 """
 
 import logging
@@ -60,11 +68,14 @@ from functions_mixed_source_orchestration import (
     partition_source_manifest,
 )
 from functions_orchestration_registry import (
+    CAPABILITY_AGENT_INVOKE,
+    CAPABILITY_DEEP_RESEARCH,
     CAPABILITY_DOCUMENT_ANALYZE,
     CAPABILITY_DOCUMENT_COMPARE,
     CAPABILITY_DOCUMENT_SEARCH,
     CAPABILITY_RESPOND,
     CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_URL_FETCH,
     CAPABILITY_WEB_SEARCH,
     DOCUMENT_ACTION_TYPE_COMPARISON,
 )
@@ -754,6 +765,582 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
 
 
 # --------------------------------------------------------------------------------------
+# url_fetch and deep_research -> functions_source_review.perform_source_review
+#
+# One function backs both capabilities. In url_access_only mode it reads only the links the
+# user pasted; with that flag off it plans and crawls several pages toward a research question.
+# Both return the same shape, so a single finalizer turns either into notes and citations.
+# perform_source_review is imported lazily: it drags in aiohttp and the whole crawl stack, and
+# routing that through module import would make this file unimportable without them.
+# --------------------------------------------------------------------------------------
+
+def _notes_from_source_review(result):
+    """Notes for the answer: the untrusted-evidence block, then a short reviewed-pages index.
+
+    ``system_message['content']`` is the same ``[SOURCE_REVIEW_EVIDENCE]`` block the classic
+    chat path folds into the model prompt -- the page excerpts, clearly labelled as untrusted
+    input. We add one ``Reviewed: title (url)`` line per page so a glance at the notes shows
+    what was actually read. This stays notes, never evidence: a web page is not an authorized
+    document source and must not enter the evidence coverage ledger.
+    """
+    notes = []
+    system_message = result.get('system_message')
+    if isinstance(system_message, dict):
+        content = _text(system_message.get('content'))
+        if content:
+            notes.append(content)
+    reviewed = []
+    for page in result.get('pages') or ():
+        if not isinstance(page, dict):
+            continue
+        url = _text(page.get('url'))
+        if not url:
+            continue
+        title = _text(page.get('title')) or url
+        reviewed.append(f'Reviewed: {title} ({url})')
+    if reviewed:
+        notes.append('\n'.join(reviewed))
+    return notes
+
+
+def _citations_from_source_review(result):
+    # perform_source_review already shapes each citation as {url, title, source, published_date};
+    # we pass them through untouched but drop any that carry no URL, since a citation the reader
+    # cannot open is noise rather than a source.
+    citations = []
+    for citation in result.get('citations') or ():
+        if isinstance(citation, dict) and _text(citation.get('url')):
+            citations.append(citation)
+    return citations
+
+
+def _finalize_source_review(
+    result,
+    *,
+    capability_id,
+    unavailable_summary,
+    empty_summary,
+    found_summary,
+    empty_replan_hint=None,
+):
+    """Turn a source-review result into a StepResult of notes and citations, never evidence.
+
+    ``enabled`` being false means the deployment setting or the caller's app role withdrew the
+    capability between planning and running; access is re-checked at run time, so that is a
+    clean failure the answer can still work around, not licence to invent web content. When it
+    is enabled, the step completes even with no pages: an empty crawl is a real, reportable
+    outcome (a link 404'd, a robots rule blocked it), and for deep research the replan hint
+    points at running a web search first rather than treating emptiness as an error.
+    """
+    result = result if isinstance(result, dict) else {}
+    if not bool(result.get('enabled')):
+        reason = _text(result.get('skipped_reason')) or 'unknown'
+        return _failed_result(
+            unavailable_summary,
+            f'{capability_id} reported it was not enabled (reason: {reason}).',
+        )
+
+    pages = [page for page in (result.get('pages') or ()) if isinstance(page, dict)]
+    notes = _notes_from_source_review(result)
+    citations = _citations_from_source_review(result)
+
+    if pages:
+        return build_step_result(
+            status=STEP_STATUS_COMPLETED,
+            summary=found_summary.format(count=len(pages)),
+            notes=notes,
+            citations=citations,
+        )
+
+    reason = _text(result.get('skipped_reason'))
+    return build_step_result(
+        status=STEP_STATUS_COMPLETED,
+        summary=empty_summary + (f' ({reason})' if reason else ''),
+        notes=notes,
+        citations=citations,
+        replan_hint=empty_replan_hint,
+    )
+
+
+def _resolve_source_review_planner(settings):
+    """The client and model deep research uses for its own link-selection planning.
+
+    perform_source_review takes a planner client/model so it can decide which discovered links
+    are worth reading. The context's ``invoke_prompt`` closure has already resolved a client,
+    but it is a ``call(prompt) -> text`` seam by design and does not expose the client object,
+    so we resolve one the same way the planner does. ``resolve_planner_client`` handles APIM,
+    managed identity and key auth and returns the planner deployment -- the right model for an
+    internal planning call rather than for writing the final answer.
+    """
+    from functions_orchestration_planner import resolve_planner_client
+
+    return resolve_planner_client(settings)
+
+
+def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
+    arguments = _arguments(step)
+    user_message = _text(_ctx(context, 'user_message', ''))
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before reading the linked pages.')
+
+    _emit(emit, _progress(step, CAPABILITY_URL_FETCH, 'Reading the linked pages'))
+
+    try:
+        from functions_source_review import (
+            URL_ACCESS_CONTEXT_CHAT,
+            extract_urls_from_text,
+            perform_source_review,
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} url_fetch is unavailable: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('Reading linked pages is unavailable.', str(exc))
+
+    # A step may narrow the read to specific links, but only links the user actually pasted may
+    # be read -- never a URL the model produced. We intersect the requested set with the URLs
+    # found in the message (normalizing both sides through extract_urls_from_text so the compare
+    # is apples to apples) and seed only those, with direct extraction turned off so a
+    # requested-but-absent URL cannot slip through the other seeding path.
+    include_direct_user_urls = True
+    additional_seed_urls = None
+    requested = _string_list(arguments.get('urls'))
+    if requested:
+        message_urls = set(extract_urls_from_text(user_message))
+        normalized_requested = []
+        for candidate in requested:
+            normalized_requested.extend(extract_urls_from_text(candidate))
+        additional_seed_urls = [url for url in normalized_requested if url in message_urls]
+        include_direct_user_urls = False
+        if not additional_seed_urls:
+            return build_step_result(
+                status=STEP_STATUS_COMPLETED,
+                summary='None of the requested links were present in the message.',
+                replan_hint='The urls argument named links that are not in the user message; omit it to read every link the user pasted.',
+            )
+
+    try:
+        result = perform_source_review(
+            settings=settings,
+            user_id=user_id,
+            user_email=_ctx(context, 'user_email', None),
+            user_roles=_ctx(context, 'user_roles', None),
+            user_message=user_message,
+            web_search_citations=[],
+            conversation_id=_ctx(context, 'conversation_id', None),
+            url_access_only=True,
+            url_access_context=URL_ACCESS_CONTEXT_CHAT,
+            include_direct_user_urls=include_direct_user_urls,
+            additional_seed_urls=additional_seed_urls,
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} url_fetch failed: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('The linked pages could not be read.', str(exc))
+
+    return _finalize_source_review(
+        result,
+        capability_id=CAPABILITY_URL_FETCH,
+        unavailable_summary='Reading linked pages is not available for this user.',
+        empty_summary='No linked pages could be read.',
+        found_summary='Read {count} linked page(s).',
+    )
+
+
+def run_deep_research(step, context, *, settings, user_id, emit, cancel_requested):
+    arguments = _arguments(step)
+    user_message = _text(_ctx(context, 'user_message', ''))
+    query = _text(arguments.get('query')) or user_message
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before deep research.')
+    if not query:
+        return _failed_result('No research question was available.', 'deep_research requires a query.')
+
+    _emit(emit, _progress(step, CAPABILITY_DEEP_RESEARCH, 'Researching sources'))
+
+    try:
+        from functions_source_review import (
+            URL_ACCESS_CONTEXT_CHAT,
+            extract_urls_from_text,
+            perform_source_review,
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} deep_research is unavailable: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('Deep research is unavailable.', str(exc))
+
+    # Deep research crawls seeds; it does not itself search the web. Its seeds are the citations
+    # any earlier web_search or url_fetch step left on the context, plus URLs the user pasted.
+    # We pass the research question as user_message so planning and relevance target the question
+    # rather than the whole turn, and pass the message's own URLs explicitly so narrowing the
+    # question does not drop a link the user gave us. Citations without a URL (document sources)
+    # are ignored by the seed collector, so handing the whole citation list over is safe.
+    prior_citations = [c for c in (_ctx(context, 'citations', []) or ()) if isinstance(c, dict)]
+    message_seed_urls = extract_urls_from_text(user_message) or None
+
+    try:
+        planner_client, planner_model = _resolve_source_review_planner(settings)
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} deep_research could not resolve a planner client: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('Deep research could not start.', str(exc))
+
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before deep research.')
+
+    try:
+        result = perform_source_review(
+            settings=settings,
+            user_id=user_id,
+            user_email=_ctx(context, 'user_email', None),
+            user_roles=_ctx(context, 'user_roles', None),
+            user_message=query,
+            web_search_citations=prior_citations,
+            conversation_id=_ctx(context, 'conversation_id', None),
+            source_review_planner_client=planner_client,
+            source_review_planner_model=planner_model,
+            url_access_only=False,
+            url_access_context=URL_ACCESS_CONTEXT_CHAT,
+            include_direct_user_urls=True,
+            additional_seed_urls=message_seed_urls,
+        )
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} deep_research failed: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('Deep research failed.', str(exc))
+
+    return _finalize_source_review(
+        result,
+        capability_id=CAPABILITY_DEEP_RESEARCH,
+        unavailable_summary='Deep research is not available for this user.',
+        empty_summary='Deep research found no readable sources.',
+        found_summary='Reviewed {count} source(s) for the research question.',
+        empty_replan_hint='Run a web_search step first so deep_research has sources to read.',
+    )
+
+
+# --------------------------------------------------------------------------------------
+# agent_invoke -> a single Semantic Kernel agent, reconstructed for the worker thread
+#
+# There is no reusable perform_agent_invoke; the classic path lives inline in the chat route
+# and leans on Flask g (g.kernel, g.kernel_agents, g.force_enable_agents). None of that exists
+# here, so this adapter composes the same steps against the context instead: resolve the agent
+# from the catalog the route captured, re-check the gates, build a one-agent kernel with the
+# loader's DRY seam, invoke it synchronously, and read usage and tool calls back out the same
+# way the route does. Everything Semantic Kernel is imported lazily -- it is a large, optional
+# dependency, and this module must import without it.
+# --------------------------------------------------------------------------------------
+
+class _AgentEventLoopError(Exception):
+    """Raised when the worker thread unexpectedly already has a running event loop."""
+
+
+def _agent_message_history(task):
+    # The agent is self-contained: it runs its own tools, so we hand it only the task and let
+    # it work, exactly as the route hands the agent a user turn. We deliberately do not fold the
+    # run's accumulated notes into its context -- that would both bloat the agent and pipe
+    # untrusted gathered web text into a tool-using agent's own prompt.
+    from semantic_kernel.contents.chat_message_content import ChatMessageContent
+
+    return [ChatMessageContent(role='user', content=task)]
+
+
+async def _await_agent_invoke(invoke, messages):
+    # Mirrors the core of the route's run_sk_call: an agent's invoke may return a value, a
+    # coroutine, or an async generator, and we take the first item of a generator just as the
+    # route does. The chat path stringifies the result afterward, so we return it raw.
+    import asyncio
+    from types import AsyncGeneratorType
+
+    result = invoke(messages)
+    if asyncio.iscoroutine(result):
+        result = await result
+    if isinstance(result, AsyncGeneratorType):
+        async for item in result:
+            return item
+        return None
+    return result
+
+
+def _invoke_agent_sync(selected_agent, task):
+    import asyncio
+
+    # asyncio.run needs no already-running loop. The executor's worker thread is synchronous, so
+    # normally there is none -- but we verify, because asyncio.run inside a running loop raises a
+    # confusing RuntimeError, and we would rather fail with a clear, attributable reason.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass  # No running loop, which is exactly what we need.
+    else:
+        raise _AgentEventLoopError('an event loop is already running in the worker thread')
+
+    messages = _agent_message_history(task)
+    raw = asyncio.run(_await_agent_invoke(selected_agent.invoke, messages))
+    return _text(raw) if raw is not None else ''
+
+
+def _record_agent_token_usage(context, kernel):
+    """Fold the kernel services' token counts into the run's usage accumulator.
+
+    The agent result carries no usage; the counts live on the chat-completion services the
+    kernel holds, populated as a side effect of the call. Chat reads them the same way, taking
+    the first service that reports any. We add them onto ``context.token_usage`` -- the run's
+    accumulator the executor already surfaces -- using the field names every other model call in
+    this framework uses, so an agent step is no longer billed as free. Token accounting must
+    never break an answer, so any failure here is swallowed after logging.
+    """
+    try:
+        usage = _ctx(context, 'token_usage', None)
+        if not isinstance(usage, dict):
+            return
+        for service in (getattr(kernel, 'services', {}) or {}).values():
+            prompt_tokens = getattr(service, 'prompt_tokens', None)
+            completion_tokens = getattr(service, 'completion_tokens', None)
+            total_tokens = getattr(service, 'total_tokens', None)
+            if prompt_tokens or completion_tokens or total_tokens:
+                for field, value in (
+                    ('prompt_tokens', prompt_tokens),
+                    ('completion_tokens', completion_tokens),
+                    ('total_tokens', total_tokens),
+                ):
+                    if isinstance(value, int):
+                        usage[field] = usage.get(field, 0) + value
+                return  # First service with usage wins, matching the chat path.
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Could not read agent token usage: {exc}',
+            level=logging.WARNING,
+        )
+
+
+def _agent_citations(plugin_logger, user_id, conversation_id, seen_before):
+    """The tool calls this invocation made, shaped exactly like the chat route's agent citations.
+
+    The plugin logger accumulates every tool call for a conversation, so we snapshot which
+    invocations existed before this step and keep only the new ones -- otherwise a second agent
+    step would re-cite the first step's tools. The citation shape matches the chat route field
+    for field so the same UI renders it. make_json_serializable and the label builder are
+    imported lazily and degraded past on failure, because losing a citation must never lose the
+    answer.
+    """
+    if plugin_logger is None:
+        return []
+    try:
+        invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Could not read agent tool invocations: {exc}',
+            level=logging.WARNING,
+        )
+        return []
+
+    try:
+        from functions_message_artifacts import (
+            build_agent_citation_tool_label,
+            make_json_serializable,
+        )
+    except Exception:
+        build_agent_citation_tool_label = None
+        make_json_serializable = None
+
+    def _serialize(value):
+        if make_json_serializable:
+            try:
+                return make_json_serializable(value)
+            except Exception:
+                pass
+        return _text(value) if value is not None else None
+
+    citations = []
+    for inv in invocations or ():
+        if id(inv) in seen_before:
+            continue  # A tool call from before this step, not ours to cite.
+        timestamp = getattr(inv, 'timestamp', None)
+        if hasattr(timestamp, 'isoformat'):
+            timestamp_str = timestamp.isoformat()
+        else:
+            timestamp_str = _text(timestamp) or None
+        plugin_name = getattr(inv, 'plugin_name', None)
+        function_name = getattr(inv, 'function_name', None)
+        parameters = getattr(inv, 'parameters', None)
+        inv_result = getattr(inv, 'result', None)
+        if build_agent_citation_tool_label:
+            try:
+                tool_name = build_agent_citation_tool_label(plugin_name, function_name, parameters, inv_result)
+            except Exception:
+                tool_name = '.'.join(part for part in (_text(plugin_name), _text(function_name)) if part)
+        else:
+            tool_name = '.'.join(part for part in (_text(plugin_name), _text(function_name)) if part)
+        citations.append({
+            'tool_name': tool_name,
+            'function_name': function_name,
+            'plugin_name': plugin_name,
+            'function_arguments': _serialize(parameters),
+            'function_result': _serialize(inv_result),
+            'duration_ms': getattr(inv, 'duration_ms', None),
+            'timestamp': timestamp_str,
+            'success': getattr(inv, 'success', None),
+            'error_message': _serialize(getattr(inv, 'error_message', None)),
+            'user_id': getattr(inv, 'user_id', None),
+        })
+    return citations
+
+
+def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested):
+    arguments = _arguments(step)
+    agent_name = _text(arguments.get('agent_name'))
+    task = _text(arguments.get('task')) or _text(_ctx(context, 'user_message', ''))
+    if not agent_name:
+        return _failed_result('No agent was named.', 'agent_invoke requires an agent_name.')
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before invoking the agent.')
+
+    # An agent may only be invoked if the catalog offered it. The catalog is resolved per request
+    # and carried on the context; refusing anything absent from it is what stops a plan -- or a
+    # repaired plan -- from naming an agent this user cannot reach. Access is verified here, at
+    # run time, not trusted from the plan-time request gate.
+    catalog = [a for a in (_ctx(context, 'agent_catalog', None) or ()) if isinstance(a, dict)]
+    selected_agent_data = next((a for a in catalog if _text(a.get('name')) == agent_name), None)
+    if selected_agent_data is None:
+        return _failed_result(
+            f'No agent named "{agent_name}" is available to this user.',
+            'agent_invoke was asked for an agent absent from the catalog.',
+        )
+
+    if not settings.get('enable_semantic_kernel', False):
+        return _failed_result('Agents are not enabled.', 'agent_invoke requires enable_semantic_kernel.')
+    if not _ctx(context, 'user_enable_agents', True):
+        return _failed_result('Agents are turned off for this user.', 'agent_invoke requires user_enable_agents.')
+
+    _emit(emit, _progress(step, CAPABILITY_AGENT_INVOKE, f'Asking agent {agent_name}'))
+
+    try:
+        from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
+
+        if not is_selected_agent_scope_enabled(settings, selected_agent_data):
+            return _failed_result(
+                f'The scope of agent "{agent_name}" is not enabled.',
+                'agent_invoke selected agent scope is disabled by settings.',
+            )
+        agent_cfg = find_agent_by_scope(catalog, selected_agent_data) or selected_agent_data
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} agent_invoke could not resolve agent scope: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('The agent could not be resolved.', str(exc))
+
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before invoking the agent.')
+
+    # Build a kernel holding exactly this one agent. We deliberately avoid
+    # initialize_semantic_kernel: in per-user mode it writes the kernel onto Flask g (absent in
+    # this thread) and returns nothing, and it loads the entire agent catalog when we need only
+    # one. load_single_agent_for_kernel is the DRY seam it calls internally; in 'global' mode it
+    # never touches its context_obj argument, so a fresh Kernel and a None context are safe, and
+    # it hands back {name: agent}. Its own plugin loading reads the current user id defensively
+    # and tolerates there being none, which is the case off the request thread.
+    try:
+        from semantic_kernel import Kernel
+        from semantic_kernel_loader import load_single_agent_for_kernel
+
+        kernel, agent_objs = load_single_agent_for_kernel(
+            Kernel(),
+            agent_cfg,
+            settings,
+            None,
+            redis_client=None,
+            mode_label='global',
+        )
+        selected_agent = (agent_objs or {}).get(_text(agent_cfg.get('name'))) if kernel else None
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} agent_invoke could not load the agent: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('The agent could not be loaded.', str(exc))
+
+    if not kernel or selected_agent is None:
+        return _failed_result(
+            f'Agent "{agent_name}" could not be initialized.',
+            'load_single_agent_for_kernel returned no usable agent (check its endpoint and credentials).',
+        )
+
+    conversation_id = _ctx(context, 'conversation_id', None)
+    try:
+        from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+
+        plugin_logger = get_plugin_logger()
+        seen_before = {
+            id(inv)
+            for inv in (plugin_logger.get_invocations_for_conversation(user_id, conversation_id) or ())
+        }
+    except Exception:
+        # The plugin logger is best-effort context for citations; its absence must not stop the
+        # invocation. We simply produce no tool-call citations in that case.
+        plugin_logger = None
+        seen_before = set()
+
+    try:
+        reply = _invoke_agent_sync(selected_agent, task)
+    except _AgentEventLoopError as exc:
+        return _failed_result('The agent could not run in this context.', str(exc))
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} agent_invoke failed during invocation: {exc}',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return _failed_result('The agent invocation failed.', str(exc))
+
+    _record_agent_token_usage(context, kernel)
+    citations = _agent_citations(plugin_logger, user_id, conversation_id, seen_before)
+
+    display_name = _text(agent_cfg.get('display_name')) or agent_name
+    if not reply:
+        # An agent that returned nothing is a completed-but-empty step, not a failure: the plan
+        # still answers, and the tool-call citations we did gather stay attached.
+        return build_step_result(
+            status=STEP_STATUS_COMPLETED,
+            summary=f'Agent {display_name} produced no reply.',
+            citations=citations,
+        )
+
+    note = f'Agent "{display_name}" was asked: {task}\n\nThe agent replied:\n{reply}'
+    return build_step_result(
+        status=STEP_STATUS_COMPLETED,
+        summary=_first_line(reply) or f'Agent {display_name} replied.',
+        notes=[note],
+        citations=citations,
+    )
+
+
+# --------------------------------------------------------------------------------------
 # respond -> synthesis over the accumulated evidence (terminal step)
 # --------------------------------------------------------------------------------------
 
@@ -861,6 +1448,9 @@ ADAPTER_REGISTRY = {
     CAPABILITY_DOCUMENT_COMPARE: run_document_compare,
     CAPABILITY_TABULAR_ANALYZE: run_tabular_analyze,
     CAPABILITY_WEB_SEARCH: run_web_search,
+    CAPABILITY_URL_FETCH: run_url_fetch,
+    CAPABILITY_DEEP_RESEARCH: run_deep_research,
+    CAPABILITY_AGENT_INVOKE: run_agent_invoke,
     CAPABILITY_RESPOND: run_respond,
 }
 

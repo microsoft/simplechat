@@ -4,10 +4,10 @@
 Triage, plan synthesis and re-planning.
 
 The planner writes a plan. It does not execute one, and it is never given a tool. That
-separation is the whole point of this framework: a model choosing among six described
-capabilities and returning JSON is a far more reliable thing than a model handed forty
-plugins and an auto-invoke loop, and its output can be validated before anything happens.
-Everything this module returns therefore passes through
+separation is the whole point of this framework: a model choosing among a short list of
+described capabilities and returning JSON is a far more reliable thing than a model handed
+forty plugins and an auto-invoke loop, and its output can be validated before anything
+happens. Everything this module returns therefore passes through
 ``functions_orchestration_schema`` before it reaches an executor.
 
 Two things are worth explaining because they are not obvious from the code.
@@ -27,7 +27,7 @@ tries several strategies before giving up, and a total failure degrades to a sin
 answering step rather than to an error -- a user who asked a question should get an
 answer even when the planning layer had a bad day.
 
-Version: 0.261.085
+Version: 0.261.087
 """
 
 import json
@@ -220,6 +220,18 @@ and nothing else.
 You will be given the capabilities available to you. Use only those. Each capability lists
 what it is for and the arguments it takes. Never invent a capability or an argument.
 
+Each capability names a phase. The phases run in a fixed order: knowledge, then reasoning,
+then output. "knowledge" is every capability that gathers or produces the evidence an
+answer stands on. "reasoning" is the single "respond" step that writes the answer from
+what those steps gathered. Because the phases are ordered, a plan may never gather after
+it answers: every gathering step comes before "respond", which is always the last step.
+
+Some requests are best handed to an agent -- a preconfigured assistant with its own tools
+and knowledge. The agents you may use are listed under "agents", each with its name and
+what it is for. To use one, add the agent capability and set "agent_name" to a name that
+appears in that list, spelled exactly. Never name an agent that is not listed; if the list
+is empty you have no agent to call, so do not plan an agent step.
+
 Return ONE JSON object with this shape:
 
 {
@@ -243,6 +255,9 @@ Rules:
 - Prefer the cheapest capability that will actually answer the question. Searching
   documents is much cheaper than analysing them; only analyse when the question needs
   whole-document coverage.
+- On the open web, web_search is the cheap default. deep_research is the most expensive
+  capability available to you; reach for it deliberately, only when a shallow web_search
+  genuinely could not cover the question.
 - Only name a document id that appears in the candidate documents or that the user
   selected. Never invent one.
 - If the user already selected documents, plan around those documents.

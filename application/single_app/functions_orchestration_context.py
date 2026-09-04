@@ -27,13 +27,14 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.085
+Version: 0.261.087
 """
 
 import json
 import logging
 
 from functions_appinsights import log_event
+from functions_orchestration_registry import build_agent_planner_projection
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -254,6 +255,61 @@ def resolve_candidate_documents(
 
 
 # --------------------------------------------------------------------------------------
+# Agents
+# --------------------------------------------------------------------------------------
+
+def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
+    """The agents a plan may invoke, resolved once for the whole plan.
+
+    Returns full catalog records rather than the planner projection. Two very different
+    consumers read the same list, and they need different fields from it: the executor's
+    agent step needs the scope and identifiers to load a kernel, while the planner needs
+    only the handful of naming fields ``build_agent_planner_projection`` keeps. Feeding
+    both from one resolution is the point -- ``build_accessible_agent_catalog`` is a
+    multi-query Cosmos operation with no cache (personal, global and every group's agents,
+    plus the model and action label maps and the user's group memberships), so resolving
+    it once per plan and handing the result to ``build_planner_context`` *and* to
+    ``RunContext.agent_catalog`` is the difference between one such traversal and one per
+    step.
+
+    Seeding mirrors ``resolve_candidate_documents``. A user who picked an agent in the
+    composer has already made the choice this catalog exists to inform, so the selection
+    is returned as-is and the traversal never runs -- and because the planner is then shown
+    that agent alone, it is the only one a plan may name, exactly as a selected document is
+    the only candidate.
+
+    Fails soft. A Cosmos hiccup degrades to "no agent available" -- a plan that simply
+    cannot reach for an agent -- rather than failing the whole request, on the same
+    reasoning as the candidate probe above.
+    """
+    seeds = seeds or {}
+
+    seeded_agent = seeds.get('agent')
+    if isinstance(seeded_agent, dict) and _text(seeded_agent.get('name')):
+        return [seeded_agent]
+
+    try:
+        # Lazy for the same reason as the candidate probe: functions_agent_catalog reaches
+        # config.py and its import-time Cosmos client, and this module is imported by the
+        # validator and by tests that have no Azure to talk to. Keeping the import inside
+        # the resolver is what lets those import functions_orchestration_context at all.
+        from functions_agent_catalog import build_accessible_agent_catalog
+
+        return build_accessible_agent_catalog(
+            user_id,
+            settings=settings,
+            user_groups=user_groups,
+        )
+    except Exception as exc:
+        log_event(
+            f"[ORCHESTRATION_CONTEXT] Agent catalog resolution failed; planning without "
+            f"agents: {exc}",
+            level=logging.WARNING,
+        )
+        return []
+
+
+# --------------------------------------------------------------------------------------
 # Run ledger
 # --------------------------------------------------------------------------------------
 
@@ -421,17 +477,25 @@ def build_planner_context(
     ledger=None,
     signals=None,
     capabilities=None,
+    agents=None,
 ):
     """Assemble everything the planner is shown, in one place.
 
     Kept as a single builder so that what the planner sees is auditable and testable
     rather than being spread across the prompt construction. Nothing enters the planner's
     context that is not visible here.
+
+    ``agents`` are the full catalog records from ``resolve_agent_catalog``; they are
+    projected here rather than trusted as-is so the planner is only ever shown the naming
+    fields ``AGENT_PLANNER_FIELDS`` allows. Projecting at the single point the context is
+    built means an agent's instructions cannot leak into the prompt even if a caller passes
+    raw records, which is exactly what the executor is handed for ``RunContext.agent_catalog``.
     """
     seeds = seeds or {}
     return {
         'message': _text(user_message),
         'capabilities': capabilities or [],
+        'agents': build_agent_planner_projection(agents),
         'candidate_documents': [
             {key: value for key, value in candidate.items() if key != 'score'}
             for candidate in (candidates or ())

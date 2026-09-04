@@ -66,6 +66,21 @@ export type PlanStatus =
 /** A capability's rough cost, from `COST_CLASSES`. Carried on a step as `estimated_cost`. */
 export type CostClass = 'low' | 'medium' | 'high';
 
+/**
+ * The phases a plan moves through, mirroring the server registry's `CAPABILITY_PHASES`.
+ *
+ * The order is meaningful: a plan gathers in `knowledge`, then answers in `reasoning`, then
+ * produces any deliverable in `output`, and never gathers again once it has answered. The
+ * run view groups steps under these in this order. A closed union rather than a loose string
+ * because -- unlike `capability_id`, where a build must tolerate a capability it had not heard
+ * of -- the phase vocabulary is fixed by the framework, so an unrecognised phase is a bug to
+ * surface, not a value to pass through.
+ */
+export type OrchestrationPhase = 'knowledge' | 'reasoning' | 'output';
+
+/** The phases in the order a plan runs them, so a grouped view can iterate them directly. */
+export const ORCHESTRATION_PHASES: OrchestrationPhase[] = ['knowledge', 'reasoning', 'output'];
+
 /** MCP elicitation response actions, named exactly as MCP names them (`ELICITATION_ACTIONS`). */
 export type ElicitationAction = 'accept' | 'decline' | 'cancel';
 
@@ -105,6 +120,14 @@ export interface OrchestrationStep {
     enabled: boolean;
     estimated_cost: CostClass;
     status: StepStatus;
+    /**
+     * The phase this step runs in, echoed from its capability.
+     *
+     * Optional and a loose string because a persisted or older plan may not carry it and the
+     * value is the server's to define: the run view resolves a missing one from the capability
+     * menu rather than dropping the step, so grouping degrades gracefully instead of failing.
+     */
+    phase?: string;
 }
 
 /** The approval block, from `normalize_plan`'s `approval`. */

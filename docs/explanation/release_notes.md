@@ -2,6 +2,40 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.087)**
+
+#### New Features
+
+*   **Orchestration Can Now Reach Agents, Linked Pages And Deep Research**
+    *   Orchestration could plan around a smaller world than you could reach by hand. Three things sitting in the composer as buttons — your agents, reading the links you pasted, and deep research — were invisible to the planner, so asking for them in plain language got you a plan that quietly did something simpler.
+    *   **Your agents can now be part of a plan.** The planner is shown the agents you can reach and picks one where the question calls for it. Picking an agent yourself still wins outright: a plan built around your choice rather than around a guess at it.
+    *   **Linked pages are read when you paste them.** Only links present in your own message are read — never one a model produced.
+    *   **Deep research is available for questions that need several sources reconciled.** It is the most expensive thing a plan can do, so the planner is told plainly that web search is the cheaper answer to an ordinary factual question.
+    *   Deep research and reading links continue to honour the `DeepResearchUser` and `UrlAccessUser` roles, and agents continue to honour your own agent setting. Orchestration still grants nobody access to anything they could not already reach by hand.
+    *   (Ref: `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_context.resolve_agent_catalog`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Orchestration settings](../admin/orchestration.md))
+
+*   **A Plan Now Has A Shape: Gather, Then Reason, Then Create**
+    *   Every capability now belongs to an ordered phase — gathering knowledge, reasoning, creating — and a plan moves through them in order. A plan can no longer go looking for something after it has already answered, which used to produce an answer written without the evidence the later step had just found. That was a silently wrong answer rather than a visible failure, which is the worse of the two.
+    *   The third phase is declared but empty. Producing files, placing them in a workspace, sharing and mail come next; they have effects outside the conversation and need an approval story of their own.
+    *   (Ref: `CAPABILITY_PHASES`, `functions_orchestration_schema._enforce_phase_order`)
+
+*   **The Orchestration Settings Are Configurable In The New Admin Interface**
+    *   The new admin interface offered exactly one orchestration setting — the on switch — while the classic interface had sixteen. Approval mode, the countdown, the capability list, every limit and the planner model were all unreachable, so turning orchestration on there meant accepting whatever the defaults happened to be.
+    *   All sixteen are now configurable, grouped as Approval, Capabilities, Limits and Planner Model.
+    *   (Ref: `admin_settings_fields.py`, [Orchestration settings](../admin/orchestration.md))
+
+#### Bug Fixes
+
+*   **Documents An Orchestrated Answer Used Now Appear In The Documents Tab**
+    *   A plan would search, find the right material, and cite it correctly in its answer — and the Documents tab would still say "No documents used yet".
+    *   Two separate things were missing. The assistant message was saved without its citations, so the reply carried no citation chips. And the conversation's used-document list was never extended, which is what the Documents tab actually reads: an answer can cite a document perfectly and still show nothing there.
+    *   Web sources and document sources are now kept apart, because they are read differently — a citation with no document behind it used to be dropped silently on its way to document tracking.
+    *   (Ref: `route_backend_orchestration._partition_citations`, `merge_cited_documents_into_conversation`, `chatStore.settleOrchestrationTurn`)
+
+*   **The Plan Bar No Longer Lingers After A Run Finishes**
+    *   A collapsed plan summary stayed pinned in the conversation after its run had settled, competing with the answer it had produced. It is now removed once the run is complete; the full plan remains in the side panel, where it can be reopened.
+    *   (Ref: `OrchestrationPlanCard.tsx`)
+
 ### **(v0.261.086)**
 
 #### Bug Fixes
