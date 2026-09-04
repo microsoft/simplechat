@@ -159,6 +159,14 @@ export interface AdminSettingsResponse {
     section_status: AdminSectionStatusSchema;
     app_role_requirements: AppRoleRequirement[];
     branding_assets: BrandingAssets;
+    /**
+     * `enable_*` keys the fallback scan must not draw.
+     *
+     * Some booleans in the settings document are derived or are staged rollout flags
+     * with no administrator control. A switch for one would appear to save and then
+     * revert, so the server names them and the scan skips them.
+     */
+    suppressed_capabilities: string[];
     version: string;
 }
 
@@ -266,7 +274,9 @@ export function isFieldVisible(field: AdminField, settings: Json, draft: Json): 
  * The placeholder the server sends in place of a stored secret.
  *
  * Mirrors `ADMIN_SETTINGS_SECRET_REDACTED_VALUE`. The browser never receives the real
- * value, so this is how a control tells "a secret is stored" apart from "no secret set".
+ * value, so this is how a control tells "a secret is stored" apart from "no secret set",
+ * and sending it back unchanged is what tells the server to keep the stored credential
+ * rather than overwrite it with this string.
  */
 export const SECRET_PLACEHOLDER = '***REDACTED***';
 
