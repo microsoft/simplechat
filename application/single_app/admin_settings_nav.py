@@ -97,15 +97,16 @@ ADMIN_NAV = [
         "icon": "bi-cpu",
         "tabs": [
             {
-                # The Chat Model card is reached through the legacy model
-                # settings dialog opened from here, so it is listed with the
-                # endpoints rather than as a tab of its own.
+                # A connection is one Azure OpenAI or Foundry resource. The Chat
+                # Model card configures the classic single-endpoint path, which is
+                # what chat uses when connections are switched off, so it is listed
+                # alongside them.
                 "id": "model-endpoints",
-                "label": "Model Endpoints",
+                "label": "Connections",
                 "icon": "bi-hdd-network",
                 "sections": [
-                    {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
-                    {"id": "gpt-config", "label": "Chat Model", "icon": "bi-chat-square-text"},
+                    {"id": "multi-endpoint-configuration", "label": "Connections", "icon": "bi-hdd-network"},
+                    {"id": "gpt-config", "label": "Chat", "icon": "bi-chat-square-text"},
                 ],
             },
             {
