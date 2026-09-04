@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -50,6 +51,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "color": ("default",),
     "text": ("default",),
     "textarea": ("default",),
+    "secret": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
     # An id_list resolves names through a search endpoint, so the renderer cannot
@@ -71,6 +73,7 @@ EXPECTED_DEFAULT_TYPES = {
     "switch": bool,
     "text": str,
     "textarea": str,
+    "secret": str,
     "select": str,
     "color": str,
     "range": int,
@@ -216,11 +219,20 @@ def test_setting_keys_are_unique():
 def _walk_dependency_conditions(dependency, path="depends_on"):
     """Yield every leaf condition in a dependency tree, with a readable path.
 
-    A dependency is either a single ``{key, equals}`` condition or an ``any_of`` /
-    ``all_of`` composition of them, and the composed forms nest. Walking the tree
-    is what lets these checks reach a condition buried two levels down, which is
-    where a typo would otherwise sit undetected and hide a control forever.
+    A dependency is a single ``{key, equals}`` condition, a list of them meaning
+    all must hold, or an ``any_of`` / ``all_of`` composition, and the composed
+    forms nest. Walking the tree is what lets these checks reach a condition
+    buried two levels down, which is where a typo would otherwise sit undetected
+    and hide a control forever.
     """
+    if isinstance(dependency, list):
+        if not dependency:
+            yield path, {"__error": "an empty condition list is always satisfied"}
+            return
+        for index, condition in enumerate(dependency):
+            yield from _walk_dependency_conditions(condition, f"{path}[{index}]")
+        return
+
     if not isinstance(dependency, dict):
         return
 
@@ -248,12 +260,13 @@ def test_dependencies_reference_real_fields():
     checked = 0
 
     for section_id, field in fields_module.iter_fields():
-        depends_on = field.get("depends_on")
-        if not depends_on:
+        if not field.get("depends_on"):
             continue
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        for path, condition in _walk_dependency_conditions(depends_on):
+        # A field may carry one condition, a list of them, or an any_of/all_of
+        # composition, so the tree is walked rather than any one shape assumed.
+        for path, condition in _walk_dependency_conditions(field["depends_on"]):
             checked += 1
 
             if "__error" in condition:
@@ -332,6 +345,124 @@ def test_connection_tests_read_declared_keys():
     return True
 
 
+def test_string_dependencies_name_an_offered_option():
+    """A string condition that no option produces would hide the field forever."""
+    print("\nTesting string visibility dependencies against their select options...")
+
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        identity = f"{section_id}.{field.get('key') or field.get('component')}"
+        for depends_on in fields_module.iter_field_dependencies(field):
+            expected = depends_on.get("equals")
+            if not isinstance(expected, str):
+                continue
+
+            checked += 1
+            gate = fields_by_key.get(depends_on.get("key"))
+
+            if gate is None:
+                problems.append(f"{identity}: gate field is not declared")
+                continue
+            if gate.get("type") != "select":
+                problems.append(
+                    f"{identity}: gate {gate['key']!r} is a {gate.get('type')!r}, but a "
+                    "string condition only makes sense against a select"
+                )
+                continue
+
+            values = [option["value"] for option in gate.get("options", [])]
+            if expected not in values:
+                problems.append(
+                    f"{identity}: waits for {gate['key']}=={expected!r}, which is not "
+                    f"one of {values}"
+                )
+
+    assert not problems, (
+        "These string dependencies can never be satisfied, so the field would "
+        "never render:\n  " + "\n  ".join(problems)
+    )
+
+    assert checked, (
+        "No string dependencies were compared; the Enhanced Citations storage "
+        "credentials should each be gated on an authentication type."
+    )
+    print(f"  All {checked} string dependency condition(s) are reachable.")
+    return True
+
+
+def test_gated_fields_inherit_their_gate_s_own_conditions():
+    """The renderer evaluates each field's conditions alone, not recursively.
+
+    So a field gated on a sibling is visible whenever that sibling's *value* matches,
+    even when the sibling is itself hidden. Gating the Enhanced Citations connection
+    string on the authentication type alone left it on screen while Enhanced Citations
+    was off, because the authentication type defaults to ``key`` whether the capability
+    is on or not -- offering a credential field for a disabled feature.
+
+    A field must therefore repeat every condition its gate carries.
+    """
+    print("\nTesting that gated fields inherit their gate's conditions...")
+
+    fields_by_key = {
+        field["key"]: field
+        for _section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    def condition_set(field, seen=None):
+        """Every (key, equals) a field declares, plus everything its gates declare."""
+        seen = seen if seen is not None else set()
+        for condition in fields_module.iter_field_dependencies(field):
+            key = condition.get("key")
+            entry = (key, condition.get("equals", True))
+            if entry in seen:
+                continue
+            seen.add(entry)
+            parent = fields_by_key.get(key)
+            if parent is not None:
+                condition_set(parent, seen)
+        return seen
+
+    problems = []
+    checked = 0
+    for section_id, field in fields_module.iter_fields():
+        own = {
+            (condition.get("key"), condition.get("equals", True))
+            for condition in fields_module.iter_field_dependencies(field)
+        }
+        if not own:
+            continue
+
+        checked += 1
+        inherited = condition_set(field)
+        missing = sorted(
+            f"{key}=={value!r}" for key, value in inherited - own
+        )
+        if missing:
+            problems.append(
+                f"{section_id}.{field.get('key') or field.get('component')}: also needs "
+                + ", ".join(missing)
+            )
+
+    assert not problems, (
+        "These fields are gated on another field that is itself gated, but do not "
+        "repeat its conditions. Because visibility is evaluated per field rather than "
+        "recursively, they stay on screen when their gate is hidden:\n  "
+        + "\n  ".join(problems)
+    )
+
+    assert checked, "No gated fields were compared; the extraction likely broke."
+    print(f"  All {checked} gated field(s) carry their gate's conditions.")
+    return True
+
+
 def test_option_values_are_unique_within_a_field():
     """Duplicate option values make a control's selection ambiguous."""
     print("\nTesting option value uniqueness...")
@@ -373,7 +504,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 
@@ -419,6 +556,8 @@ if __name__ == "__main__":
         test_setting_keys_are_unique,
         test_dependencies_reference_real_fields,
         test_connection_tests_read_declared_keys,
+        test_string_dependencies_name_an_offered_option,
+        test_gated_fields_inherit_their_gate_s_own_conditions,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,
     ]

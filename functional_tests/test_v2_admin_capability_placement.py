@@ -24,13 +24,17 @@ without opening the page:
   - ``enable_text_plugin`` matched "text" in ``home-page-text-section`` and
     appeared under Appearance > Branding.
 
-Declaring a field is what takes a key out of that scan. This test holds two
+Declaring a field is what takes a key out of that scan. This test holds three
 invariants so the misfiling cannot come back:
 
-  1. The Appearance and Security groups are fully described by the schema, so they
-     must receive *no* guessed rows at all. A new undeclared key that lands in
-     either fails here, and the fix is to declare it in its real section.
+  1. The Appearance, Chat and Security groups are fully described by the schema, so
+     they must receive *no* guessed rows at all. A new undeclared key that lands in
+     any of them fails here, and the fix is to declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
+  3. Keys that are not editable settings at all stay suppressed rather than
+     declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
+     derived from ``enable_enhanced_citations`` and rewritten by ``get_settings``
+     on every read, so a switch would appear to save and then revert.
 
 Security was described later and had misfilings of its own. The clearest was
 ``enable_app_maintenance`` and ``enable_startup_app_maintenance``, which matched
@@ -64,7 +68,7 @@ APPEARANCE_GROUP_ID = "appearance"
 # Groups whose sections are described by the schema in full. A guessed row landing
 # in one of these is a key that was filed by word stems into a group that has a
 # real home for everything it owns, which means it is in the wrong place.
-FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "security")
+FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security")
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -80,7 +84,24 @@ RELOCATED_CAPABILITIES = {
     "enable_support_menu": ("support-menu-section", "support-menu"),
     "enable_user_workspace": ("personal-workspaces-section", "workspace-types"),
     "enable_text_plugin": ("actions-config", "actions"),
+    # Guessed into the Chat group before the Chat work: "audio", "video" and
+    # "file" all reached chat-file-uploads-section, and "enhanced" reached
+    # enhanced-citations-section.
+    "enable_audio_file_support": ("ai-voice-chat-section", "audio-video"),
+    "enable_chat_completion_audio_cues": ("ai-voice-chat-section", "audio-video"),
+    "enable_video_file_support": ("video-intelligence-section", "audio-video"),
+    "enable_enhanced_extraction": ("document-intelligence-section", "extraction"),
+    "enable_default_embedding_model_plugin": ("actions-config", "actions"),
 }
+
+# Keys the scan must skip entirely, because they are not settings an
+# administrator can change. Declaring one would claim there is something to edit.
+EXPECTED_SUPPRESSED_CAPABILITIES = (
+    "enable_tabular_processing_plugin",
+    "enable_enhanced_citations_mount",
+    "enable_mixed_source_chat_search",
+    "enable_mixed_source_conversation_continuity",
+)
 
 # Relocations with no server-rendered counterpart to check against. Both are
 # documented in ``V2_ONLY_FIELDS``, which is what the section assertion below reads
@@ -99,6 +120,7 @@ RENDERER_INVARIANTS = (
     ("ignores tokens of two characters or fewer", "token.length > 2"),
     ("keeps the first section that scores highest", "score > bestScore"),
     ("skips keys that have a declared field", "!declaredKeys.has(key)"),
+    ("skips keys the server suppresses", "!suppressedKeys.has(key)"),
 )
 
 DEFAULT_SETTING_RE = re.compile(
@@ -170,7 +192,7 @@ def test_ported_heuristic_still_matches_the_renderer():
     """A rewritten renderer would leave this test asserting the wrong thing."""
     print("Testing the ported heuristic against AdminSettingsPage.tsx...")
 
-    assert_app_version_at_least("0.261.047")
+    assert_app_version_at_least("0.261.059")
 
     assert RENDERER.is_file(), f"Missing the V2 admin renderer: {RENDERER}"
     source = RENDERER.read_text(encoding="utf-8")
@@ -197,6 +219,7 @@ def test_described_groups_receive_no_guessed_capabilities():
     print("\nTesting that no guessed capability lands in a fully described group...")
 
     declared = fields_module.get_declared_setting_keys()
+    suppressed = set(fields_module.get_suppressed_capability_keys())
     sections = build_sections()
     described_sections = {
         section["section_id"]: section
@@ -207,7 +230,7 @@ def test_described_groups_receive_no_guessed_capabilities():
     misfiled = []
     guessed = 0
     for key in read_capability_keys():
-        if key in declared:
+        if key in declared or key in suppressed:
             continue
         guessed += 1
         placement = place_capability(key, sections)
@@ -221,13 +244,70 @@ def test_described_groups_receive_no_guessed_capabilities():
         "These settings have no declared field, so the V2 admin UI guessed a home "
         "for them and put them in a group that is described in full, where they do "
         "not belong. Declare each one in admin_settings_fields.py under the section "
-        "it really lives in:\n  " + "\n  ".join(misfiled)
+        "it really lives in, or suppress it if it is not an editable setting:\n  "
+        + "\n  ".join(misfiled)
     )
 
     print(
         f"  {guessed} guessed capability row(s), none of them in "
-        f"{' or '.join(FULLY_DESCRIBED_GROUP_IDS)}."
+        f"{', '.join(FULLY_DESCRIBED_GROUP_IDS)}."
     )
+    return True
+
+
+def test_non_editable_capabilities_are_suppressed_not_declared():
+    """A switch over a derived value appears to save and then reverts."""
+    print("\nTesting the suppressed capability declarations...")
+
+    suppressed = set(fields_module.get_suppressed_capability_keys())
+    declared = fields_module.get_declared_setting_keys()
+
+    problems = []
+    for key in EXPECTED_SUPPRESSED_CAPABILITIES:
+        if key not in suppressed:
+            problems.append(
+                f"{key}: not suppressed, so the fallback scan will draw a switch for it"
+            )
+        if key in declared:
+            problems.append(
+                f"{key}: declared as an editable field, but it is not an editable setting"
+            )
+
+    # Every suppression must carry a written reason, so a key cannot be hidden
+    # from administrators without saying why.
+    unexplained = sorted(
+        key
+        for key, reason in fields_module.SUPPRESSED_CAPABILITY_KEYS.items()
+        if not str(reason or "").strip()
+    )
+    problems.extend(f"{key}: suppressed with no reason recorded" for key in unexplained)
+
+    assert not problems, (
+        "The suppressed capability list is wrong:\n  " + "\n  ".join(problems)
+    )
+
+    print(f"  All {len(EXPECTED_SUPPRESSED_CAPABILITIES)} suppression(s) hold.")
+    return True
+
+
+def test_suppressed_capabilities_are_real_settings_keys():
+    """A suppression for a key that no longer exists hides nothing and misleads."""
+    print("\nTesting that suppressed keys still exist in the settings document...")
+
+    capability_keys = set(read_capability_keys())
+    stale = sorted(
+        key
+        for key in fields_module.SUPPRESSED_CAPABILITY_KEYS
+        if key not in capability_keys
+    )
+
+    assert not stale, (
+        "These keys are suppressed but no longer appear in the settings defaults. "
+        "Remove the suppression so it does not outlive the setting it describes:\n  "
+        + "\n  ".join(stale)
+    )
+
+    print(f"  All {len(fields_module.SUPPRESSED_CAPABILITY_KEYS)} suppressed key(s) exist.")
     return True
 
 
@@ -320,6 +400,8 @@ if __name__ == "__main__":
     tests = [
         test_ported_heuristic_still_matches_the_renderer,
         test_described_groups_receive_no_guessed_capabilities,
+        test_non_editable_capabilities_are_suppressed_not_declared,
+        test_suppressed_capabilities_are_real_settings_keys,
         test_relocated_capabilities_are_declared_where_they_belong,
         test_v2_only_relocations_are_documented,
         test_relocated_capabilities_exist_in_their_v1_panes,

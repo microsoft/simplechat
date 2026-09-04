@@ -20,6 +20,7 @@ Two blueprints are registered from here:
 """
 
 import logging
+import uuid
 
 from flask import current_app, jsonify, request, session
 
@@ -34,6 +35,7 @@ from admin_settings_fields import (
     get_admin_settings_fields,
     get_secret_field_keys,
     get_secret_storage_paths,
+    get_suppressed_capability_keys,
     is_safe_external_link_url,
     normalize_admin_settings_updates,
     read_nested_setting,
@@ -85,16 +87,27 @@ from functions_public_workspaces import (
 from functions_settings import (
     ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
     WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+    build_migrated_model_endpoints_from_legacy,
     get_admin_settings_api_secret_fields,
     get_settings,
     get_user_settings,
     is_chat_file_upload_enabled_for_user,
     is_user_workflows_enabled_for_user,
+    merge_model_endpoint_payload,
+    normalize_model_endpoints,
     redact_admin_settings_secrets_for_api,
     redact_admin_settings_secrets_for_form,
     resolve_admin_settings_secret_value,
+    resolve_default_model_selection,
+    resolve_metadata_extraction_model_selection,
     sanitize_settings_for_user,
+    sanitize_model_endpoints_for_frontend,
     update_settings,
+)
+from functions_keyvault import (
+    keyvault_model_endpoint_cleanup_helper,
+    keyvault_model_endpoint_delete_helper,
+    keyvault_model_endpoint_save_helper,
 )
 from functions_source_review import (
     get_source_review_runtime_capabilities,
@@ -632,6 +645,151 @@ def register_route_backend_v2(bp):
             return jsonify({"error": "Failed to load application bootstrap"}), 500
 
 
+def _load_global_model_endpoints(settings=None):
+    """Read the stored global model endpoints as a list."""
+    source = settings if isinstance(settings, dict) else get_settings()
+    endpoints = source.get("model_endpoints", [])
+    return endpoints if isinstance(endpoints, list) else []
+
+
+def _find_model_endpoint(endpoints, endpoint_id):
+    """Return the endpoint with the given id, or None."""
+    reference = str(endpoint_id or "")
+    for endpoint in endpoints:
+        if isinstance(endpoint, dict) and str(endpoint.get("id") or "") == reference:
+            return endpoint
+    return None
+
+
+def _model_endpoint_response(saved_endpoints, endpoint_id, status):
+    """Return one saved endpoint, sanitized, as the response to a write."""
+    saved = _find_model_endpoint(saved_endpoints, endpoint_id)
+    sanitized = sanitize_model_endpoints_for_frontend([saved]) if saved else []
+    return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
+
+
+def _persist_global_model_endpoints(normalized, existing):
+    """Save the global endpoint list, moving Key Vault secrets to match.
+
+    Secrets need three passes because every endpoint can carry them: endpoints being
+    saved write theirs, endpoints whose auth changed have the superseded secret cleaned
+    up, and endpoints that are gone have theirs deleted. Without the last pass a delete
+    would leave an orphaned secret in the vault forever.
+
+    This mirrors what the classic admin form does on submit, so an endpoint saved from
+    either interface ends up stored identically.
+    """
+    existing_by_id = {
+        endpoint.get("id"): endpoint
+        for endpoint in existing
+        if isinstance(endpoint, dict) and endpoint.get("id")
+    }
+
+    saved_endpoints = [
+        keyvault_model_endpoint_save_helper(
+            endpoint,
+            endpoint.get("id"),
+            scope="global",
+            existing_endpoint=existing_by_id.get(endpoint.get("id")),
+        )
+        for endpoint in normalized
+    ]
+
+    for endpoint in saved_endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        if not endpoint_id:
+            continue
+        keyvault_model_endpoint_cleanup_helper(
+            existing_by_id.get(endpoint_id),
+            endpoint,
+            endpoint_id,
+            scope="global",
+        )
+
+    saved_endpoint_ids = {
+        endpoint.get("id")
+        for endpoint in saved_endpoints
+        if isinstance(endpoint, dict) and endpoint.get("id")
+    }
+    for endpoint in existing:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        if endpoint_id and endpoint_id not in saved_endpoint_ids:
+            keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
+
+    settings = get_settings()
+    updates = {"model_endpoints": saved_endpoints}
+    multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
+
+    # Both stored selections name an endpoint and a model by id, so deleting or disabling
+    # either leaves them pointing at nothing. A dangling default makes chat fall back
+    # quietly; a dangling metadata extraction selection makes document ingestion raise,
+    # and its caller only logs that. Neither is acceptable, so both are re-resolved against
+    # what was actually saved.
+    resolved_default, _ = resolve_default_model_selection(
+        settings.get("default_model_selection"),
+        saved_endpoints,
+        multi_endpoint_enabled=multi_endpoint_enabled,
+    )
+    if resolved_default != settings.get("default_model_selection"):
+        updates["default_model_selection"] = resolved_default
+
+    resolved_metadata, _ = resolve_metadata_extraction_model_selection(
+        settings.get("metadata_extraction_model_selection"),
+        saved_endpoints,
+        multi_endpoint_enabled=multi_endpoint_enabled,
+    )
+    if resolved_metadata != settings.get("metadata_extraction_model_selection"):
+        updates["metadata_extraction_model_selection"] = resolved_metadata
+
+    # ``update_settings`` swallows its own exceptions and answers False. The Key Vault
+    # passes above have already run and cannot be undone, so reporting success on a failed
+    # write would leave an endpoint referencing a secret that no longer exists.
+    if not update_settings(updates):
+        raise RuntimeError("The settings document could not be updated.")
+
+    return saved_endpoints
+
+
+def _seed_connections_on_first_enable(updates, current_settings):
+    """Carry the classic chat endpoint into the connection list when connections go on.
+
+    Enabling connections is one-way. A deployment that already had a working classic
+    endpoint, and enables connections without carrying it over, is left with an empty model
+    catalog and no way to switch back -- so chat stops working outright.
+
+    The classic form has always migrated on this transition. Mirroring it here, through the
+    same shared builder, is what stops the V2 surface from being the one path that strands
+    a deployment.
+    """
+    if not updates.get("enable_multi_model_endpoints"):
+        return
+    if current_settings.get("enable_multi_model_endpoints", False):
+        return
+    if _load_global_model_endpoints(current_settings):
+        return
+
+    migrated = build_migrated_model_endpoints_from_legacy(current_settings)
+    if not migrated:
+        return
+
+    normalized, _ = normalize_model_endpoints(migrated)
+    updates["model_endpoints"] = [
+        keyvault_model_endpoint_save_helper(
+            endpoint, endpoint.get("id"), scope="global", existing_endpoint=None
+        )
+        for endpoint in normalized
+    ]
+    log_event(
+        f"[V2_ADMIN_ENDPOINTS] Migrated the classic chat endpoint into "
+        f"{len(updates['model_endpoints'])} connection(s) on first enable",
+        level=logging.INFO,
+    )
+
+
 def register_route_backend_v2_admin(bp):
     def _build_model_catalog(settings):
         """Return the models an administrator can pick, with resolved capabilities.
@@ -766,6 +924,11 @@ def register_route_backend_v2_admin(bp):
         stored under the name of its control -- the Web Search client secret lives inside
         ``web_search_agent``, and redacting the field key would leave the real value in
         place under its actual path.
+
+        Model endpoint credentials are reached by none of the above, because they sit
+        inside a list rather than at a fixed key. ``sanitize_model_endpoints_for_frontend``
+        strips those, and it runs here rather than at the call site so the PATCH echo is
+        covered by the same guarantee as the GET.
         """
         redacted = redact_admin_settings_secrets_for_api(settings)
         for path in get_secret_storage_paths():
@@ -774,6 +937,12 @@ def register_route_backend_v2_admin(bp):
                     write_nested_setting(redacted, path, SECRET_REDACTED_VALUE)
             elif redacted.get(path):
                 redacted[path] = SECRET_REDACTED_VALUE
+        # Only when it is present: the PATCH echo carries just the submitted keys, and
+        # adding one the caller never sent would write it into the page's stored copy.
+        if "model_endpoints" in redacted:
+            redacted["model_endpoints"] = sanitize_model_endpoints_for_frontend(
+                redacted.get("model_endpoints")
+            )
         return redacted
 
     @bp.route("/api/v2/admin/settings", methods=["GET"])
@@ -800,9 +969,16 @@ def register_route_backend_v2_admin(bp):
         PATCH below resolves anything that reaches it against the stored document, so an
         untouched secret survives a save either way.
 
+        Model endpoint credentials sit inside the ``model_endpoints`` list rather than at
+        a fixed key, so no key-based list reaches them. They are stripped separately by
+        ``sanitize_model_endpoints_for_frontend``, which is what the server-rendered page
+        passes to its template.
+
         ``field_schema`` describes the concrete controls each section owns. Sections with
         no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
-        not been described yet keep working.
+        not been described yet keep working. ``suppressed_capabilities`` names the keys
+        that scan must skip because they are derived or are staged rollout flags with no
+        administrator control.
         """
         try:
             settings = get_settings()
@@ -820,6 +996,7 @@ def register_route_backend_v2_admin(bp):
                             **_build_endpoint_readouts(settings),
                         },
                         "model_catalog": _build_model_catalog(settings),
+                        "suppressed_capabilities": get_suppressed_capability_keys(),
                         "version": VERSION,
                     }
                 ),
@@ -904,6 +1081,10 @@ def register_route_backend_v2_admin(bp):
                 normalized[key] = resolve_admin_settings_secret_value(
                     key, normalized[key], current_settings
                 )
+
+            # After the secret pass, so the derived endpoints this adds -- whose own
+            # secrets are already stored through Key Vault -- are not run through it.
+            _seed_connections_on_first_enable(normalized, current_settings)
 
             update_settings(normalized)
             log_event(
@@ -1118,6 +1299,196 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to store the uploaded image"}), 500
+
+    # ---------------------------------------------------------------------
+    # Global model endpoints
+    # ---------------------------------------------------------------------
+    #
+    # Personal and group scopes have had per-endpoint REST routes for a while; global
+    # scope never did. It was written through a hidden ``model_endpoints_json`` field on
+    # the classic admin form, which means adding or editing an endpoint there stores
+    # nothing until the whole settings page is submitted. These routes give global scope
+    # the same per-resource handling the other two scopes already have, so a save is a
+    # save.
+    #
+    # Secrets never travel outward: responses go through
+    # ``sanitize_model_endpoints_for_frontend``, which strips ``auth.api_key`` and
+    # ``auth.client_secret`` and leaves ``has_api_key`` / ``has_client_secret`` behind. An
+    # omitted secret on the way back in therefore means "keep what is stored" rather than
+    # "clear it", which is what ``merge_model_endpoint_payload`` implements.
+
+    @bp.route("/api/v2/admin/model-endpoints", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_list_model_endpoints():
+        """Return every global model endpoint, with secrets stripped."""
+        try:
+            endpoints = _load_global_model_endpoints()
+            return (
+                jsonify(
+                    {
+                        "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
+                        "multi_endpoint_enabled": bool(
+                            get_settings().get("enable_multi_model_endpoints", False)
+                        ),
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to list model endpoints: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load model endpoints"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_create_model_endpoint():
+        """Add one global model endpoint."""
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not payload:
+            return jsonify({"error": "Model endpoint payload must be an object."}), 400
+
+        try:
+            existing = _load_global_model_endpoints()
+            candidate = dict(payload)
+
+            endpoint_id = str(candidate.get("id") or "").strip()
+            if not endpoint_id:
+                endpoint_id = str(uuid.uuid4())
+            elif _find_model_endpoint(existing, endpoint_id):
+                return (
+                    jsonify({"error": "A model endpoint with that id already exists."}),
+                    409,
+                )
+            candidate["id"] = endpoint_id
+
+            normalized, _ = normalize_model_endpoints(list(existing) + [candidate])
+            saved = _persist_global_model_endpoints(normalized, existing)
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Created model endpoint {endpoint_id}",
+                level=logging.INFO,
+            )
+            return _model_endpoint_response(saved, endpoint_id, 201)
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to create model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to create the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints/<endpoint_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_model_endpoint(endpoint_id):
+        """Return one global model endpoint, with its secrets stripped."""
+        try:
+            endpoint = _find_model_endpoint(_load_global_model_endpoints(), endpoint_id)
+            if not endpoint:
+                return jsonify({"error": "Model endpoint not found."}), 404
+
+            sanitized = sanitize_model_endpoints_for_frontend([endpoint])
+            return jsonify({"endpoint": sanitized[0] if sanitized else {}}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to read model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints/<endpoint_id>", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_update_model_endpoint(endpoint_id):
+        """Apply a partial update to one global model endpoint.
+
+        The stored endpoint is merged with the supplied keys server-side. A client only
+        ever holds a copy with the secrets stripped out, so sending that copy back must
+        not blank them -- and because the merge skips empty values, it does not.
+        """
+        updates = request.get_json(silent=True)
+        if not isinstance(updates, dict):
+            return jsonify({"error": "Model endpoint payload must be an object."}), 400
+
+        try:
+            existing = _load_global_model_endpoints()
+            current = _find_model_endpoint(existing, endpoint_id)
+            if not current:
+                return jsonify({"error": "Model endpoint not found."}), 404
+
+            merged = merge_model_endpoint_payload(
+                current, {**updates, "id": current.get("id")}
+            )
+            replaced = [
+                merged
+                if isinstance(endpoint, dict)
+                and str(endpoint.get("id") or "") == str(endpoint_id)
+                else endpoint
+                for endpoint in existing
+            ]
+
+            normalized, _ = normalize_model_endpoints(replaced)
+            saved = _persist_global_model_endpoints(normalized, existing)
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Updated model endpoint {endpoint_id}",
+                level=logging.INFO,
+            )
+            return _model_endpoint_response(saved, current.get("id"), 200)
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to update model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to update the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints/<endpoint_id>", methods=["DELETE"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_delete_model_endpoint(endpoint_id):
+        """Remove one global model endpoint and the secrets it owned.
+
+        The stored list is read server-side rather than taken from the request, so a
+        stale copy in one browser tab cannot drop endpoints it never knew about.
+        """
+        try:
+            existing = _load_global_model_endpoints()
+            if not _find_model_endpoint(existing, endpoint_id):
+                return jsonify({"error": "Model endpoint not found."}), 404
+
+            remaining = [
+                endpoint
+                for endpoint in existing
+                if not (
+                    isinstance(endpoint, dict)
+                    and str(endpoint.get("id") or "") == str(endpoint_id)
+                )
+            ]
+
+            normalized, _ = normalize_model_endpoints(remaining)
+            _persist_global_model_endpoints(normalized, existing)
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Deleted model endpoint {endpoint_id}",
+                level=logging.INFO,
+            )
+            return jsonify({"success": True}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to delete model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to delete the model endpoint"}), 500
 
     @bp.route("/api/v2/admin/groups", methods=["GET"])
     @swagger_route(security=get_auth_security())

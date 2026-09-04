@@ -59,7 +59,7 @@ Beyond a field's type, four optional descriptors shape how a section reads:
     input would otherwise save to a top-level key nothing reads. See
     ``_apply_nested_paths``.
 
-The Appearance, Workflow, Workspaces, Security and Knowledge groups are
+The Appearance, Chat, Knowledge, Workflow, Workspaces and Security groups are
 described in full. Sections with no entry here fall back to the V2 surface's
 ``enable_*`` scan, so undescribed groups keep working exactly as they did. A
 handful of individual fields outside those groups are also declared: that scan
@@ -69,11 +69,21 @@ setting appears in V2 at all. Workflow had the opposite problem -- none of its
 settings are named ``enable_*``, so the scan had nothing to guess with and the
 group rendered empty.
 
+``SUPPRESSED_CAPABILITY_KEYS`` covers the remaining case -- a boolean the scan
+would draw but which is not an editable setting at all.
+
 Secrets are declared with the ``secret`` type. The browser is sent a placeholder
 rather than the stored value, so the module reports which keys are secrets --
 through ``get_secret_field_keys`` and ``get_secret_storage_paths`` -- and the
-normalizer drops a submitted placeholder rather than writing it, which is what
-stops an unrelated save from overwriting every stored credential.
+route swaps the placeholder back for what is stored, which is a persistence
+concern belonging with the code holding the current settings document, and is
+where the server-rendered form does it too.
+
+The one exception is a secret declared with ``paths``. That value is folded into
+its containing object by ``_apply_nested_paths`` before the route sees it, so it
+never arrives as a settings key the route's key-based resolve can match. For
+those, and only those, the normalizer drops a submitted placeholder rather than
+letting it through to overwrite a stored credential.
 """
 
 import copy
@@ -81,6 +91,10 @@ import json
 import re
 from urllib.parse import urlparse
 
+from admin_settings_secret_utils import (
+    ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
+    resolve_admin_settings_secret_value,
+)
 from functions_ai_notice import (
     AI_NOTICE_MAX_MESSAGE_LENGTH,
     normalize_ai_notice_frequency,
@@ -89,6 +103,12 @@ from functions_ai_notice import (
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
     normalize_content_safety_violation_message,
+)
+from functions_model_endpoint_identity_header import (
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+    DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+    normalize_model_endpoint_identity_header_name,
+    normalize_model_endpoint_identity_header_value_type,
 )
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
@@ -161,6 +181,20 @@ FIELD_ROLES = ("capability",)
 #   block  disables the dependent controls until the prerequisite is on
 #   warn   leaves them usable, for prerequisites the backend accepts as intent
 REQUIRES_MODES = ("block", "warn")
+
+# Keys the settings PATCH must refuse outright.
+#
+# ``model_endpoints`` holds each endpoint's API key and client secret inside the
+# list, so the admin surface is served a sanitized copy with those stripped.
+# Writing that copy back would erase every credential it removed. The V2 surface
+# has no editor for it, so refusing is safe and keeps a malformed or hostile
+# payload from destroying the endpoint configuration.
+NON_PATCHABLE_KEYS = {
+    "model_endpoints": (
+        "Model endpoints hold credentials that are stripped before they reach "
+        "the browser, so they cannot be saved from here."
+    ),
+}
 
 # ``input_type`` values a text field may ask the browser for. Anything else would
 # reach the DOM unvalidated, so the schema test rejects it.
@@ -692,6 +726,24 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_external_links", "equals": True},
         },
     ],
+    # ------------------------------------------------------------------
+    # Chat group. Sections and order follow admin_settings_nav.py; wording
+    # follows the V1 panes (chat-experience, feedback-alerts, citation) so both
+    # interfaces describe the same setting the same way.
+    # ------------------------------------------------------------------
+    "processing-thoughts-section": [
+        {
+            "key": "enable_thoughts",
+            "type": "switch",
+            "label": "Enable Processing Thoughts",
+            "help": (
+                "Shows the steps taken while answering -- document searches, web "
+                "searches, agent calls -- as they happen, and stores them so a "
+                "message can be reviewed afterwards."
+            ),
+            "default": True,
+        },
+    ],
     # The sections below are not part of the Appearance group. They are described
     # here because the V2 surface's `enable_*` fallback was filing their toggles
     # under Appearance: it matches a key to a section by shared leading word
@@ -737,8 +789,15 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": False,
             # V1 hides this control entirely while the Latest Features destination
-            # is off, because the cards it affects are not reachable then.
-            "depends_on": {"key": "enable_support_latest_features", "equals": True},
+            # is off, because the cards it affects are not reachable then. The
+            # Support Menu condition is repeated because visibility is evaluated
+            # per field rather than recursively: `enable_support_latest_features`
+            # defaults to True, so gating on it alone would leave this on screen
+            # while the whole Support menu is off.
+            "depends_on": [
+                {"key": "enable_support_menu", "equals": True},
+                {"key": "enable_support_latest_features", "equals": True},
+            ],
         },
     ],
     # Declared so the dependency above resolves to a control an administrator can
@@ -775,6 +834,73 @@ ADMIN_SETTINGS_FIELDS = {
                 "storage, knowledge bases and personal AI interactions."
             ),
             "default": True,
+        },
+    ],
+    "multi-endpoint-configuration": [
+        {
+            "key": "enable_multi_model_endpoints",
+            "type": "switch",
+            "label": "Use connections for chat",
+            "help": (
+                "Routes chat through the connections listed below, so several Azure "
+                "OpenAI or Foundry resources can serve models at once. When off, chat "
+                "uses the single classic endpoint instead and these connections are "
+                "not consulted. Switching this on cannot be undone, and carries the "
+                "classic endpoint over as the first connection."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "component": "model-connections-manager",
+            "label": "Connections",
+            "help": (
+                "Each connection is one Azure OpenAI or Foundry resource: where it is, "
+                "how SimpleChat authenticates to it, and which of its deployed models "
+                "may be used."
+            ),
+        },
+        {
+            "key": "model_endpoint_identity_header_enabled",
+            "type": "switch",
+            "label": "Send an identity header with model requests",
+            "help": (
+                "Adds a header identifying the signed-in user to every model request. "
+                "Gateways in front of a model endpoint use it to attribute usage or "
+                "apply per-user quotas, which they otherwise cannot do because the "
+                "request arrives under SimpleChat's own credentials."
+            ),
+            "default": False,
+        },
+        {
+            "key": "model_endpoint_identity_header_name",
+            "type": "text",
+            "label": "Header name",
+            "help": (
+                "Rejected if it collides with a header the model call already sets, "
+                "such as authorization or api-key."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
+            "max_length": 128,
+            "fallback_when_empty": True,
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
+        },
+        {
+            "key": "model_endpoint_identity_header_value_type",
+            "type": "select",
+            "label": "Identity sent in the header",
+            "help": (
+                "Object id is stable when a user is renamed; UPN is readable in gateway "
+                "logs. The tenant variants qualify the value for a multi-tenant gateway."
+            ),
+            "default": DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
+            "options": [
+                {"value": "user_oid_tenant_id", "label": "Object id and tenant id"},
+                {"value": "user_oid", "label": "Object id"},
+                {"value": "user_upn_tenant_id", "label": "User principal name and tenant id"},
+                {"value": "user_upn", "label": "User principal name"},
+            ],
+            "depends_on": {"key": "model_endpoint_identity_header_enabled", "equals": True},
         },
     ],
     # The first Knowledge section described, and the reference for the rest.
@@ -828,6 +954,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "azure_ai_search_key",
             "type": "secret",
+            "default": "",
             "label": "Search Key",
             "help": "An admin key for the search service.",
             "required": True,
@@ -852,6 +979,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "azure_apim_ai_search_subscription_key",
             "type": "secret",
+            "default": "",
             "label": "API Management Subscription Key",
             "required": True,
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
@@ -1074,6 +1202,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "web_search_foundry_client_secret",
             "type": "secret",
+            "default": "",
             "label": "Client Secret",
             "help": "A secret value or a Key Vault reference.",
             "required": True,
@@ -1646,6 +1775,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "azure_document_intelligence_key",
             "type": "secret",
+            "default": "",
             "label": "Document Intelligence Key",
             "required": True,
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
@@ -1668,6 +1798,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "azure_apim_document_intelligence_subscription_key",
             "type": "secret",
+            "default": "",
             "label": "API Management Subscription Key",
             "required": True,
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
@@ -1812,6 +1943,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "azure_content_understanding_key",
             "type": "secret",
+            "default": "",
             "label": "Content Understanding Key",
             "group": {"id": "connection", "label": "Connection", "variant": "connection"},
             "depends_on": {
@@ -2248,6 +2380,7 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "speech_service_key",
             "type": "secret",
+            "default": "",
             "label": "API Key",
             "required": True,
             "group": {"id": "speech", "label": "Speech resource", "variant": "connection"},
@@ -2530,13 +2663,19 @@ ADMIN_SETTINGS_FIELDS = {
             "group": {"id": "advanced", "label": "Advanced", "variant": "advanced"},
         },
     ],
-    # Relocated from Knowledge > Audio & Video, where it was the first control in
-    # the AI Voice Conversations card, above the Azure Speech Service
-    # configuration. It plays a bundled local sound and, as its own help text
-    # says, needs no Speech resource at all. Notifications are what it belongs
-    # with. V1 keeps it where it is; declaring the key here removes it from the
-    # V2 fallback scan, so it cannot render in both places.
     "desktop-notifications-section": [
+        {
+            "key": "enable_desktop_notifications",
+            "type": "switch",
+            "label": "Enable Desktop Conversation Notifications",
+            "help": (
+                "Lets users receive an operating system notification when a "
+                "response finishes in a hidden or unfocused tab. Requires browser "
+                "permission, stops when the tab is closed, and users can turn it "
+                "off in their profile."
+            ),
+            "default": False,
+        },
         {
             "key": "enable_chat_completion_audio_cues",
             "type": "switch",
@@ -2547,6 +2686,153 @@ ADMIN_SETTINGS_FIELDS = {
                 "Azure Speech resource is involved."
             ),
             "default": False,
+        },
+    ],
+    # Standard citations has no settings -- V1's card is explanatory only -- so it
+    # is deliberately absent. A section with nothing to render is skipped.
+    "enhanced-citations-section": [
+        {
+            "key": "enable_enhanced_citations",
+            "type": "switch",
+            "label": "Enable Enhanced Citations",
+            "help": (
+                "Stores original files in an Azure Storage account so citations can "
+                "link to and preview the source document rather than only quoting "
+                "extracted text."
+            ),
+            "default": False,
+        },
+        {
+            "type": "component",
+            "label": "Storage Connection",
+            "component": "enhanced-citations-storage-test",
+            "help": (
+                "Startup does not check storage, so an outage cannot block boot. "
+                "Test here to confirm the account is reachable and the expected "
+                "containers exist."
+            ),
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
+        },
+        {
+            "key": "office_docs_authentication_type",
+            "type": "select",
+            "label": "Storage Account Authentication Type",
+            "help": "How SimpleChat authenticates to the storage account.",
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Connection String"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
+        },
+        {
+            "key": "office_docs_storage_account_url",
+            "type": "secret",
+            "label": "Storage Account Connection String",
+            "help": "Used when authenticating with a connection string.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_enhanced_citations", "equals": True},
+                {"key": "office_docs_authentication_type", "equals": "key"},
+            ],
+        },
+        {
+            "key": "office_docs_storage_account_blob_endpoint",
+            "type": "secret",
+            "label": "Storage Account Blob Service Endpoint",
+            "help": "Used when authenticating with a managed identity.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_enhanced_citations", "equals": True},
+                {
+                    "key": "office_docs_authentication_type",
+                    "equals": "managed_identity",
+                },
+            ],
+        },
+        {
+            "key": "tabular_preview_max_blob_size_mb",
+            "type": "number",
+            "label": "Maximum File Size for Tabular Preview (MB)",
+            "help": (
+                "CSV and XLSX files above this size are not previewed. Raise it for "
+                "larger files when the host has memory to spare; lower it to protect "
+                "smaller instances."
+            ),
+            "default": 200,
+            "min": 1,
+            "max": 1024,
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
+        },
+        {
+            "key": "enable_tabular_durable_run_confirmation",
+            "type": "switch",
+            "label": "Confirm very large row-level runs before starting",
+            "help": (
+                "When a prompt names an explicitly large row count, the user is "
+                "asked to continue or narrow the scope before the run starts."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
+        },
+        {
+            "key": "tabular_durable_run_confirmation_threshold_rows",
+            "type": "number",
+            "label": "Confirmation Row Threshold",
+            "help": "Row count at or above which the confirmation is shown.",
+            "default": 500,
+            "min": 1,
+            "max": 1000000,
+            "depends_on": [
+                {"key": "enable_enhanced_citations", "equals": True},
+                {"key": "enable_tabular_durable_run_confirmation", "equals": True},
+            ],
+        },
+        {
+            "key": "tabular_durable_run_confirmation_threshold_batches",
+            "type": "number",
+            "label": "Confirmation Batch Threshold",
+            "help": "Batch count at or above which the confirmation is shown.",
+            "default": 75,
+            "min": 1,
+            "max": 100000,
+            "depends_on": [
+                {"key": "enable_enhanced_citations", "equals": True},
+                {"key": "enable_tabular_durable_run_confirmation", "equals": True},
+            ],
+        },
+        {
+            "key": "tabular_generated_output_chunk_model_mode",
+            "type": "select",
+            "label": "Chunk Processing Model",
+            "help": (
+                "Whether per-chunk work reuses the model the user selected or a "
+                "deployment set aside for it."
+            ),
+            "default": "current",
+            "options": [
+                {"value": "current", "label": "Use the user's selected model"},
+                {
+                    "value": "configured",
+                    "label": "Use a configured deployment for chunk work",
+                },
+            ],
+            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
+        },
+        {
+            "key": "tabular_generated_output_chunk_model_deployment",
+            "type": "text",
+            "label": "Configured Chunk Model Deployment",
+            "help": "Deployment name used when chunk work runs on its own model.",
+            "default": "",
+            "max_length": 120,
+            "depends_on": [
+                {"key": "enable_enhanced_citations", "equals": True},
+                {
+                    "key": "tabular_generated_output_chunk_model_mode",
+                    "equals": "configured",
+                },
+            ],
         },
     ],
     # ------------------------------------------------------------------
@@ -2872,17 +3158,149 @@ ADMIN_SETTINGS_FIELDS = {
     ],
     "chat-file-uploads-section": [
         {
+            "key": "enable_chat_file_uploads",
+            "type": "switch",
+            "label": "Enable Chat File Uploads",
+            "help": (
+                "Lets users attach files directly to a conversation instead of "
+                "adding them to a workspace first."
+            ),
+            "default": True,
+        },
+        {
             "key": "require_member_of_chat_file_upload_user",
             "type": "switch",
             "label": "Require ChatFileUploadUser App Role",
             "help": (
-                "Narrows attaching files to a chat message to holders of the "
-                "ChatFileUploadUser app role. Attachments already in a conversation "
-                "stay readable; this governs new uploads only."
+                "Restricts new uploads to users holding the ChatFileUploadUser "
+                "Enterprise App role. Files already attached stay visible."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_chat_file_uploads", "equals": True},
+        },
+    ],
+    "conversation-contents-drawer-section": [
+        {
+            "key": "enable_conversation_contents_drawer",
+            "type": "switch",
+            "label": "Enable Conversation Contents Drawer",
+            "help": (
+                "Adds a drawer listing a conversation's prompts so users can jump "
+                "back to an earlier turn. Users can turn it off for themselves in "
+                "their profile."
+            ),
+            "default": True,
+        },
+    ],
+    "workspace-scope-lock-section": [
+        {
+            "key": "enforce_workspace_scope_lock",
+            "type": "switch",
+            "label": "Enforce Workspace Scope Lock",
+            "help": (
+                "Keeps a conversation restricted to the workspaces that produced "
+                "its first search results. Turn this off to let users unlock the "
+                "scope and search elsewhere in the same conversation."
+            ),
+            "default": True,
+        },
+    ],
+    "conversation-history-section": [
+        {
+            "key": "conversation_history_limit",
+            "type": "number",
+            "label": "Conversation History Limit",
+            "help": (
+                "How many previous messages are carried into each new request. "
+                "Raising it preserves more context and costs more tokens per turn."
+            ),
+            "default": 10,
+            "min": 1,
+        },
+        {
+            "key": "enable_summarize_content_history_beyond_conversation_history_limit",
+            "type": "switch",
+            "label": "Summarize Messages Beyond the History Limit",
+            "help": (
+                "Replaces messages that fall outside the limit with a running "
+                "summary instead of dropping them, so older context survives a "
+                "long conversation."
             ),
             "default": False,
         },
+        {
+            "key": "enable_summarize_content_history_for_search",
+            "type": "switch",
+            "label": "Summarize Conversation History for Search",
+            "help": (
+                "Summarizes recent turns into the query used for hybrid document "
+                "search, so a follow-up question that relies on earlier context "
+                "still retrieves the right sources."
+            ),
+            "default": False,
+        },
+        {
+            "key": "number_of_historical_messages_to_summarize",
+            "type": "number",
+            "label": "Historical Messages to Summarize",
+            "help": (
+                "How many recent messages are summarized into the search query. "
+                "Twice this many are read to build the summary."
+            ),
+            "default": 10,
+            "min": 1,
+            "max": 100,
+            "depends_on": {
+                "key": "enable_summarize_content_history_for_search",
+                "equals": True,
+            },
+        },
     ],
+    "default-system-prompt-section": [
+        {
+            "key": "default_system_prompt",
+            "type": "textarea",
+            "label": "Default System Prompt",
+            "help": (
+                "Applied to conversations that do not set their own. Agents and "
+                "conversations with a custom prompt are unaffected."
+            ),
+            "default": "",
+            "rows": 5,
+        },
+    ],
+    "fact-memory-section": [
+        {
+            "key": "enable_fact_memory_plugin",
+            "type": "switch",
+            "label": "Enable Fact Memory",
+            "help": (
+                "Lets the assistant carry durable context between conversations. "
+                "Instruction memories apply to every prompt; fact memories are "
+                "recalled only when relevant. This is a chat capability and does "
+                "not require agents or actions. Users manage their own entries "
+                "under Profile > Fact Memory. Existing entries are preserved while "
+                "this is off, but stay inactive."
+            ),
+            "default": True,
+        },
+    ],
+    "user-feedback-section": [
+        {
+            "key": "enable_user_feedback",
+            "type": "switch",
+            "label": "Enable User Feedback (Thumbs Up/Down)",
+            "help": (
+                "Adds thumbs up and down controls to AI responses and routes the "
+                "ratings to the feedback review workflow."
+            ),
+            "default": True,
+        },
+    ],
+    # `chat-file-uploads-section` is declared in full in the Chat group above,
+    # including this role requirement gated on the capability itself. A second
+    # declaration here would override that one and silently drop
+    # `enable_chat_file_uploads`, because a later key wins in a dict literal.
     "control-center-overview-section": [
         {
             "key": "require_member_of_control_center_admin",
@@ -3071,10 +3489,10 @@ ADMIN_SETTINGS_FIELDS = {
             "results_key": "groups",
             "item_noun": "group",
             "item_noun_plural": "groups",
-            "depends_on": {
-                "key": "require_group_assignment_for_file_downloads",
-                "equals": True,
-            },
+            "depends_on": [
+                {"key": "allow_group_workspace_file_downloads", "equals": True},
+                {"key": "require_group_assignment_for_file_downloads", "equals": True},
+            ],
         },
         {
             "key": "allow_public_workspace_file_downloads",
@@ -3116,10 +3534,13 @@ ADMIN_SETTINGS_FIELDS = {
             "results_key": "workspaces",
             "item_noun": "public workspace",
             "item_noun_plural": "public workspaces",
-            "depends_on": {
-                "key": "require_public_workspace_assignment_for_file_downloads",
-                "equals": True,
-            },
+            "depends_on": [
+                {"key": "allow_public_workspace_file_downloads", "equals": True},
+                {
+                    "key": "require_public_workspace_assignment_for_file_downloads",
+                    "equals": True,
+                },
+            ],
         },
     ],
     "file-sharing-section": [
@@ -3166,6 +3587,9 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    # The Workflow group has exactly one section, and none of its settings are
+    # named `enable_*`, so the fallback scan found nothing at all and the group
+    # rendered empty in V2. Declaring the section is what makes it reachable.
     "workflow-settings-section": [
         {
             "key": "allow_user_workflows",
@@ -3225,10 +3649,13 @@ ADMIN_SETTINGS_FIELDS = {
             ),
             "default": [],
             "search_endpoint": "/api/v2/admin/groups",
-            "depends_on": {
-                "key": "require_group_assignment_for_group_workflows",
-                "equals": True,
-            },
+            "depends_on": [
+                {"key": "allow_group_workflows", "equals": True},
+                {
+                    "key": "require_group_assignment_for_group_workflows",
+                    "equals": True,
+                },
+            ],
         },
         {
             "key": "workflow_max_auto_invoke_attempts",
@@ -3552,6 +3979,7 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Connection",
             "label": "Content Safety Key",
             "help": "Either key from the Content Safety resource.",
+            "default": "",
             "depends_on": [
                 {"key": "enable_content_safety", "equals": True},
                 {"key": "enable_content_safety_apim", "equals": False},
@@ -3578,6 +4006,7 @@ ADMIN_SETTINGS_FIELDS = {
             "group": "Connection",
             "label": "APIM Subscription Key",
             "help": "The APIM subscription key authorised for that API.",
+            "default": "",
             "depends_on": [
                 {"key": "enable_content_safety", "equals": True},
                 {"key": "enable_content_safety_apim", "equals": True},
@@ -3784,6 +4213,10 @@ ADMIN_SETTINGS_FIELDS = {
             "depends_on": {"key": "enable_app_maintenance", "equals": True},
         },
     ],
+    # `workflow-settings-section` is declared in full below, and that declaration
+    # already carries this role requirement gated on `allow_user_workflows`. This
+    # copy was dead -- a later key wins in a dict literal -- so it is removed
+    # rather than left to become live if the two are ever reordered.
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -3794,6 +4227,16 @@ ADMIN_SETTINGS_FIELDS = {
                 "validation and manipulation of strings and text content."
             ),
             "default": True,
+        },
+        {
+            "key": "enable_default_embedding_model_plugin",
+            "type": "switch",
+            "label": "Enable Default Embedding Model Action",
+            "help": (
+                "Registers the configured embedding deployment as an action agents "
+                "can call to embed text directly."
+            ),
+            "default": False,
         },
     ],
 }
@@ -3846,6 +4289,36 @@ ADMIN_SECTION_STATUS = {
         "enabled_key": "enable_custom_rate_limit_message",
         "configured": [{"requires": ["rate_limit_message"]}],
     },
+}
+
+
+# Keys the V2 fallback scan must not draw a switch for.
+#
+# That scan renders every `enable_*` boolean it finds in the settings document.
+# Some of those booleans are not settings an administrator can change, so a
+# switch would appear to save and then silently revert, or save a value nothing
+# ever reads. Declaring them is not the answer either -- a declared field claims
+# there is something to edit. They are named here with the reason instead, and
+# the settings GET sends this list so the scan can skip them.
+SUPPRESSED_CAPABILITY_KEYS = {
+    "enable_tabular_processing_plugin": (
+        "Derived, not stored: is_tabular_processing_enabled() returns "
+        "enable_enhanced_citations, and get_settings() overwrites the stored value "
+        "on every read. A switch here would revert on the next page load."
+    ),
+    "enable_enhanced_citations_mount": (
+        "No control in either interface. The saved value is forced off unless "
+        "Enhanced Citations is enabled, and the mount path itself is not "
+        "administrator-editable."
+    ),
+    "enable_mixed_source_chat_search": (
+        "Staged rollout flag for mixed-source chat and search, with no control in "
+        "the server-rendered admin form."
+    ),
+    "enable_mixed_source_conversation_continuity": (
+        "Staged rollout flag gated behind enable_mixed_source_chat_search, with no "
+        "control in the server-rendered admin form."
+    ),
 }
 
 
@@ -3943,6 +4416,11 @@ def get_declared_setting_keys():
     return {field["key"] for _section_id, field in iter_fields() if field.get("key")}
 
 
+def get_suppressed_capability_keys():
+    """Return the keys the V2 fallback scan must not render a switch for."""
+    return sorted(SUPPRESSED_CAPABILITY_KEYS)
+
+
 def get_secret_field_keys():
     """Return the settings keys declared as secrets.
 
@@ -3962,7 +4440,10 @@ def iter_field_dependencies(field):
 
     A field may declare one condition or a list of them; a list means every
     condition has to hold. Both shapes are read through here so callers never have
-    to care which was written.
+    to care which was written. A list is needed wherever a control is gated on a
+    sibling whose own default would otherwise reveal it -- the Enhanced Citations
+    storage credentials are chosen by authentication type, but must stay hidden
+    entirely while Enhanced Citations itself is off.
     """
     dependency = field.get("depends_on")
     if not dependency:
@@ -4657,6 +5138,47 @@ def _apply_nested_paths(normalized, current_settings, warnings=None):
     normalized.update(containers)
     return normalized
 
+def _validate_identity_header_name(value):
+    """Return ``(normalized, error)`` for the model endpoint identity header name.
+
+    ``normalize_model_endpoint_identity_header_name`` answers "" for a name that
+    collides with a header the model call already sets, such as ``authorization`` or
+    ``api-key``. Storing that silently would turn the header off without saying so, so
+    an explicit save reports the refusal instead.
+    """
+    candidate = str(value or "").strip()
+    if not candidate:
+        return DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME, None
+
+    normalized = normalize_model_endpoint_identity_header_name(candidate)
+    if not normalized:
+        return None, (
+            "That header name is reserved or malformed. Use a token such as "
+            f"{DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME}."
+        )
+    return normalized, None
+
+
+def _validate_multi_model_endpoint_enablement(value, current_settings):
+    """Return ``(normalized, error)`` for the connections capability toggle.
+
+    ``update_settings`` runs this key through ``coerce_multi_model_endpoint_enablement``,
+    which is ``existing or requested`` -- so once connections are on they cannot be turned
+    off. The classic form reflects that by rendering the checkbox only while the flag is
+    off. The V2 surface has no such affordance, so without this an administrator could
+    switch it off, be told the save succeeded, and be shown the toggle in its new position,
+    while chat carried on routing through connections.
+    """
+    requested = _coerce_bool(value)
+    already_on = _coerce_bool(current_settings.get("enable_multi_model_endpoints", False))
+
+    if already_on and not requested:
+        return None, (
+            "Connections cannot be switched off once enabled, because existing chats, "
+            "agents and workflows may already reference a model published from one."
+        )
+    return requested, None
+
 
 def _check_acknowledgements(updates, current_settings, errors):
     """Enforce the acknowledgements a field requires before it may be enabled."""
@@ -4701,6 +5223,10 @@ def normalize_admin_settings_updates(updates, current_settings=None):
         if key in acknowledgement_keys:
             continue
 
+        if key in NON_PATCHABLE_KEYS:
+            errors[key] = NON_PATCHABLE_KEYS[key]
+            continue
+
         field = get_field_definition(key)
         if field is None:
             normalized[key] = value
@@ -4712,6 +5238,24 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 errors[key] = redirect_error
             else:
                 normalized[key] = redirect_value
+            continue
+
+        if key == "model_endpoint_identity_header_name":
+            header_value, header_error = _validate_identity_header_name(value)
+            if header_error:
+                errors[key] = header_error
+            else:
+                normalized[key] = header_value
+            continue
+
+        if key == "enable_multi_model_endpoints":
+            enablement, enablement_error = _validate_multi_model_endpoint_enablement(
+                value, current
+            )
+            if enablement_error:
+                errors[key] = enablement_error
+            else:
+                normalized[key] = enablement
             continue
 
         if key == "front_door_url":
