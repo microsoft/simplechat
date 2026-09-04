@@ -158,12 +158,38 @@ export interface OrchestrationValidation {
 }
 
 /**
+ * A document the plan will act on, as the server described it.
+ *
+ * `build_plan_inputs` derives this from the *validated* steps rather than from what the planner
+ * proposed, so it reflects what will actually run after unauthorized documents were dropped.
+ *
+ * `selected_by_user` is the distinction worth showing: a document the user picked in the
+ * composer and one the planner chose from a relevance probe are both "documents this plan
+ * reads", but only the second is a decision the user is being asked to check.
+ */
+export interface OrchestrationPlanDocument {
+    document_id: string;
+    /** Falls back to the id server-side when no name could be resolved. */
+    display_name: string;
+    selected_by_user: boolean;
+}
+
+/** What the plan will act on, for the approval card. */
+export interface OrchestrationPlanInputs {
+    documents: OrchestrationPlanDocument[];
+    web: boolean;
+    agent?: Json;
+    model?: Json;
+    prompt?: Json;
+}
+
+/**
  * A validated, runnable plan.
  *
- * `inputs` and `outputs` are carried opaquely: the prompt's contract lists them, but the schema
- * module (`normalize_plan`) does not populate them, so their shape is owned by the planner /
- * executor work being built in parallel. They are typed loosely rather than guessed at, so this
- * client neither drops them nor claims a structure the server has not committed to.
+ * `outputs` is carried opaquely: its shape is owned by the executor work being built in
+ * parallel, so it is typed loosely rather than guessed at. `inputs` is not -- `build_plan_inputs`
+ * commits to a shape, and reading it is what lets the card name a document rather than resolve
+ * the name a second time from the browser.
  */
 export interface OrchestrationPlan {
     plan_id: string;
@@ -183,7 +209,7 @@ export interface OrchestrationPlan {
     planner_contract_version: number;
     intent: OrchestrationIntent;
     assumptions: string[];
-    inputs?: Json;
+    inputs?: OrchestrationPlanInputs;
     steps: OrchestrationStep[];
     outputs?: Json[];
     approval: OrchestrationApproval;

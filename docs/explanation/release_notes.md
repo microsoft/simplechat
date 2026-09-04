@@ -4,6 +4,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.090)**
 
+#### New Features
+
+*   **Orchestration Uses The Documents And Tags You Picked**
+    *   The context picker's chips reached a plan only as document ids. A tag chip narrowed a normal chat message and did nothing at all in orchestration, so a plan searched more widely than you had asked it to — the one thing a chip is for.
+    *   **Tags now narrow a plan too, and stay in force for the whole run.** A later step can choose its own search query but cannot widen the shelf you narrowed to. Documents and tags picked together are combined additively, matching the chat path.
+    *   **A document you picked now reaches the planner by name.** It previously arrived as a bare identifier, so the planner could not write "compare the Q3 and Q4 contracts" without being told which document was which, and the plan you were asked to approve listed a row of uuids. The composer sends the names it already had on screen.
+    *   **The plan marks which documents were your choice.** A document you picked and one the planner found are both documents the plan will read, but only the second is a decision worth checking — so the two now look different on the card.
+    *   Names are display only. What a plan may read is still decided from the document ids, so a renamed document is exactly the document it was.
+    *   (Ref: `resolve_seeds`, `resolve_candidate_documents`, `RunContext.tags`, `contextDocumentDescriptors`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md), [Chat Context Picker](features/CHAT_CONTEXT_PICKER.md))
+
 #### Bug Fixes
 
 *   **Plans No Longer Propose Work The User Cannot Do**
@@ -11,6 +21,10 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
     *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
     *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
+
+*   **Documents Found During A Run Had No Workspace**
+    *   A document discovered by a search step lost the workspace it came from, because the citation dropped `group_id` and `public_workspace_id` even though the search index returns them. Since context chips are grouped by workspace, a found document had no home to be offered back into.
+    *   (Ref: `_citations_from_search_results`)
 
 ### **(v0.261.089)**
 
