@@ -2,6 +2,26 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.087)**
+
+#### New Features
+
+*   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
+    *   Image generation previously required a dedicated `gpt-image` or DALL-E deployment. A deployment like that is separately approved and is not offered in every subscription or region, so a tenant without one could not switch image generation on at all — the deployment list was filtered to image models, and nothing appeared to select.
+    *   A chat deployment such as `gpt-5.6` can now be selected instead. It has no image endpoint, so SimpleChat asks it through the Responses API's image generation tool rather than the images endpoint, and works out which of the two applies from the model behind the deployment you chose. There is no new setting to configure.
+    *   **Fetch deployments** now lists chat models alongside image models, and excludes embedding deployments, which can produce an image either way.
+    *   A chat deployment offers whole-image regeneration only. Changing part of an image needs the images API, and the editor says so before you paint a region rather than after.
+    *   Existing configurations are untouched. Every deployment that could be selected before still takes the route it always did, including one whose model name was never recorded and one reached through API Management.
+    *   Worth one test generation after selecting a chat deployment: the tool is served by an image model behind the scenes, so a subscription with no image capability at all may still be refused.
+    *   (Ref: `functions_image_api_route.py`, `functions_image_generation.request_generated_image_source`, `/api/models/image`, [Image generation through Responses-capable chat models](features/IMAGE_GENERATION_RESPONSES_MODELS.md))
+
+#### User Interface Enhancements
+
+*   **The Redundant API Management Switch Is Gone From AI Models**
+    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
+    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
+    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](../admin/ai-models.md))
+
 ### **(v0.261.086)**
 
 #### Bug Fixes

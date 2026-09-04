@@ -14,6 +14,13 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import AzureOpenAI, cognitive_services_scope, cosmos_messages_container
 from functions_appinsights import log_event
+from functions_image_api_route import (
+    IMAGE_API_ROUTE_RESPONSES,
+    build_image_generation_tool,
+    extract_responses_image_source,
+    resolve_image_api_route,
+    resolve_responses_image_api_version,
+)
 from functions_image_messages import build_image_message_documents, decode_image_content
 
 
@@ -135,15 +142,21 @@ def normalize_image_proposal(raw_proposal):
     return normalized_proposal
 
 
-def resolve_image_generation_client(settings):
-    """Create the Azure OpenAI image generation client and return it with the deployment name."""
+def resolve_image_generation_client(settings, api_version=None):
+    """Create the Azure OpenAI image generation client and return it with the deployment name.
+
+    ``api_version`` overrides the stored image API version. The Responses route passes one
+    because that setting defaults to a version predating the Responses API, and honouring
+    it there would fail every request against a deployment that is otherwise configured
+    correctly.
+    """
     if not image_generation_is_enabled(settings):
         raise PermissionError('Image generation is not enabled')
 
     if settings.get('enable_image_gen_apim', False):
         image_gen_model = settings.get('azure_apim_image_gen_deployment')
         image_gen_client = AzureOpenAI(
-            api_version=settings.get('azure_apim_image_gen_api_version'),
+            api_version=api_version or settings.get('azure_apim_image_gen_api_version'),
             azure_endpoint=settings.get('azure_apim_image_gen_endpoint'),
             api_key=settings.get('azure_apim_image_gen_subscription_key'),
         )
@@ -155,16 +168,18 @@ def resolve_image_generation_client(settings):
         selected_image_gen_model = image_gen_model_obj['selected'][0]
         image_gen_model = selected_image_gen_model.get('deploymentName')
 
+    resolved_api_version = api_version or settings.get('azure_openai_image_gen_api_version')
+
     if settings.get('azure_openai_image_gen_authentication_type') == 'managed_identity':
         token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
         image_gen_client = AzureOpenAI(
-            api_version=settings.get('azure_openai_image_gen_api_version'),
+            api_version=resolved_api_version,
             azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
             azure_ad_token_provider=token_provider,
         )
     else:
         image_gen_client = AzureOpenAI(
-            api_version=settings.get('azure_openai_image_gen_api_version'),
+            api_version=resolved_api_version,
             azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
             api_key=settings.get('azure_openai_image_gen_key'),
         )
@@ -173,6 +188,43 @@ def resolve_image_generation_client(settings):
         raise ValueError('No image generation deployment is selected')
 
     return image_gen_client, image_gen_model
+
+
+def request_generated_image_source(settings, prompt, size='', quality='', background=''):
+    """Ask the configured deployment for an image and return its URL or data URL.
+
+    The single place that decides between the images endpoint and the Responses image
+    tool. Every caller goes through it, including the admin connection test, because a
+    test that exercised a different route from the real call would certify a path nobody
+    uses.
+    """
+    if resolve_image_api_route(settings) != IMAGE_API_ROUTE_RESPONSES:
+        client, deployment = resolve_image_generation_client(settings)
+        arguments = {'model': deployment, 'prompt': prompt, 'n': 1}
+        if size:
+            arguments['size'] = size
+        return extract_generated_image_source(client.images.generate(**arguments))
+
+    client, deployment = resolve_image_generation_client(
+        settings,
+        api_version=resolve_responses_image_api_version(settings),
+    )
+    response = client.responses.create(
+        model=deployment,
+        input=prompt,
+        tools=[build_image_generation_tool(size=size, quality=quality, background=background)],
+        # Without this the model is free to answer with prose about the image it would
+        # have drawn, which reads as an empty result rather than as a refusal.
+        tool_choice={'type': 'image_generation'},
+    )
+
+    generated_image_url = extract_responses_image_source(response)
+    if not generated_image_url:
+        raise ValueError(
+            f'{deployment} answered without generating an image. Its deployment may not '
+            'support the image generation tool.'
+        )
+    return generated_image_url
 
 
 def extract_generated_image_source(image_response):
@@ -257,13 +309,7 @@ def generate_chat_image_message(
     if not normalized_prompt:
         raise ValueError('Image generation prompt is required')
 
-    image_gen_client, image_gen_model = resolve_image_generation_client(settings)
-    image_response = image_gen_client.images.generate(
-        prompt=normalized_prompt,
-        n=1,
-        model=image_gen_model,
-    )
-    generated_image_url = extract_generated_image_source(image_response)
+    generated_image_url = request_generated_image_source(settings, normalized_prompt)
     if not generated_image_url or generated_image_url == 'null':
         raise ValueError('Generated image URL is null or empty')
 
