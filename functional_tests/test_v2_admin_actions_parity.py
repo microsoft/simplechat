@@ -47,6 +47,22 @@ ACTIONS_SECTIONS = (
     "actions-config",
 )
 
+# Built-in action toggles that used to be declared under `actions-config` and now
+# live with the rest of them in `core-plugin-toggles`. `actions-config` therefore
+# declares no fields at all, which is deliberate -- what belongs there is the
+# global actions table, still authored in the classic interface.
+#
+# The pairing matters during a merge. `enable_text_plugin` moved in 0.261.061 and
+# `enable_default_embedding_model_plugin` was moved into `actions-config` by the
+# Chat work afterwards, so by the time the two branches met, dropping the section
+# would have silently orphaned a key that had arrived while nobody was looking.
+# The check below is the general form: a removed section must not take a setting
+# with it.
+RELOCATED_FROM_ACTIONS_CONFIG = (
+    "enable_text_plugin",
+    "enable_default_embedding_model_plugin",
+)
+
 FIELD_NAME_RE = re.compile(r'\sname="([^"]+)"')
 JINJA_RE = re.compile(r"\{\{|\{%")
 
@@ -121,6 +137,46 @@ def document_action_default_limits():
         "chat": literal_assignment(source, "CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS"),
         "workflow": literal_assignment(source, "WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS"),
     }
+
+
+def test_removing_a_section_did_not_orphan_its_settings():
+    """A section can be emptied, but not at the cost of losing a setting.
+
+    `actions-config` is declared by ``ADMIN_NAV`` and by the V1 pane, but the
+    schema deliberately gives it no fields. That is only safe while everything it
+    used to hold is declared somewhere else, and "everything it used to hold" is
+    not fixed: the Chat work moved a second toggle into it after this branch had
+    already emptied it.
+
+    So the invariant is checked rather than remembered. If a later merge restores
+    the section, the registry integrity test catches the resulting duplicate; if
+    one of these keys is dropped instead, this catches that.
+    """
+    print("\nTesting that the emptied section orphaned nothing...")
+
+    schema = fields_module.get_admin_settings_fields()
+    assert not schema.get("actions-config"), (
+        "actions-config declares fields again. If that is intended, the built-in "
+        "action toggles must not also be declared in core-plugin-toggles, or the "
+        "same key ends up with two controls."
+    )
+
+    declared = fields_module.get_declared_setting_keys()
+    orphaned = sorted(key for key in RELOCATED_FROM_ACTIONS_CONFIG if key not in declared)
+
+    assert not orphaned, (
+        "These settings were declared under actions-config before it was emptied "
+        "and are now declared nowhere, so they are invisible in V2:\n  "
+        + "\n  ".join(orphaned)
+    )
+
+    home = {
+        key: section_id
+        for section_id, field in fields_module.iter_fields()
+        if (key := field.get("key")) in RELOCATED_FROM_ACTIONS_CONFIG
+    }
+    print(f"  {len(RELOCATED_FROM_ACTIONS_CONFIG)} relocated key(s) accounted for: {home}")
+    return True
 
 
 def test_actions_sections_match_navigation():
@@ -382,7 +438,14 @@ def test_read_only_mirrors_name_their_owner_and_cannot_invent_a_value():
 
 
 def test_fact_memory_stays_editable_where_it_is_owned():
-    """Mirroring a key must not remove the control that actually sets it."""
+    """Mirroring a key must not remove the control that actually sets it.
+
+    Both this branch and the Chat work declared `fact-memory-section`, with the
+    same single writable field. Only one may survive a merge: two writable
+    declarations of one key give it two owners, and `get_field_definition` would
+    then return whichever came first rather than the one that governs saving.
+    The Chat group owns the section, so its declaration is the one kept.
+    """
     print("\nTesting that fact memory is still editable under Chat...")
 
     owner = fields_module.get_field_definition("enable_fact_memory_plugin")
@@ -400,6 +463,16 @@ def test_fact_memory_stays_editable_where_it_is_owned():
 
     assert 'name="enable_fact_memory_plugin"' in read_pane("chat-experience"), (
         "The V1 owner control moved; the schema still points at Chat."
+    )
+
+    writable = [
+        section_id
+        for section_id, field in fields_module.iter_fields()
+        if field.get("key") == "enable_fact_memory_plugin" and not field.get("readonly")
+    ]
+    assert writable == ["fact-memory-section"], (
+        "enable_fact_memory_plugin must have exactly one writable declaration, in "
+        f"the section Chat owns. Found: {writable}"
     )
 
     print("  Fact memory remains editable under Chat and mirrored under Actions.")
@@ -437,6 +510,7 @@ def test_tabular_processing_is_no_longer_an_editable_toggle():
 if __name__ == "__main__":
     tests = [
         test_actions_sections_match_navigation,
+        test_removing_a_section_did_not_orphan_its_settings,
         test_every_actions_pane_field_is_claimed_by_the_schema,
         test_document_action_fields_write_into_the_nested_container,
         test_document_action_bounds_match_the_application,
