@@ -2,8 +2,8 @@
 # test_v2_admin_knowledge_web_research.py
 """
 Functional test for the Knowledge group's Web & Research tab in the V2 admin UI.
-Version: 0.261.082
-Implemented in: 0.261.082
+Version: 0.261.084
+Implemented in: 0.261.084
 
 Web Search, URL Access and Deep Research are the first Knowledge sections
 described in ``admin_settings_fields.py``. Before that they existed in the V2
@@ -81,7 +81,7 @@ def test_the_tab_sections_match_navigation():
     """A field filed under an unknown section id would never render."""
     print("Testing Web & Research sections against ADMIN_NAV...")
 
-    assert_app_version_at_least("0.261.082")
+    assert_app_version_at_least("0.261.084")
 
     nav_sections = {
         section["id"]

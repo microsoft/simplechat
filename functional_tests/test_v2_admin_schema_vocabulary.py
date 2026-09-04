@@ -2,8 +2,8 @@
 # test_v2_admin_schema_vocabulary.py
 """
 Functional test for the Admin Settings schema vocabulary added for Knowledge.
-Version: 0.261.082
-Implemented in: 0.261.082
+Version: 0.261.084
+Implemented in: 0.261.084
 
 The Knowledge group needs control kinds the schema could not previously express:
 credentials, domain allow lists, workspace assignment lists, server-computed
@@ -55,7 +55,7 @@ def test_declared_types_are_renderable():
     """A type the renderer does not implement would draw nothing at all."""
     print("Testing declared field types...")
 
-    assert_app_version_at_least("0.261.082")
+    assert_app_version_at_least("0.261.084")
 
     for new_type in ("secret", "string_list", "id_list", "status"):
         assert new_type in fields_module.FIELD_TYPES, (

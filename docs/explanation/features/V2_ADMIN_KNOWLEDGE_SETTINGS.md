@@ -1,6 +1,6 @@
 # Knowledge Settings in the V2 Admin Surface
 
-**Implemented in version:** 0.261.082
+**Implemented in version:** 0.261.084
 
 ## Overview
 

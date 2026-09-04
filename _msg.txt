@@ -1,45 +1,30 @@
-Merge origin/paullizer-react-v2-ui (Agents & Actions) at 0.261.082
+Merge origin/paullizer-react-v2-ui (AI Models phases 2 and 3) at 0.261.084
 
-Takes #1424's deletion of `actions-config` rather than resurrecting it. Both its
-fields moved into `core-plugin-toggles`, and the union check now distinguishes a
-field that moved from one that vanished: a section deleted on the base is
-dropped, and its fields are only allowed to disappear if the base rehomed them.
-Both `enable_text_plugin` and `enable_default_embedding_model_plugin` are
-accounted for there.
+Renumbered from 082 because #1426 landed at 083 while this was resolving, so
+082 would have been a regression rather than a bump.
 
-Registry merged as the verified union: 67 sections, 307 fields, none lost and
-none with two writable declarations. `enable_fact_memory_plugin` is declared
-twice on purpose -- Chat owns the writable one, and #1424's plugin roster
-carries a `readonly` mirror -- so the duplicate check now tests for two
-*writable* declarations rather than two declarations.
+Git's line-based merge silently misfiled one field. `enable_office_embedded_image_analysis`
+is declared in `office-embedded-image-section` here and in `document-intelligence-section`
+on the base; the textual merge put a copy in `shared-conversation-file-approvals-section`,
+which is a Workspaces section neither side ever declared it in. Nothing about
+that is a conflict, so it merged clean and would have shipped a duplicate
+setting under an unrelated group.
 
-Three collisions in the shared registry needed merging rather than choosing:
+Found by diffing field-to-section ownership against both parents rather than
+trusting the merge: every key in the result must be declared where at least one
+parent declared it, must have exactly one writable owner, and none may vanish.
+That check is worth more on this file than the conflict markers are, and it is
+the second time it has caught something a clean merge introduced.
 
-  * `_apply_nested_paths` existed on both sides for two different descriptors.
-    Mine folded dotted `paths`, theirs folded segmented `settings_path`. One
-    function now does both, running whichever container normalizer applies.
-  * `_normalize_string_list` likewise. Theirs bounds the Key Vault reminder
-    roles with `max_item_length` and restores the default through
-    `fallback_when_empty`; mine validates the URL Access domain lists with
-    `entry_pattern` and `max_entries`. Both descriptor sets are declared in the
-    merged schema, so both are honoured.
-  * `LEGACY_FIELD_NAMES`, `LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT` and
-    `V2_ONLY_FIELDS` were each about to be declared twice, which would have let
-    the later one silently win. Merged into one declaration apiece.
+The stray copy is removed and the capability keeps its own section. The setting
+turns on a separate pass with its own model and its own cost, so filing it under
+Document Intelligence implied it was part of that engine's configuration rather
+than an independent choice made after it. Recorded in the placement test's
+relocation registry alongside the reason, so it reads as a decision.
 
-The TypeScript side had diverged further, into two parallel vocabularies for the
-same ideas. Rather than pick, the base's file is the spine and my capabilities
-are folded back in: dependencies now evaluate `any_of`, `all_of` and
-`not_equals` as well as the base's runtime `flag` conditions, and
-`readFieldValue` resolves both nested-path descriptors plus the unit `scale`
-that File Sync's per-run limit needs.
-
-`SettingsSection` stays as the section shell because the base's inline panel is
-a subset of it -- the status pill it added is what the shell already draws from
-its status rule. The one thing the shell lacked was the base's `collapsed`
-group, so grouping now carries it and a group declared closed starts closed.
-
-Also restores a guard the merge dropped from the schema test, which read
-`field["depends_on"]` on every field and raised for the ones without it.
+Also verified base-anchored, per the technique that caught a resurrection
+elsewhere in this queue: the merged section set is exactly the base's 58 plus
+the 12 this branch adds, `actions-config` stays deleted, and the base section
+count is re-derived rather than carried over from the previous sync.
 
 Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>

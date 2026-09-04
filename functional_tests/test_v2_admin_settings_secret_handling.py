@@ -2,8 +2,8 @@
 # test_v2_admin_settings_secret_handling.py
 """
 Functional test for credential handling on the V2 Admin Settings endpoint.
-Version: 0.261.082
-Implemented in: 0.261.082
+Version: 0.261.084
+Implemented in: 0.261.084
 
 The server-rendered admin form runs every settings document through
 ``redact_admin_settings_secrets_for_form`` before rendering, so a stored key
@@ -58,7 +58,7 @@ def test_get_does_not_return_the_raw_settings_document():
     """Returning get_settings() untouched hands every credential to the browser."""
     print("Testing that the settings GET redacts before responding...")
 
-    assert_app_version_at_least("0.261.082")
+    assert_app_version_at_least("0.261.084")
 
     source = read_route_source()
 

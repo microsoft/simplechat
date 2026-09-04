@@ -25,6 +25,90 @@ fields_module = import_app_module("admin_settings_fields")
 normalize = fields_module.normalize_admin_settings_updates
 
 
+def test_dependency_conditions_compare_by_declared_type():
+    """A string condition compared for truthiness would match every non-empty choice."""
+    print("Testing depends_on comparison semantics...")
+
+    assert_app_version_at_least("0.261.083")
+
+    satisfied = fields_module._dependency_is_satisfied
+
+    # Boolean dependencies keep working exactly as they did.
+    assert satisfied({"key": "flag", "equals": True}, {"flag": True}) is True
+    assert satisfied({"key": "flag", "equals": True}, {"flag": False}) is False
+    assert satisfied({"key": "flag", "equals": False}, {"flag": False}) is True
+    # Including the form-shaped truthiness a stored document may carry.
+    assert satisfied({"key": "flag", "equals": True}, {"flag": "on"}) is True
+
+    # An omitted ``equals`` still means True, which is the historical default.
+    assert satisfied({"key": "flag"}, {"flag": True}) is True
+
+    auth = {"key": "azure_openai_embedding_authentication_type", "equals": "key"}
+
+    # Exact equality only. "managed_identity" is truthy, so a boolean comparison here
+    # would show an API key field for a route that stores no key.
+    assert satisfied(auth, {"azure_openai_embedding_authentication_type": "key"}) is True
+    assert (
+        satisfied(auth, {"azure_openai_embedding_authentication_type": "managed_identity"})
+        is False
+    )
+
+    # A near miss must not match: no prefix, substring or case folding.
+    for near_miss in ("keys", "ke", "KEY", "Key", " key", "key "):
+        assert satisfied(auth, {"azure_openai_embedding_authentication_type": near_miss}) is False, (
+            f"{near_miss!r} matched a condition on 'key'"
+        )
+
+    # A missing or null value must not match a string condition by accident.
+    for absent in ({}, {"azure_openai_embedding_authentication_type": None}):
+        assert satisfied(auth, absent) is False, absent
+
+    print("  Boolean conditions unchanged; string conditions match on exact equality.")
+    return True
+
+
+def test_every_condition_must_hold_for_a_multi_gated_field():
+    """A field inside two nested blocks is only visible while both are open."""
+    print("Testing multi-condition visibility...")
+
+    # The Azure OpenAI embedding key sits inside the direct-connection card and the
+    # key-authentication card within it, so it declares both conditions. Judging only
+    # one would leave a direct-connection credential on screen under APIM.
+    field = fields_module.get_field_definition("azure_openai_embedding_key")
+    conditions = list(fields_module.iter_field_dependencies(field))
+    assert len(conditions) == 2, conditions
+
+    holds = fields_module.field_dependencies_are_satisfied
+
+    assert holds(field, {
+        "enable_embedding_apim": False,
+        "azure_openai_embedding_authentication_type": "key",
+    }) is True
+
+    # Either condition failing is enough to hide it.
+    assert holds(field, {
+        "enable_embedding_apim": True,
+        "azure_openai_embedding_authentication_type": "key",
+    }) is False
+    assert holds(field, {
+        "enable_embedding_apim": False,
+        "azure_openai_embedding_authentication_type": "managed_identity",
+    }) is False
+
+    # Image generation adds a third: the capability toggle above the APIM switch.
+    image_key = fields_module.get_field_definition("azure_openai_image_gen_key")
+    assert len(list(fields_module.iter_field_dependencies(image_key))) == 3
+
+    assert holds(image_key, {
+        "enable_image_generation": False,
+        "enable_image_gen_apim": False,
+        "azure_openai_image_gen_authentication_type": "key",
+    }) is False
+
+    print("  Every declared condition has to hold before a field is shown.")
+    return True
+
+
 def test_numeric_values_are_clamped_to_declared_bounds():
     """An out-of-range logo scale would render an unusable home page."""
     print("Testing numeric clamping...")
@@ -354,6 +438,8 @@ def test_switches_coerce_form_shaped_truthiness():
 
 if __name__ == "__main__":
     tests = [
+        test_dependency_conditions_compare_by_declared_type,
+        test_every_condition_must_hold_for_a_multi_gated_field,
         test_numeric_values_are_clamped_to_declared_bounds,
         test_colours_must_be_hex,
         test_external_links_reject_unsafe_urls,

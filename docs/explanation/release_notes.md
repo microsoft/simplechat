@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.082)**
+### **(v0.261.084)**
 
 #### New Features
 
@@ -49,6 +49,58 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **The Response Completion Sound Moved To Feedback & Alerts**
     *   It played a local browser sound and required no Azure Speech resource, yet it was the first control in the AI Voice Conversations section. It now sits with the other notification settings under Chat.
     *   (Ref: `enable_chat_completion_audio_cues`, [Chat settings](../admin/chat.md#desktop-notifications-section))
+### **(v0.261.083)**
+
+#### New Features
+
+*   **Embeddings And Image Generation Can Be Configured In The New Admin Interface**
+    *   These were the last two sections of AI Models with nothing behind them. Both fell back to scanning the settings document for `enable_*` booleans, so each showed a switch or two and hid everything that actually makes the route work: the endpoint, the authentication method, the subscription and resource group, the API version, the gateway alternative and the deployment in use.
+    *   **Neither has connections, and the interface no longer pretends otherwise.** Chat can draw from several resources at once; embeddings and image generation each have exactly one, or one API Management gateway in front of one. Both are now configured directly, with the direct and gateway routes presented as the alternatives they are — only the selected one is used, so the fields for the other stay out of the way instead of sitting there looking configured.
+    *   **The deployment in use is chosen from a list rather than typed.** **Fetch deployments** asks the resource what it has, and the choice is saved on its own. A deployment the resource no longer reports is dropped from the selection rather than kept, because a request naming it would fail on the next embedding or image call rather than at save time. The list is a cache of the last answer, which is why fetching is a deliberate action and why the interface says so.
+    *   **Fetching reads the saved endpoint, not the one on screen**, since that is how the underlying discovery has always worked. That caveat is now stated next to the button that trips over it.
+    *   (Ref: `admin_settings_fields.py`, `route_backend_v2.py`, `/api/v2/admin/model-selection`, `ModelSelectionPicker.tsx`, `modelSelection.ts`, `embedding_model`, `image_gen_model`)
+
+*   **Stored Credentials Are No Longer Placed In The Page**
+    *   The new admin interface had no way to describe a secret, so a credential declared in a section would have been drawn by the ordinary text control — a live Azure OpenAI key sitting in a readable box, offered to every password manager and form-restore cache on the machine. Secrets are now a field type of their own: masked, excluded from browser autofill, and revealed only on request.
+    *   **The box starts empty whatever is stored, and leaving it empty keeps the stored value.** The new interface saves a section at a time, so an untouched credential still travels with whatever else was edited. Had an empty box meant "empty string", saving an API version would have wiped a working key, and the damage would only have surfaced the next time the service was called. Removal is now its own action, which is the only thing that clears a stored secret.
+    *   (Ref: `admin_settings_fields.py`, `fields.tsx`, `AdminSettingsPage.tsx`, `azure_openai_embedding_key`, `azure_openai_image_gen_key`)
+
+#### Bug Fixes
+
+*   **A Document Extraction Setting Was Appearing Under Image Generation**
+    *   Settings the new admin interface has no description for are placed by matching words in their name against section names. **Analyze images embedded in DOCX and PPTX files** shares the word "image" with Image Generation, so it was filed there — as a bare switch, with no explanation, among settings about producing pictures rather than reading them out of Word and PowerPoint files.
+    *   It now appears under Knowledge, in Document Extraction, alongside the rest of Document Intelligence, and carries the explanation the classic page has always had.
+    *   (Ref: `admin_settings_fields.py`, `enable_office_embedded_image_analysis`, `document-intelligence-section`)
+
+#### User Interface Enhancements
+
+*   **Conditional Settings Follow The Choice They Depend On**
+    *   A setting could previously be shown or hidden by a switch, but not by a choice — the condition was read as true or false, and every non-empty option is true. The API key field, which belongs to key authentication, would therefore have stayed on screen after switching a route to managed identity, next to a note saying it was not being used.
+    *   Conditions now compare the actual value, and a control that sits inside two nested blocks can name both. The Azure OpenAI keys for embeddings and image generation are gated on the direct-connection route *and* on key authentication, so switching either section to API Management now takes the whole direct connection with it, including its key, rather than leaving parts of it behind.
+    *   (Ref: `adminFields.ts`, `isFieldVisible`, `admin_settings_fields.py`, `docs/admin/ai-models.md`)
+
+### **(v0.261.081)**
+
+#### New Features
+
+*   **The Default Chat Model Can Be Chosen In The New Admin Interface**
+    *   The Chat section of AI Models had nothing in it but a single switch. The default model — the one chat uses when nobody has picked anything, such as on a brand new conversation — could only be set on the classic admin page, even though the connections it selects from had just moved.
+    *   **Only models that can actually serve are offered.** The list is built from enabled models on enabled connections, because a reference to anything else is cleared the moment connections are next saved. Offering a disabled model would have let an administrator choose a value that quietly reverted, with nothing to explain why.
+    *   **A choice that no longer resolves is refused rather than accepted.** Naming a connection that has been deleted, or a model that has been switched off, now comes back with a message saying so. Previously the two failure modes — storing a dangling reference, and silently emptying it — both ended up looking identical: the field simply read as having no default.
+    *   **The saved default is shown for what it currently means.** If the connection or model it named has since gone, the interface says that rather than presenting an empty field as though nothing had ever been set. Opening the page does not rewrite the stored value, so the evidence of what went missing survives.
+    *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+
+#### User Interface Enhancements
+
+*   **Chat Now Says Which Endpoint Is Actually Serving It**
+    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
+    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
+    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
+    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
+    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
+    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
+
 ### **(v0.261.074)**
 
 #### New Features
