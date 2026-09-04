@@ -46,9 +46,13 @@ of work, and they are enforced regardless of what a plan asks for.
 
 ## Before you change anything
 
-- Confirm which retrieval capabilities are already enabled. Orchestration can only plan
-  around document search, document analysis, document comparison, spreadsheet analysis and
-  web search where those are separately enabled.
+- Confirm which knowledge capabilities are already enabled. Orchestration can only plan
+  around document search, document analysis, document comparison, spreadsheet analysis,
+  web search, reading linked pages, deep research and agents where those are separately
+  enabled.
+- Note that reading linked pages and deep research are additionally restricted by app role
+  where your deployment requires it. A plan will not propose a capability the individual
+  user could not reach by hand.
 - Decide whether users should be able to change their own approval mode, or whether the
   deployment default should apply to everyone.
 - Consider configuring a smaller planner model. Planning is a short structured task, so it
@@ -95,6 +99,38 @@ working by hand, which is how a deployment can adopt orchestration for search wh
 continuing to require deliberate action for document analysis.
 
 Answering is always available and cannot be cleared, because a plan has to end somewhere.
+
+#### How a plan is ordered
+
+Every capability belongs to one of three phases, and a plan always moves through them in
+order:
+
+| Phase | What happens | Capabilities |
+| --- | --- | --- |
+| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, agents |
+| Reasoning | Saying something about it | Answering |
+| Creating | Producing files and other artifacts | Not yet available |
+
+The order is enforced rather than suggested. A plan cannot go looking for something after
+it has already answered, because the answer would be written without the very evidence the
+later step found.
+
+#### The more expensive capabilities
+
+Three capabilities cost noticeably more than the rest and are each limited to one use per
+plan:
+
+- **Deep research** reads and cross-checks multiple sources. It is for questions that need
+  several independent sources reconciled; web search is the cheaper choice for ordinary
+  factual questions.
+- **Agents** load the agent's tools, connections and instructions before running. That
+  setup is the expensive part of the turn, so a plan uses at most one agent.
+- **Reading linked pages** only appears when the user's message actually contains a link,
+  and only reads links the user pasted — never one the model produced.
+
+Reading linked pages and deep research also honour the `UrlAccessUser` and
+`DeepResearchUser` app roles where your deployment requires them. A user without the role
+does not get the capability, whether they ask by hand or a plan proposes it.
 
 #### Settings
 
@@ -163,6 +199,9 @@ model, which means orchestration works as soon as it is switched on.
 | Every plan is a single answering step | Capabilities are narrowed to answering only, or the retrieval capabilities are disabled elsewhere. | Review Capabilities on this page, then confirm document search and web search are enabled in their own settings groups. |
 | A plan is smaller than expected | The step cap trimmed it. | Raise Maximum steps in a plan, or ask a narrower question. |
 | A question is asked that was already answered | The ledger is disabled or too small to reach the earlier turn. | Raise Earlier runs shown to the planner, and confirm the summary size is not set to its minimum. |
+| Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
+| Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
+| A plan proposed reading a link but found nothing | The link was produced by the model rather than pasted by the user. | Only links present in the user's own message are read. Ask the user to paste the URL into their message. |
 
 ## Related
 

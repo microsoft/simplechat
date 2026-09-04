@@ -40,6 +40,11 @@ def _build_stub_modules():
 
     appinsights = types.ModuleType("functions_appinsights")
     appinsights.log_event = lambda *args, **kwargs: None
+    # Several modules import this alongside log_event. Without it the import fails, and a
+    # caller that lazily imports such a module reads that failure as the capability being
+    # unavailable -- which is correct behaviour but makes the module untestable here.
+    appinsights.debug_print = lambda *args, **kwargs: None
+    appinsights.is_debug_enabled = lambda *args, **kwargs: False
 
     settings = types.ModuleType("functions_settings")
     settings.get_settings = lambda: {}

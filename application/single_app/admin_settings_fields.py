@@ -3617,6 +3617,253 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    # The Orchestration group had the same problem the Workflow group had, from the
+    # other direction: exactly one of its settings is named `enable_*`, so the fallback
+    # scan found that switch and nothing else. The group rendered as a single toggle
+    # while the classic page carried the approval mode, every limit, the capability
+    # list and the planner model -- which meant the one interface an administrator is
+    # steered towards was the one that could not configure the feature.
+    "chat-orchestration-section": [
+        {
+            "key": "enable_chat_orchestration",
+            "type": "switch",
+            "label": "Enable Chat Orchestration",
+            "help": (
+                "Lets a user describe what they want and have SimpleChat work out the "
+                "rest. Instead of choosing documents, web search, a prompt, an agent and "
+                "a model before asking, the user asks; SimpleChat plans the work, shows "
+                "the plan, and runs it once approved. Orchestration reaches only "
+                "capabilities this deployment already allows, so turning it on grants no "
+                "new access. Available in the V2 interface."
+            ),
+            "default": False,
+            "role": "capability",
+        },
+    ],
+    "chat-orchestration-approval-section": [
+        {
+            "key": "chat_orchestration_default_approval_mode",
+            "type": "select",
+            "label": "Default Approval Mode",
+            "help": (
+                "How much say a user has before a plan runs. Reviewing every plan is the "
+                "safest default and the slowest; running automatically is the fastest and "
+                "gives the user no chance to intervene before work starts. The countdown "
+                "sits between the two: the plan appears with a timer, and doing nothing "
+                "runs it."
+            ),
+            "default": "manual",
+            "options": [
+                {"value": "manual", "label": "Review before running"},
+                {"value": "timed", "label": "Run automatically after a countdown"},
+                {"value": "auto", "label": "Run automatically"},
+            ],
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "behavior", "label": "Approval", "variant": "behavior"},
+        },
+        {
+            "key": "chat_orchestration_timed_approval_seconds",
+            "type": "number",
+            "label": "Countdown Before Running",
+            "help": (
+                "Seconds the user has to intervene when the mode is a countdown. "
+                "Supported range is 3 to 120."
+            ),
+            "default": 10,
+            "min": 3,
+            "max": 120,
+            # Both conditions, not just the mode. Visibility is evaluated per field rather
+            # than recursively, so gating this only on the mode would leave it on screen
+            # whenever the mode field itself was hidden by orchestration being off.
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "chat_orchestration_default_approval_mode", "equals": "timed"},
+            ],
+            "group": {"id": "behavior", "label": "Approval", "variant": "behavior"},
+        },
+        {
+            "key": "chat_orchestration_allow_user_approval_override",
+            "type": "switch",
+            "label": "Let Users Change Their Own Approval Mode",
+            "help": (
+                "When off, every user stays on the default above and the control is "
+                "hidden from the composer."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "behavior", "label": "Approval", "variant": "behavior"},
+        },
+        {
+            "key": "chat_orchestration_show_manual_controls",
+            "type": "switch",
+            "label": "Keep The Manual Composer Controls Available",
+            "help": (
+                "Keeps the document, web, model and agent pickers reachable behind a "
+                "disclosure while orchestration is on. Anything chosen there constrains "
+                "the plan rather than being ignored, so a power user can pin the work to "
+                "a particular document and let orchestration decide the rest."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "behavior", "label": "Approval", "variant": "behavior"},
+        },
+    ],
+    "chat-orchestration-capabilities-section": [
+        {
+            "key": "chat_orchestration_enabled_capabilities",
+            "type": "checkbox_set",
+            "label": "Capabilities",
+            "help": (
+                "Which kinds of work a plan may contain. Leaving every box ticked is the "
+                "normal state and means whatever the rest of this deployment already "
+                "permits; clearing one keeps it out of plans even where it remains "
+                "available to users working by hand. Answering is always available "
+                "because a plan has to end somewhere."
+            ),
+            "default": [],
+            "options": [
+                {"value": "document_search", "label": "Search documents"},
+                {"value": "document_analyze", "label": "Analyse documents"},
+                {"value": "document_compare", "label": "Compare documents"},
+                {"value": "tabular_analyze", "label": "Analyse spreadsheets"},
+                {"value": "web_search", "label": "Search the web"},
+                {"value": "url_fetch", "label": "Read linked pages"},
+                {"value": "deep_research", "label": "Research in depth"},
+                {"value": "agent_invoke", "label": "Ask an agent"},
+            ],
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+        },
+    ],
+    "chat-orchestration-limits-section": [
+        {
+            "key": "chat_orchestration_max_steps",
+            "type": "number",
+            "label": "Maximum Steps In A Plan",
+            "help": (
+                "Caps how much work one plan may describe. Enforced regardless of what a "
+                "plan asks for, so a vaguely worded request cannot become an open-ended "
+                "amount of work. Supported range is 1 to 30."
+            ),
+            "default": 8,
+            "min": 1,
+            "max": 30,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_max_replans",
+            "type": "number",
+            "label": "Maximum Re-plans Per Run",
+            "help": (
+                "How often a step may send the plan back to be reconsidered after "
+                "discovering something. Zero means a plan is followed as written."
+            ),
+            "default": 2,
+            "min": 0,
+            "max": 5,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_step_timeout_seconds",
+            "type": "number",
+            "label": "Step Timeout",
+            "help": "Seconds a single step may run before it is abandoned.",
+            "default": 180,
+            "min": 30,
+            "max": 1800,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_total_timeout_seconds",
+            "type": "number",
+            "label": "Run Timeout",
+            "help": "Seconds a whole run may take before it is abandoned.",
+            "default": 900,
+            "min": 60,
+            "max": 7200,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_ledger_max_runs",
+            "type": "number",
+            "label": "Earlier Runs Shown To The Planner",
+            "help": (
+                "How many of the conversation's previous runs the planner can see. This "
+                "is what lets a follow-up question reuse what an earlier turn already "
+                "found instead of searching for it again, and what stops the assistant "
+                "asking a question the user has already answered. Zero makes every turn "
+                "plan from scratch."
+            ),
+            "default": 10,
+            "min": 0,
+            "max": 50,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+        {
+            "key": "chat_orchestration_ledger_max_bytes",
+            "type": "number",
+            "label": "Earlier-run Summary Size",
+            "help": (
+                "Caps the size of that summary in bytes. Older runs lose their detail "
+                "first when the budget is reached."
+            ),
+            "default": 16384,
+            "min": 1024,
+            "max": 131072,
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "limits", "label": "Limits", "variant": "limits"},
+        },
+    ],
+    "chat-orchestration-planner-model-section": [
+        {
+            "key": "chat_orchestration_planner_deployment",
+            "type": "text",
+            "label": "Planner Deployment Name",
+            "help": (
+                "Which model writes the plan. Planning is a short, structured task rather "
+                "than a conversational one, so a smaller and faster deployment usually "
+                "does it well and costs less per message than the model that writes the "
+                "answer. Leave blank to plan with this deployment's default chat model."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "connection", "label": "Planner model", "variant": "connection"},
+        },
+        {
+            "key": "chat_orchestration_planner_model_id",
+            "type": "text",
+            "label": "Planner Model Id",
+            "help": "Identifies the model when planning through a configured model endpoint.",
+            "default": "",
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "connection", "label": "Planner model", "variant": "connection"},
+        },
+        {
+            "key": "chat_orchestration_planner_model_endpoint_id",
+            "type": "text",
+            "label": "Planner Model Endpoint Id",
+            "help": (
+                "Identifies the endpoint when planning through a configured model "
+                "endpoint rather than the default deployment."
+            ),
+            "default": "",
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "connection", "label": "Planner model", "variant": "connection"},
+        },
+        {
+            "key": "chat_orchestration_planner_model_provider",
+            "type": "text",
+            "label": "Planner Model Provider",
+            "help": "Identifies the provider when planning through a configured model endpoint.",
+            "default": "",
+            "depends_on": {"key": "enable_chat_orchestration", "equals": True},
+            "group": {"id": "connection", "label": "Planner model", "variant": "connection"},
+        },
+    ],
     # The Workflow group has exactly one section, and none of its settings are
     # named `enable_*`, so the fallback scan found nothing at all and the group
     # rendered empty in V2. Declaring the section is what makes it reachable.
