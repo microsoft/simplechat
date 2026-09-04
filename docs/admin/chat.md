@@ -88,7 +88,10 @@ The User Feedback section belongs to the Feedback & Alerts tab. Use it with the 
 
 ### Desktop Conversation Notifications {#desktop-notifications-section}
 
-The Desktop Conversation Notifications section belongs to the Feedback & Alerts tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Two ways of telling a user something happened while they were looking elsewhere. Desktop
+notifications need the browser permission the user grants themselves, and the completion
+sound is a short bundled audio cue played locally, with no Azure Speech resource involved.
+Both are opt-in per user; these settings decide whether the option is offered at all.
 
 #### Settings
 
@@ -96,6 +99,7 @@ The Desktop Conversation Notifications section belongs to the Feedback & Alerts 
 | --- | --- | --- | --- |
 | Enable User Feedback (Thumbs Up/Down) | Shows thumbs up/down feedback controls on AI responses so users can submit response-level feedback for review. | On | `enable_user_feedback`; capability toggle |
 | Enable Desktop Conversation Notifications | Allows browser desktop notifications for conversation events when the user grants browser permission. | Off | `enable_desktop_notifications`; capability toggle |
+| AI response completion sounds | Lets users opt in to a short bundled sound when a response finishes while they are looking elsewhere. Played locally by the browser; no Azure Speech resource is involved. | Off | `enable_chat_completion_audio_cues`; capability toggle |
 | Require FeedbackAdmin App Role | Requires the `FeedbackAdmin` app role before users can use this capability or view. | Off | `require_member_of_feedback_admin` |
 
 ## Citations {#citation}

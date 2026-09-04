@@ -4,7 +4,7 @@ counts:
   capabilities: 112
   admin_groups: 14
   admin_tabs: 46
-  admin_sections: 96
+  admin_sections: 98
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -524,6 +524,10 @@ admin_sections:
   label: Content Safety
   tab: content-safety
   group: security
+- id: content-understanding-section
+  label: Content Understanding
+  tab: extraction
+  group: knowledge
 - id: control-center-auto-refresh-section
   label: Automatic Data Refresh
   tab: control-center-config
@@ -746,6 +750,10 @@ admin_sections:
   group: ai-models
 - id: multimodal-vision-section
   label: Multi-Modal Vision Analysis
+  tab: extraction
+  group: knowledge
+- id: office-embedded-image-section
+  label: Images Inside Office Files
   tab: extraction
   group: knowledge
 - id: permissions-section
