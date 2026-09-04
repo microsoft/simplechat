@@ -43,7 +43,7 @@ def test_dockerfile_installs_driver_18_runtime():
         assert "find /opt/microsoft/msodbcsql18/lib64 -name 'libmsodbcsql-*.so*'" in dockerfile, \
             'Docker build should resolve the installed Driver 18 shared library path'
         assert "UsageCount=1" in dockerfile, 'Docker build should create a deterministic odbcinst.ini registration'
-        assert '/odbc-runtime/usr/lib64' in dockerfile, \
+        assert '/odbc-runtime/usr/lib' in dockerfile, \
             'Docker build should stage unixODBC libraries from Azure Linux library paths before runtime copy'
         assert "/usr/lib64/libodbc* /usr/lib/libodbc*" in dockerfile, \
             'Docker build should support unixODBC libraries installed under /usr/lib64 or /usr/lib'

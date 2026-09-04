@@ -2165,7 +2165,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'WHERE c.type = @type '
         'AND c.source_scope = @source_scope '
         'AND c.scope_key = @scope_key '
-        'AND c.access_granted = true '
+        'AND (c.access_granted = true OR c.approval_status = @approval_not_approved) '
         'AND c.is_current_version = true '
         'AND c.projection_version = @projection_version'
     )
@@ -2177,6 +2177,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
             {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
             {'name': '@source_scope', 'value': source_scope},
             {'name': '@scope_key', 'value': scope_key},
+            {'name': '@approval_not_approved', 'value': DOCUMENT_ACCESS_APPROVAL_NOT_APPROVED},
             {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
         ],
         partition_key=scope_key,

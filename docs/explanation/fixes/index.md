@@ -7,6 +7,8 @@ category: Version History
 ---
 
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
+- [Distroless Runtime Overlay Path Fix](DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md)
+- [Workspace Shared File Approval Visibility Fix](WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md)
 - [Semantic Kernel Startup Request Context Fix](SEMANTIC_KERNEL_STARTUP_REQUEST_CONTEXT_FIX.md)
 - [Data Management Restore Route Endpoint Collision Fix](DATA_MANAGEMENT_RESTORE_ROUTE_ENDPOINT_COLLISION_FIX.md)
 - [Font Size and 200 Percent Zoom Fix](FONT_SIZE_AND_200_PERCENT_ZOOM_FIX.md)
