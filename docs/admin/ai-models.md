@@ -83,12 +83,12 @@ The default applies to connections only. With chat on the classic single endpoin
 
 #### Settings
 
-The classic single endpoint is configured on the server-rendered admin page. Its values are listed here because they are what chat uses while **Use connections for chat** is off.
+The classic single endpoint is configured on the server-rendered admin page. Its values are listed here because they are what chat uses while **Use connections for chat** is off, and because API Management applies to GPT requests that use the classic endpoint whichever mode chat is in.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
 | Default model | The model chat uses when nothing else has chosen one. Cleared automatically if the connection or model it names is deleted or disabled. | Not specified in defaults | `default_model_selection`; connections mode only |
-| Use APIM instead of direct to Azure OpenAI endpoint | Sends chat requests through API Management rather than straight to the Azure OpenAI resource. | Off | `enable_gpt_apim`; capability toggle |
+| Send requests through API Management | Routes GPT requests that use the classic endpoint through API Management rather than straight to the Azure OpenAI resource, so a deployment can apply its own governance and monitoring to them. | Off | `enable_gpt_apim`; needs the three APIM values below |
 | Azure OpenAI Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_openai_gpt_endpoint` |
 | Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `azure_openai_gpt_authentication_type` |
 | Subscription ID | Addresses the resource when listing its deployments. | Empty | `azure_openai_gpt_subscription_id` |

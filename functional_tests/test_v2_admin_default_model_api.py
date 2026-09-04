@@ -40,6 +40,10 @@ SETTINGS_FILE = APP_DIR / "functions_settings.py"
 
 SECTION_ID = "gpt-config"
 
+# Declared alongside the two components rather than left to the V2 fallback scan. See
+# test_the_apim_toggle_is_declared_rather_than_guessed for why that matters.
+APIM_TOGGLE_KEY = "enable_gpt_apim"
+
 EXPECTED_ROUTES = {
     ("/api/v2/admin/default-model", "GET"): "v2_admin_get_default_model",
     ("/api/v2/admin/default-model", "PUT"): "v2_admin_set_default_model",
@@ -275,6 +279,72 @@ def test_the_chat_section_declares_its_components():
     return True
 
 
+def test_the_apim_toggle_is_declared_rather_than_guessed():
+    """Left undeclared, this lands in the Chat card as an unlabelled switch.
+
+    ``buildCapabilityIndex`` files an undeclared ``enable_*`` key under the section
+    whose id shares the most word stems. ``enable_gpt_apim`` splits to ``{gpt, apim}``
+    and ``gpt-config`` to ``{gpt, config}``, so it scores and wins -- and renders as
+    "Gpt apim" with no help text, directly beneath a notice that speaks
+    authoritatively about which endpoint chat is using.
+
+    That is a trap rather than an inconvenience: the APIM endpoint, deployment and
+    subscription key it depends on are only settable on the classic admin page, so
+    the switch reaches for configuration the surrounding surface does not offer.
+    Declaring it is what both names it and takes it out of the guess.
+    """
+    print("\nTesting the APIM toggle declaration...")
+
+    declared_sections = {
+        field["key"]: (section_id, field)
+        for section_id, field in fields_module.iter_fields()
+        if field.get("key")
+    }
+
+    entry = declared_sections.get(APIM_TOGGLE_KEY)
+    assert entry is not None, (
+        f"{APIM_TOGGLE_KEY} is not declared, so the V2 admin surface guesses a home for "
+        f"it. Declare it in the {SECTION_ID!r} section."
+    )
+
+    section_id, field = entry
+    assert section_id == SECTION_ID, (
+        f"{APIM_TOGGLE_KEY} is declared under {section_id!r}, expected {SECTION_ID!r}."
+    )
+    assert field.get("type") == "switch", (
+        f"{APIM_TOGGLE_KEY} is declared as {field.get('type')!r}, expected 'switch'."
+    )
+    assert field.get("help"), (
+        f"{APIM_TOGGLE_KEY} is declared without help text, which leaves it as anonymous "
+        "as the fallback scan rendered it."
+    )
+
+    # This is the property the renderer actually reads: `!declaredKeys.has(key)` is what
+    # suppresses the guess.
+    assert APIM_TOGGLE_KEY in fields_module.get_declared_setting_keys(), (
+        f"{APIM_TOGGLE_KEY} is not reported as declared, so the fallback scan would "
+        "still place it."
+    )
+
+    print(f"  {APIM_TOGGLE_KEY} is declared in {SECTION_ID} with help text.")
+    return True
+
+
+def test_the_apim_toggle_exists_in_its_server_rendered_pane():
+    """A declared field with no V1 counterpart would write a setting nothing reads."""
+    print("\nTesting the APIM toggle against the server-rendered pane...")
+
+    pane = APP_DIR / "templates" / "admin" / "_panes" / "model-endpoints.html"
+    assert pane.is_file(), f"Missing the server-rendered pane: {pane}"
+    assert f'name="{APIM_TOGGLE_KEY}"' in pane.read_text(encoding="utf-8"), (
+        f"{APIM_TOGGLE_KEY} has no field in {pane.name}, so the two admin interfaces "
+        "would not be editing the same setting."
+    )
+
+    print(f"  {APIM_TOGGLE_KEY} exists in {pane.name}.")
+    return True
+
+
 def test_routes_exist_and_are_admin_gated():
     """A missing admin guard would let any signed-in user repoint chat's default."""
     print("\nTesting default model route declarations...")
@@ -484,6 +554,8 @@ if __name__ == "__main__":
     tests = [
         test_the_key_is_declared_so_the_settings_patch_refuses_it,
         test_the_chat_section_declares_its_components,
+        test_the_apim_toggle_is_declared_rather_than_guessed,
+        test_the_apim_toggle_exists_in_its_server_rendered_pane,
         test_routes_exist_and_are_admin_gated,
         test_the_read_route_does_not_write,
         test_the_write_route_stores_only_the_resolved_value,
