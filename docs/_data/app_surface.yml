@@ -4,7 +4,7 @@ counts:
   capabilities: 112
   admin_groups: 14
   admin_tabs: 46
-  admin_sections: 98
+  admin_sections: 99
   actions: 27
   chat_controls: 47
   sub_elements: 3
@@ -314,6 +314,7 @@ admin_groups:
   - rate-limiting
   - secrets
   - session
+  - workspace-identities
 - id: workflow
   label: Workflow
   tabs:
@@ -322,7 +323,6 @@ admin_groups:
   label: Workspaces
   tabs:
   - files-sharing
-  - workspace-identities
   - workspace-types
 admin_tabs:
 - id: access-roles
@@ -459,7 +459,7 @@ admin_tabs:
   group: workflow
 - id: workspace-identities
   label: Global Identities
-  group: workspaces
+  group: security
 - id: workspace-types
   label: Workspace Types
   group: workspaces
@@ -662,8 +662,8 @@ admin_sections:
   group: workspaces
 - id: file-size-limit-section
   label: Maximum File Size
-  tab: files-sharing
-  group: workspaces
+  tab: extraction
+  group: knowledge
 - id: file-sync-group-section
   label: Group Workspace Sync
   tab: file-sync
@@ -852,6 +852,10 @@ admin_sections:
   label: Workflow
   tab: workflow
   group: workflow
+- id: workspace-identities-section
+  label: Global Identities
+  tab: workspace-identities
+  group: security
 - id: workspace-scope-lock-section
   label: Workspace Scope Lock
   tab: chat-experience

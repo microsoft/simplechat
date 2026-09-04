@@ -177,32 +177,55 @@ vector is trimmed, and the event is logged.
 Custom sizes apply to new uploads only. Existing documents keep the chunks they were indexed with
 until they are uploaded again.
 
+### Maximum File Size {#file-size-limit-section}
+
+The ceiling applies to every upload, whether a document going into a workspace or a file
+attached to a chat message, and it is checked before any extraction runs. That makes it the
+cheapest control available for protecting the extraction pipeline: an oversized file is
+refused outright rather than consuming Document Intelligence capacity and then failing.
+
+It sits with extraction rather than with Workspaces because both upload paths feed the same
+pipeline, and because the practical ceiling is whatever your extraction and storage tiers can
+absorb rather than a workspace policy decision.
+
 ### Metadata Extraction {#metadata-extraction-section}
 
-Runs a model over each uploaded document to infer a title, authors, subject and keywords,
-which are then searchable alongside the document's content. This is useful where the
-documents themselves carry little structure, such as scanned reports or exported files that
-lost their properties.
+After a document is chunked, a further model pass can read it and record structured metadata
+about it -- title, authors, subject, keywords -- which is what makes a citation readable as a
+source rather than as a filename. It runs on upload, so enabling it later does not backfill
+documents that are already indexed.
+
+It costs an extra model call per document, and it needs a deployment selected for it, so it
+is off by default.
 
 ### Multi-Modal Vision Analysis {#multimodal-vision-section}
 
-Sends page images to a model so figures, charts and scanned pages are described and indexed
-rather than skipped.
+Sends page images to a vision-capable model so the text inside diagrams, screenshots and
+scanned pages becomes searchable alongside the extracted text. Only vision-capable
+deployments are offered for selection, because a text-only model silently returns nothing
+useful here.
 
-Only models that can accept image input are offered. Which models those are is resolved in
-three steps, most authoritative first: an explicit choice recorded on the model under
-[AI Models](ai-models.md), then the application's built-in model capability data, then the
-model's name. A model resolved by name alone is marked as inferred, because a name is a
-guess: a deployment of a self-hosted model may read images without saying so, and some
-text-only chat variants are named like models that do.
-
-If a model you expect is missing from the list, set its image support explicitly on the
+Which deployments count as vision-capable is resolved in three steps, most authoritative
+first: an explicit choice recorded on the model under [AI Models](ai-models.md), then the
+application's built-in model capability data, then the model's name. A model resolved by
+name alone is marked as inferred, because a name is a guess -- a self-hosted deployment may
+read images without saying so, and some text-only chat variants are named like models that
+do. If a model you expect is missing from the list, set its image support explicitly on the
 endpoint that hosts it.
+
+This is the most expensive extraction path in the group. Reach for it when the material is
+genuinely visual; for text documents that happen to contain a chart, Document Intelligence
+already captures the surrounding structure.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Maximum File Size (MB) | Rejects an upload larger than this before extraction runs. Applies to workspace documents and chat attachments alike. | 150 | `max_file_size_mb` |
+| Enable Extract Meta Data | Runs a model pass on upload to record title, authors, subject and keywords for each document. | Off | `enable_extract_meta_data`; capability toggle |
+| Extraction Model | The deployment the metadata pass sends its requests to. | Empty | `metadata_extraction_model` |
+| Enable Multi-Modal Vision Analysis | Sends page images to a vision model so text inside diagrams and scans becomes searchable. | Off | `enable_multimodal_vision`; capability toggle |
+| Vision Model | A vision-capable deployment, such as gpt-4o or a supported GPT 5 or later model. Only vision-capable models are offered. | Empty | `multimodal_vision_model` |
 | Require DeepResearchUser App Role | Required app role value: DeepResearchUser. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use Deep Research. | Off | `require_member_of_deep_research_user` |
 | Max User URLs per Turn | Direct URLs beyond this cap are recorded as omitted in the ledger. | 100 | `deep_research_max_user_urls_per_turn` |
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |

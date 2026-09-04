@@ -1,44 +1,229 @@
 // AssignmentPicker.tsx
-// Search-and-assign editor for an `id_list` field.
+// Editor for an `id_list` field: the set of groups or public workspaces a policy applies to.
 //
-// Some settings hold a list of opaque identifiers -- which groups may use File Sync,
-// which public workspaces may use it. An identifier is not something an administrator
-// can type from memory, so the control searches a declared endpoint and stores the id
-// while showing the name.
+// The value is a list of opaque record ids, and there is no endpoint that turns an id back
+// into a name in bulk. The server-rendered admin page has the same constraint and answers
+// it by summarising the selection as a count and resolving names only through search; this
+// does the same rather than inventing a lookup the API cannot serve.
 //
-// The server-rendered pane keeps these lists in hidden textareas and ships assignment
-// modals whose JavaScript was never written, so the values are currently unreachable
-// from that interface. This is the first control that can actually edit them.
-//
-// Nothing here knows about File Sync. The endpoint and the response shape are read from
-// the field definition, so a second assignment list needs a schema entry and no code.
+// Edits are reported upward into the page draft like any other field, so a change here is
+// saved by the same Save button and is discarded by the same Cancel.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Loader2, Search, X } from 'lucide-react';
-import { api } from '../../lib/apiClient';
-import { asString, type AdminField } from '../../lib/adminFields';
-import { FieldShell } from './fields';
+import { AlertCircle, Loader2, Search, Users } from 'lucide-react';
+import { ApiError, api } from '../../lib/apiClient';
+import { asStringArray, type AdminField } from '../../lib/adminFields';
+import { AdminModal } from './AdminModal';
+import { GlassButton } from '../ui/primitives';
 
-/** One search result, after the declared field names have been resolved. */
-interface AssignmentOption {
+/** One record the search endpoint offered. Only these three fields are relied on. */
+interface AssignableRecord {
     id: string;
-    title: string;
-    subtitle?: string;
+    name?: string;
+    description?: string;
 }
 
-/**
- * Minimum query length before a search is issued.
- *
- * Matches the server, which returns an empty list below two characters rather than
- * scanning the directory for every keystroke.
- */
-const MIN_QUERY_LENGTH = 2;
+/** Pull the result array out of a response whose property name the schema declares. */
+function readResults(payload: unknown, resultsKey: string): AssignableRecord[] {
+    if (!payload || typeof payload !== 'object') {
+        return [];
+    }
+    const candidate = (payload as Record<string, unknown>)[resultsKey];
+    if (!Array.isArray(candidate)) {
+        return [];
+    }
+    return candidate
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .map((item) => ({
+            id: String(item.id ?? ''),
+            name: typeof item.name === 'string' ? item.name : undefined,
+            description: typeof item.description === 'string' ? item.description : undefined,
+        }))
+        .filter((item) => item.id);
+}
 
-const SEARCH_DEBOUNCE_MS = 300;
+function buildSearchUrl(field: AdminField, term: string): string {
+    const params = new URLSearchParams({ ...(field.search_extra ?? {}) });
+    params.set(field.search_param ?? 'q', term);
+    return `${field.search_endpoint}?${params.toString()}`;
+}
 
-function readField(record: Record<string, unknown>, name: string | undefined): string {
-    return name ? asString(record[name]) : '';
+function summarise(count: number, field: AdminField): string {
+    const singular = field.item_noun ?? 'item';
+    const plural = field.item_noun_plural ?? `${singular}s`;
+    if (count === 0) {
+        return `No ${plural} assigned.`;
+    }
+    return `${count} ${count === 1 ? singular : plural} assigned.`;
+}
+
+function PickerModal({
+    field,
+    selected,
+    onToggle,
+    onClose,
+}: {
+    field: AdminField;
+    selected: string[];
+    onToggle: (id: string, checked: boolean) => void;
+    onClose: () => void;
+}) {
+    const [term, setTerm] = useState('');
+    const [results, setResults] = useState<AssignableRecord[]>([]);
+    const [status, setStatus] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [searching, setSearching] = useState(false);
+    const searchRef = useRef<HTMLInputElement>(null);
+
+    const runSearch = useCallback(
+        async (query: string) => {
+            if (!field.search_endpoint) {
+                return;
+            }
+            setSearching(true);
+            setError(null);
+            try {
+                const payload = await api.get<unknown>(buildSearchUrl(field, query));
+                const records = readResults(payload, field.results_key ?? 'results');
+                setResults(records);
+                setStatus(
+                    records.length
+                        ? null
+                        : query
+                          ? `No ${field.item_noun_plural ?? 'records'} matched that search.`
+                          : // Not every endpoint answers an empty term with a full list --
+                            // the public workspace search requires two characters -- so an
+                            // empty result for an empty term means "type something", not
+                            // "nothing exists".
+                            `Search to find ${field.item_noun_plural ?? 'records'} to assign.`,
+                );
+            } catch (searchError) {
+                setResults([]);
+                setStatus(null);
+                setError(
+                    searchError instanceof ApiError && searchError.status === 403
+                        ? 'You do not have permission to search here, or the feature this search depends on is disabled.'
+                        : searchError instanceof Error
+                          ? searchError.message
+                          : 'The search failed.',
+                );
+            } finally {
+                setSearching(false);
+            }
+        },
+        [field],
+    );
+
+    // Open with the unfiltered list where the endpoint returns one. The public workspace
+    // search requires two characters and answers an empty term with nothing, so the status
+    // line below tells the reader to type rather than leaving a bare empty list.
+    useEffect(() => {
+        void runSearch('');
+        searchRef.current?.focus();
+    }, [runSearch]);
+
+    const plural = field.item_noun_plural ?? 'records';
+
+    return (
+        <AdminModal
+            title={field.label}
+            description={`Choose which ${plural} this policy applies to.`}
+            size="lg"
+            onClose={onClose}
+            footer={
+                <GlassButton variant="subtle" size="sm" onClick={onClose}>
+                    Done
+                </GlassButton>
+            }
+        >
+            <form
+                className="mb-3 flex items-center gap-2"
+                onSubmit={(event) => {
+                    event.preventDefault();
+                    void runSearch(term.trim());
+                }}
+            >
+                <div className="relative min-w-0 flex-1">
+                    <Search
+                        size={15}
+                        className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
+                    />
+                    <input
+                        ref={searchRef}
+                        type="search"
+                        value={term}
+                        onChange={(event) => setTerm(event.target.value)}
+                        placeholder={`Search ${plural} by name or description`}
+                        aria-label={`Search ${plural}`}
+                        className={clsx(
+                            'w-full rounded-lg border border-edge bg-surface-1 py-2 pr-3 pl-9',
+                            'text-sm text-text-1 placeholder:text-text-3',
+                            'focus:border-accent focus:outline-none',
+                        )}
+                    />
+                </div>
+                <GlassButton type="submit" variant="subtle" size="sm" disabled={searching}>
+                    {searching ? <Loader2 size={14} className="animate-spin" /> : 'Search'}
+                </GlassButton>
+            </form>
+
+            {error ? (
+                <p
+                    role="alert"
+                    className="mb-3 flex items-start gap-1.5 rounded-lg bg-danger-soft px-3 py-2 text-xs text-danger"
+                >
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    {error}
+                </p>
+            ) : null}
+
+            <p className="mb-2 text-xs text-text-3">
+                {summarise(selected.length, field)} Assignments are kept even while a record
+                is outside the current results, so searching never clears a selection.
+            </p>
+
+            {status ? <p className="py-6 text-center text-sm text-text-3">{status}</p> : null}
+
+            <ul className="space-y-1">
+                {results.map((record) => {
+                    const checked = selected.includes(record.id);
+                    const id = `assignment-${field.key}-${record.id}`;
+                    return (
+                        <li key={record.id}>
+                            <label
+                                htmlFor={id}
+                                className={clsx(
+                                    'flex cursor-pointer items-start gap-3 rounded-lg border border-edge px-3 py-2',
+                                    checked ? 'bg-accent-soft' : 'hover:bg-surface-2',
+                                )}
+                            >
+                                <input
+                                    id={id}
+                                    type="checkbox"
+                                    className="mt-0.5 accent-[var(--accent)]"
+                                    checked={checked}
+                                    onChange={(event) =>
+                                        onToggle(record.id, event.target.checked)
+                                    }
+                                />
+                                <span className="min-w-0">
+                                    <span className="block truncate text-sm text-text-1">
+                                        {record.name || 'Unnamed'}
+                                    </span>
+                                    {record.description ? (
+                                        <span className="block truncate text-xs text-text-3">
+                                            {record.description}
+                                        </span>
+                                    ) : null}
+                                </span>
+                            </label>
+                        </li>
+                    );
+                })}
+            </ul>
+        </AdminModal>
+    );
 }
 
 export function AssignmentPicker({
@@ -54,209 +239,53 @@ export function AssignmentPicker({
     disabled?: boolean;
     onChange: (next: string[]) => void;
 }) {
-    const assigned = Array.isArray(value)
-        ? value.filter((item): item is string => typeof item === 'string')
-        : [];
+    const [open, setOpen] = useState(false);
+    const selected = asStringArray(value);
 
-    const [query, setQuery] = useState('');
-    const [results, setResults] = useState<AssignmentOption[]>([]);
-    const [searching, setSearching] = useState(false);
-    const [searchError, setSearchError] = useState<string | null>(null);
-
-    /**
-     * Names for ids that are already assigned.
-     *
-     * An id saved previously has no name until something looks it up, and the settings
-     * document stores only the id. Names discovered through search are remembered here
-     * so an assigned entry stops reading as a bare GUID once it has been seen.
-     */
-    const [labels, setLabels] = useState<Record<string, string>>({});
-
-    const searchEndpoint = field.search_endpoint;
-    const resultsKey = field.results_key ?? 'results';
-
-    const runSearch = useCallback(
-        async (candidate: string, signal: AbortSignal) => {
-            if (!searchEndpoint || candidate.trim().length < MIN_QUERY_LENGTH) {
-                setResults([]);
-                setSearchError(null);
-                return;
-            }
-
-            setSearching(true);
-            setSearchError(null);
-            try {
-                const separator = searchEndpoint.includes('?') ? '&' : '?';
-                const response = await api.get<Record<string, unknown>>(
-                    `${searchEndpoint}${separator}q=${encodeURIComponent(candidate.trim())}`,
-                    signal,
-                );
-
-                const rows = Array.isArray(response[resultsKey])
-                    ? (response[resultsKey] as Record<string, unknown>[])
-                    : [];
-
-                const options = rows
-                    .map((row) => ({
-                        id: readField(row, field.value_field ?? 'id'),
-                        title:
-                            readField(row, field.title_field ?? 'name') ||
-                            readField(row, field.value_field ?? 'id'),
-                        subtitle: readField(row, field.subtitle_field),
-                    }))
-                    .filter((option) => option.id);
-
-                setResults(options);
-                setLabels((current) => {
-                    const next = { ...current };
-                    for (const option of options) {
-                        next[option.id] = option.title;
-                    }
-                    return next;
-                });
-            } catch (caught) {
-                // An aborted request is the previous keystroke being superseded, not a
-                // failure worth showing.
-                if (signal.aborted) {
-                    return;
-                }
-                setSearchError(caught instanceof Error ? caught.message : 'Search failed.');
-                setResults([]);
-            } finally {
-                if (!signal.aborted) {
-                    setSearching(false);
-                }
-            }
-        },
-        [searchEndpoint, resultsKey, field.value_field, field.title_field, field.subtitle_field],
-    );
-
-    const controllerRef = useRef<AbortController | null>(null);
-
-    useEffect(() => {
-        const controller = new AbortController();
-        controllerRef.current?.abort();
-        controllerRef.current = controller;
-
-        const timer = window.setTimeout(() => {
-            void runSearch(query, controller.signal);
-        }, SEARCH_DEBOUNCE_MS);
-
-        return () => {
-            window.clearTimeout(timer);
-            controller.abort();
-        };
-    }, [query, runSearch]);
-
-    const assign = (option: AssignmentOption) => {
-        if (assigned.includes(option.id)) {
-            return;
-        }
-        onChange([...assigned, option.id]);
-        setQuery('');
-        setResults([]);
+    const onToggle = (id: string, checked: boolean) => {
+        onChange(checked ? [...selected, id] : selected.filter((item) => item !== id));
     };
 
     return (
-        <FieldShell
-            field={field}
-            error={error ?? searchError ?? undefined}
-            trailing={
-                <span className="text-xs tabular-nums text-text-3">
-                    {assigned.length} assigned
-                </span>
-            }
-        >
-            <div className="relative">
-                <Search
-                    size={14}
-                    className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
-                />
-                <input
-                    type="search"
-                    className={clsx(
-                        'w-full rounded-lg border border-edge bg-surface-1 py-2 pr-8 pl-9',
-                        'text-sm text-text-1 placeholder:text-text-3',
-                        'focus:border-accent focus:outline-none',
-                        'disabled:cursor-not-allowed disabled:opacity-60',
-                    )}
-                    value={query}
-                    placeholder={field.placeholder ?? 'Search by name'}
+        <div className="py-3">
+            <p className="mb-1.5 text-sm font-medium text-text-1">{field.label}</p>
+
+            <div className="flex flex-wrap items-center gap-2">
+                <GlassButton
+                    type="button"
+                    variant="subtle"
+                    size="sm"
                     disabled={disabled}
-                    onChange={(event) => setQuery(event.target.value)}
-                />
-                {searching ? (
-                    <Loader2
-                        size={14}
-                        className="absolute top-1/2 right-3 -translate-y-1/2 animate-spin text-text-3"
-                    />
-                ) : null}
+                    onClick={() => setOpen(true)}
+                >
+                    <Users size={14} />
+                    Manage
+                </GlassButton>
+                <span className="text-xs text-text-3">{summarise(selected.length, field)}</span>
             </div>
 
-            {query.trim().length >= MIN_QUERY_LENGTH && !searching && !results.length ? (
-                <p className="mt-2 text-xs text-text-3">No matches.</p>
+            {field.help ? (
+                <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
             ) : null}
 
-            {results.length ? (
-                <ul className="mt-2 max-h-52 overflow-y-auto rounded-lg border border-edge">
-                    {results.map((option) => {
-                        const already = assigned.includes(option.id);
-                        return (
-                            <li key={option.id}>
-                                <button
-                                    type="button"
-                                    className={clsx(
-                                        'flex w-full flex-col items-start gap-0.5 border-b border-edge px-3 py-2 text-left last:border-b-0',
-                                        already
-                                            ? 'cursor-default opacity-50'
-                                            : 'hover:bg-surface-2',
-                                    )}
-                                    disabled={disabled || already}
-                                    onClick={() => assign(option)}
-                                >
-                                    <span className="text-sm text-text-1">{option.title}</span>
-                                    {option.subtitle ? (
-                                        <span className="text-xs text-text-3">
-                                            {option.subtitle}
-                                        </span>
-                                    ) : null}
-                                    {already ? (
-                                        <span className="text-xs text-text-3">
-                                            Already assigned
-                                        </span>
-                                    ) : null}
-                                </button>
-                            </li>
-                        );
-                    })}
-                </ul>
+            {error ? (
+                <p
+                    role="alert"
+                    className="mt-1.5 flex items-start gap-1.5 text-xs text-danger"
+                >
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    {error}
+                </p>
             ) : null}
 
-            {assigned.length ? (
-                <ul className="mt-2 flex flex-wrap gap-1.5">
-                    {assigned.map((id) => (
-                        <li
-                            key={id}
-                            className="flex items-center gap-1.5 rounded-full border border-edge bg-surface-1 py-1 pr-1 pl-3 text-xs text-text-2"
-                        >
-                            {/* Falls back to the id when the name has never been
-                                fetched, which is honest about what is stored. */}
-                            <span>{labels[id] ?? id}</span>
-                            <button
-                                type="button"
-                                aria-label={`Remove ${labels[id] ?? id}`}
-                                className="rounded-full p-0.5 text-text-3 hover:bg-surface-2 hover:text-danger disabled:cursor-not-allowed"
-                                disabled={disabled}
-                                onClick={() => onChange(assigned.filter((item) => item !== id))}
-                            >
-                                <X size={12} />
-                            </button>
-                        </li>
-                    ))}
-                </ul>
-            ) : (
-                <p className="mt-2 text-xs text-text-3">Nothing assigned yet.</p>
-            )}
-        </FieldShell>
+            {open ? (
+                <PickerModal
+                    field={field}
+                    selected={selected}
+                    onToggle={onToggle}
+                    onClose={() => setOpen(false)}
+                />
+            ) : null}
+        </div>
     );
 }
