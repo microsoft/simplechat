@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -215,18 +216,23 @@ def test_dependencies_reference_real_fields():
     checked = 0
 
     for section_id, field in fields_module.iter_fields():
+        if not field.get("depends_on"):
+            continue
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
-        for depends_on in fields_module.iter_field_dependencies(field):
+
+        # A field may carry one condition or a list of them, so both shapes are read
+        # through the schema's own iterator rather than assumed here.
+        for condition in fields_module.iter_field_dependencies(field):
             checked += 1
 
-            if "key" not in depends_on:
+            if "key" not in condition:
                 problems.append(f"{identity}: depends_on has no key")
                 continue
-            if depends_on["key"] not in declared:
+            if condition["key"] not in declared:
                 problems.append(
-                    f"{identity}: depends on undeclared key {depends_on['key']!r}"
+                    f"{identity}: depends on undeclared key {condition['key']!r}"
                 )
-            if field.get("key") == depends_on["key"]:
+            if field.get("key") == condition["key"]:
                 problems.append(f"{identity}: depends on itself")
 
     assert not problems, (
@@ -396,7 +402,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 

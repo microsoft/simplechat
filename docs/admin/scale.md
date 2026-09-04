@@ -63,7 +63,18 @@ The DAI Metrics section belongs to the Cosmos tab. Use it with the adjacent sett
 
 ### Cosmos Maintenance {#cosmos-maintenance-section}
 
-The Cosmos Maintenance section belongs to the Cosmos tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+A recurring background job keeps Cosmos in the shape the application expects: it compares composite index policies against what the current code needs, reconciles the document access index by repairing fail-open projection records and running a bounded backfill batch, and clears stale operational cache documents. Newly upgraded deployments rely on it to converge, since the document access index read path falls back to slower source queries until backfill catches up.
+
+The section also runs a maintenance pass on demand and reports what the last run did, which is the quickest way to confirm an upgrade has settled.
+
+Both switches below default to on and should stay on. Turning off the scheduler stops repair and backfill from converging at all. Turning off the startup pass only delays convergence to the next scheduled run, which is a reasonable trade when application start time matters more than picking up new index policies immediately after a deployment.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Run background maintenance | Runs the recurring job that checks Cosmos composite index policies, reconciles the document access index, and clears stale cache documents. | On | `enable_app_maintenance`; capability toggle |
+| Also run maintenance at startup | Runs one maintenance pass as the application starts, so a deployment picks up new index policies without waiting for the next scheduled run. | On | `enable_startup_app_maintenance`; capability toggle |
 
 ### Cosmos DB Throughput {#cosmos-throughput-section}
 
@@ -87,7 +98,6 @@ The Cosmos Metrics section belongs to the Cosmos tab. Use it with the adjacent s
 | Repair Batch Size | Fail-open repair records reconciled before each backfill batch. | 100 | `document_access_index_repair_batch_size` |
 | Document access index reads Wave 5B default | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_document_access_index_reads`; capability toggle |
 | Cosmos Throughput Container Policies Json | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `cosmos_throughput_container_policies_json` |
-| App maintenance background scheduler | Allows the background maintenance loop to run app maintenance jobs such as Cosmos index policy checks and stale cache cleanup according to the maintenance interval and lease settings. | On | `enable_app_maintenance`; no visible field in `admin_settings.html` |
 | Enable Cosmos throughput automation | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `cosmos_throughput_autoscale_enabled` |
 | Subscription ID | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `cosmos_throughput_subscription_id` |
 | Resource Group | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `cosmos_throughput_resource_group` |

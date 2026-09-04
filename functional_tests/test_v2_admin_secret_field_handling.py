@@ -93,13 +93,13 @@ def test_every_declared_secret_field_is_a_known_secret():
     unmasked = [
         key
         for key in declared_secrets
-        if key not in secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
+        if key not in secret_utils.get_admin_settings_api_secret_fields()
     ]
 
     assert not unmasked, (
-        "These fields are declared as secrets but are not in "
-        "ADMIN_SETTINGS_FORM_SECRET_FIELDS, so the GET would send the real value "
-        "to a control that promises it is hidden:\n  " + "\n  ".join(unmasked)
+        "These fields are declared as secrets but are not masked by the API "
+        "redaction list, so the GET would send the real value to a control that "
+        "promises it is hidden:\n  " + "\n  ".join(unmasked)
     )
 
     print(f"  All {len(declared_secrets)} declared secret(s) are masked on read.")
@@ -107,23 +107,35 @@ def test_every_declared_secret_field_is_a_known_secret():
 
 
 def test_an_untouched_secret_keeps_its_stored_value():
-    """The destructive case: saving the mask would overwrite the credential."""
+    """The destructive case: saving the placeholder would overwrite the credential."""
     print("\nTesting that an untouched secret survives a save...")
 
-    current = {"office_docs_storage_account_url": REAL_SECRET}
-
-    normalized, errors, _warnings = fields_module.normalize_admin_settings_updates(
-        {"office_docs_storage_account_url": SENTINEL}, current
+    # Resolution is the route's job, not the schema's: only the route holds the
+    # current settings document. The schema normalizer leaves the placeholder
+    # alone, so this checks the helper the route applies to it.
+    resolved = secret_utils.resolve_admin_settings_secret_value(
+        "office_docs_storage_account_url",
+        SENTINEL,
+        {"office_docs_storage_account_url": REAL_SECRET},
     )
 
-    assert not errors, f"Unexpected validation errors: {errors}"
-    assert normalized["office_docs_storage_account_url"] == REAL_SECRET, (
-        "Submitting the mask did not resolve back to the stored secret. Saving an "
-        "untouched Enhanced Citations section would replace a working connection "
-        f"string with {normalized['office_docs_storage_account_url']!r}."
+    assert resolved == REAL_SECRET, (
+        "Submitting the placeholder did not resolve back to the stored secret. "
+        "Saving an untouched Enhanced Citations section would replace a working "
+        f"connection string with {resolved!r}."
     )
 
-    print("  The sentinel resolves back to the stored secret.")
+    source = ROUTE_MODULE.read_text(encoding="utf-8")
+    assert "resolve_admin_settings_secret_value(" in source, (
+        "The settings PATCH no longer resolves secret placeholders, so an "
+        "untouched secret would be saved as the literal placeholder."
+    )
+    assert re.search(r"get_secret_field_keys\(\)", source), (
+        "The settings PATCH no longer asks the schema which keys are secrets, so "
+        "a declared secret field would not be resolved on save."
+    )
+
+    print("  The placeholder resolves back to the stored secret.")
     return True
 
 
@@ -131,17 +143,15 @@ def test_a_new_secret_replaces_the_stored_value():
     """Replacing a credential is the normal case and must not be swallowed."""
     print("\nTesting that a new secret replaces the stored value...")
 
-    current = {"office_docs_storage_account_url": REAL_SECRET}
     replacement = "DefaultEndpointsProtocol=https;AccountKey=rotated-value=="
-
-    normalized, errors, _warnings = fields_module.normalize_admin_settings_updates(
-        {"office_docs_storage_account_url": replacement}, current
+    resolved = secret_utils.resolve_admin_settings_secret_value(
+        "office_docs_storage_account_url",
+        replacement,
+        {"office_docs_storage_account_url": REAL_SECRET},
     )
 
-    assert not errors, f"Unexpected validation errors: {errors}"
-    assert normalized["office_docs_storage_account_url"] == replacement, (
-        "A submitted secret did not replace the stored value: "
-        f"{normalized['office_docs_storage_account_url']!r}"
+    assert resolved == replacement, (
+        f"A submitted secret did not replace the stored value: {resolved!r}"
     )
 
     print("  A submitted secret replaces the stored value.")
@@ -152,16 +162,15 @@ def test_an_empty_secret_clears_the_stored_value():
     """Clearing must be possible, or a secret could only ever be replaced."""
     print("\nTesting that an empty secret clears the stored value...")
 
-    current = {"office_docs_storage_account_url": REAL_SECRET}
-
-    normalized, errors, _warnings = fields_module.normalize_admin_settings_updates(
-        {"office_docs_storage_account_url": ""}, current
+    resolved = secret_utils.resolve_admin_settings_secret_value(
+        "office_docs_storage_account_url",
+        "",
+        {"office_docs_storage_account_url": REAL_SECRET},
     )
 
-    assert not errors, f"Unexpected validation errors: {errors}"
-    assert normalized["office_docs_storage_account_url"] == "", (
+    assert resolved == "", (
         "An empty submission did not clear the secret, so a credential could be "
-        f"replaced but never removed: {normalized['office_docs_storage_account_url']!r}"
+        f"replaced but never removed: {resolved!r}"
     )
 
     print("  An empty submission clears the stored secret.")
@@ -175,9 +184,10 @@ def test_the_settings_endpoints_mask_before_responding():
     assert ROUTE_MODULE.is_file(), f"Missing the V2 route module: {ROUTE_MODULE}"
     source = ROUTE_MODULE.read_text(encoding="utf-8")
 
-    # The GET must not hand the raw document straight to jsonify.
+    # The GET must not hand the raw document straight to jsonify. The API list is
+    # wider than the form's, because this endpoint returns the whole document.
     assert re.search(
-        r"safe_settings\s*=\s*redact_admin_settings_secrets_for_form\(settings\)", source
+        r"safe_settings\s*=\s*redact_admin_settings_secrets_for_api\(settings\)", source
     ), (
         "GET /api/v2/admin/settings no longer masks its response. Returning "
         "get_settings() unchanged sends every stored API key and connection "
@@ -195,14 +205,17 @@ def test_the_settings_endpoints_mask_before_responding():
         "which the key-based mask does not reach."
     )
 
-    # The PATCH echoes what it saved, and a secret field resolves the mask back
-    # to the real credential before saving, so the echo has to be re-masked.
-    assert re.search(
-        r'"settings":\s*redact_admin_settings_secrets_for_form\(normalized\)', source
-    ), (
-        "PATCH /api/v2/admin/settings no longer masks its echoed settings. A "
+    # The PATCH echoes what it saved, and it resolves the placeholder back to the
+    # real credential before saving, so the echo has to be re-masked.
+    assert re.search(r'"settings":\s*echoed', source), (
+        "PATCH /api/v2/admin/settings no longer echoes a re-masked payload. A "
         "resolved secret would be returned to the browser, defeating the mask on "
         "the GET."
+    )
+    assert re.search(
+        r"ADMIN_SETTINGS_SECRET_REDACTED_VALUE\s*\n?\s*if key in secret_keys", source
+    ), (
+        "The PATCH echo no longer replaces secret values with the placeholder."
     )
 
     print("  Both endpoints mask before responding.")
@@ -238,25 +251,34 @@ def test_storage_account_keys_are_masked():
     print("\nTesting that storage account keys are masked...")
 
     storage_keys = ("office_docs_key", "video_files_key", "audio_files_key")
+    api_fields = secret_utils.get_admin_settings_api_secret_fields()
 
-    missing = [
-        key
-        for key in storage_keys
-        if key not in secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
-    ]
+    missing = [key for key in storage_keys if key not in api_fields]
     assert not missing, (
-        "These storage account keys are not masked, so they are sent to the admin "
-        "browser in cleartext. office_docs_key is used directly as account_key= to "
-        "sign citation SAS tokens:\n  " + "\n  ".join(missing)
+        "These storage account keys are not masked on the API, so they are sent to "
+        "the admin browser in cleartext. office_docs_key is used directly as "
+        "account_key= to sign citation SAS tokens:\n  " + "\n  ".join(missing)
     )
 
-    masked = secret_utils.redact_admin_settings_secrets_for_form(
+    masked = secret_utils.redact_admin_settings_secrets_for_api(
         {key: REAL_SECRET for key in storage_keys}
     )
     still_visible = [key for key in storage_keys if masked[key] != SENTINEL]
     assert not still_visible, f"Not masked in practice: {still_visible}"
 
-    print(f"  All {len(storage_keys)} storage account key(s) are masked.")
+    # Deliberately absent from the form list: the server-rendered page has no
+    # input for these, so redacting them there would risk storing the placeholder.
+    leaked_to_form = [
+        key
+        for key in storage_keys
+        if key in secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
+    ]
+    assert not leaked_to_form, (
+        "These belong to the API-only tier. Adding them to the form list changes "
+        f"what the server-rendered page renders: {leaked_to_form}"
+    )
+
+    print(f"  All {len(storage_keys)} storage account key(s) are masked on the API.")
     return True
 
 
@@ -309,7 +331,7 @@ def test_the_control_distinguishes_untouched_from_pending_delete():
         ),
         (
             "offers a way back to the untouched state",
-            "onChange(REDACTED_SECRET)",
+            "onChange(SECRET_PLACEHOLDER)",
         ),
     )
 

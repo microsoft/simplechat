@@ -96,6 +96,7 @@ USER_UI_SETTINGS_KEYS = (
 ADMIN_SETTINGS_SECRET_REDACTED_VALUE = _secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE
 ADMIN_SETTINGS_FORM_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
 ADMIN_SETTINGS_NESTED_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_NESTED_SECRET_FIELDS
+ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'enable_analysis_deliverable_contract_telemetry',
     'analysis_deliverable_contract_mode',
@@ -334,6 +335,14 @@ def normalize_model_endpoint_identity_header_settings(settings):
 
 def redact_admin_settings_secrets_for_form(settings):
     return _secret_utils.redact_admin_settings_secrets_for_form(settings)
+
+
+def get_admin_settings_api_secret_fields():
+    return _secret_utils.get_admin_settings_api_secret_fields()
+
+
+def redact_admin_settings_secrets_for_api(settings):
+    return _secret_utils.redact_admin_settings_secrets_for_api(settings)
 
 
 def _clone_user_settings_doc(doc):
