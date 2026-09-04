@@ -27,12 +27,15 @@ import threading
 import uuid
 from datetime import datetime, timezone
 
-from flask import Response, jsonify, request
+from flask import Response, jsonify, request, session
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from functions_appinsights import log_event
+from functions_citation_tracking import merge_cited_documents_into_conversation
+from functions_conversation_cache import invalidate_conversation_cache_for_item
 from functions_authentication import (
     get_current_user_id,
+    get_current_user_info,
     login_required,
     user_required,
 )
@@ -41,6 +44,7 @@ from functions_orchestration_context import (
     build_planner_context,
     build_run_ledger,
     collect_answered_questions,
+    resolve_agent_catalog,
     resolve_candidate_documents,
     resolve_seeds,
 )
@@ -85,7 +89,7 @@ from functions_orchestration_schema import (
     summarize_plan,
     validate_elicitation_response,
 )
-from functions_settings import get_settings
+from functions_settings import get_settings, get_user_settings
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -327,15 +331,125 @@ def _ensure_conversation(conversation_id, user_id, title=''):
     return conversation_id, True
 
 
-def _save_message(conversation_id, role, content, metadata=None):
+def _request_identity(user_id=None, seeded_agent=None):
+    """Capture the request-scoped identity a run needs, before any thread starts.
+
+    ``execute_plan`` runs on a worker thread with no Flask request context: no ``g``, no
+    ``session``, no ``current_app``. An adapter that reached for ``session`` there would
+    raise, and one that quietly defaulted instead would be worse -- ``user_roles`` gates the
+    ``UrlAccessUser`` and ``DeepResearchUser`` app roles, so guessing it would either deny a
+    permitted user or, far worse, admit one who is not.
+
+    So the values are read here, on the request thread, and carried explicitly on the run
+    context. Roles come from the session the same way the classic chat route reads them,
+    which keeps one source of truth for what a role claim looks like.
+    """
+    try:
+        info = get_current_user_info() or {}
+    except Exception:
+        info = {}
+    try:
+        roles = (session.get('user') or {}).get('roles', [])
+    except Exception:
+        # No session to read (an unusual transport, or a torn-down context). Absent roles
+        # must read as "no roles", never as "unknown, allow anyway".
+        roles = []
+
+    # The per-user agent switch. RunContext defaults this to True for the same
+    # backward-compatibility reason the classic path does, but the default is only correct
+    # when nobody asked -- here somebody did, so the stored preference is read rather than
+    # assumed, and a user who turned agents off does not get them back via orchestration.
+    enable_agents = True
+    if user_id:
+        try:
+            enable_agents = bool(
+                (get_user_settings(user_id) or {}).get('settings', {}).get('enable_agents', True)
+            )
+        except Exception as exc:
+            log_event(
+                f"[ORCHESTRATION] Could not read user agent preference: {exc}",
+                level=logging.WARNING,
+            )
+    # Selecting an agent by hand is itself the permission: the classic path sets
+    # force_enable_agents on the same reasoning, so a seeded agent is honoured even when the
+    # general switch is off.
+    if isinstance(seeded_agent, dict) and _text(seeded_agent.get('name')):
+        enable_agents = True
+
+    return {
+        'user_email': _text(info.get('email')) or None,
+        'user_roles': list(roles) if isinstance(roles, (list, tuple, set)) else [],
+        'user_enable_agents': enable_agents,
+    }
+
+
+def _partition_citations(citations):
+    """Split a run's citations into the document and web buckets chat already uses.
+
+    An assistant message carries these in two separate fields, and the difference is not
+    cosmetic: ``hybrid_citations`` is what the conversation's used-document tracking reads
+    to work out which documents an answer actually drew on, and a web citation has no
+    document to track. Folding both into one field would either lose the web sources or
+    put entries with no ``document_id`` in front of ``build_used_documents``, which skips
+    them silently -- a bug that looks like nothing happening.
+    """
+    document_citations = []
+    web_citations = []
+    for citation in citations or ():
+        if not isinstance(citation, dict):
+            continue
+        if _text(citation.get('document_id')):
+            document_citations.append(citation)
+        elif _text(citation.get('url')) or citation.get('source_type') == 'web':
+            web_citations.append(citation)
+        else:
+            # Neither a document nor a page: an agent tool call, for instance. Carried as
+            # a web-style citation so it is still visible on the message rather than
+            # discarded, but kept out of document tracking where it has no place.
+            web_citations.append(citation)
+    return document_citations, web_citations
+
+
+def _record_cited_documents(conversation_id, user_id, document_citations):
+    """Fold an answer's document citations into the conversation's used-document list.
+
+    This is what puts a document in the Documents drawer. The drawer reads
+    ``used_documents`` off the conversation, not the citations off the message, so an
+    answer can cite a document perfectly and still show "No documents used yet" if this
+    step is skipped -- which is exactly what an orchestrated answer did before this.
+    """
+    if not document_citations:
+        return
+
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id, partition_key=conversation_id
+        )
+    except Exception as exc:
+        log_event(f"[ORCHESTRATION] Could not read the conversation to record cited "
+                  f"documents: {exc}", level=logging.WARNING)
+        return
+
+    if conversation.get('user_id') != user_id:
+        return
+
+    try:
+        merge_cited_documents_into_conversation(conversation, document_citations)
+        conversation['last_updated'] = _now_iso()
+        cosmos_conversations_container.upsert_item(conversation)
+        invalidate_conversation_cache_for_item(conversation, reason="orchestration_completed")
+    except Exception as exc:
+        log_event(f"[ORCHESTRATION] Could not record cited documents: {exc}",
+                  level=logging.WARNING)
+
+
+def _save_message(conversation_id, role, content, metadata=None, extra=None):
     """Write one message, returning its id.
 
-    Deliberately minimal: id, conversation, role, content, timestamp and metadata. An
-    orchestrated answer is an ordinary assistant message, so the existing renderer,
-    citations and exports apply to it without any of them being told about orchestration.
+    ``extra`` carries the citation fields an assistant message needs. They are top-level
+    rather than nested in metadata because that is where every existing reader looks for
+    them -- the renderer, the citation lookup and the used-document tracking alike.
     """
-
-
     message_id = f"{role}_{uuid.uuid4().hex}"
     document = {
         'id': message_id,
@@ -344,6 +458,8 @@ def _save_message(conversation_id, role, content, metadata=None):
         'content': content or '',
         'timestamp': _now_iso(),
     }
+    if isinstance(extra, dict):
+        document.update(extra)
     if metadata:
         document['metadata'] = metadata
 
@@ -491,6 +607,26 @@ def register_route_backend_orchestration(bp):
                     kind = 'plan'
                 else:
                     yield build_planning_thought('Deciding what this question needs.')
+                    # The agent catalog is resolved here rather than above so a
+                    # conversational message never pays for it: it is a multi-query Cosmos
+                    # traversal with no cache, and a trivial reply has no plan for an agent
+                    # to appear in. Once per plan, never per step.
+                    #
+                    # The context is rebuilt rather than having 'agents' assigned into it,
+                    # because build_planner_context is the single place the catalog is
+                    # projected down to its naming fields. Writing the key directly would
+                    # put an agent's full instructions in front of the planner.
+                    context = build_planner_context(
+                        message, candidates=candidates, seeds=seeds, ledger=ledger,
+                        signals=signals,
+                        agents=resolve_agent_catalog(
+                            user_id, seeds=seeds, settings=settings,
+                            user_groups=seeds.get('active_group_ids') or None,
+                        ),
+                    )
+                    if answered:
+                        context['answered_now'] = answered
+
                     kind, plan = plan_request(
                         message, context, resolved_conversation_id, user_id,
                         settings=settings,
@@ -605,6 +741,20 @@ def register_route_backend_orchestration(bp):
             (plan.get('intent') or {}).get('summary')
         )
 
+        # Captured out here, on the request thread, and closed over by the generator. A
+        # streamed response's generator body runs after the view has returned, so reading
+        # the session from inside it would be reading a context that is already gone.
+        identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
+
+        # Resolved again rather than read back off the plan. Planning and running are
+        # separate requests, and an agent the user could reach when the plan was made is not
+        # necessarily one they can reach now -- the same reason document authorization is
+        # rechecked before the answer is composed. Still once per run, never per step.
+        agent_catalog = resolve_agent_catalog(
+            user_id, seeds=seeds, settings=settings,
+            user_groups=seeds.get('active_group_ids') or None,
+        )
+
         def generate():
             approved_at = _now_iso()
             try:
@@ -685,6 +835,12 @@ def register_route_backend_orchestration(bp):
                 active_public_workspace_id=(
                     (seeds.get('active_public_workspace_ids') or [None])[0]
                 ),
+                # Read on the request thread; see _request_identity.
+                user_roles=identity.get('user_roles'),
+                user_email=identity.get('user_email'),
+                user_enable_agents=identity.get('user_enable_agents', True),
+                active_group_id=(seeds.get('active_group_ids') or [None])[0],
+                agent_catalog=agent_catalog,
             )
 
             cancel_requested = _make_cancel_probe(run_id, user_id, conversation_id)
@@ -745,6 +901,9 @@ def register_route_backend_orchestration(bp):
             summary = summarize_plan(plan)
             summary['status'] = result.get('status')
 
+            # Everything the run gathered, split the way an assistant message carries it.
+            document_citations, web_citations = _partition_citations(result.get('citations'))
+
             # The answer is an ordinary assistant message. Written before the terminal
             # frame so that a client which reloads the moment it arrives finds the answer
             # in the conversation rather than an empty turn where one just streamed.
@@ -757,10 +916,19 @@ def register_route_backend_orchestration(bp):
                     },
                     'token_usage': run_token_usage or result.get('token_usage') or {},
                 },
+                extra={
+                    'hybrid_citations': document_citations,
+                    'web_search_citations': web_citations,
+                    'augmented': bool(document_citations or web_citations),
+                },
             ) if answer else None
 
             if answer:
                 _touch_conversation(conversation_id, user_id)
+                # What the Documents drawer reads. The drawer works from the conversation's
+                # used-document list rather than from the message's citations, so citing a
+                # document is not enough on its own to make it appear there.
+                _record_cited_documents(conversation_id, user_id, document_citations)
                 yield build_content_event(answer)
 
             try:
@@ -778,7 +946,8 @@ def register_route_backend_orchestration(bp):
                 message_id=message_id,
                 run_id=run_id,
                 full_content=answer,
-                citations=result.get('citations'),
+                citations=document_citations,
+                web_citations=web_citations,
                 artifacts=result.get('artifacts'),
                 plan_summary=summary,
                 status=result.get('status') or PLAN_STATUS_COMPLETED,

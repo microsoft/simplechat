@@ -32,9 +32,9 @@ def test_descriptors_are_well_formed():
             import functions_orchestration_registry as registry
 
             required_fields = (
-                'id', 'label', 'kind', 'summary', 'when_to_use', 'settings_gates',
-                'settings_gates_any', 'gate', 'requires_scope', 'inputs', 'produces',
-                'cost_class', 'max_per_plan', 'adapter', 'terminal',
+                'id', 'label', 'phase', 'summary', 'when_to_use', 'settings_gates',
+                'settings_gates_any', 'gate', 'request_gate', 'requires_scope', 'inputs',
+                'produces', 'cost_class', 'max_per_plan', 'adapter', 'terminal',
             )
 
             seen_ids = set()
@@ -49,8 +49,8 @@ def test_descriptors_are_well_formed():
                 )
                 seen_ids.add(capability['id'])
 
-                assert capability['kind'] in registry.CAPABILITY_KINDS, (
-                    f"{capability['id']} has an unknown kind {capability['kind']}"
+                assert capability['phase'] in registry.CAPABILITY_PHASES, (
+                    f"{capability['id']} has an unknown phase {capability['phase']}"
                 )
                 assert capability['cost_class'] in registry.COST_CLASSES, (
                     f"{capability['id']} has an unknown cost class"

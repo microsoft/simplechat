@@ -49,14 +49,26 @@ DOCUMENT_ACTION_TYPE_ANALYZE = 'analyze'
 DOCUMENT_ACTION_TYPE_COMPARISON = 'comparison'
 DOCUMENT_ACTION_CONTEXT_CHAT = 'chat'
 
-CAPABILITY_KIND_RETRIEVAL = 'retrieval'
-CAPABILITY_KIND_ANALYSIS = 'analysis'
-CAPABILITY_KIND_SYNTHESIS = 'synthesis'
+PHASE_KNOWLEDGE = 'knowledge'
+PHASE_REASONING = 'reasoning'
+PHASE_OUTPUT = 'output'
 
-CAPABILITY_KINDS = (
-    CAPABILITY_KIND_RETRIEVAL,
-    CAPABILITY_KIND_ANALYSIS,
-    CAPABILITY_KIND_SYNTHESIS,
+# Ordered, and the order is the point. A plan runs in phase order, so a capability's phase
+# is really its index: "may this step follow that one" becomes an integer comparison rather
+# than a table of special cases.
+#
+# This replaces the earlier `kind` (retrieval / analysis / synthesis), which was carried all
+# the way to the browser and read by nothing -- not the validator, not the executor, not one
+# React component. A second decorative taxonomy alongside this one is how a field ends up
+# meaning nothing, so `kind` is gone rather than kept.
+#
+# The boundary is drawn on what a capability *produces*, not on how hard it thinks. Analysing
+# and comparing documents emit the same evidence envelopes as searching them, and the answer
+# is the only step that consumes evidence -- so they are knowledge and it is reasoning.
+CAPABILITY_PHASES = (
+    PHASE_KNOWLEDGE,
+    PHASE_REASONING,
+    PHASE_OUTPUT,
 )
 
 COST_CLASS_LOW = 'low'
@@ -70,6 +82,16 @@ PRODUCES_EVIDENCE = 'evidence'
 PRODUCES_CITATIONS = 'citations'
 PRODUCES_ARTIFACTS = 'artifacts'
 PRODUCES_MESSAGE = 'message'
+# Gathered text rather than document evidence.
+#
+# An agent, a URL read and a deep research crawl all return prose and citations tied to no
+# document id. `build_evidence_envelope` refuses that shape outright -- it requires a
+# non-empty `document_id`, a `source_kind` of tabular or narrative, and one of three named
+# engines. Calling their output evidence would mean either lying to that validator or
+# loosening it, and neither is worth it: `RunContext` already accumulates `notes`, and the
+# respond adapter already folds notes into its prompt. So they produce notes, and notes
+# reach the answer by the path that exists.
+PRODUCES_NOTES = 'notes'
 
 # Capability identifiers. Referenced by plans, adapters and tests, so they are constants
 # rather than repeated string literals.
@@ -78,6 +100,9 @@ CAPABILITY_DOCUMENT_ANALYZE = 'document_analyze'
 CAPABILITY_DOCUMENT_COMPARE = 'document_compare'
 CAPABILITY_TABULAR_ANALYZE = 'tabular_analyze'
 CAPABILITY_WEB_SEARCH = 'web_search'
+CAPABILITY_URL_FETCH = 'url_fetch'
+CAPABILITY_DEEP_RESEARCH = 'deep_research'
+CAPABILITY_AGENT_INVOKE = 'agent_invoke'
 CAPABILITY_RESPOND = 'respond'
 
 # Workspace scopes a capability may need at least one of.
@@ -113,6 +138,81 @@ def _document_action_gate(action_type):
     return _gate
 
 
+# --------------------------------------------------------------------------------------
+# Request-level gates
+# --------------------------------------------------------------------------------------
+#
+# Separate from the settings gates above, and the separation matters. A settings gate asks
+# "has this deployment configured the capability at all", which is what the admin page and
+# the bootstrap payload need to know. A request gate asks "may *this* request use it", which
+# depends on the caller's app roles and on what they actually typed.
+#
+# Collapsing the two would break both surfaces: the admin Capabilities list would hide a
+# capability the deployment plainly has because the current request has no URL in it, and
+# the planner would be offered capabilities the caller has no role for. So request gates run
+# only when a request context is supplied, and the deployment view never sees them.
+#
+# Every one of these fails CLOSED. `user_roles` reaches the executor's worker thread by being
+# captured in the request and carried on the run context; if that plumbing ever breaks, the
+# roles arrive as None, and a gate that treated None as "no restriction" would quietly hand
+# every user a capability their app role was meant to withhold.
+
+
+def _url_access_request_gate(settings, context):
+    """Whether this caller may read URLs, and whether there are any to read."""
+    try:
+        from functions_source_review import is_url_access_enabled_for_user
+
+        if not is_url_access_enabled_for_user(settings, user_roles=context.get('user_roles')):
+            return False
+    except Exception as exc:
+        log_event(
+            f"[ORCHESTRATION_REGISTRY] Could not resolve the URL access gate, treating it "
+            f"as disabled: {exc}",
+            level=logging.WARNING,
+        )
+        return False
+
+    # Offering "read URLs" when the message contains none invites a step that can only
+    # report having nothing to do. The classic composer hides the button on the same
+    # condition; expressing it here means the rule lives with the capability rather than
+    # being restated in the browser.
+    return bool(context.get('message_urls'))
+
+
+def _deep_research_request_gate(settings, context):
+    """Whether this caller may run a deep research crawl."""
+    try:
+        from functions_source_review import is_source_review_enabled_for_user
+
+        return bool(is_source_review_enabled_for_user(
+            settings,
+            context.get('user_id'),
+            user_email=context.get('user_email'),
+            user_roles=context.get('user_roles'),
+        ))
+    except Exception as exc:
+        log_event(
+            f"[ORCHESTRATION_REGISTRY] Could not resolve the deep research gate, treating "
+            f"it as disabled: {exc}",
+            level=logging.WARNING,
+        )
+        return False
+
+
+def _agent_request_gate(settings, context):
+    """Whether this caller has an agent to invoke.
+
+    Agents are per-user in a way the other capabilities are not: the deployment can have
+    Semantic Kernel on while a given user has agents switched off in their own settings, or
+    simply has none they can reach. Offering the capability in either case produces plans
+    naming agents that cannot run.
+    """
+    if not context.get('user_enable_agents', True):
+        return False
+    return bool(context.get('agent_catalog'))
+
+
 # The registry itself. Ordered as a plan tends to read: gather, then reason, then answer.
 #
 # `when_to_use` is the only free text the planner is shown per capability, so it is written
@@ -123,7 +223,8 @@ CAPABILITY_REGISTRY = (
     {
         'id': CAPABILITY_DOCUMENT_SEARCH,
         'label': 'Search documents',
-        'kind': CAPABILITY_KIND_RETRIEVAL,
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': None,
         'summary': "Find relevant passages across the documents this user can read.",
         'when_to_use': (
             "The question asks about information likely held in the user's own documents, "
@@ -170,7 +271,8 @@ CAPABILITY_REGISTRY = (
     {
         'id': CAPABILITY_DOCUMENT_ANALYZE,
         'label': 'Analyse documents',
-        'kind': CAPABILITY_KIND_ANALYSIS,
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': None,
         'summary': "Read one or more documents end to end and answer a question about them.",
         'when_to_use': (
             "The question needs whole-document coverage rather than a few passages -- "
@@ -215,7 +317,8 @@ CAPABILITY_REGISTRY = (
     {
         'id': CAPABILITY_DOCUMENT_COMPARE,
         'label': 'Compare documents',
-        'kind': CAPABILITY_KIND_ANALYSIS,
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': None,
         'summary': "Compare one document against one or more others.",
         'when_to_use': (
             "The question is explicitly comparative -- what changed, how two versions "
@@ -263,7 +366,8 @@ CAPABILITY_REGISTRY = (
     {
         'id': CAPABILITY_TABULAR_ANALYZE,
         'label': 'Analyse spreadsheets',
-        'kind': CAPABILITY_KIND_ANALYSIS,
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': None,
         'summary': "Compute over CSV or Excel data rather than reading it as prose.",
         'when_to_use': (
             "The named documents are spreadsheets or CSV files and the question needs "
@@ -300,7 +404,8 @@ CAPABILITY_REGISTRY = (
     {
         'id': CAPABILITY_WEB_SEARCH,
         'label': 'Search the web',
-        'kind': CAPABILITY_KIND_RETRIEVAL,
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': None,
         'summary': "Look the question up on the public web.",
         'when_to_use': (
             "The question is about current events, or about something no internal document "
@@ -318,16 +423,130 @@ CAPABILITY_REGISTRY = (
             'required': ['query'],
             'additionalProperties': False,
         },
-        'produces': (PRODUCES_EVIDENCE, PRODUCES_CITATIONS),
+        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS),
         'cost_class': COST_CLASS_LOW,
         'max_per_plan': 2,
         'adapter': CAPABILITY_WEB_SEARCH,
         'terminal': False,
     },
     {
+        'id': CAPABILITY_URL_FETCH,
+        'label': 'Read linked pages',
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': _url_access_request_gate,
+        'summary': "Read the web pages the user linked to in their message.",
+        'when_to_use': (
+            "The user pasted one or more links and is asking about what they contain. This "
+            "reads those pages and nothing else -- it does not search, so use web search "
+            "when the question needs sources the user has not already named."
+        ),
+        'settings_gates': ('enable_url_access',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'urls': {
+                    'type': 'array',
+                    'items': {'type': 'string'},
+                    'description': (
+                        'Restrict to these links. Omit to read every link in the message. '
+                        'Only links the user actually pasted can be read.'
+                    ),
+                },
+            },
+            'required': [],
+            'additionalProperties': False,
+        },
+        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS),
+        'cost_class': COST_CLASS_LOW,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_URL_FETCH,
+        'terminal': False,
+    },
+    {
+        'id': CAPABILITY_DEEP_RESEARCH,
+        'label': 'Research in depth',
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': _deep_research_request_gate,
+        'summary': "Follow a question across several web sources and cross-check them.",
+        'when_to_use': (
+            "The question needs more than one source to answer honestly -- comparing "
+            "accounts, establishing what is current, or building a picture no single page "
+            "holds. This is the most expensive capability here: it crawls and reads several "
+            "pages. For anything a single search result would settle, use web search."
+        ),
+        'settings_gates': ('enable_source_review',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'query': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'What to establish. Phrase it as the question to answer.',
+                },
+            },
+            'required': ['query'],
+            'additionalProperties': False,
+        },
+        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS),
+        'cost_class': COST_CLASS_HIGH,
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_DEEP_RESEARCH,
+        'terminal': False,
+    },
+    {
+        'id': CAPABILITY_AGENT_INVOKE,
+        'label': 'Ask an agent',
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': _agent_request_gate,
+        'summary': "Hand the task to one of this user's configured agents.",
+        'when_to_use': (
+            "An agent in the list has tools or knowledge built for exactly this task -- "
+            "reaching a system none of the other capabilities can, or following a procedure "
+            "somebody configured deliberately. Name only an agent from the list. An agent "
+            "runs its own tools, so do not also plan the work it would do itself."
+        ),
+        'settings_gates': ('enable_semantic_kernel',),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'agent_name': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': "The agent's name, exactly as it appears in the list.",
+                },
+                'task': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'What to ask the agent to do, in a sentence or two.',
+                },
+            },
+            'required': ['agent_name', 'task'],
+            'additionalProperties': False,
+        },
+        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS, PRODUCES_ARTIFACTS),
+        'cost_class': COST_CLASS_HIGH,
+        # One per plan. Every agent step loads a kernel from scratch -- resolving Key Vault
+        # secrets, hydrating each plugin the agent declares, introspecting SQL and Cosmos
+        # schemas -- and there is no live kernel cache to amortise it. Two agent steps means
+        # paying all of that twice.
+        'max_per_plan': 1,
+        'adapter': CAPABILITY_AGENT_INVOKE,
+        'terminal': False,
+    },
+    {
         'id': CAPABILITY_RESPOND,
         'label': 'Answer',
-        'kind': CAPABILITY_KIND_SYNTHESIS,
+        'phase': PHASE_REASONING,
+        'request_gate': None,
         'summary': "Write the answer from whatever the earlier steps gathered.",
         'when_to_use': (
             "Always the last step. Every plan ends with exactly one of these, including a "
@@ -380,8 +599,25 @@ def get_capability(capability_id):
     return CAPABILITY_BY_ID.get(capability_id.strip())
 
 
+def phase_index(capability_or_id):
+    """Where a capability sits in the run, as a sortable integer.
+
+    Accepts a descriptor or an id so callers do not have to look one up first. An unknown
+    capability sorts to the end rather than the front: whatever it is, running it before
+    everything that gathers would be the more damaging guess.
+    """
+    capability = capability_or_id
+    if isinstance(capability_or_id, str):
+        capability = get_capability(capability_or_id)
+    phase = (capability or {}).get('phase')
+    try:
+        return CAPABILITY_PHASES.index(phase)
+    except ValueError:
+        return len(CAPABILITY_PHASES)
+
+
 def _gates_pass(capability, settings):
-    """Whether a capability's three gate forms all allow it."""
+    """Whether a capability's three deployment-level gate forms all allow it."""
     settings = settings if isinstance(settings, dict) else {}
 
     for key in capability.get('settings_gates') or ():
@@ -399,13 +635,40 @@ def _gates_pass(capability, settings):
     return True
 
 
-def resolve_available_capabilities(settings, allowed_ids=None):
+def _request_gate_passes(capability, settings, request_context):
+    """Whether this particular request may use a capability the deployment allows.
+
+    Skipped entirely when no request context is supplied, which is what the admin page and
+    the bootstrap payload want: they are describing the deployment, not a caller.
+
+    A gate that raises is treated as a refusal. These gates read app roles, and an error
+    resolving a role is not a reason to assume the caller has it.
+    """
+    gate = capability.get('request_gate')
+    if not callable(gate) or request_context is None:
+        return True
+    try:
+        return bool(gate(settings, request_context))
+    except Exception as exc:
+        log_event(
+            f"[ORCHESTRATION_REGISTRY] The request gate for {capability['id']} raised; "
+            f"withholding the capability: {exc}",
+            level=logging.WARNING,
+        )
+        return False
+
+
+def resolve_available_capabilities(settings, allowed_ids=None, request_context=None):
     """The capabilities this deployment currently permits, in registry order.
 
     ``allowed_ids`` is the administrator's ``chat_orchestration_enabled_capabilities``
     narrowing. An empty or missing list means "everything the other gates already allow",
     because an administrator who has not expressed an opinion should not thereby disable
     the feature entirely.
+
+    ``request_context`` narrows further to what *this caller, asking this question* may use
+    -- app roles, whether they have any agents, whether their message contains a link.
+    Omitted, the answer describes the deployment, which is what the admin surface needs.
 
     The terminal capability is never removed by the narrowing. A plan cannot end without
     it, so allowing it to be configured away would only produce plans that fail validation.
@@ -425,16 +688,20 @@ def resolve_available_capabilities(settings, allowed_ids=None):
                 continue
         if not _gates_pass(capability, settings):
             continue
+        if not _request_gate_passes(capability, settings, request_context):
+            continue
         available.append(capability)
 
     return available
 
 
-def resolve_available_capability_ids(settings, allowed_ids=None):
+def resolve_available_capability_ids(settings, allowed_ids=None, request_context=None):
     """Identifiers only, for the validator and for the bootstrap payload."""
     return [
         capability['id']
-        for capability in resolve_available_capabilities(settings, allowed_ids=allowed_ids)
+        for capability in resolve_available_capabilities(
+            settings, allowed_ids=allowed_ids, request_context=request_context
+        )
     ]
 
 
@@ -451,7 +718,7 @@ def build_planner_capability_projection(capabilities):
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
-            'kind': capability['kind'],
+            'phase': capability['phase'],
             'summary': capability['summary'],
             'when_to_use': capability['when_to_use'],
             'inputs': capability['inputs'],
@@ -471,11 +738,42 @@ def build_capability_client_projection(capabilities):
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
-            'kind': capability['kind'],
+            'phase': capability['phase'],
             'summary': capability['summary'],
             'cost': capability['cost_class'],
             'terminal': bool(capability.get('terminal')),
         })
+    return projection
+
+
+# Fields of an agent catalog record the planner may see.
+#
+# `instructions` is the agent's entire system prompt and is withheld deliberately: it is
+# long enough to crowd out the question, and it is the agent's own configuration rather than
+# something the planner needs to choose between agents. `actions_to_load`,
+# `assigned_knowledge`, `model_endpoint_id` and `scope_id` are withheld on the same
+# principle as the capability projection -- the planner is given what it needs to pick, not
+# the internals of what it picked.
+AGENT_PLANNER_FIELDS = ('name', 'display_name', 'description', 'tags', 'action_labels')
+
+
+def build_agent_planner_projection(agents, limit=None):
+    """Reduce the agent catalog to what the planner is shown when choosing one."""
+    projection = []
+    for agent in agents or ():
+        if not isinstance(agent, dict):
+            continue
+        name = str(agent.get('name') or '').strip()
+        if not name:
+            continue
+        entry = {'name': name}
+        for field in AGENT_PLANNER_FIELDS[1:]:
+            value = agent.get(field)
+            if value:
+                entry[field] = value
+        projection.append(entry)
+        if limit is not None and len(projection) >= limit:
+            break
     return projection
 
 
@@ -512,4 +810,5 @@ def describe_registry():
         'contract_version': CAPABILITY_REGISTRY_CONTRACT_VERSION,
         'capability_ids': all_capability_ids(),
         'terminal_capability_id': TERMINAL_CAPABILITY_ID,
+        'phases': list(CAPABILITY_PHASES),
     }

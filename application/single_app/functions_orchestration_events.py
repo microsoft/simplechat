@@ -278,6 +278,7 @@ def build_run_done_event(
     run_id=None,
     full_content='',
     citations=None,
+    web_citations=None,
     artifacts=None,
     plan_summary=None,
     status='completed',
@@ -287,6 +288,10 @@ def build_run_done_event(
     Shaped like the chat stream's own terminal payload so the V2 message renderer needs no
     special case: an orchestrated answer is still just an assistant message, and the parts
     that are new to orchestration are additive keys rather than a different envelope.
+
+    Document and web citations are carried in the two separate fields chat already uses,
+    because the client renders them differently and the used-document tracking only ever
+    reads the document one.
     """
     return serialize_sse({
         'done': True,
@@ -296,6 +301,8 @@ def build_run_done_event(
         'run_id': run_id,
         'full_content': full_content,
         'hybrid_citations': list(citations or ()),
+        'web_search_citations': list(web_citations or ()),
+        'augmented': bool(citations or web_citations),
         'generated_artifacts': list(artifacts or ()),
         'orchestration': plan_summary or {},
         'status': status,

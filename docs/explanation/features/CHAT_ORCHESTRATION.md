@@ -1,6 +1,7 @@
 # Chat Orchestration
 
 **Implemented in version: 0.261.086**
+**Knowledge phase added in version: 0.261.087**
 
 ## Overview
 
@@ -78,6 +79,52 @@ an adapter is reached. The validator repairs where repair is honest and drops wh
 not, and records what it did in `validation.repairs` so the card can show a plan that
 differs from the proposal and say why.
 
+### Phases
+
+Every capability declares a `phase`, and the phases are ordered:
+
+```
+knowledge  ->  reasoning  ->  output
+```
+
+| Phase | Meaning | Capabilities |
+| --- | --- | --- |
+| `knowledge` | Produces something the answer can be based on | `document_search`, `document_analyze`, `document_compare`, `tabular_analyze`, `web_search`, `url_fetch`, `deep_research`, `agent_invoke` |
+| `reasoning` | Turns what was gathered into an answer | `respond` |
+| `output` | Declared, not yet populated | — |
+
+The boundary is drawn at *evidence*, not at effort: analysing and comparing documents are
+knowledge steps because they produce something to reason over, even though they involve a
+model call. Answering is the only reasoning step, because it is the only one that commits
+to a claim.
+
+`CAPABILITY_PHASES` is an ordered tuple, so a capability's phase is an index and "may this
+step follow that one" is an integer comparison rather than a table of special cases. The
+validator stably sorts by phase before the topological pass and drops a `depends_on` edge
+that points backwards across a phase boundary, recording a repair note.
+
+This replaced an earlier `kind` field (`retrieval` / `analysis` / `synthesis`) that was
+carried all the way to the browser and read by nothing. Two overlapping taxonomies where
+one is decorative is how a field comes to mean nothing, so `kind` was removed rather than
+kept alongside.
+
+**What enforcement buys.** A plan that searches after it has answered is not a plan, it is
+a mistake: it would run, and produce an answer written without the evidence the later step
+just found. That is a silent wrong answer rather than a visible failure, which is the worst
+kind.
+
+### Knowledge capabilities that produce text rather than evidence
+
+`build_evidence_envelope` requires a non-empty `document_id`, a `source_kind` of `tabular`
+or `narrative`, and an `engine` from three values. An agent returns free text plus tool-call
+citations tied to no document, and source review returns a JSON blob plus citations.
+Neither can honestly produce evidence.
+
+So `agent_invoke`, `url_fetch` and `deep_research` produce `notes` and `citations` instead.
+This is not a workaround: `RunContext.merge_step_result` already accumulates notes, and the
+respond adapter already folds them into its prompt. A knowledge step that gathers *text*
+rather than *document evidence* reaches the answer through a path that already existed.
+
 ### Execute
 
 `functions_orchestration_executor.py` orders steps topologically over `depends_on` and runs
@@ -87,6 +134,23 @@ cancellation and telemetry come with it.
 
 Authorization is checked twice: when the plan is validated, and again before the answer is
 composed. Those are not the same moment, and access can be revoked between them.
+
+#### The worker-thread boundary
+
+`execute_plan` runs in a `threading.Thread` so progress can stream while work happens. That
+thread has no Flask request context: no `g`, no `session`, no `current_app`. **An adapter
+must never read Flask state.** Every request-scoped value an adapter needs is captured on
+the request thread by `_request_identity()` in `route_backend_orchestration.py` and carried
+explicitly on `RunContext`.
+
+This matters most for `user_roles`, which gates the `UrlAccessUser` and `DeepResearchUser`
+app roles. Guessing it would either deny a permitted user or, far worse, admit one who
+holds no role. Absent roles normalise to "no roles" and the gate denies — the failure mode
+is a feature that does not appear, never one that appears when it should not.
+
+The capture happens outside the streamed generator, because a generator body runs *after*
+the view returns, when the session is already gone. `test_orchestration_adapter_contract.py`
+asserts all of this statically.
 
 ### Outputs
 
@@ -199,6 +263,9 @@ to the front.
 | `functional_tests/test_orchestration_run_ledger.py` | Run and byte bounds, oldest-first compaction, honest truncation, answered questions carrying forward |
 | `functional_tests/test_orchestration_invoke_prompt_contract.py` | The model-call convention: the route's closure must accept what the adapters and the document functions actually pass, and must count token usage |
 | `functional_tests/test_orchestration_executor.py` | Step ordering, dependency skipping, cancellation, budget caps, re-authorization |
+| `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
+| `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
+| `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list, and document and web citations are separated |
 
 ## Known limitations
 
@@ -206,8 +273,16 @@ to the front.
   capability metadata, so plans use one configured planner model and the default chat model
   for execution. Each step records which model it used, so per-step routing can be added
   without changing the plan contract.
-- **Retrieval and reasoning only.** Image generation, file exports, agent dispatch and
-  MCP or OpenAPI actions are not yet capabilities a plan can contain.
+- **Retrieval and reasoning only.** Image generation, file exports, workspace placement,
+  sharing, mail and MCP or OpenAPI actions are not yet capabilities a plan can contain. The
+  `output` phase is declared for them but empty.
+- **An agent step produces no artifacts.** Charts and images an agent generates are written
+  through the Flask-bound message-artifact pipeline, which the worker thread cannot reach.
+  The adapter surfaces the agent's tool activity as citations instead and returns no
+  artifacts.
+- **One agent per plan.** Loading an agent resolves Key Vault secrets, hydrates every plugin
+  it declares, and introspects SQL and Cosmos schemas. There is no working kernel cache, so
+  each agent step pays that cost in full.
 - **Steps run sequentially.** The executor orders steps by dependency but does not run
   independent steps in parallel.
 - **Workflows do not yet execute against this engine.** The run record was shaped with that
