@@ -35,9 +35,11 @@ import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
+import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { SaveBar } from '../components/admin/SaveBar';
+import { SettingsSection } from '../components/admin/SettingsSection';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -550,6 +552,16 @@ export function AdminSettingsPage() {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'connection-test':
+                    return (
+                        <ConnectionTest
+                            key={key}
+                            field={field}
+                            settings={settings}
+                            draft={draft}
+                            disabled={saving}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
@@ -734,40 +746,47 @@ export function AdminSettingsPage() {
                             )}
 
                             {visibleSections.map((section) => (
-                                <GlassPanel key={section.sectionId} edge className="p-4">
-                                    <div className="mb-1">
-                                        <h2 className="text-sm font-semibold text-text-1">
-                                            {section.label}
-                                        </h2>
-                                        <p className="text-xs text-text-3">
-                                            {section.groupLabel}
-                                            {section.tabLabel ? ` · ${section.tabLabel}` : ''}
-                                        </p>
-                                    </div>
-
-                                    <div className="divide-y divide-edge">
-                                        {section.fields.map(renderField)}
-
-                                        {section.capabilities.map((row) => (
-                                            <div key={row.key} className="py-1">
-                                                <Toggle
-                                                    label={row.label}
-                                                    description={row.key}
-                                                    checked={asBoolean(
-                                                        Object.prototype.hasOwnProperty.call(
-                                                            draft,
-                                                            row.key,
-                                                        )
-                                                            ? draft[row.key]
-                                                            : settings[row.key],
-                                                    )}
-                                                    disabled={saving}
-                                                    onChange={(next) => setValue(row.key, next)}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                </GlassPanel>
+                                <SettingsSection
+                                    key={section.sectionId}
+                                    sectionId={section.sectionId}
+                                    label={section.label}
+                                    groupLabel={section.groupLabel}
+                                    tabLabel={section.tabLabel}
+                                    fields={section.fields}
+                                    settings={settings}
+                                    draft={draft}
+                                    renderField={renderField}
+                                    renderCapability={renderField}
+                                    // While a search is filtering, a match inside a
+                                    // collapsed group has to be shown or the card would
+                                    // appear empty.
+                                    forceExpanded={Boolean(query.trim())}
+                                >
+                                    {section.capabilities.length ? (
+                                        <div className="divide-y divide-edge">
+                                            {section.capabilities.map((row) => (
+                                                <div key={row.key} className="py-1">
+                                                    <Toggle
+                                                        label={row.label}
+                                                        description={row.key}
+                                                        checked={asBoolean(
+                                                            Object.prototype.hasOwnProperty.call(
+                                                                draft,
+                                                                row.key,
+                                                            )
+                                                                ? draft[row.key]
+                                                                : settings[row.key],
+                                                        )}
+                                                        disabled={saving}
+                                                        onChange={(next) =>
+                                                            setValue(row.key, next)
+                                                        }
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </SettingsSection>
                             ))}
 
                             {!loading && activeGroupUsesFallback && (

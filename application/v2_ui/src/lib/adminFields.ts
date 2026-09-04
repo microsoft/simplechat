@@ -127,6 +127,21 @@ export interface AdminField {
     subtitle_field?: string;
     /** `status` fields only: which server-computed readout to show. */
     status_source?: string;
+    /**
+     * `connection-test` components only: which test the shared dispatcher should run,
+     * and how to build its payload from current values.
+     *
+     * Keys are dotted paths into the request body, so one flat declaration produces the
+     * nested `{direct: {...}}` / `{apim: {...}}` shape the test handlers expect. An entry
+     * with a `when` is only sent while that condition holds, which is what lets a single
+     * declaration cover both sides of an APIM-or-direct choice.
+     */
+    test_type?: string;
+    test_payload?: Record<string, { key?: string; value?: unknown; when?: AdminFieldDependency }>;
+    /** Marks a field that must hold a value before its section counts as configured. */
+    required?: boolean;
+    /** Lifts a field into the section header. See `FIELD_ROLES`. */
+    role?: 'capability';
     depends_on?: AdminFieldDependency;
     requires?: AdminFieldRequirement;
     group?: AdminFieldGroup;

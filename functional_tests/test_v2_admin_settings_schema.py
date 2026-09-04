@@ -191,6 +191,32 @@ def test_setting_keys_are_unique():
     return True
 
 
+def _walk_dependency_conditions(dependency, path="depends_on"):
+    """Yield every leaf condition in a dependency tree, with a readable path.
+
+    A dependency is either a single ``{key, equals}`` condition or an ``any_of`` /
+    ``all_of`` composition of them, and the composed forms nest. Walking the tree
+    is what lets these checks reach a condition buried two levels down, which is
+    where a typo would otherwise sit undetected and hide a control forever.
+    """
+    if not isinstance(dependency, dict):
+        return
+
+    for combinator in ("any_of", "all_of"):
+        if combinator in dependency:
+            nested = dependency[combinator]
+            if not isinstance(nested, list) or not nested:
+                yield path, {"__error": f"{combinator} must be a non-empty list"}
+                return
+            for index, condition in enumerate(nested):
+                yield from _walk_dependency_conditions(
+                    condition, f"{path}.{combinator}[{index}]"
+                )
+            return
+
+    yield path, dependency
+
+
 def test_dependencies_reference_real_fields():
     """A dependency on an undeclared key would hide the field permanently."""
     print("\nTesting visibility dependencies...")
@@ -203,22 +229,84 @@ def test_dependencies_reference_real_fields():
         depends_on = field.get("depends_on")
         if not depends_on:
             continue
-        checked += 1
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        if "key" not in depends_on:
-            problems.append(f"{identity}: depends_on has no key")
-            continue
-        if depends_on["key"] not in declared:
-            problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
-        if field.get("key") == depends_on["key"]:
-            problems.append(f"{identity}: depends on itself")
+        for path, condition in _walk_dependency_conditions(depends_on):
+            checked += 1
+
+            if "__error" in condition:
+                problems.append(f"{identity}: {path}: {condition['__error']}")
+                continue
+            if "key" not in condition:
+                problems.append(f"{identity}: {path} has no key")
+                continue
+            if condition["key"] not in declared:
+                problems.append(
+                    f"{identity}: {path} depends on undeclared key {condition['key']!r}"
+                )
+            if field.get("key") == condition["key"]:
+                problems.append(f"{identity}: {path} depends on itself")
+            if "equals" not in condition and "not_equals" not in condition:
+                problems.append(
+                    f"{identity}: {path} states neither equals nor not_equals"
+                )
 
     assert not problems, (
         "These visibility dependencies are broken:\n  " + "\n  ".join(problems)
     )
 
-    print(f"  All {checked} dependency reference(s) resolve to declared fields.")
+    print(f"  All {checked} dependency condition(s) resolve to declared fields.")
+    return True
+
+
+def test_connection_tests_read_declared_keys():
+    """A test payload naming a key that does not exist would send an empty value."""
+    print("\nTesting connection test payloads...")
+
+    declared = fields_module.get_declared_setting_keys()
+    problems = []
+    checked = 0
+
+    for section_id, field in fields_module.iter_fields():
+        if field.get("component") != "connection-test":
+            continue
+        identity = f"{section_id}.connection-test"
+        checked += 1
+
+        if not field.get("test_type"):
+            problems.append(f"{identity}: no test_type declared")
+
+        payload = field.get("test_payload") or {}
+        if not payload:
+            problems.append(f"{identity}: no test_payload declared")
+
+        for path, source in payload.items():
+            if not isinstance(source, dict):
+                problems.append(f"{identity}: {path} is not an object")
+                continue
+            if "key" not in source and "value" not in source:
+                problems.append(f"{identity}: {path} names neither a key nor a value")
+                continue
+            key = source.get("key")
+            if key and key not in declared:
+                problems.append(f"{identity}: {path} reads undeclared key {key!r}")
+
+            for condition_path, condition in _walk_dependency_conditions(
+                source.get("when"), f"{path}.when"
+            ):
+                if "__error" in condition:
+                    problems.append(f"{identity}: {condition_path}: {condition['__error']}")
+                elif condition.get("key") not in declared:
+                    problems.append(
+                        f"{identity}: {condition_path} reads undeclared key "
+                        f"{condition.get('key')!r}"
+                    )
+
+    assert not problems, (
+        "These connection tests would send the wrong payload:\n  " + "\n  ".join(problems)
+    )
+
+    print(f"  {checked} connection test(s) read only declared keys.")
     return True
 
 
@@ -308,6 +396,7 @@ if __name__ == "__main__":
         test_select_defaults_are_offered_as_options,
         test_setting_keys_are_unique,
         test_dependencies_reference_real_fields,
+        test_connection_tests_read_declared_keys,
         test_option_values_are_unique_within_a_field,
         test_declared_defaults_match_the_application,
     ]
