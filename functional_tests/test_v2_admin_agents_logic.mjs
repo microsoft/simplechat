@@ -1,8 +1,8 @@
 // test_v2_admin_agents_logic.mjs
 //
 // Runtime test for the Admin Settings logic the Agents & Actions rework depends on.
-// Version: 0.261.059
-// Implemented in: 0.261.059
+// Version: 0.261.060
+// Implemented in: 0.261.059 (agents), 0.261.060 (nested values and mirrored fields)
 //
 // The companion test, test_v2_admin_agents_parity.py, proves the schema describes the same
 // settings the V1 pane submits. That is a source assertion; it says nothing about whether
@@ -26,9 +26,12 @@
 
 import assert from 'node:assert/strict';
 import {
+    buildFieldIndex,
     buildSectionBlocks,
     isFieldVisible,
     isSectionVisible,
+    readFieldValue,
+    readNestedValue,
 } from '../application/v2_ui/src/lib/adminFields.ts';
 import {
     agentScopeLabel,
@@ -144,7 +147,6 @@ check('a string dependency is not satisfied by a truthy non-match', () => {
 });
 
 /* ---------------------------- section conditions ----------------------------- */
-
 check('a section with no condition always applies', () => {
     assert.equal(isSectionVisible(undefined, {}, {}, {}), true);
 });
@@ -173,8 +175,103 @@ check('a section reveals itself from the draft before the save lands', () => {
     );
 });
 
-/* ------------------------------- orchestration -------------------------------- */
+/* --------------------------- nested settings values --------------------------- */
 
+const ANALYZE_ENABLED = field('document_action_analyze_enabled', {
+    settings_path: ['document_action_capabilities', 'analyze', 'enabled'],
+});
+const ANALYZE_CHAT_LIMIT = {
+    key: 'document_action_analyze_chat_max_documents',
+    type: 'number',
+    label: 'limit',
+    default: 3,
+    settings_path: ['document_action_capabilities', 'analyze', 'chat_max_documents'],
+    depends_on: { key: 'document_action_analyze_enabled', equals: true },
+};
+
+const CAPABILITIES = {
+    document_action_capabilities: {
+        analyze: { enabled: true, chat_max_documents: 25 },
+        comparison: { enabled: false },
+    },
+};
+
+check('a nested path is walked, and a missing branch reads as undefined', () => {
+    assert.equal(
+        readNestedValue(CAPABILITIES, ['document_action_capabilities', 'analyze', 'chat_max_documents']),
+        25,
+    );
+    assert.equal(readNestedValue(CAPABILITIES, ['document_action_capabilities', 'missing', 'x']), undefined);
+    assert.equal(readNestedValue({ a: 'text' }, ['a', 'b']), undefined);
+    assert.equal(readNestedValue({ a: [1] }, ['a', 'b']), undefined);
+});
+
+check('a settings_path field reads its stored value, not its flat key', () => {
+    assert.equal(readFieldValue(ANALYZE_CHAT_LIMIT, CAPABILITIES, {}), 25);
+});
+
+check('a settings_path field falls back to its declared default', () => {
+    assert.equal(readFieldValue(ANALYZE_CHAT_LIMIT, {}, {}), 3);
+});
+
+check('an unsaved edit is keyed by the flat name even for a nested field', () => {
+    assert.equal(
+        readFieldValue(ANALYZE_CHAT_LIMIT, CAPABILITIES, {
+            document_action_analyze_chat_max_documents: 9,
+        }),
+        9,
+    );
+});
+
+check('a gate stored inside a container is resolved through the field index', () => {
+    const index = buildFieldIndex({ 'document-action-capabilities-card': [ANALYZE_ENABLED] });
+
+    assert.equal(
+        isFieldVisible(ANALYZE_CHAT_LIMIT, CAPABILITIES, {}, index),
+        true,
+        'the limit must be visible while its container flag is on',
+    );
+    assert.equal(
+        isFieldVisible(
+            ANALYZE_CHAT_LIMIT,
+            { document_action_capabilities: { analyze: { enabled: false } } },
+            {},
+            index,
+        ),
+        false,
+    );
+});
+
+check('without the index a nested gate cannot be found, which is why it is passed', () => {
+    assert.equal(
+        isFieldVisible(ANALYZE_CHAT_LIMIT, CAPABILITIES, {}),
+        false,
+        'this is the failure the field index exists to prevent',
+    );
+});
+
+/* ------------------------------ mirrored fields ------------------------------- */
+
+const MIRROR = field('enable_fact_memory_plugin', {
+    readonly: true,
+    managed_by: 'Chat',
+});
+const OWNER = field('enable_fact_memory_plugin');
+
+check('the writable declaration owns a key however the sections are ordered', () => {
+    const mirrorFirst = buildFieldIndex({ actions: [MIRROR], chat: [OWNER] });
+    const ownerFirst = buildFieldIndex({ chat: [OWNER], actions: [MIRROR] });
+
+    assert.equal(mirrorFirst.get('enable_fact_memory_plugin').readonly, undefined);
+    assert.equal(ownerFirst.get('enable_fact_memory_plugin').readonly, undefined);
+});
+
+check('a key that is only ever mirrored still resolves to the mirror', () => {
+    const index = buildFieldIndex({ actions: [field('enable_tabular_processing_plugin', { readonly: true })] });
+    assert.equal(index.get('enable_tabular_processing_plugin').readonly, true);
+});
+
+/* ------------------------------- orchestration -------------------------------- */
 const SINGLE = [{ value: 'default_agent', label: 'Selected Agent', agent_mode: 'single' }];
 const MULTI = [...SINGLE, { value: 'group_chat', label: 'Group Chat', agent_mode: 'multi' }];
 

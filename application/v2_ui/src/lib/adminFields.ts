@@ -77,6 +77,18 @@ export interface AdminField {
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
+    /**
+     * Path into a nested settings object this field reads and writes.
+     *
+     * A few settings are stored as one object rather than as top-level keys.
+     * `key` stays the flat name used in the draft and in field errors; the
+     * server folds the value back into the container on save.
+     */
+    settings_path?: string[];
+    /** Reports a value that something else owns. Never editable here. */
+    readonly?: boolean;
+    /** Where a read-only mirror is actually configured. */
+    managed_by?: string;
     /** Optional sub-heading grouping several fields inside one section. */
     group?: string;
     /** Group fields only: start the group closed. Rarely-changed settings. */
@@ -144,12 +156,27 @@ export function extractFieldErrors(payload: unknown): Record<string, string> {
     );
 }
 
+/** Walk a dotted path into the settings document, or undefined if it is not there. */
+export function readNestedValue(settings: Json, path: string[]): unknown {
+    let node: unknown = settings;
+    for (const segment of path) {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) {
+            return undefined;
+        }
+        node = (node as Record<string, unknown>)[segment];
+    }
+    return node;
+}
+
 /**
  * Read a field's current value, preferring an unsaved edit over the stored value.
  *
  * Falls back to the schema default rather than `undefined` so a control is never
  * uncontrolled on first render, which React would warn about and which would lose the
  * first keystroke.
+ *
+ * A field with a `settings_path` is stored inside a nested object, so only the draft is
+ * keyed by its flat name; the saved value has to be walked to.
  */
 export function readFieldValue(field: AdminField, settings: Json, draft: Json): unknown {
     if (!field.key) {
@@ -158,7 +185,9 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
     if (Object.prototype.hasOwnProperty.call(draft, field.key)) {
         return draft[field.key];
     }
-    const stored = settings[field.key];
+    const stored = field.settings_path
+        ? readNestedValue(settings, field.settings_path)
+        : settings[field.key];
     return stored === undefined || stored === null ? field.default : stored;
 }
 
@@ -197,17 +226,60 @@ export function fieldDependencies(field: AdminField): AdminFieldDependency[] {
     return Array.isArray(dependency) ? dependency : [dependency];
 }
 
+/** Index every declared field by the settings key it edits. */
+export function buildFieldIndex(schema: AdminFieldSchema): Map<string, AdminField> {
+    const index = new Map<string, AdminField>();
+    for (const fields of Object.values(schema)) {
+        for (const field of fields) {
+            if (!field.key) {
+                continue;
+            }
+            const existing = index.get(field.key);
+            // A key declared twice is a read-only mirror of a field edited
+            // elsewhere. The writable declaration describes where the value really
+            // lives, so it wins regardless of declaration order.
+            if (!existing || (existing.readonly && !field.readonly)) {
+                index.set(field.key, field);
+            }
+        }
+    }
+    return index;
+}
+
+/**
+ * Read the current value of a key another field depends on.
+ *
+ * A gate may itself be stored inside a nested object -- the document action limits are
+ * gated by an `enabled` flag that lives in the same container -- so the key alone is not
+ * enough to find the saved value.
+ */
+function readDependencyValue(
+    key: string,
+    settings: Json,
+    draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
+): unknown {
+    if (Object.prototype.hasOwnProperty.call(draft, key)) {
+        return draft[key];
+    }
+    const gate = fieldsByKey?.get(key);
+    return gate?.settings_path ? readNestedValue(settings, gate.settings_path) : settings[key];
+}
+
 /**
  * Whether every one of a field's `depends_on` conditions is currently satisfied.
  *
  * Each condition is judged against the unsaved draft first, so a field appears
  * or disappears as soon as its gate is flipped rather than only after a save.
  */
-export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
+export function isFieldVisible(
+    field: AdminField,
+    settings: Json,
+    draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
+): boolean {
     return fieldDependencies(field).every((dependency) => {
-        const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
-            ? draft[dependency.key]
-            : settings[dependency.key];
+        const current = readDependencyValue(dependency.key, settings, draft, fieldsByKey);
         return typeof dependency.equals === 'string'
             ? asString(current) === dependency.equals
             : asBoolean(current) === dependency.equals;
@@ -226,6 +298,7 @@ export function isSectionVisible(
     settings: Json,
     draft: Json,
     runtimeFlags: Record<string, boolean>,
+    fieldsByKey?: Map<string, AdminField>,
 ): boolean {
     if (!condition) {
         return true;
@@ -233,10 +306,7 @@ export function isSectionVisible(
     if (Object.prototype.hasOwnProperty.call(runtimeFlags, condition)) {
         return runtimeFlags[condition];
     }
-    const current = Object.prototype.hasOwnProperty.call(draft, condition)
-        ? draft[condition]
-        : settings[condition];
-    return asBoolean(current);
+    return asBoolean(readDependencyValue(condition, settings, draft, fieldsByKey));
 }
 
 /** Turn `enable_document_classification` into `Document classification`. */

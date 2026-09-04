@@ -10,7 +10,7 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Lock } from 'lucide-react';
 import type { ReactNode } from 'react';
 import {
     asBoolean,
@@ -346,12 +346,53 @@ function CheckboxSetControl({
 }
 
 /**
+ * A setting shown here but owned somewhere else.
+ *
+ * Fact memory is a chat capability that decides whether agents get a memory action, and
+ * tabular processing is recomputed from Enhanced Citations on every settings read. Both
+ * belong in this list for an administrator working out what an agent can do, and neither
+ * can be set from here -- so they report their state and name their owner instead of
+ * offering a switch that would be rejected or silently overwritten.
+ */
+function MirrorControl({ field, value }: FieldControlProps) {
+    const on = asBoolean(value);
+    return (
+        <div className="flex items-start justify-between gap-3 py-3">
+            <div className="min-w-0">
+                <p className="text-sm font-medium text-text-1">{field.label}</p>
+                {field.help ? (
+                    <p className="mt-1 text-xs leading-relaxed text-text-3">{field.help}</p>
+                ) : null}
+                {field.managed_by ? (
+                    <p className="mt-1 flex items-center gap-1.5 text-xs text-text-3">
+                        <Lock size={12} className="shrink-0" aria-hidden="true" />
+                        Configured in {field.managed_by}
+                    </p>
+                ) : null}
+            </div>
+            <span
+                className={clsx(
+                    'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
+                    on ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-text-3',
+                )}
+            >
+                {on ? 'On' : 'Off'}
+            </span>
+        </div>
+    );
+}
+
+/**
  * Render one declared field.
  *
  * `image`, `link_list` and `component` fields are handled by the page, which owns the
  * upload endpoint and the bespoke widgets, so they are not reached here.
  */
 export function SettingField(props: FieldControlProps) {
+    if (props.field.readonly) {
+        return <MirrorControl {...props} />;
+    }
+
     switch (props.field.type) {
         case 'text':
             return <TextControl {...props} />;
