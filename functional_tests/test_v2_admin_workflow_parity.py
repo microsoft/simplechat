@@ -229,7 +229,19 @@ def test_number_bounds_match_v1():
 
 
 def test_sub_settings_are_gated_by_their_capability():
-    """A sub-setting gated on the wrong capability hides while its feature is live."""
+    """A sub-setting gated on the wrong capability hides while its feature is live.
+
+    This read ``depends_on`` as a single dict until 0.261.074, and raised
+    ``'list' object has no attribute 'get'`` the moment it met a chain. The crash
+    was latent rather than new: ``group_workflow_allowed_group_ids`` has carried a
+    two-link chain for some time, but ``workflow-settings-section`` was declared
+    twice and the later declaration won, so the chained field was never the one
+    this test read. Resolving that duplicate made it live and the assumption
+    failed immediately.
+
+    Worth remembering as a shape: fixing a duplicate declaration can expose a bug
+    in code that only ever saw the other copy.
+    """
     print("\nTesting the workflow gating chain...")
 
     declared = {field["key"]: field for field in workflow_fields() if field.get("key")}
@@ -240,13 +252,19 @@ def test_sub_settings_are_gated_by_their_capability():
         if field is None:
             problems.append(f"{key}: not declared")
             continue
-        depends_on = field.get("depends_on") or {}
-        if depends_on.get("key") != expected_gate:
-            problems.append(
-                f"{key}: gated on {depends_on.get('key')!r}, expected {expected_gate!r}"
-            )
-        if depends_on.get("equals") is not True:
-            problems.append(f"{key}: gate expects {depends_on.get('equals')!r}, not True")
+        # A field may declare a chain rather than one condition, so the gates are
+        # read through the schema's own iterator. The capability this test cares
+        # about has to be one of them, and every link has to require True.
+        conditions = list(fields_module.iter_field_dependencies(field))
+        gates = [condition.get("key") for condition in conditions]
+        if expected_gate not in gates:
+            problems.append(f"{key}: gated on {gates!r}, expected {expected_gate!r}")
+        for condition in conditions:
+            if condition.get("equals") is not True:
+                problems.append(
+                    f"{key}: gate {condition.get('key')!r} expects "
+                    f"{condition.get('equals')!r}, not True"
+                )
 
     for key in UNGATED_KEYS:
         field = declared.get(key)
@@ -254,8 +272,12 @@ def test_sub_settings_are_gated_by_their_capability():
             problems.append(f"{key}: not declared")
             continue
         if field.get("depends_on"):
+            gates = [
+                condition.get("key")
+                for condition in fields_module.iter_field_dependencies(field)
+            ]
             problems.append(
-                f"{key}: gated on {field['depends_on'].get('key')!r}. It bounds both "
+                f"{key}: gated on {gates!r}. It bounds both "
                 "personal and group runs, so gating it on one capability hides a live "
                 "limit from administrators who use the other."
             )

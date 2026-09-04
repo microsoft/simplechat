@@ -23,6 +23,7 @@ export type AdminFieldType =
     | 'note'
     | 'image'
     | 'link_list'
+    | 'entry_list'
     | 'id_list'
     | 'group_picker'
     | 'component';
@@ -33,17 +34,24 @@ export interface AdminFieldOption {
 }
 
 /**
- * Shows a field only while another field holds a given value.
+ * Shows a field only while a condition holds.
+ *
+ * `key` names another settings field. `flag` names a server-resolved runtime flag
+ * instead, for a capability gated outside the settings document -- Inbound MCP is
+ * gated by an App Service application setting, so there is no settings key to
+ * depend on.
  *
  * `equals` is a string for a select, and a boolean for a switch. A field may carry one
  * of these or an array of them, in which case every condition has to hold — Content
  * Safety's key is gated on the capability, the routing choice and the auth type at once.
  */
 export interface AdminFieldCondition {
-    key: string;
+    key?: string;
+    flag?: string;
     equals: boolean | string;
 }
 
+/** One condition, or a chain of them that must all hold. */
 export type AdminFieldDependency = AdminFieldCondition | AdminFieldCondition[];
 
 /**
@@ -104,6 +112,24 @@ export interface AdminField {
     /** Connection test components only: which `test_connection` branch to call. */
     test_type?: string;
     /**
+     * Path into a nested settings object this field reads and writes.
+     *
+     * A few settings are stored as one object rather than as top-level keys.
+     * `key` stays the flat name used in the draft and in field errors; the
+     * server folds the value back into the container on save.
+     */
+    settings_path?: string[];
+    /** Reports a value that something else owns. Never editable here. */
+    readonly?: boolean;
+    /** Where a read-only mirror is actually configured. */
+    managed_by?: string;
+    /** Entry list fields only: what one row's identifier is called. */
+    value_label?: string;
+    /** Entry list fields only: what to say when the list is empty. */
+    empty_text?: string;
+    /** Group fields only: start the group closed. Rarely-changed settings. */
+    collapsed?: boolean;
+    /**
      * Standing guidance shown as a callout beneath the control.
      *
      * Distinct from `help`, which describes what the setting does, and from the
@@ -112,7 +138,8 @@ export interface AdminField {
      */
     notice?: string;
     notice_level?: 'info' | 'warning';
-    depends_on?: AdminFieldDependency;
+    /** One condition, or a chain that must all hold. */
+    depends_on?: AdminFieldCondition | AdminFieldCondition[];
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
@@ -160,6 +187,13 @@ export interface AdminSettingsResponse {
     app_role_requirements: AppRoleRequirement[];
     branding_assets: BrandingAssets;
     /**
+     * Server-resolved flags a navigation section may be conditional on.
+     *
+     * `mcp_ui_enabled` comes from an App Service application setting rather than
+     * the settings document, so it cannot be read from `settings`.
+     */
+    runtime_flags?: Record<string, boolean>;
+    /**
      * `enable_*` keys the fallback scan must not draw.
      *
      * Some booleans in the settings document are derived or are staged rollout flags
@@ -202,12 +236,27 @@ export function extractFieldErrors(payload: unknown): Record<string, string> {
     );
 }
 
+/** Walk a dotted path into the settings document, or undefined if it is not there. */
+export function readNestedValue(settings: Json, path: string[]): unknown {
+    let node: unknown = settings;
+    for (const segment of path) {
+        if (!node || typeof node !== 'object' || Array.isArray(node)) {
+            return undefined;
+        }
+        node = (node as Record<string, unknown>)[segment];
+    }
+    return node;
+}
+
 /**
  * Read a field's current value, preferring an unsaved edit over the stored value.
  *
  * Falls back to the schema default rather than `undefined` so a control is never
  * uncontrolled on first render, which React would warn about and which would lose the
  * first keystroke.
+ *
+ * A field with a `settings_path` is stored inside a nested object, so only the draft is
+ * keyed by its flat name; the saved value has to be walked to.
  */
 export function readFieldValue(field: AdminField, settings: Json, draft: Json): unknown {
     if (!field.key) {
@@ -216,7 +265,9 @@ export function readFieldValue(field: AdminField, settings: Json, draft: Json): 
     if (Object.prototype.hasOwnProperty.call(draft, field.key)) {
         return draft[field.key];
     }
-    const stored = settings[field.key];
+    const stored = field.settings_path
+        ? readNestedValue(settings, field.settings_path)
+        : settings[field.key];
     return stored === undefined || stored === null ? field.default : stored;
 }
 
@@ -246,28 +297,105 @@ export function asStringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/**
- * Whether every `depends_on` condition on a field currently holds.
- *
- * A boolean `equals` is compared loosely, because a switch value arriving from a stored
- * settings document may be `"on"` rather than `true`. A string `equals` is compared as a
- * string, which is what a select needs.
- */
-export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
+/** Every `depends_on` condition a field declares, whether one or a chain. */
+export function fieldDependencies(field: AdminField): AdminFieldCondition[] {
     const dependency = field.depends_on;
     if (!dependency) {
+        return [];
+    }
+    return Array.isArray(dependency) ? dependency : [dependency];
+}
+
+/** Index every declared field by the settings key it edits. */
+export function buildFieldIndex(schema: AdminFieldSchema): Map<string, AdminField> {
+    const index = new Map<string, AdminField>();
+    for (const fields of Object.values(schema)) {
+        for (const field of fields) {
+            if (!field.key) {
+                continue;
+            }
+            const existing = index.get(field.key);
+            // A key declared twice is a read-only mirror of a field edited
+            // elsewhere. The writable declaration describes where the value really
+            // lives, so it wins regardless of declaration order.
+            if (!existing || (existing.readonly && !field.readonly)) {
+                index.set(field.key, field);
+            }
+        }
+    }
+    return index;
+}
+
+/**
+ * Read the current value of a key another field depends on.
+ *
+ * A gate may itself be stored inside a nested object -- the document action limits are
+ * gated by an `enabled` flag that lives in the same container -- so the key alone is not
+ * enough to find the saved value.
+ */
+function readDependencyValue(
+    key: string,
+    settings: Json,
+    draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
+): unknown {
+    if (Object.prototype.hasOwnProperty.call(draft, key)) {
+        return draft[key];
+    }
+    const gate = fieldsByKey?.get(key);
+    return gate?.settings_path ? readNestedValue(settings, gate.settings_path) : settings[key];
+}
+
+/**
+ * Whether every one of a field's `depends_on` conditions is currently satisfied.
+ *
+ * Each condition is judged against the unsaved draft first, so a field appears
+ * or disappears as soon as its gate is flipped rather than only after a save.
+ * A condition naming a `flag` is answered from the server's runtime flags, which
+ * an administrator cannot change from this page at all.
+ */
+export function isFieldVisible(
+    field: AdminField,
+    settings: Json,
+    draft: Json,
+    fieldsByKey?: Map<string, AdminField>,
+    runtimeFlags?: Record<string, boolean>,
+): boolean {
+    return fieldDependencies(field).every((dependency) => {
+        if (dependency.flag) {
+            return Boolean(runtimeFlags?.[dependency.flag]) === dependency.equals;
+        }
+        if (!dependency.key) {
+            return true;
+        }
+        const current = readDependencyValue(dependency.key, settings, draft, fieldsByKey);
+        return typeof dependency.equals === 'string'
+            ? asString(current) === dependency.equals
+            : asBoolean(current) === dependency.equals;
+    });
+}
+
+/**
+ * Whether a navigation section's `condition` holds.
+ *
+ * A condition names either a settings key or a server-resolved runtime flag.
+ * Runtime flags win, because a flag such as `mcp_ui_enabled` deliberately has no
+ * entry in the settings document.
+ */
+export function isSectionVisible(
+    condition: string | undefined,
+    settings: Json,
+    draft: Json,
+    runtimeFlags: Record<string, boolean>,
+    fieldsByKey?: Map<string, AdminField>,
+): boolean {
+    if (!condition) {
         return true;
     }
-    const conditions = Array.isArray(dependency) ? dependency : [dependency];
-
-    return conditions.every((condition) => {
-        const current = Object.prototype.hasOwnProperty.call(draft, condition.key)
-            ? draft[condition.key]
-            : settings[condition.key];
-        return typeof condition.equals === 'boolean'
-            ? asBoolean(current) === condition.equals
-            : asString(current) === condition.equals;
-    });
+    if (Object.prototype.hasOwnProperty.call(runtimeFlags, condition)) {
+        return runtimeFlags[condition];
+    }
+    return asBoolean(readDependencyValue(condition, settings, draft, fieldsByKey));
 }
 
 /**
@@ -346,6 +474,50 @@ export function fieldSearchText(field: AdminField): string {
     ]
         .join(' ')
         .toLowerCase();
+}
+
+/** A run of fields sharing a `group`, or a single ungrouped field. */
+export type SectionBlock =
+    | { kind: 'field'; field: AdminField }
+    | { kind: 'group'; name: string; collapsed: boolean; fields: AdminField[] };
+
+/**
+ * Lay a section's fields out as ordered blocks.
+ *
+ * A group appears where its first field does, so declaration order still decides what an
+ * administrator reads first. Grouping exists because a section can hold several unrelated
+ * concerns -- the Agents page has its hero, its guidance text and its promotions, and Key
+ * Vault has its connection settings and its expiration reminders -- and a flat list of a
+ * dozen controls gives no clue which ones belong together. A group may also start closed,
+ * which is what keeps the always-on built-in actions out of the way.
+ */
+export function buildSectionBlocks(fields: AdminField[]): SectionBlock[] {
+    const blocks: SectionBlock[] = [];
+    const groups = new Map<string, Extract<SectionBlock, { kind: 'group' }>>();
+
+    for (const field of fields) {
+        if (!field.group) {
+            blocks.push({ kind: 'field', field });
+            continue;
+        }
+        const existing = groups.get(field.group);
+        if (existing) {
+            existing.fields.push(field);
+            continue;
+        }
+        const group: Extract<SectionBlock, { kind: 'group' }> = {
+            kind: 'group',
+            name: field.group,
+            // Only the first field of a group decides how it opens, so a group
+            // cannot end up half-collapsed depending on which field is read.
+            collapsed: Boolean(field.collapsed),
+            fields: [field],
+        };
+        groups.set(field.group, group);
+        blocks.push(group);
+    }
+
+    return blocks;
 }
 
 /** Settings that gate a capability behind an Entra app role. */
