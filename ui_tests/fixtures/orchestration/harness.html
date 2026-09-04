@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Orchestration UI test harness</title>
+</head>
+<body>
+    <!--
+      Static harness for the V2 orchestration Playwright tests. It hosts nothing but a mount point
+      and the bundled real components (harness.bundle.js, produced by build_harness.mjs). The tests
+      seed the stores and mount components through window.OrchHarness. No network, no credentials.
+    -->
+    <main id="test-root"></main>
+    <div id="mount-a"></div>
+    <div id="mount-b"></div>
+    <script src="./harness.bundle.js"></script>
+</body>
+</html>

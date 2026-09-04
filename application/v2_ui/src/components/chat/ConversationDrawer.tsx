@@ -1,9 +1,10 @@
 // ConversationDrawer.tsx
-// Right-hand drawer with two modes, mirroring the legacy offcanvas that hosts both a
-// table of contents and the documents used in the conversation.
+// Right-hand drawer with three modes, mirroring the legacy offcanvas that hosts both a
+// table of contents and the documents used in the conversation, plus the orchestration plan.
 //
 // Contents lists the user's turns so a long thread can be navigated; Documents lists the
-// document-level citation aggregates the server records on the conversation.
+// document-level citation aggregates the server records on the conversation; Plan hosts the
+// orchestration plan surface when the feature is on.
 
 import { useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
@@ -11,6 +12,7 @@ import {
     FileText,
     Files,
     ListOrdered,
+    ListTree,
     Quote,
     TriangleAlert,
     X,
@@ -18,6 +20,7 @@ import {
 import { useChatStore, type DrawerMode } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { EmptyState, Skeleton } from '../ui/primitives';
+import { OrchestrationPlanPanel } from './OrchestrationPlanPanel';
 import type { UsedDocument } from '../../lib/types';
 
 /** Scroll a message into view and flash it, so the jump target is obvious. */
@@ -220,6 +223,12 @@ export function ConversationDrawer() {
     const contentsEnabled = useBootstrapStore((state) =>
         Boolean(state.data?.features?.enable_conversation_contents_drawer),
     );
+    const orchestrationEnabled = useBootstrapStore((state) =>
+        Boolean(
+            state.data?.features?.enable_chat_orchestration &&
+                state.data?.orchestration?.enabled,
+        ),
+    );
 
     // Close on Escape, matching the dismissal behaviour of the rest of the app.
     useEffect(() => {
@@ -244,6 +253,9 @@ export function ConversationDrawer() {
             ? [{ id: 'contents' as const, label: 'Contents', icon: ListOrdered }]
             : []),
         { id: 'documents' as const, label: 'Documents', icon: Files },
+        ...(orchestrationEnabled
+            ? [{ id: 'plan' as const, label: 'Plan', icon: ListTree }]
+            : []),
     ];
 
     return (
@@ -288,7 +300,13 @@ export function ConversationDrawer() {
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
-                {drawerMode === 'contents' ? <ContentsMode /> : <DocumentsMode />}
+                {drawerMode === 'contents' ? (
+                    <ContentsMode />
+                ) : drawerMode === 'plan' ? (
+                    <OrchestrationPlanPanel />
+                ) : (
+                    <DocumentsMode />
+                )}
             </div>
         </aside>
     );

@@ -640,3 +640,16 @@ thoughts-display:
   reference:
     - title: "Chat interface reference"
       url: /reference/chat-controls/
+chat-orchestration:
+  name: "Chat orchestration"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Plans a chat request on the user's behalf, so they describe what they want instead of choosing documents, searches, prompts, agents and models first."
+  why: "Use this when users get worse answers because they had to decide how to research a question before they had seen any results. Keep plan approval on review while a deployment builds confidence, because a plan that runs automatically gives the user no chance to intervene before work starts. It reaches only capabilities that are separately enabled, so it grants no new access."
+  default_state: "Disabled"
+  admin_tab: orchestration
+  setting_keys:
+    - enable_chat_orchestration
+  reference:
+    - title: "Orchestration settings"
+      url: /admin/orchestration/

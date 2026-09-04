@@ -46,6 +46,12 @@ from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_model_capabilities import is_vision_capable_model
+from functions_orchestration_registry import (
+    CAPABILITY_REGISTRY,
+    TERMINAL_CAPABILITY_ID,
+    all_capability_ids,
+    build_capability_client_projection,
+)
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -410,6 +416,93 @@ def get_inbound_mcp_easy_auth_check_base_url():
     if website_hostname:
         return f"https://{website_hostname}/"
     return request.host_url
+
+
+def normalize_chat_orchestration_settings(form_data, settings=None):
+    """Read the Chat Orchestration pane off the admin form.
+
+    Kept out of the main POST handler because these values are interdependent in ways a
+    flat dict literal cannot express: the capability list has to keep the terminal
+    capability whatever the administrator ticked, and every bound is clamped rather than
+    trusted, since the form is only one of the ways a settings document can be written.
+
+    An empty capability selection is stored as an empty list, which the registry reads as
+    "everything the other gates allow". That is the difference between an administrator
+    who has expressed no opinion and one who has disabled the feature.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+
+    approval_mode = str(
+        form_data.get('chat_orchestration_default_approval_mode') or 'manual'
+    ).strip().lower()
+    if approval_mode not in ('manual', 'timed', 'auto'):
+        approval_mode = 'manual'
+
+    def _clamped(field, default, low, high):
+        value, _source = safe_int_with_source(
+            form_data.get(field), settings.get(field, default), default
+        )
+        return min(high, max(low, value))
+
+    selected = [
+        str(value).strip()
+        for value in (form_data.getlist('chat_orchestration_enabled_capabilities')
+                      if hasattr(form_data, 'getlist') else
+                      form_data.get('chat_orchestration_enabled_capabilities') or [])
+        if str(value).strip()
+    ]
+    known = set(all_capability_ids())
+    selected = [value for value in selected if value in known]
+    if selected and TERMINAL_CAPABILITY_ID not in selected:
+        # The pane renders this box checked and disabled, so a browser never posts it.
+        # Adding it back here keeps the stored list executable rather than one that would
+        # make every plan fail validation.
+        selected.append(TERMINAL_CAPABILITY_ID)
+    # A full selection means the same thing as no opinion, and storing it as an empty list
+    # keeps a later capability addition enabled by default instead of silently excluded.
+    if set(selected) == known:
+        selected = []
+
+    return {
+        'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
+        'chat_orchestration_default_approval_mode': approval_mode,
+        'chat_orchestration_timed_approval_seconds': _clamped(
+            'chat_orchestration_timed_approval_seconds', 10, 3, 120
+        ),
+        'chat_orchestration_allow_user_approval_override': (
+            form_data.get('chat_orchestration_allow_user_approval_override') == 'on'
+        ),
+        'chat_orchestration_show_manual_controls': (
+            form_data.get('chat_orchestration_show_manual_controls') == 'on'
+        ),
+        'chat_orchestration_enabled_capabilities': selected,
+        'chat_orchestration_max_steps': _clamped('chat_orchestration_max_steps', 8, 1, 30),
+        'chat_orchestration_max_replans': _clamped('chat_orchestration_max_replans', 2, 0, 5),
+        'chat_orchestration_step_timeout_seconds': _clamped(
+            'chat_orchestration_step_timeout_seconds', 180, 30, 1800
+        ),
+        'chat_orchestration_total_timeout_seconds': _clamped(
+            'chat_orchestration_total_timeout_seconds', 900, 60, 7200
+        ),
+        'chat_orchestration_ledger_max_runs': _clamped(
+            'chat_orchestration_ledger_max_runs', 10, 0, 50
+        ),
+        'chat_orchestration_ledger_max_bytes': _clamped(
+            'chat_orchestration_ledger_max_bytes', 16384, 1024, 131072
+        ),
+        'chat_orchestration_planner_deployment': str(
+            form_data.get('chat_orchestration_planner_deployment') or ''
+        ).strip(),
+        'chat_orchestration_planner_model_id': str(
+            form_data.get('chat_orchestration_planner_model_id') or ''
+        ).strip(),
+        'chat_orchestration_planner_model_endpoint_id': str(
+            form_data.get('chat_orchestration_planner_model_endpoint_id') or ''
+        ).strip(),
+        'chat_orchestration_planner_model_provider': str(
+            form_data.get('chat_orchestration_planner_model_provider') or ''
+        ).strip(),
+    }
 
 
 def register_route_frontend_admin_settings(bp):
@@ -996,6 +1089,11 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
+                orchestration_capabilities=build_capability_client_projection(CAPABILITY_REGISTRY),
+                orchestration_selected_capabilities=(
+                    settings.get('chat_orchestration_enabled_capabilities')
+                    or [capability['id'] for capability in CAPABILITY_REGISTRY]
+                ),
                 inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
@@ -1106,6 +1204,7 @@ def register_route_frontend_admin_settings(bp):
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
             require_member_of_workflow_user = form_data.get('require_member_of_workflow_user') == 'on'
+            chat_orchestration_settings = normalize_chat_orchestration_settings(form_data, settings)
             group_workflow_allowed_group_ids = normalize_group_workflow_allowed_group_ids(
                 form_data.get('group_workflow_allowed_group_ids', '')
             )
@@ -2500,6 +2599,7 @@ def register_route_frontend_admin_settings(bp):
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
                 'workflow_max_tasks': workflow_max_tasks,
+                **chat_orchestration_settings,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
                 'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',

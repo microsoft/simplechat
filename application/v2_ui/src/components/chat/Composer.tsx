@@ -9,6 +9,7 @@ import {
     ArrowUp,
     Bot,
     BookmarkPlus,
+    ChevronDown,
     FileText,
     Gauge,
     Globe,
@@ -18,8 +19,10 @@ import {
     Paperclip,
     Reply,
     Search,
+    ShieldCheck,
     Square,
     Telescope,
+    Workflow,
     X,
 } from 'lucide-react';
 import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
@@ -29,9 +32,15 @@ import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { uploadDocument } from '../../lib/endpoints';
 import { sendCollaborationTyping } from '../../lib/collaboration';
 import { agentSelectionKey } from '../../lib/agents';
-import { hasResolvableAgent } from '../../lib/chatRequestSelection';
+import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestSelection';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
 import { resolveGating } from '../../lib/composerGating';
+import type { ApprovalMode } from '../../lib/orchestration';
+import {
+    cancelOrchestration,
+    hasActiveOrchestration,
+    startOrchestrationPlan,
+} from '../../lib/orchestrationController';
 import {
     estimateLargeTabularRun,
     type TabularRunEstimate,
@@ -212,6 +221,50 @@ export function Composer() {
         urlAccess: false,
         selectedDocumentIds: [],
     });
+
+    /**
+     * Orchestration mode.
+     *
+     * The toggle only exists where the deployment has orchestration on, so `orchestrating`
+     * folds the feature flag and the bootstrap switch into the one boolean every branch below
+     * reads. Held off by default: turning the composer into a planner is a deliberate act, and
+     * a deployment that ships the feature still opens on the chat everyone already knows.
+     */
+    const orchestrationConfig = bootstrap?.orchestration;
+    const orchestrationAvailable = Boolean(
+        features.enable_chat_orchestration && orchestrationConfig?.enabled,
+    );
+    const [orchestrationOn, setOrchestrationOn] = useState(false);
+    const orchestrating = orchestrationOn && orchestrationAvailable;
+
+    // The disclosure that hides the manual controls while orchestrating. Only reachable when the
+    // administrator leaves them reachable; otherwise the planner owns every decision and there is
+    // nothing under the disclosure to open.
+    const [manualControlsOpen, setManualControlsOpen] = useState(false);
+    const manualControlsGovernable = Boolean(orchestrationConfig?.show_manual_controls);
+    // Visible inline when not orchestrating (the classic composer), and behind the disclosure
+    // when orchestrating with manual controls left reachable.
+    const manualControlsVisible =
+        !orchestrating || (manualControlsGovernable && manualControlsOpen);
+
+    // The approval mode the plan will carry. Seeded from the deployment default and only editable
+    // where the administrator allows an override; where they do not, the control is hidden and the
+    // default is what ships.
+    const [approvalMode, setApprovalMode] = useState<ApprovalMode>(
+        orchestrationConfig?.default_approval_mode ?? 'manual',
+    );
+    // The default arrives with the bootstrap, which can resolve after the first render, so adopt it
+    // when it lands. Keyed on the value itself, so a later refresh carrying the same default does
+    // not overwrite a choice the user has since made.
+    useEffect(() => {
+        if (orchestrationConfig?.default_approval_mode) {
+            setApprovalMode(orchestrationConfig.default_approval_mode);
+        }
+    }, [orchestrationConfig?.default_approval_mode]);
+    const approvalOverridable = Boolean(orchestrationConfig?.allow_user_approval_override);
+    const effectiveApprovalMode: ApprovalMode = approvalOverridable
+        ? approvalMode
+        : (orchestrationConfig?.default_approval_mode ?? 'manual');
 
     // An agent supplies its own deployment and never receives a reasoning level, so a
     // selection the server can actually resolve is what puts the model picker into its
@@ -421,6 +474,18 @@ export function Composer() {
         group: prompt.scope_type ? String(prompt.scope_type) : undefined,
     }));
 
+    // The approval-mode choices. "After Ns" names the actual countdown so the reader knows how
+    // long a timed plan waits before it approves itself, rather than being told only that it will.
+    const approvalOptions: DropdownOption[] = [
+        { value: 'auto', label: 'Auto', description: 'Run the plan as soon as it is ready' },
+        {
+            value: 'timed',
+            label: `After ${orchestrationConfig?.timed_approval_seconds ?? 0}s`,
+            description: 'Approve automatically unless you step in',
+        },
+        { value: 'manual', label: 'Review', description: 'Wait for your approval every time' },
+    ];
+
     /**
      * What the `/` menu is currently offering.
      *
@@ -594,6 +659,14 @@ export function Composer() {
             return;
         }
 
+        // Orchestration takes a different road entirely: the server plans the work rather than
+        // running a chat stream, so the large-run confirmation — a manual-flow concern about a
+        // tabular export the planner has not chosen — does not apply.
+        if (orchestrating) {
+            dispatchOrchestration(text);
+            return;
+        }
+
         const estimate = estimateLargeTabularRun(text, tabularRunSettings);
         if (estimate.shouldConfirm) {
             setLargeRun(estimate);
@@ -610,6 +683,74 @@ export function Composer() {
         // Sent, so the indicator other people can see must stop now rather than when the
         // idle timer happens to fire.
         stopTyping();
+    };
+
+    /**
+     * Assemble the seeds a plan request carries from the manual controls.
+     *
+     * These do not replace the planner's judgement, they constrain it: a document the user
+     * pinned, an agent or model they chose, a saved prompt, a web-search preference. Only the
+     * capabilities with a documented seed field travel — the planner owns image, deep research
+     * and URL access, so those toggles inform the classic path alone. `buildSelectionFields`
+     * keeps the agent-XOR-model exclusivity the chat request already relies on.
+     */
+    const buildOrchestrationSeeds = (): Record<string, unknown> => {
+        const seeds: Record<string, unknown> = {
+            web_search_enabled: options.webSearch,
+            selected_document_ids: options.selectedDocumentIds,
+        };
+        Object.assign(
+            seeds,
+            buildSelectionFields({
+                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                agentSelection: options.agentSelection,
+                modelDeployment: options.modelDeployment,
+                reasoningEffort: options.reasoningEffort,
+            }),
+        );
+        if (options.promptId) {
+            const prompt = promptCatalog.find((item) => item.id === options.promptId);
+            if (prompt) {
+                // No shared prompt_info builder exists yet, so the shape is assembled here:
+                // enough for the planner to resolve the saved prompt without re-reading the
+                // catalog it already holds.
+                seeds.prompt_info = {
+                    id: prompt.id,
+                    name: prompt.name,
+                    content: prompt.content,
+                };
+            }
+        }
+        return seeds;
+    };
+
+    const dispatchOrchestration = (message: string) => {
+        void startOrchestrationPlan({
+            conversationId: activeConversationId ?? null,
+            message,
+            approvalMode: effectiveApprovalMode,
+            seeds: buildOrchestrationSeeds(),
+        });
+        setText('');
+        setMention(null);
+        stopTyping();
+    };
+
+    /**
+     * Stop the work in flight, whichever kind it is.
+     *
+     * A plan or run has no server-side cancel endpoint the way a chat stream does, so Stop can
+     * only abort the reader; the controller settles the thread either way and keeps the partial
+     * answer. Routed by whether the conversation has an orchestration stream open, so Stop does
+     * the right thing without the button needing to know which mode produced the work.
+     */
+    const handleStop = () => {
+        if (activeConversationId && hasActiveOrchestration(activeConversationId)) {
+            cancelOrchestration(activeConversationId);
+            return;
+        }
+        stopStreaming();
     };
 
     /**
@@ -1034,173 +1175,226 @@ export function Composer() {
                     />
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
-                        {/* Hidden while generating an image: the request goes to an image
-                            endpoint that does not take a chat model. Shown but overridden
-                            while an agent is selected, since the agent brings its own
-                            deployment — picking a model here is how the user gets back to
-                            using one, so it stays usable rather than disabled. */}
-                        {gating.showModelPicker && (
-                            <Dropdown
-                                options={modelOptions}
-                                value={options.modelDeployment}
-                                placeholder="Model"
-                                inactive={gating.modelPickerInactive}
-                                title={
-                                    activeAgentLabel
-                                        ? `${activeAgentLabel} supplies its own model. Pick a model to use one instead.`
-                                        : undefined
-                                }
-                                onChange={(value) => {
-                                    setOptions((current) => ({
-                                        ...current,
-                                        modelDeployment: value,
-                                        // Choosing a model is the way out of agent mode. The
-                                        // two cannot both apply, and the server reads a model
-                                        // sent alongside an agent as an override of it.
-                                        agentSelection: undefined,
-                                    }));
-                                    rememberModelSelection(value);
-                                }}
+                        {orchestrationAvailable && (
+                            <ToolToggle
+                                active={orchestrating}
+                                onClick={() => setOrchestrationOn((on) => !on)}
+                                icon={<Workflow size={15} />}
+                                label="Orchestrate"
                             />
                         )}
 
-                        {agentOptions.length > 0 && (
+                        {orchestrating && approvalOverridable && (
                             <Dropdown
-                                options={agentOptions}
-                                value={options.agentSelection}
-                                placeholder="Agent"
-                                clearable
-                                icon={<Bot size={15} />}
+                                options={approvalOptions}
+                                value={effectiveApprovalMode}
+                                placeholder="Approval"
+                                icon={<ShieldCheck size={15} />}
                                 onChange={(value) =>
-                                    setOptions((current) => ({
-                                        ...current,
-                                        // The model selection is kept, not cleared: it is
-                                        // simply not in force, and it comes back the moment
-                                        // the agent is cleared.
-                                        agentSelection: value,
-                                    }))
+                                    value && setApprovalMode(value as ApprovalMode)
                                 }
                             />
                         )}
 
-                        {promptOptions.length > 0 && (
-                            <Dropdown
-                                options={promptOptions}
-                                value={options.promptId}
-                                placeholder="Prompt"
-                                clearable
-                                icon={<FileText size={15} />}
-                                onChange={onPickPrompt}
-                            />
+                        {/* A disclosure, not a toggle: it hides the manual controls rather than
+                            switching a capability, so it carries aria-expanded rather than the
+                            aria-pressed the capability buttons use. Offered only where the
+                            administrator leaves the controls reachable. */}
+                        {orchestrating && manualControlsGovernable && (
+                            <button
+                                type="button"
+                                onClick={() => setManualControlsOpen((open) => !open)}
+                                aria-expanded={manualControlsOpen}
+                                title="Manual controls"
+                                className={clsx(
+                                    'inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-sm transition-colors',
+                                    manualControlsOpen
+                                        ? 'border-transparent bg-accent-soft text-accent'
+                                        : 'border-edge bg-surface-1 text-text-2 hover:bg-surface-2 hover:text-text-1',
+                                )}
+                            >
+                                <ChevronDown
+                                    size={15}
+                                    className={clsx(
+                                        'transition-transform',
+                                        manualControlsOpen && 'rotate-180',
+                                    )}
+                                />
+                                <span className="hidden lg:inline">Manual controls</span>
+                            </button>
                         )}
 
-                        {/* Only offered once there is something to save. A prompt is wording
-                            you have already refined, so the moment worth catching is after it
-                            has been written, not before. */}
-                        {canPost && text.trim().length > 0 && (
-                            <ToolToggle
-                                active={false}
-                                onClick={saveWrittenTextAsPrompt}
-                                icon={<BookmarkPlus size={15} />}
-                                label="Save as prompt"
-                            />
-                        )}
+                        {manualControlsVisible && (
+                            <>
+                                {/* Hidden while generating an image: the request goes to an image
+                                    endpoint that does not take a chat model. Shown but overridden
+                                    while an agent is selected, since the agent brings its own
+                                    deployment — picking a model here is how the user gets back to
+                                    using one, so it stays usable rather than disabled. */}
+                                {gating.showModelPicker && (
+                                    <Dropdown
+                                        options={modelOptions}
+                                        value={options.modelDeployment}
+                                        placeholder="Model"
+                                        inactive={gating.modelPickerInactive}
+                                        title={
+                                            activeAgentLabel
+                                                ? `${activeAgentLabel} supplies its own model. Pick a model to use one instead.`
+                                                : undefined
+                                        }
+                                        onChange={(value) => {
+                                            setOptions((current) => ({
+                                                ...current,
+                                                modelDeployment: value,
+                                                // Choosing a model is the way out of agent mode. The
+                                                // two cannot both apply, and the server reads a model
+                                                // sent alongside an agent as an override of it.
+                                                agentSelection: undefined,
+                                            }));
+                                            rememberModelSelection(value);
+                                        }}
+                                    />
+                                )}
 
-                        <span className="mx-0.5 h-6 w-px bg-edge-strong" aria-hidden="true" />
+                                {agentOptions.length > 0 && (
+                                    <Dropdown
+                                        options={agentOptions}
+                                        value={options.agentSelection}
+                                        placeholder="Agent"
+                                        clearable
+                                        icon={<Bot size={15} />}
+                                        onChange={(value) =>
+                                            setOptions((current) => ({
+                                                ...current,
+                                                // The model selection is kept, not cleared: it is
+                                                // simply not in force, and it comes back the moment
+                                                // the agent is cleared.
+                                                agentSelection: value,
+                                            }))
+                                        }
+                                    />
+                                )}
 
-                        <ToolToggle
-                            active={options.documentSearch}
-                            disabled={gating.disabledByImageGeneration}
-                            onClick={() =>
-                                setOptions((current) => ({
-                                    ...current,
-                                    documentSearch: !current.documentSearch,
-                                }))
-                            }
-                            icon={<Search size={15} />}
-                            label="Documents"
-                        />
+                                {promptOptions.length > 0 && (
+                                    <Dropdown
+                                        options={promptOptions}
+                                        value={options.promptId}
+                                        placeholder="Prompt"
+                                        clearable
+                                        icon={<FileText size={15} />}
+                                        onChange={onPickPrompt}
+                                    />
+                                )}
 
-                        {gating.showWeb && (
-                            <ToolToggle
-                                active={options.webSearch}
-                                disabled={gating.disabledByImageGeneration}
-                                onClick={() =>
-                                    setOptions((current) => ({
-                                        ...current,
-                                        webSearch: !current.webSearch,
-                                    }))
-                                }
-                                icon={<Globe size={15} />}
-                                label="Web"
-                            />
-                        )}
+                                {/* Only offered once there is something to save. A prompt is wording
+                                    you have already refined, so the moment worth catching is after it
+                                    has been written, not before. */}
+                                {canPost && text.trim().length > 0 && (
+                                    <ToolToggle
+                                        active={false}
+                                        onClick={saveWrittenTextAsPrompt}
+                                        icon={<BookmarkPlus size={15} />}
+                                        label="Save as prompt"
+                                    />
+                                )}
 
-                        {gating.showImage && (
-                            <ToolToggle
-                                active={options.imageGeneration}
-                                onClick={() =>
-                                    setOptions((current) => ({
-                                        ...current,
-                                        imageGeneration: !current.imageGeneration,
-                                    }))
-                                }
-                                icon={<ImageIcon size={15} />}
-                                label="Image"
-                            />
-                        )}
+                                <span className="mx-0.5 h-6 w-px bg-edge-strong" aria-hidden="true" />
 
-                        {/* Deep research sets both source_review_enabled and
-                            deep_research_enabled, matching the existing client. It appears
-                            only once there is something to research: web search, or URLs
-                            in the prompt. */}
-                        {gating.showDeepResearch && (
-                            <ToolToggle
-                                active={options.deepResearch}
-                                disabled={gating.disabledByImageGeneration}
-                                onClick={() =>
-                                    setOptions((current) => ({
-                                        ...current,
-                                        deepResearch: !current.deepResearch,
-                                    }))
-                                }
-                                icon={<Telescope size={15} />}
-                                label="Deep research"
-                            />
-                        )}
+                                <ToolToggle
+                                    active={options.documentSearch}
+                                    disabled={gating.disabledByImageGeneration}
+                                    onClick={() =>
+                                        setOptions((current) => ({
+                                            ...current,
+                                            documentSearch: !current.documentSearch,
+                                        }))
+                                    }
+                                    icon={<Search size={15} />}
+                                    label="Documents"
+                                />
 
-                        {/* Only offered when the prompt actually contains a URL. */}
-                        {gating.showUrlAccess && (
-                            <ToolToggle
-                                active={options.urlAccess}
-                                disabled={gating.disabledByImageGeneration}
-                                onClick={() =>
-                                    setOptions((current) => ({
-                                        ...current,
-                                        urlAccess: !current.urlAccess,
-                                    }))
-                                }
-                                icon={<Link2 size={15} />}
-                                label="Read URLs"
-                            />
-                        )}
+                                {gating.showWeb && (
+                                    <ToolToggle
+                                        active={options.webSearch}
+                                        disabled={gating.disabledByImageGeneration}
+                                        onClick={() =>
+                                            setOptions((current) => ({
+                                                ...current,
+                                                webSearch: !current.webSearch,
+                                            }))
+                                        }
+                                        icon={<Globe size={15} />}
+                                        label="Web"
+                                    />
+                                )}
 
-                        {/* Only shown when a reasoning level is a real choice: the selected
-                            model has to offer one, and neither an agent nor image generation
-                            can be in play, because neither carries the parameter. The level
-                            is stored per model, so it survives a reload and applies to this
-                            model alone. It is clearable only where no level is in effect —
-                            a deployment with no model catalog — because that is the one case
-                            where "no level" is a state to get back to. */}
-                        {gating.showReasoning && reasoningLevels.length > 0 && (
-                            <Dropdown
-                                options={reasoningLevels}
-                                value={options.reasoningEffort}
-                                placeholder="Reasoning"
-                                clearable={!reasoningKey}
-                                icon={<Gauge size={15} />}
-                                onChange={chooseReasoningLevel}
-                            />
+                                {gating.showImage && (
+                                    <ToolToggle
+                                        active={options.imageGeneration}
+                                        onClick={() =>
+                                            setOptions((current) => ({
+                                                ...current,
+                                                imageGeneration: !current.imageGeneration,
+                                            }))
+                                        }
+                                        icon={<ImageIcon size={15} />}
+                                        label="Image"
+                                    />
+                                )}
+
+                                {/* Deep research sets both source_review_enabled and
+                                    deep_research_enabled, matching the existing client. It appears
+                                    only once there is something to research: web search, or URLs
+                                    in the prompt. */}
+                                {gating.showDeepResearch && (
+                                    <ToolToggle
+                                        active={options.deepResearch}
+                                        disabled={gating.disabledByImageGeneration}
+                                        onClick={() =>
+                                            setOptions((current) => ({
+                                                ...current,
+                                                deepResearch: !current.deepResearch,
+                                            }))
+                                        }
+                                        icon={<Telescope size={15} />}
+                                        label="Deep research"
+                                    />
+                                )}
+
+                                {/* Only offered when the prompt actually contains a URL. */}
+                                {gating.showUrlAccess && (
+                                    <ToolToggle
+                                        active={options.urlAccess}
+                                        disabled={gating.disabledByImageGeneration}
+                                        onClick={() =>
+                                            setOptions((current) => ({
+                                                ...current,
+                                                urlAccess: !current.urlAccess,
+                                            }))
+                                        }
+                                        icon={<Link2 size={15} />}
+                                        label="Read URLs"
+                                    />
+                                )}
+
+                                {/* Only shown when a reasoning level is a real choice: the selected
+                                    model has to offer one, and neither an agent nor image generation
+                                    can be in play, because neither carries the parameter. The level
+                                    is stored per model, so it survives a reload and applies to this
+                                    model alone. It is clearable only where no level is in effect —
+                                    a deployment with no model catalog — because that is the one case
+                                    where "no level" is a state to get back to. */}
+                                {gating.showReasoning && reasoningLevels.length > 0 && (
+                                    <Dropdown
+                                        options={reasoningLevels}
+                                        value={options.reasoningEffort}
+                                        placeholder="Reasoning"
+                                        clearable={!reasoningKey}
+                                        icon={<Gauge size={15} />}
+                                        onChange={chooseReasoningLevel}
+                                    />
+                                )}
+                            </>
                         )}
 
                         <div className="ml-auto flex items-center gap-1.5">
@@ -1247,7 +1441,7 @@ export function Composer() {
                             {streaming ? (
                                 <button
                                     type="button"
-                                    onClick={stopStreaming}
+                                    onClick={handleStop}
                                     aria-label="Stop generating"
                                     className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-danger-soft text-danger transition-colors hover:bg-danger hover:text-white"
                                 >

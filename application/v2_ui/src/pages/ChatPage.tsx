@@ -4,12 +4,26 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { Files, Info, ListOrdered, Maximize2, Minimize2, Users } from 'lucide-react';
-import { useChatStore } from '../stores/chatStore';
+import {
+    Files,
+    Info,
+    ListOrdered,
+    ListTree,
+    Maximize2,
+    Minimize2,
+    Users,
+} from 'lucide-react';
+import { useChatStore, type DrawerMode } from '../stores/chatStore';
 import { useCollaborationStore } from '../stores/collaborationStore';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUiStore } from '../stores/uiStore';
 import { useImageProposalStore } from '../stores/imageProposalStore';
+import {
+    selectActiveTurn,
+    selectPlan,
+    useOrchestrationStore,
+} from '../stores/orchestrationStore';
+import { enabledSteps, isPlanAwaitingApproval } from '../lib/orchestrationPlan';
 import { readConversationParam, syncedConversationParams } from '../lib/conversationUrl';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
@@ -107,6 +121,37 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
     const chatWidth = useUiStore((state) => state.chatWidth);
     const toggleChatWidth = useUiStore((state) => state.toggleChatWidth);
 
+    // The Plan toggle only exists when orchestration is switched on for this deployment, so a
+    // build that never plans keeps the same header it always had.
+    const orchestrationEnabled = useBootstrapStore((state) =>
+        Boolean(
+            state.data?.features?.enable_chat_orchestration &&
+                state.data?.orchestration?.enabled,
+        ),
+    );
+    // Keyed on the active turn so the badge describes the plan for the conversation on screen and
+    // not a plan left running in another one. selectActiveTurn/selectPlan both return stable refs,
+    // so subscribing to them directly does not trip zustand's re-render guard.
+    const activeTurnId = useOrchestrationStore((state) =>
+        activeConversationId ? selectActiveTurn(state, activeConversationId) : null,
+    );
+    const activePlan = useOrchestrationStore((state) =>
+        activeConversationId && activeTurnId
+            ? selectPlan(state, activeConversationId, activeTurnId)
+            : null,
+    );
+    const planRunning = useOrchestrationStore((state) =>
+        activeConversationId && activeTurnId
+            ? Object.values(state.inFlight).some(
+                  (run) =>
+                      run.conversationId === activeConversationId &&
+                      run.turnId === activeTurnId,
+              )
+            : false,
+    );
+    const planStepCount = activePlan ? enabledSteps(activePlan).length : 0;
+    const planAwaiting = activePlan ? isPlanAwaitingApproval(activePlan) : false;
+
     const active = conversations.find(
         (conversation) => conversation.id === activeConversationId,
     );
@@ -130,7 +175,7 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
           ).size
         : null;
 
-    const toggle = (mode: 'contents' | 'documents') =>
+    const toggle = (mode: Exclude<DrawerMode, null>) =>
         setDrawerMode(drawerMode === mode ? null : mode);
 
     return (
@@ -241,6 +286,37 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
                             </span>
                         ) : null}
                     </button>
+
+                    {orchestrationEnabled && (
+                        <button
+                            type="button"
+                            onClick={() => toggle('plan')}
+                            aria-pressed={drawerMode === 'plan'}
+                            title="Open orchestration plan"
+                            aria-label="Open orchestration plan"
+                            className={clsx(
+                                'relative rounded-lg p-2 transition-colors',
+                                drawerMode === 'plan'
+                                    ? 'bg-accent-soft text-accent'
+                                    : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                            )}
+                        >
+                            <ListTree size={17} />
+                            {/* A running plan shows how many steps it is working through; a plan
+                                that has stopped to ask for approval shows only a dot, because the
+                                count is not the point when the point is "look at me". */}
+                            {planRunning && planStepCount ? (
+                                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-on-accent">
+                                    {planStepCount}
+                                </span>
+                            ) : planAwaiting ? (
+                                <span
+                                    className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-warn"
+                                    aria-hidden="true"
+                                />
+                            ) : null}
+                        </button>
+                    )}
                 </div>
             )}
         </header>
@@ -251,6 +327,9 @@ export function ChatPage() {
     const [detailsOpen, setDetailsOpen] = useState(false);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
     const setVisibleConversation = useImageProposalStore(
+        (state) => state.setVisibleConversation,
+    );
+    const setOrchestrationVisible = useOrchestrationStore(
         (state) => state.setVisibleConversation,
     );
 
@@ -264,6 +343,14 @@ export function ChatPage() {
         setVisibleConversation(activeConversationId);
         return () => setVisibleConversation(null);
     }, [activeConversationId, setVisibleConversation]);
+
+    // The orchestration controller's auto-open rule only fires for the conversation actually on
+    // screen, so it needs the same signal. Without this the guard `visibleConversationId ===
+    // conversationId` never holds and a manual-mode plan never opens its drawer for the reader.
+    useEffect(() => {
+        setOrchestrationVisible(activeConversationId);
+        return () => setOrchestrationVisible(null);
+    }, [activeConversationId, setOrchestrationVisible]);
 
     return (
         <div className="flex min-h-0 flex-1">
