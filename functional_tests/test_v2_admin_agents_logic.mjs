@@ -1,9 +1,8 @@
 // test_v2_admin_agents_logic.mjs
 //
 // Runtime test for the Admin Settings logic the Agents & Actions rework depends on.
-// Version: 0.261.064
-// Implemented in: 0.261.062 (agents), 0.261.063 (nested values and mirrored fields),
-//                 0.261.064 (runtime flag gates and allowlists)
+// Version: 0.261.065
+// Implemented in: 0.261.065
 //
 // The companion test, test_v2_admin_agents_parity.py, proves the schema describes the same
 // settings the V1 pane submits. That is a source assertion; it says nothing about whether
