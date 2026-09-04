@@ -42,6 +42,9 @@ STORE_TS = V2_SRC / "stores" / "chatStore.ts"
 
 CLASSIC_DIAGRAMS_JS = APP_DIR / "static" / "js" / "chat" / "chat-inline-diagrams.js"
 CLASSIC_MESSAGES_JS = APP_DIR / "static" / "js" / "chat" / "chat-messages.js"
+# The fingerprint and the resolution rules are shared between the classic client's diagram and
+# chart renderers, so they live in one module rather than being copied into each.
+CLASSIC_REVISIONS_JS = APP_DIR / "static" / "js" / "chat" / "chat-block-revisions.js"
 ROUTES_PY = APP_DIR / "route_backend_chats.py"
 COLLABORATION_PY = APP_DIR / "route_backend_collaboration.py"
 STORAGE_PY = APP_DIR / "functions_message_block_revisions.py"
@@ -163,12 +166,17 @@ def test_the_classic_client_shows_the_current_version():
     assert "fingerprintSource" in classic, (
         "it can only find the right entry by computing the same fingerprint"
     )
-    assert "0x811c9dc5" in classic and "0x01000193" in classic, (
-        "the fingerprint must be the same FNV-1a the other two implementations use"
-    )
     assert "sourceHash: fingerprintSource(payload)" in classic, (
         "the hash must come from the raw fence body; the normalized source strips trailing "
         "whitespace the reference implementation keeps, so the hashes would diverge"
+    )
+
+    shared = _read(CLASSIC_REVISIONS_JS)
+    assert "0x811c9dc5" in shared and "0x01000193" in shared, (
+        "the fingerprint must be the same FNV-1a the other two implementations use"
+    )
+    assert "export function applyStoredBlockRevisions" in shared, (
+        "diagrams and charts must resolve revisions through one implementation of the rule"
     )
 
     messages = _read(CLASSIC_MESSAGES_JS)
@@ -356,7 +364,7 @@ def test_the_three_fingerprints_agree():
                 "node",
                 str(harness),
                 str(V2_SRC / "lib" / "visualPalettes.ts"),
-                str(CLASSIC_DIAGRAMS_JS),
+                str(CLASSIC_REVISIONS_JS),
                 str(sample_file),
             ],
             capture_output=True,

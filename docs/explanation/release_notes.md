@@ -6,6 +6,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### New Features
 
+*   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated chart used to be final. If the model picked a pie where a bar was wanted, put a scale on the axis that flattened the whole story, left the axes unnamed, or got a single number wrong, the only remedy was to ask again — which left a second near-duplicate chart sitting below the first with nothing to say which one was current.
+    *   Every chart now has an **Edit** button. The editor opens beside a live preview with six tabs: **Data**, **Design**, **Axes**, **Source**, **Ask AI** and **History**.
+    *   **The numbers are editable.** A grid of the chart's own labels and series: change any value, rename or add a series, add and remove rows. An emptied cell is a gap rather than a zero, so a line is drawn straight past it instead of dropping to the axis. Scatter and bubble charts get a list of their x/y pairs instead.
+    *   **The chart type can be changed**, but only to a type the data can actually be read as. A scatter chart is not offered a bar chart, and pie, doughnut and polar area appear once a chart has a single series — with the reason given, rather than the option silently missing.
+    *   **The axes can be scaled and named.** An explicit minimum and maximum, start-at-zero, a logarithmic scale for values that span orders of magnitude, and an angle and a limit for category labels too crowded to read. On a horizontal bar chart these correctly apply to the axis that carries the values, which runs along the bottom.
+    *   **Bar width, line thickness, point size, the doughnut hole, gridlines, the legend and its position, stacking and orientation** are all adjustable, along with the chart's title, subtitle and caption.
+    *   **Six changes make one entry in the history, not six.** The whole panel edits a draft that the preview follows, and one save records the lot with a note naming what changed — "Bar width, Value axis" rather than "Edited".
+    *   **Ask AI changes the chart in front of it** without adding anything to the conversation, and is told not to invent numbers: if an instruction asks for values the chart does not have and cannot derive, the data is left alone. A reply that is not a chart is refused rather than stored.
+    *   **Nothing is deleted.** History keeps every version with who made it and what it was; restoring moves a pointer rather than discarding newer ones, and the chart the model originally produced is always kept.
+    *   Exported and emailed charts, and the classic interface, all show the current version with every setting applied — so a conversation looks the same wherever it is read.
+    *   (Ref: `chartEdits.ts`, `ChartEditor.tsx`, `ChartDataGrid.tsx`, `ChartCanvas.tsx`, `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `functions_chart_export.py`, `chat-block-revisions.js`, [V2 Inline Chart Editing](features/V2_INLINE_CHART_EDITING.md))
+
 *   **The Whole Workspaces Group Is Now Editable In The New Interface**
     *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.
     *   **Everything that was missing is now there**: personal, group and public workspace downloads, both "require assignment" rules and the group and public workspace pickers that go with them, the public workspace end-user display name, shared conversation file approvals, the CreateGroups and CreatePublicWorkspaces role requirements, and the owner-only restriction on group agents and actions.
@@ -23,6 +36,24 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Global Identities are saved credentials for the systems SimpleChat connects out to, used by File Sync sources and actions. They were filed under Workspaces, which owns neither, and the tab in the new interface was empty.
     *   The tab has moved to **Security**, next to Key Vault — which is where each identity's secret is actually stored — and now lists what exists with its sign-in type, alongside a link to the classic page for adding or editing one. Existing links to the tab still work.
     *   (Ref: `admin_settings_nav.py`, `GlobalIdentitiesList.tsx`)
+
+#### Bug Fixes
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Workflow Settings Are Reachable In The New Admin Interface**
+    *   The **Workflow** group in the new admin interface was empty. Selecting it showed no controls at all — not a missing toggle here or there, but the whole group. Enabling workflows meant going back to the classic admin page.
+    *   The cause was one thing, not seven. The new admin interface draws a section either from a description of its controls, or by scanning for settings whose names begin with `enable_`. Workflow had no description, and not one of its settings is named that way — they are `allow_user_workflows`, `allow_group_workflows`, `workflow_max_tasks` and so on — so the scan found nothing and the section was dropped for being empty.
+    *   All seven settings are now present: **Enable Personal Workflows**, **Require WorkflowUser App Role**, **Enable Group Workflows**, **Require Group Assignment to Use Workflow**, **Assigned Groups**, **Workflow Agent Action Limit** and **Workflow Task Limit**.
+    *   **Sub-settings stay out of the way until they apply.** The `WorkflowUser` role requirement appears once personal workflows are on, and the group allow list appears once group assignment is required. The two run limits are always shown, because they bound personal and group runs alike.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, [V2 Admin Workflow Settings Parity](fixes/V2_ADMIN_WORKFLOW_SETTINGS_PARITY_FIX.md))
 
 #### User Interface Enhancements
 
@@ -45,15 +76,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   In the new interface the assignment is visible: each assigned group appears as a named chip you can remove, search is inline and filters as you type rather than waiting behind a Search button, and an assignment pointing at a group that no longer exists is marked **Not found** so it can be cleared out.
     *   The list saves with the toggle that gates it, so requiring assignment and choosing the groups is one save rather than two.
     *   (Ref: `GroupAssignmentField.tsx`, `/api/v2/admin/groups`)
-
-#### Bug Fixes
-
-*   **Workflow Settings Are Reachable In The New Admin Interface**
-    *   The **Workflow** group in the new admin interface was empty. Selecting it showed no controls at all — not a missing toggle here or there, but the whole group. Enabling workflows meant going back to the classic admin page.
-    *   The cause was one thing, not seven. The new admin interface draws a section either from a description of its controls, or by scanning for settings whose names begin with `enable_`. Workflow had no description, and not one of its settings is named that way — they are `allow_user_workflows`, `allow_group_workflows`, `workflow_max_tasks` and so on — so the scan found nothing and the section was dropped for being empty.
-    *   All seven settings are now present: **Enable Personal Workflows**, **Require WorkflowUser App Role**, **Enable Group Workflows**, **Require Group Assignment to Use Workflow**, **Assigned Groups**, **Workflow Agent Action Limit** and **Workflow Task Limit**.
-    *   **Sub-settings stay out of the way until they apply.** The `WorkflowUser` role requirement appears once personal workflows are on, and the group allow list appears once group assignment is required. The two run limits are always shown, because they bound personal and group runs alike.
-    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, [V2 Admin Workflow Settings Parity](fixes/V2_ADMIN_WORKFLOW_SETTINGS_PARITY_FIX.md))
 
 ### **(v0.261.058)**
 
