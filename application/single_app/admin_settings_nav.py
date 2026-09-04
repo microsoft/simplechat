@@ -195,14 +195,7 @@ ADMIN_NAV = [
                     {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
                     {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-check2-square"},
-                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                 ],
-            },
-            {
-                "id": "workspace-identities",
-                "label": "Global Identities",
-                "icon": "bi-person-badge",
-                "sections": [],
             },
         ],
     },
@@ -255,6 +248,10 @@ ADMIN_NAV = [
                 "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
+                    # The upload ceiling belongs with the extraction pipeline it
+                    # feeds rather than with Workspaces, because it caps chat
+                    # attachments as well as workspace documents.
+                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                     {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
                     {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
                 ],
@@ -306,6 +303,18 @@ ADMIN_NAV = [
                 "icon": "bi-safe",
                 "sections": [
                     {"id": "keyvault-section", "label": "Key Vault", "icon": "bi-safe"},
+                ],
+            },
+            {
+                # Stored credentials for the systems File Sync and Actions reach
+                # out to, not accounts for signing in. They sit with Secrets
+                # because each one keeps its secret in Key Vault; they used to sit
+                # under Workspaces, which owns neither of the things that use them.
+                "id": "workspace-identities",
+                "label": "Global Identities",
+                "icon": "bi-person-badge",
+                "sections": [
+                    {"id": "workspace-identities-section", "label": "Global Identities", "icon": "bi-person-badge"},
                 ],
             },
             {
