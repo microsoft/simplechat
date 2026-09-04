@@ -44,6 +44,7 @@ from functions_orchestration_registry import (
     TERMINAL_CAPABILITY_ID,
     get_capability,
     get_capability_document_limit,
+    phase_index,
     resolve_available_capability_ids,
 )
 
@@ -344,6 +345,44 @@ def validate_step_arguments(capability, arguments):
 # Plan validation
 # --------------------------------------------------------------------------------------
 
+def _enforce_phase_order(steps):
+    """Sort steps into phase order and drop dependencies that point backwards.
+
+    Returns ``(ordered_steps, repairs)``.
+
+    A plan runs knowledge, then reasoning, then output. A step that gathers after the
+    answer has been written is not merely out of order -- it would run, cost money, and
+    contribute nothing, because the answer it was meant to inform has already been
+    composed. The same is true of a dependency pointing from an earlier phase to a later
+    one: honouring it would drag the later step forward, which is the very inversion the
+    phase order exists to prevent.
+
+    The sort is stable, so within a phase the planner's own ordering survives untouched and
+    the topological pass that follows still decides what actually depends on what.
+    """
+    repairs = []
+
+    ordered = sorted(steps, key=lambda step: phase_index(step.get('capability_id')))
+    position = {
+        step['step_id']: phase_index(step.get('capability_id')) for step in ordered
+    }
+
+    for step in ordered:
+        own_phase = position.get(step['step_id'], 0)
+        kept = []
+        for dependency in step.get('depends_on') or ():
+            if position.get(dependency, own_phase) > own_phase:
+                repairs.append(
+                    f"Step '{step['step_id']}' waited on '{dependency}', which runs in a "
+                    f"later phase; the dependency was dropped."
+                )
+                continue
+            kept.append(dependency)
+        step['depends_on'] = kept
+
+    return ordered, repairs
+
+
 def _order_steps(steps):
     """Topologically order steps, or report the ids caught in a cycle.
 
@@ -382,12 +421,20 @@ def validate_plan(
     settings=None,
     authorized_document_ids=None,
     available_capability_ids=None,
+    agent_names=None,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
     ``authorized_document_ids`` is the set of documents this user may read *right now*. It
     is applied here and applied again before finalization in the executor, because the two
     moments are not the same moment and access can be revoked between them.
+
+    ``agent_names`` is the set of agents this user can actually reach. A planner naming
+    anything else is treated exactly like a planner naming an unknown capability: the step
+    is dropped rather than handed to an adapter that would go looking for an agent nobody
+    offered. ``None`` means the caller resolved no catalog, so agent steps cannot be
+    checked and are refused outright -- an agent step with no catalog behind it has no way
+    to succeed.
 
     Returns the plan with ``steps``, ``validation`` and ``status`` settled. Raises
     ``PlanValidationError`` only when nothing runnable survives.
@@ -404,6 +451,12 @@ def validate_plan(
             allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
         )
     available = set(available_capability_ids or ())
+
+    known_agents = None
+    if agent_names is not None:
+        known_agents = {
+            str(value).strip() for value in agent_names if str(value).strip()
+        }
 
     authorized = None
     if authorized_document_ids is not None:
@@ -453,6 +506,24 @@ def validate_plan(
                 f"Step {index + 1} ({capability_id}): " + '; '.join(argument_errors)
             )
             continue
+
+        # An agent step may only name an agent the caller can actually reach. A planner
+        # inventing a plausible-sounding agent is as likely as one inventing a capability,
+        # and is caught the same way rather than being discovered by an adapter searching a
+        # catalog that never contained it.
+        if 'agent_name' in arguments:
+            if known_agents is None:
+                errors.append(
+                    f"Step {index + 1} asks for an agent, but no agent catalog was "
+                    f"resolved for this request."
+                )
+                continue
+            if arguments['agent_name'] not in known_agents:
+                errors.append(
+                    f"Step {index + 1} names an agent this user cannot reach: "
+                    f"'{arguments['agent_name']}'."
+                )
+                continue
 
         # Document authorization, and the administrator's per-action document ceiling.
         for field in ('document_ids', 'right_document_ids'):
@@ -511,6 +582,7 @@ def validate_plan(
             'optional': bool(raw.get('optional', False)),
             'enabled': bool(raw.get('enabled', True)),
             'estimated_cost': capability['cost_class'],
+            'phase': capability['phase'],
             'status': STEP_STATUS_PENDING,
         })
         used_counts[capability_id] = used_counts.get(capability_id, 0) + 1
@@ -523,6 +595,11 @@ def validate_plan(
         if len(kept) != len(step['depends_on']):
             repairs.append(f"Step '{step['step_id']}' waited on a step that was removed.")
         step['depends_on'] = kept
+
+    # Phase order first, so the topological pass below sorts within a plan that already
+    # runs knowledge before reasoning before output rather than one that merely could.
+    accepted, phase_repairs = _enforce_phase_order(accepted)
+    repairs.extend(phase_repairs)
 
     ordered, cyclic = _order_steps(accepted)
     if cyclic:
@@ -672,6 +749,7 @@ def normalize_plan(
     turn_id=None,
     seeds=None,
     document_labels=None,
+    agent_names=None,
 ):
     """Turn raw planner output into a complete, validated plan document."""
     settings = settings if isinstance(settings, dict) else {}
@@ -725,6 +803,7 @@ def normalize_plan(
         settings=settings,
         authorized_document_ids=authorized_document_ids,
         available_capability_ids=available_capability_ids,
+        agent_names=agent_names,
     )
 
     plan['inputs'] = build_plan_inputs(plan, seeds=seeds, document_labels=document_labels)

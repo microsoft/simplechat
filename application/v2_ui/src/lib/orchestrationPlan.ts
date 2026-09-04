@@ -150,6 +150,11 @@ export function normalizeStep(raw: unknown, index = 0): OrchestrationStep {
         enabled: asBoolean(source.enabled, true),
         estimated_cost: oneOf(source.estimated_cost, COST_CLASSES, 'medium'),
         status: oneOf(source.status, STEP_STATUSES, 'pending'),
+        // Carried through rather than re-derived from the capability menu. The validator
+        // stamps each step with the phase it ordered the plan by, so this is the value the
+        // run actually used; looking it up again client-side would disagree the moment a
+        // capability is disabled after a plan was made.
+        phase: asString(source.phase) || undefined,
     };
 }
 

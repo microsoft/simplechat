@@ -733,8 +733,8 @@ export interface NavGroup<TItem> {
 export interface OrchestrationCapability {
     id: string;
     label: string;
-    /** The capability family (search, generation, …). A string because the registry is server-owned. */
-    kind: string;
+    /** The phase this capability runs in (knowledge, reasoning, output). A string because the registry is server-owned. */
+    phase: string;
     summary: string;
     cost: 'low' | 'medium' | 'high';
     terminal: boolean;
