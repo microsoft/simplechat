@@ -30,17 +30,24 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Only the Appearance, Chat, Workflow and Workspaces groups are described in full
-so far. Sections with no entry here fall back to the V2 surface's ``enable_*``
-scan, so undescribed groups keep working exactly as they did. A handful of
-individual fields outside those groups are also declared: that scan places a key
-by guessing from shared word stems, and declaring a field is the only way to stop
-it guessing wrong, and the only way a ``require_member_of_*`` setting appears in
-V2 at all. Workflow had the opposite problem -- none of its settings are named
-``enable_*``, so the scan had nothing to guess with and the group rendered empty.
+The Appearance, Chat, Workflow, Workspaces and Security groups are described in
+full. Sections with no entry here fall back to the V2 surface's ``enable_*`` scan,
+so undescribed groups keep working exactly as they did. A handful of individual
+fields outside those groups are also declared: that scan places a key by guessing
+from shared word stems, and declaring a field is the only way to stop it guessing
+wrong, and the only way a ``require_member_of_*`` setting appears in V2 at all.
+Workflow had the opposite problem -- none of its settings are named ``enable_*``,
+so the scan had nothing to guess with and the group rendered empty.
 
 ``SUPPRESSED_CAPABILITY_KEYS`` covers the remaining case -- a boolean the scan
 would draw but which is not an editable setting at all.
+
+Secrets are declared with the ``secret`` type but are *not* resolved here. The
+browser is sent a placeholder rather than the stored value, and swapping the
+placeholder back for what is stored is a persistence concern that belongs with the
+route holding the current settings document -- which is where the server-rendered
+form does it too. This module only reports which keys are secrets, through
+``get_secret_field_keys``.
 """
 
 import re
@@ -55,8 +62,16 @@ from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
 )
+from functions_content_safety import (
+    CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
+    normalize_content_safety_violation_message,
+)
 from functions_group_assignment_ids import (
     normalize_group_workflow_allowed_group_ids,
+)
+from functions_rate_limit import (
+    RATE_LIMIT_MESSAGE_MAX_LENGTH,
+    normalize_rate_limit_message,
 )
 from functions_terms_of_use import (
     TERMS_OF_USE_DEFAULT_REDIRECT,
@@ -83,6 +98,7 @@ FIELD_TYPES = (
     "color",
     "range",
     "number",
+    "string_list",
     "image",
     "link_list",
     "id_list",
@@ -107,6 +123,11 @@ NON_PATCHABLE_KEYS = {
         "the browser, so they cannot be saved from here."
     ),
 }
+
+# ``input_type`` values a text field may ask the browser for. Anything else would
+# reach the DOM unvalidated, so the schema test rejects it.
+TEXT_INPUT_TYPES = ("text", "email", "url")
+
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
 USER_AGREEMENT_APPLY_TO_VALUES = ("personal", "group", "public", "chat")
@@ -138,6 +159,33 @@ PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
 # into an anchor href, so allowing arbitrary schemes would let a saved link
 # carry javascript: into every page's navigation.
 EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
+
+# Front Door terminates TLS and rewrites the host, so the value here becomes the
+# base of every generated redirect. A scheme-less or pathful value would produce
+# redirects that silently fail sign-in, which is why it is validated rather than
+# stored as typed.
+FRONT_DOOR_ALLOWED_SCHEMES = ("http", "https")
+
+# Matches the server-rendered form: fewer than ten minutes of inactivity signs
+# people out mid-thought, and the warning cannot arrive after the logout it warns
+# about.
+IDLE_TIMEOUT_MIN_MINUTES = 10
+IDLE_TIMEOUT_MAX_MINUTES = 1440
+IDLE_WARNING_MIN_MINUTES = 0
+
+# Bounds enforced by ``normalize_key_vault_secret_reminder_config``. Declaring the
+# same numbers here means an out-of-range value is refused at the point of entry
+# with a message, instead of being quietly clamped on the next read.
+KEY_VAULT_REMINDER_MIN_LEAD_DAYS = 1
+KEY_VAULT_REMINDER_MAX_LEAD_DAYS = 3650
+KEY_VAULT_REMINDER_MIN_SCAN_SECONDS = 900
+KEY_VAULT_REMINDER_MAX_SCAN_SECONDS = 86400
+
+# ``normalize_admin_role_list`` falls back to this when the list comes back empty,
+# so an administrator who clears the field gets the same result either way.
+KEY_VAULT_REMINDER_DEFAULT_ADMIN_ROLES = ["Admin"]
+
+ACCESS_DENIED_MESSAGE_MAX_LENGTH = 2000
 
 
 ADMIN_SETTINGS_FIELDS = {
@@ -1526,6 +1574,558 @@ ADMIN_SETTINGS_FIELDS = {
             "step": 1,
         },
     ],
+    "access-denied-message-section": [
+        {
+            "key": "access_denied_message",
+            "type": "textarea",
+            "label": "Access Denied Message",
+            "help": (
+                "Shown to someone who signed in successfully but holds none of the "
+                "roles the application requires. Name the team that grants access, "
+                "since the person reading it cannot get any further on their own."
+            ),
+            "default": (
+                "You are logged in but do not have the required permissions to access "
+                "this application.\nPlease contact an administrator for access."
+            ),
+            "rows": 3,
+            "max_length": ACCESS_DENIED_MESSAGE_MAX_LENGTH,
+            "fallback_when_empty": True,
+        },
+    ],
+    "keyvault-section": [
+        {
+            "key": "enable_key_vault_secret_storage",
+            "type": "switch",
+            "group": "Vault connection",
+            "label": "Store agent and action secrets in Key Vault",
+            "help": (
+                "API keys and secrets attached to agents and actions are written to "
+                "Azure Key Vault instead of the settings document, and referenced by "
+                "name."
+            ),
+            "notice": (
+                "Enabling this is effectively one-way. Secrets saved afterwards live "
+                "in Key Vault and are referenced by name, so turning it back off "
+                "leaves those references pointing at values the application can no "
+                "longer read, breaking every agent and action that depends on them."
+            ),
+            "notice_level": "warning",
+            "default": False,
+        },
+        {
+            "key": "key_vault_name",
+            "type": "text",
+            "group": "Vault connection",
+            "label": "Key Vault Name",
+            "help": (
+                "The vault resource name only, not a URL. The endpoint suffix comes "
+                "from the AZURE_ENVIRONMENT App Service setting."
+            ),
+            "default": "",
+            "max_length": 120,
+            "placeholder": "my-simplechat-vault",
+            "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
+        },
+        {
+            "key": "key_vault_identity",
+            "type": "text",
+            "group": "Vault connection",
+            "label": "Managed Identity Client ID",
+            "help": (
+                "Client ID of the user-assigned managed identity that holds Get, Set "
+                "and List on the vault. Leave blank to use the App Service "
+                "system-assigned identity."
+            ),
+            "default": "",
+            "max_length": 120,
+            "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "test_type": "key_vault",
+            "group": "Vault connection",
+            "label": "Test Key Vault connection",
+            "help": (
+                "Lists secret properties with the identity above. Run this before "
+                "saving a vault change, because a wrong identity is only visible once "
+                "an agent tries to read a secret."
+            ),
+            "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
+        },
+        {
+            "key": "enable_key_vault_secret_expiration_reminders",
+            "type": "switch",
+            "group": "Expiration reminders",
+            "label": "Track secret expiration dates",
+            "help": (
+                "Key Vault secret names are opaque hashes, so an expiry alert from "
+                "Azure cannot be traced back to an owner. Tracking records who owns "
+                "each secret, which action and field it backs, and warns before it "
+                "expires."
+            ),
+            "notice": (
+                "SimpleChat raises reminders in-app and emits the Application "
+                "Insights event key_vault_expiration_reminder_triggered; it does not "
+                "send email. To notify anyone, point an Azure Monitor scheduled query "
+                "alert, Logic App, Function or webhook at that event, and configure "
+                "the vault's own expiry alerts in Azure Monitor or Event Grid too."
+            ),
+            "notice_level": "info",
+            "default": False,
+            "depends_on": {"key": "enable_key_vault_secret_storage", "equals": True},
+        },
+        {
+            "key": "key_vault_secret_expiration_default_lead_days",
+            "type": "number",
+            "group": "Expiration reminders",
+            "label": "Default lead days",
+            "help": "How far ahead of expiry the first reminder is raised.",
+            "default": 30,
+            "min": KEY_VAULT_REMINDER_MIN_LEAD_DAYS,
+            "max": KEY_VAULT_REMINDER_MAX_LEAD_DAYS,
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+        {
+            "key": "key_vault_secret_expiration_default_contact_email",
+            "type": "text",
+            "input_type": "email",
+            "group": "Expiration reminders",
+            "label": "Default reminder email",
+            "help": (
+                "Used when a tracked secret names no owner of its own. This address "
+                "is not emailed by SimpleChat; it is recorded so Azure Monitor or a "
+                "Logic App can route to it."
+            ),
+            "default": "",
+            "max_length": 254,
+            "placeholder": "owner@example.com",
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+        {
+            "key": "key_vault_secret_expiration_admin_roles",
+            "type": "string_list",
+            "group": "Expiration reminders",
+            "label": "Admin notification roles",
+            "help": (
+                "Roles notified in-app about global-scope reminders, meaning secrets "
+                "with no individual owner. Comma separated."
+            ),
+            "default": KEY_VAULT_REMINDER_DEFAULT_ADMIN_ROLES,
+            "fallback_when_empty": True,
+            "max_item_length": 80,
+            "placeholder": "Admin",
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+        {
+            "key": "key_vault_secret_expiration_scan_interval_seconds",
+            "type": "number",
+            "group": "Expiration reminders",
+            "label": "Scan interval (seconds)",
+            "help": (
+                "How often the background sweep re-checks tracked secrets. The "
+                "default of 21600 is four sweeps a day."
+            ),
+            "default": 21600,
+            "min": KEY_VAULT_REMINDER_MIN_SCAN_SECONDS,
+            "max": KEY_VAULT_REMINDER_MAX_SCAN_SECONDS,
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+        {
+            "key": "key_vault_secret_expiration_require_expiration",
+            "type": "switch",
+            "group": "Expiration reminders",
+            "label": "Require an expiration date when users enable tracking",
+            "help": (
+                "A tracked secret with no expiry date can never raise a reminder, so "
+                "this stops one being created in that state."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+        {
+            "key": "key_vault_secret_expiration_emit_contact_email_in_telemetry",
+            "type": "switch",
+            "group": "Expiration reminders",
+            "label": "Include the contact email in external telemetry",
+            "help": (
+                "Adds contact_email to the key_vault_expiration_reminder_triggered "
+                "Application Insights event. Turn this on only when downstream "
+                "automation needs the address to route a notification, since it puts "
+                "an email address into telemetry."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+        {
+            "type": "component",
+            "component": "key-vault-secret-reminders",
+            "group": "Tracked secrets",
+            "label": "Tracked secret inventory",
+            "help": (
+                "Maps each opaque vault secret name back to its owner, source and "
+                "field, so an emailed Key Vault alert can be acted on."
+            ),
+            "depends_on": [
+                {"key": "enable_key_vault_secret_storage", "equals": True},
+                {"key": "enable_key_vault_secret_expiration_reminders", "equals": True},
+            ],
+        },
+    ],
+    "content-safety-section": [
+        {
+            "key": "enable_content_safety",
+            "type": "switch",
+            "group": "Connection",
+            "label": "Enable Content Safety",
+            "help": (
+                "Every user message is sent to Azure AI Content Safety before it "
+                "reaches a model. A message that trips the configured thresholds is "
+                "blocked and recorded as a safety violation."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_content_safety_apim",
+            "type": "switch",
+            "group": "Connection",
+            "label": "Route through Azure API Management",
+            "help": (
+                "Send Content Safety calls to an APIM front end rather than the "
+                "service endpoint, so they are subject to the same policy, quota and "
+                "logging as the rest of your Azure AI traffic."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_endpoint",
+            "type": "text",
+            "input_type": "url",
+            "group": "Connection",
+            "label": "Content Safety Endpoint",
+            "help": "The resource endpoint from the Content Safety resource in Azure.",
+            "default": "",
+            "max_length": 500,
+            "placeholder": "https://my-content-safety.cognitiveservices.azure.com/",
+            "depends_on": [
+                {"key": "enable_content_safety", "equals": True},
+                {"key": "enable_content_safety_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "content_safety_authentication_type",
+            "type": "select",
+            "group": "Connection",
+            "label": "Authentication Type",
+            "help": (
+                "Managed identity avoids storing a key, and needs the Cognitive "
+                "Services User role on the resource for the App Service identity."
+            ),
+            "default": "key",
+            "options": [
+                {"value": "key", "label": "Key"},
+                {"value": "managed_identity", "label": "Managed Identity"},
+            ],
+            "depends_on": [
+                {"key": "enable_content_safety", "equals": True},
+                {"key": "enable_content_safety_apim", "equals": False},
+            ],
+        },
+        {
+            "key": "content_safety_key",
+            "type": "secret",
+            "group": "Connection",
+            "label": "Content Safety Key",
+            "help": "Either key from the Content Safety resource.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_content_safety", "equals": True},
+                {"key": "enable_content_safety_apim", "equals": False},
+                {"key": "content_safety_authentication_type", "equals": "key"},
+            ],
+        },
+        {
+            "key": "azure_apim_content_safety_endpoint",
+            "type": "text",
+            "input_type": "url",
+            "group": "Connection",
+            "label": "APIM Content Safety Endpoint",
+            "help": "The APIM API base URL that fronts the Content Safety resource.",
+            "default": "",
+            "max_length": 500,
+            "depends_on": [
+                {"key": "enable_content_safety", "equals": True},
+                {"key": "enable_content_safety_apim", "equals": True},
+            ],
+        },
+        {
+            "key": "azure_apim_content_safety_subscription_key",
+            "type": "secret",
+            "group": "Connection",
+            "label": "APIM Subscription Key",
+            "help": "The APIM subscription key authorised for that API.",
+            "default": "",
+            "depends_on": [
+                {"key": "enable_content_safety", "equals": True},
+                {"key": "enable_content_safety_apim", "equals": True},
+            ],
+        },
+        {
+            "type": "component",
+            "component": "connection-test",
+            "test_type": "safety",
+            "group": "Connection",
+            "label": "Test Content Safety connection",
+            "help": (
+                "Analyses a harmless sample string. Worth running before saving, "
+                "because a broken connection blocks chat rather than failing quietly."
+            ),
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_violation_message",
+            "type": "textarea",
+            "markdown": True,
+            "group": "When a message is blocked",
+            "label": "Safety Violation Message",
+            "help": (
+                "Replaces the blocked message in the conversation. Say what to do "
+                "next -- rephrase, or raise it with a named team -- because the user "
+                "cannot see what triggered the block unless you include it below."
+            ),
+            "default": "",
+            "rows": 4,
+            "max_length": CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
+            "placeholder": "Your message was blocked by Content Safety.",
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+        {
+            "key": "content_safety_include_trigger_information",
+            "type": "switch",
+            "group": "When a message is blocked",
+            "label": "Show what triggered the block",
+            "help": (
+                "Appends the detected categories, their severities and any blocklist "
+                "matches beneath the message. Helps users self-correct, but tells "
+                "them exactly which thresholds are set."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_content_safety", "equals": True},
+        },
+    ],
+    "idle-timeout-section": [
+        {
+            "key": "enable_idle_timeout",
+            "type": "switch",
+            "label": "Sign out inactive users",
+            "help": (
+                "Ends the local session after a period without interaction, so an "
+                "unattended browser on a shared machine does not stay signed in. "
+                "This is a client-side timer, not a token lifetime."
+            ),
+            "default": False,
+        },
+        {
+            "key": "idle_timeout_minutes",
+            "type": "number",
+            "label": "Sign out after (minutes)",
+            "help": (
+                "Minimum 10 minutes. Anything shorter interrupts people mid-task "
+                "while they read a long response."
+            ),
+            "default": 30,
+            "min": IDLE_TIMEOUT_MIN_MINUTES,
+            "max": IDLE_TIMEOUT_MAX_MINUTES,
+            "depends_on": {"key": "enable_idle_timeout", "equals": True},
+        },
+        {
+            "key": "idle_warning_minutes",
+            "type": "number",
+            "label": "Warn after (minutes)",
+            "help": (
+                "When the warning dialog appears. Set it equal to the sign-out time "
+                "to skip the warning entirely. A value beyond the sign-out time is "
+                "lowered to match, since a warning cannot follow the sign-out."
+            ),
+            "default": 28,
+            "min": IDLE_WARNING_MIN_MINUTES,
+            "max": IDLE_TIMEOUT_MAX_MINUTES,
+            "depends_on": {"key": "enable_idle_timeout", "equals": True},
+        },
+        {
+            "key": "idle_warning_message",
+            "type": "text",
+            "label": "Idle Warning Message",
+            "help": "Heading of the dialog offering to keep the session alive.",
+            "default": "You've been inactive for a while.",
+            "max_length": 200,
+            "fallback_when_empty": True,
+            "depends_on": {"key": "enable_idle_timeout", "equals": True},
+        },
+    ],
+    "front-door-section": [
+        {
+            "key": "enable_front_door",
+            "type": "switch",
+            "label": "Behind Azure Front Door or a load balancer",
+            "help": (
+                "The App Service sees its own internal hostname, not the one users "
+                "typed, so sign-in redirects would send people back to a host they "
+                "cannot reach. Enabling this makes the URL below the base of every "
+                "generated redirect."
+            ),
+            "default": False,
+        },
+        {
+            "key": "front_door_url",
+            "type": "text",
+            "input_type": "url",
+            "label": "Front Door URL",
+            "help": (
+                "The public origin only -- scheme and host, no path. This must match "
+                "a redirect URI registered on the Entra app registration, or sign-in "
+                "fails with a redirect mismatch."
+            ),
+            "default": "",
+            "max_length": 500,
+            "placeholder": "https://your-frontdoor.azurefd.net",
+            "depends_on": {"key": "enable_front_door", "equals": True},
+        },
+        {
+            "type": "component",
+            "component": "front-door-redirect-preview",
+            "label": "Generated redirects",
+            "help": (
+                "Register both of these on the Entra app registration before saving."
+            ),
+            "depends_on": {"key": "enable_front_door", "equals": True},
+        },
+    ],
+    "rate-limit-message-section": [
+        {
+            "key": "enable_custom_rate_limit_message",
+            "type": "switch",
+            "label": "Use a custom rate limit message",
+            "help": (
+                "Throttled calls are retried with backoff, so this is only reached "
+                "once the retries run out and the request fails with HTTP 429. Leave "
+                "it off to keep the built-in wording."
+            ),
+            "default": False,
+        },
+        {
+            "key": "rate_limit_message",
+            "type": "textarea",
+            "markdown": True,
+            "label": "Rate Limit Message",
+            "help": (
+                "Give the retry window or an internal support channel -- the built-in "
+                "text cannot know either. Clearing this falls back to the built-in "
+                "message rather than showing nothing."
+            ),
+            "default": "",
+            "rows": 5,
+            "max_length": RATE_LIMIT_MESSAGE_MAX_LENGTH,
+            "depends_on": {"key": "enable_custom_rate_limit_message", "equals": True},
+        },
+    ],
+    "cosmos-maintenance-section": [
+        {
+            "key": "enable_app_maintenance",
+            "type": "switch",
+            "label": "Run background maintenance",
+            "help": (
+                "The recurring job that checks Cosmos composite index policies, "
+                "reconciles the document access index and clears stale cache "
+                "documents. Turning it off stops index repair and backfill from "
+                "converging, so document lists fall back to slower source queries."
+            ),
+            "default": True,
+        },
+        {
+            "key": "enable_startup_app_maintenance",
+            "type": "switch",
+            "label": "Also run maintenance at startup",
+            "help": (
+                "Runs one maintenance pass as the application starts, so an upgrade "
+                "picks up new index policies without waiting for the next scheduled "
+                "run. Disable it only if startup time matters more than converging "
+                "promptly after a deployment."
+            ),
+            "default": True,
+            "depends_on": {"key": "enable_app_maintenance", "equals": True},
+        },
+    ],
+}
+
+
+# Section-level state, drawn as a pill in the section header.
+#
+# A section reduced to a list of controls tells an administrator nothing until they
+# read every control in it. That is bearable for a section with one switch and
+# actively misleading for an integration, where "enabled" and "usable" are different
+# things: Content Safety can be on with no endpoint, and Key Vault can be on with no
+# vault name, and in both cases the feature is silently doing nothing.
+#
+# ``enabled_key``
+#     The capability toggle. False renders "Off" and nothing else is evaluated.
+#
+# ``configured``
+#     Rules deciding whether an enabled section is actually usable. Each rule
+#     applies when every entry in its ``when`` map matches current state, and
+#     requires every key in ``requires`` to hold a non-empty value. A rule with no
+#     ``when`` always applies. Rules exist rather than a flat key list because the
+#     required keys change with configuration: Content Safety needs a direct
+#     endpoint or an APIM endpoint depending on how it is routed, never both.
+ADMIN_SECTION_STATUS = {
+    "keyvault-section": {
+        "enabled_key": "enable_key_vault_secret_storage",
+        "configured": [{"requires": ["key_vault_name"]}],
+    },
+    "content-safety-section": {
+        "enabled_key": "enable_content_safety",
+        "configured": [
+            {
+                "when": {"enable_content_safety_apim": False},
+                "requires": ["content_safety_endpoint"],
+            },
+            {
+                "when": {"enable_content_safety_apim": True},
+                "requires": ["azure_apim_content_safety_endpoint"],
+            },
+        ],
+    },
+    "front-door-section": {
+        "enabled_key": "enable_front_door",
+        "configured": [{"requires": ["front_door_url"]}],
+    },
+    "idle-timeout-section": {
+        "enabled_key": "enable_idle_timeout",
+    },
+    "rate-limit-message-section": {
+        "enabled_key": "enable_custom_rate_limit_message",
+        "configured": [{"requires": ["rate_limit_message"]}],
+    },
 }
 
 
@@ -1585,15 +2185,36 @@ LEGACY_FIELD_NAMES = {
     "enable_group_creation": ["disable_group_creation"],
 }
 
-# Field names present in the V1 Appearance panes that intentionally have no V2
-# equivalent, with the reason. The parity test reads this, so an unexplained
-# omission fails rather than passing silently.
+# Field names present in the V1 panes covered by a parity test that intentionally
+# have no V2 equivalent, with the reason. The parity test reads this, so an
+# unexplained omission fails rather than passing silently.
 LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {}
+
+# Settings the schema declares that the server-rendered page has no control for,
+# with the reason it is reasonable for V2 to be ahead. The parity test reads this
+# so a V2-only field is a recorded decision rather than an accident.
+V2_ONLY_FIELDS = {
+    "enable_app_maintenance": (
+        "Documented in docs/admin/scale.md but never given a control on the "
+        "server-rendered page. Declared here so it stops being guessed into "
+        "Security > App Role Requirements by the fallback scan, which matched it "
+        "on the shared word stem 'app'."
+    ),
+    "enable_startup_app_maintenance": (
+        "Same as enable_app_maintenance: no server-rendered control, and misfiled "
+        "into Security by the fallback scan until it was declared."
+    ),
+}
 
 
 def get_admin_settings_fields():
     """Return the section-id keyed field schema."""
     return ADMIN_SETTINGS_FIELDS
+
+
+def get_admin_section_status():
+    """Return the section-id keyed status descriptors."""
+    return ADMIN_SECTION_STATUS
 
 
 def iter_fields():
@@ -1625,21 +2246,55 @@ def get_suppressed_capability_keys():
     return sorted(SUPPRESSED_CAPABILITY_KEYS)
 
 
-def iter_field_dependencies(field):
-    """Return a field's visibility conditions as a tuple.
+def get_secret_field_keys():
+    """Return the settings keys declared as secrets.
 
-    ``depends_on`` is normally one condition. It may also be a list, and then every
-    condition must hold. That is needed wherever a control is gated on a sibling
-    whose own default would otherwise reveal it: the Enhanced Citations storage
-    credentials are chosen by authentication type, but must stay hidden entirely
-    while Enhanced Citations itself is off.
+    The browser is handed a placeholder for each of these instead of the stored
+    value, so the route applying a save has to know which submitted values may be
+    that placeholder rather than a real new secret.
     """
-    depends_on = field.get("depends_on")
-    if not depends_on:
-        return ()
-    if isinstance(depends_on, dict):
-        return (depends_on,)
-    return tuple(depends_on)
+    return {
+        field["key"]
+        for _section_id, field in iter_fields()
+        if field.get("type") == "secret" and field.get("key")
+    }
+
+
+def iter_field_dependencies(field):
+    """Yield each ``depends_on`` condition on a field.
+
+    A field may declare one condition or a list of them; a list means every
+    condition has to hold. Both shapes are read through here so callers never have
+    to care which was written. A list is needed wherever a control is gated on a
+    sibling whose own default would otherwise reveal it -- the Enhanced Citations
+    storage credentials are chosen by authentication type, but must stay hidden
+    entirely while Enhanced Citations itself is off.
+    """
+    dependency = field.get("depends_on")
+    if not dependency:
+        return
+    if isinstance(dependency, dict):
+        yield dependency
+        return
+    for condition in dependency:
+        yield condition
+
+
+def _dependency_is_satisfied(condition, settings):
+    """Whether one ``depends_on`` condition holds against a settings mapping."""
+    expected = condition.get("equals", True)
+    current = settings.get(condition["key"])
+    if isinstance(expected, bool):
+        return _coerce_bool(current) is expected
+    return str(current if current is not None else "") == str(expected)
+
+
+def field_dependencies_are_satisfied(field, settings):
+    """Whether every ``depends_on`` condition on a field holds."""
+    return all(
+        _dependency_is_satisfied(condition, settings)
+        for condition in iter_field_dependencies(field)
+    )
 
 
 def get_legacy_field_names():
@@ -1671,6 +2326,57 @@ def _normalize_text(value, field):
     if max_length:
         text = text[:max_length]
     return text
+
+
+def _normalize_string_list(value, field):
+    """Return ``(items, error)`` for a comma-separated list of short tokens.
+
+    Accepts the list the V2 control sends and the comma string the server-rendered
+    form stores, because both shapes already exist in saved settings documents.
+    """
+    if isinstance(value, str):
+        raw_items = value.replace(";", ",").split(",")
+    elif isinstance(value, list):
+        raw_items = value
+    elif value is None:
+        raw_items = []
+    else:
+        return None, "Expected a list of values."
+
+    max_item_length = field.get("max_item_length", 80)
+    items = []
+    for raw_item in raw_items:
+        item = " ".join(str(raw_item or "").split())[:max_item_length]
+        if item and item not in items:
+            items.append(item)
+
+    if not items and field.get("fallback_when_empty"):
+        items = list(field.get("default") or [])
+    return items, None
+
+
+def _validate_front_door_url(value):
+    """Return ``(url, error)`` for the Front Door origin.
+
+    Every sign-in redirect is built from this value, so a path, a query or a
+    missing scheme produces redirects that fail authentication rather than merely
+    looking untidy. The server-rendered form blanks a bad value and flashes a
+    message; refusing the save says the same thing without the administrator
+    having to notice the field emptied itself.
+    """
+    candidate = str(value or "").strip().rstrip("/")
+    if not candidate:
+        return "", None
+
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in FRONT_DOOR_ALLOWED_SCHEMES:
+        allowed = " or ".join(f"{scheme}://" for scheme in FRONT_DOOR_ALLOWED_SCHEMES)
+        return None, f"URL must start with {allowed}."
+    if not parsed.netloc:
+        return None, "URL is missing a host."
+    if parsed.path or parsed.query or parsed.fragment:
+        return None, "Enter the origin only, with no path or query string."
+    return candidate, None
 
 
 def _validate_external_link_url(url):
@@ -1820,10 +2526,14 @@ _DELEGATED_NORMALIZERS = {
     "terms_of_use_decline_button_text": lambda value, field: normalize_terms_of_use_text(
         value, fallback="Cancel", max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH
     ),
+    "content_safety_violation_message": lambda value, field: (
+        normalize_content_safety_violation_message(value)
+    ),
+    "rate_limit_message": lambda value, field: normalize_rate_limit_message(value),
 }
 
 
-def _normalize_field_value(key, value, field, current_settings=None):
+def _normalize_field_value(key, value, field):
     """Return ``(normalized, error, warning)`` for one declared field."""
     field_type = field.get("type")
 
@@ -1837,14 +2547,14 @@ def _normalize_field_value(key, value, field, current_settings=None):
         return _coerce_bool(value), None, None
 
     if field_type == "secret":
-        # A value still equal to the mask means the administrator did not touch
-        # the field, so the stored secret is kept. Storing the mask would
-        # overwrite a working credential with the literal "***REDACTED***".
-        resolved = resolve_admin_settings_secret_value(
-            key, value, current_settings or {}
-        )
-        max_length = field.get("max_length")
-        return (resolved[:max_length] if max_length else resolved), None, None
+        # Whitespace only, and no length cap: the value is an opaque credential,
+        # and the placeholder standing in for a stored secret is resolved by the
+        # route that holds the settings document, not here.
+        return str(value if value is not None else "").strip(), None, None
+
+    if field_type == "string_list":
+        items, error = _normalize_string_list(value, field)
+        return items, error, None
 
     if field_type == "select":
         allowed = [option["value"] for option in field.get("options", [])]
@@ -1982,7 +2692,15 @@ def normalize_admin_settings_updates(updates, current_settings=None):
                 normalized[key] = redirect_value
             continue
 
-        field_value, error, warning = _normalize_field_value(key, value, field, current)
+        if key == "front_door_url":
+            front_door_value, front_door_error = _validate_front_door_url(value)
+            if front_door_error:
+                errors[key] = front_door_error
+            else:
+                normalized[key] = front_door_value
+            continue
+
+        field_value, error, warning = _normalize_field_value(key, value, field)
         if error:
             errors[key] = error
             continue
@@ -1996,44 +2714,62 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     # is known, because the capability toggle and its selection may arrive apart.
     _check_minimum_selections(normalized, current, errors)
 
+    # Same reasoning for settings that constrain each other: the pair may be edited
+    # together or one at a time, so the merged state is the only thing worth
+    # judging.
+    _apply_cross_field_rules(normalized, current, warnings)
+
     return normalized, errors, warnings
 
 
-def _dependency_is_satisfied(depends_on, value):
-    """Whether a ``depends_on`` condition holds for a field's current value.
+def _apply_cross_field_rules(normalized, current_settings, warnings):
+    """Reconcile settings whose valid range depends on another setting.
 
-    ``equals`` is usually a boolean, gating a field on a capability switch. It
-    may also be a string, which gates a field on a select -- the Enhanced
-    Citations storage credentials each apply to one authentication type only.
+    Only the idle warning needs this today. It has to arrive before the sign-out it
+    warns about, and the two are separate fields that can be saved independently,
+    so the check cannot live on either field's own definition. The server-rendered
+    form silently lowers the warning to match; doing the same and saying so is
+    kinder than rejecting a save over a value the administrator did not touch.
     """
-    expected = depends_on.get("equals", True)
-    if isinstance(expected, str):
-        return str(value or "").strip() == expected
-    return _coerce_bool(value) == expected
+    if "idle_warning_minutes" not in normalized and "idle_timeout_minutes" not in normalized:
+        return
+
+    def merged(key, fallback):
+        if key in normalized:
+            return normalized[key]
+        stored = current_settings.get(key)
+        return fallback if stored is None else stored
+
+    try:
+        timeout = int(merged("idle_timeout_minutes", 30))
+        warning = int(merged("idle_warning_minutes", 28))
+    except (TypeError, ValueError):
+        return
+
+    if warning <= timeout:
+        return
+
+    normalized["idle_warning_minutes"] = timeout
+    warnings["idle_warning_minutes"] = (
+        f"Lowered to {timeout} minutes, because a warning cannot arrive after the "
+        "sign-out it warns about."
+    )
 
 
 def _check_minimum_selections(normalized, current_settings, errors):
     """Enforce ``min_selected`` once the merged state of a save is known."""
+    merged = {**current_settings, **normalized}
+
     for _section_id, field in iter_fields():
         key = field.get("key")
         minimum = field.get("min_selected")
         if not key or not minimum:
             continue
 
-        depends_on = field.get("depends_on")
-        if depends_on:
-            gated_off = False
-            for condition in iter_field_dependencies(field):
-                gate_key = condition["key"]
-                gate_value = (
-                    normalized[gate_key] if gate_key in normalized
-                    else current_settings.get(gate_key, False)
-                )
-                if not _dependency_is_satisfied(condition, gate_value):
-                    gated_off = True
-                    break
-            if gated_off:
-                continue
+        # A hidden field is not one the administrator declined to fill in, so a
+        # gated selection is only judged while its gate is open.
+        if not field_dependencies_are_satisfied(field, merged):
+            continue
 
         selection = (
             normalized[key] if key in normalized else current_settings.get(key) or []

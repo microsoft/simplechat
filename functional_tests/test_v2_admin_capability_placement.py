@@ -27,14 +27,24 @@ without opening the page:
 Declaring a field is what takes a key out of that scan. This test holds three
 invariants so the misfiling cannot come back:
 
-  1. The Appearance and Chat groups are fully described by the schema, so they
-     must receive *no* guessed rows at all. A new undeclared key that lands in
-     either fails here, and the fix is to declare it in its real section.
+  1. The Appearance, Chat and Security groups are fully described by the schema, so
+     they must receive *no* guessed rows at all. A new undeclared key that lands in
+     any of them fails here, and the fix is to declare it in its real section.
   2. The keys that were moved stay declared where they were moved to.
   3. Keys that are not editable settings at all stay suppressed rather than
      declared. ``enable_tabular_processing_plugin`` is the clearest case: it is
      derived from ``enable_enhanced_citations`` and rewritten by ``get_settings``
      on every read, so a switch would appear to save and then revert.
+
+Security was described later and had misfilings of its own. The clearest was
+``enable_app_maintenance`` and ``enable_startup_app_maintenance``, which matched
+the token "app" in ``app-role-requirements-section`` and so appeared under Security
+> Access & Roles, next to Entra role switches they have nothing to do with. Both
+are Cosmos maintenance switches and are now declared under
+``cosmos-maintenance-section``. ``enable_key_vault_secret_storage`` matched
+"storage" in ``data-management-storage-section`` and appeared under Backup &
+Recovery, while ``enable_key_vault_secret_expiration_reminders`` matched nothing at
+all and fell into "Other capabilities".
 """
 
 import re
@@ -55,10 +65,10 @@ RENDERER = REPO_ROOT / "application" / "v2_ui" / "src" / "pages" / "AdminSetting
 
 APPEARANCE_GROUP_ID = "appearance"
 
-# Groups whose sections are described in full by the schema. A guessed row landing
-# in one of these is by definition misfiled, because everything that genuinely
-# belongs there is declared.
-FULLY_DESCRIBED_GROUP_IDS = ("appearance", "chat")
+# Groups whose sections are described by the schema in full. A guessed row landing
+# in one of these is a key that was filed by word stems into a group that has a
+# real home for everything it owns, which means it is in the wrong place.
+FULLY_DESCRIBED_GROUP_IDS = (APPEARANCE_GROUP_ID, "chat", "security")
 
 # Where each relocated toggle now lives, and the V1 pane it is mirrored from. The
 # pane is checked too, because a schema field with no server-rendered counterpart
@@ -92,6 +102,14 @@ EXPECTED_SUPPRESSED_CAPABILITIES = (
     "enable_mixed_source_chat_search",
     "enable_mixed_source_conversation_continuity",
 )
+
+# Relocations with no server-rendered counterpart to check against. Both are
+# documented in ``V2_ONLY_FIELDS``, which is what the section assertion below reads
+# instead of a pane.
+RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD = {
+    "enable_app_maintenance": "cosmos-maintenance-section",
+    "enable_startup_app_maintenance": "cosmos-maintenance-section",
+}
 
 # The rules the ported heuristic depends on. If the renderer stops doing any of
 # these, the port below no longer predicts what an administrator sees.
@@ -197,14 +215,14 @@ def test_ported_heuristic_still_matches_the_renderer():
 
 
 def test_described_groups_receive_no_guessed_capabilities():
-    """Appearance and Chat are fully described, so anything guessed in is misfiled."""
-    print("\nTesting that no guessed capability lands in a described group...")
+    """A fully described group has a real home for everything it owns."""
+    print("\nTesting that no guessed capability lands in a fully described group...")
 
     declared = fields_module.get_declared_setting_keys()
     suppressed = set(fields_module.get_suppressed_capability_keys())
     sections = build_sections()
     described_sections = {
-        section["section_id"]: section["group_label"]
+        section["section_id"]: section
         for section in sections
         if section["group_id"] in FULLY_DESCRIBED_GROUP_IDS
     }
@@ -294,7 +312,7 @@ def test_suppressed_capabilities_are_real_settings_keys():
 
 
 def test_relocated_capabilities_are_declared_where_they_belong():
-    """Undeclaring one of these silently returns it to the Appearance group."""
+    """Undeclaring one of these silently returns it to the group it was guessed into."""
     print("\nTesting the relocated capability declarations...")
 
     declared_sections = {}
@@ -303,8 +321,13 @@ def test_relocated_capabilities_are_declared_where_they_belong():
         if key:
             declared_sections[key] = (section_id, field)
 
+    expected_sections = {
+        key: section for key, (section, _pane) in RELOCATED_CAPABILITIES.items()
+    }
+    expected_sections.update(RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD)
+
     problems = []
-    for key, (expected_section, _pane) in RELOCATED_CAPABILITIES.items():
+    for key, expected_section in expected_sections.items():
         entry = declared_sections.get(key)
         if entry is None:
             problems.append(f"{key}: not declared at all")
@@ -318,11 +341,34 @@ def test_relocated_capabilities_are_declared_where_they_belong():
             problems.append(f"{key}: declared as {field.get('type')!r}, expected 'switch'")
 
     assert not problems, (
-        "These capabilities were moved out of the Appearance group by declaring "
-        "them. Changing that undoes the move:\n  " + "\n  ".join(problems)
+        "These capabilities were moved out of the group that guessed them by "
+        "declaring them. Changing that undoes the move:\n  " + "\n  ".join(problems)
     )
 
-    print(f"  All {len(RELOCATED_CAPABILITIES)} relocated capability declaration(s) hold.")
+    print(f"  All {len(expected_sections)} relocated capability declaration(s) hold.")
+    return True
+
+
+def test_v2_only_relocations_are_documented():
+    """A field V1 has no control for must say why, not just appear."""
+    print("\nTesting that V2-only relocations are recorded...")
+
+    undocumented = sorted(
+        key
+        for key in RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD
+        if not fields_module.V2_ONLY_FIELDS.get(key)
+    )
+
+    assert not undocumented, (
+        "These settings are declared in the schema but have no server-rendered "
+        "control, so V2 is deliberately ahead of V1. Record the reason in "
+        "V2_ONLY_FIELDS in admin_settings_fields.py:\n  " + "\n  ".join(undocumented)
+    )
+
+    print(
+        f"  All {len(RELOCATED_CAPABILITIES_WITHOUT_V1_FIELD)} V2-only relocation(s) "
+        "are documented."
+    )
     return True
 
 
@@ -357,6 +403,7 @@ if __name__ == "__main__":
         test_non_editable_capabilities_are_suppressed_not_declared,
         test_suppressed_capabilities_are_real_settings_keys,
         test_relocated_capabilities_are_declared_where_they_belong,
+        test_v2_only_relocations_are_documented,
         test_relocated_capabilities_exist_in_their_v1_panes,
     ]
 
