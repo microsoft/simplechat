@@ -1,8 +1,9 @@
 // test_v2_admin_agents_logic.mjs
 //
 // Runtime test for the Admin Settings logic the Agents & Actions rework depends on.
-// Version: 0.261.060
-// Implemented in: 0.261.059 (agents), 0.261.060 (nested values and mirrored fields)
+// Version: 0.261.061
+// Implemented in: 0.261.059 (agents), 0.261.060 (nested values and mirrored fields),
+//                 0.261.061 (runtime flag gates and allowlists)
 //
 // The companion test, test_v2_admin_agents_parity.py, proves the schema describes the same
 // settings the V1 pane submits. That is a source assertion; it says nothing about whether
@@ -43,6 +44,10 @@ import {
     roundsApply,
     toPromotedAgent,
 } from '../application/v2_ui/src/lib/adminAgents.ts';
+import {
+    effectiveEntries,
+    readEntryList,
+} from '../application/v2_ui/src/lib/adminEntries.ts';
 
 const checks = [];
 function check(name, fn) {
@@ -250,8 +255,100 @@ check('without the index a nested gate cannot be found, which is why it is passe
     );
 });
 
-/* ------------------------------ mirrored fields ------------------------------- */
+/* ------------------------------ runtime flag gates ---------------------------- */
 
+const MCP_FIELD = field('enable_inbound_mcp_server', {
+    depends_on: { flag: 'mcp_ui_enabled', equals: true },
+});
+const MCP_NOTICE = field('notice', {
+    depends_on: { flag: 'mcp_ui_enabled', equals: false },
+});
+
+check('a runtime flag gate cannot be satisfied from the settings document', () => {
+    assert.equal(
+        isFieldVisible(MCP_FIELD, { mcp_ui_enabled: true }, {}, undefined, {}),
+        false,
+        'the flag comes from the App Service, so a settings key of the same name must not count',
+    );
+    assert.equal(isFieldVisible(MCP_FIELD, {}, {}, undefined, { mcp_ui_enabled: true }), true);
+});
+
+check('the disabled notice is the complement of the gated fields', () => {
+    const off = { mcp_ui_enabled: false };
+    const on = { mcp_ui_enabled: true };
+
+    assert.equal(isFieldVisible(MCP_FIELD, {}, {}, undefined, off), false);
+    assert.equal(isFieldVisible(MCP_NOTICE, {}, {}, undefined, off), true);
+    assert.equal(isFieldVisible(MCP_FIELD, {}, {}, undefined, on), true);
+    assert.equal(isFieldVisible(MCP_NOTICE, {}, {}, undefined, on), false);
+});
+
+check('a missing flag reads as off rather than as satisfied', () => {
+    assert.equal(isFieldVisible(MCP_FIELD, {}, {}, undefined, undefined), false);
+    assert.equal(isFieldVisible(MCP_NOTICE, {}, {}, undefined, undefined), true);
+});
+
+check('a flag gate combines with an ordinary key gate', () => {
+    const throttle = field('inbound_mcp_rate_limit_window_seconds', {
+        depends_on: [
+            { flag: 'mcp_ui_enabled', equals: true },
+            { key: 'enable_inbound_mcp_rate_limits', equals: true },
+        ],
+    });
+    const flags = { mcp_ui_enabled: true };
+
+    assert.equal(
+        isFieldVisible(throttle, { enable_inbound_mcp_rate_limits: true }, {}, undefined, flags),
+        true,
+    );
+    assert.equal(
+        isFieldVisible(throttle, { enable_inbound_mcp_rate_limits: false }, {}, undefined, flags),
+        false,
+    );
+    assert.equal(
+        isFieldVisible(
+            throttle,
+            { enable_inbound_mcp_rate_limits: true },
+            {},
+            undefined,
+            { mcp_ui_enabled: false },
+        ),
+        false,
+    );
+});
+
+/* -------------------------------- allowlists ---------------------------------- */
+
+check('a stored allowlist reads rows, and a bare string is still accepted', () => {
+    assert.deepEqual(readEntryList([{ value: 'a', description: 'A' }, 'b', null]), [
+        { value: 'a', description: 'A' },
+        { value: 'b', description: '' },
+        { value: '', description: '' },
+    ]);
+    assert.deepEqual(readEntryList(undefined), []);
+});
+
+check('the effective allowlist drops blanks and repeats, keeping the first', () => {
+    const entries = [
+        { value: '  ABC  ', description: ' VS Code ' },
+        { value: '', description: 'blank' },
+        { value: 'abc', description: 'duplicate' },
+        { value: 'def', description: '' },
+    ];
+
+    assert.deepEqual(effectiveEntries(entries, true), [
+        { value: 'abc', description: 'VS Code' },
+        { value: 'def', description: '' },
+    ]);
+});
+
+check('case is only folded where the server folds it', () => {
+    const entries = [{ value: 'VSCode', description: '' }];
+    assert.equal(effectiveEntries(entries, false)[0].value, 'VSCode');
+    assert.equal(effectiveEntries(entries, true)[0].value, 'vscode');
+});
+
+/* ------------------------------ mirrored fields ------------------------------- */
 const MIRROR = field('enable_fact_memory_plugin', {
     readonly: true,
     managed_by: 'Chat',

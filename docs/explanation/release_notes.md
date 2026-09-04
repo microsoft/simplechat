@@ -2,6 +2,29 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.061)**
+
+#### New Features
+
+*   **Inbound MCP Is Fully Configurable In The New Admin Interface**
+    *   The Inbound MCP tab in the new Admin Settings surface showed exactly two switches — **Enable inbound MCP server** and **Enable tool throttles** — and nothing else. The delegated scope, the required Entra roles, the request and throttle limits, and all three allowlists were invisible, which read as "disabled, but throttles are on" with no explanation for either.
+    *   The tab now renders the whole configuration, grouped as **Runtime gate**, **Request limits** and **Allowlists**.
+    *   **Allowlists are edited as rows rather than raw JSON.** Each row pairs the identifier the runtime matches with a description of who it belongs to, and a repeated value is flagged as you type rather than disappearing on save.
+    *   **The lists the runtime actually reads are derived on save**, exactly as the classic interface derives them. Editing an allowlist in the new interface now takes effect; previously the schema had no way to express that one setting produces several, which for an access control list is the worst kind of failure — the screen would show the new restriction while the runtime applied the old one.
+    *   **Turning off "Allow additional tenant IDs" no longer discards the tenants you listed.** It stops admitting them, and turning it back on restores them.
+    *   (Ref: `admin_settings_fields.py`, `functions_mcp_server_config.py`, `EntryListEditor.tsx`, `adminEntries.ts`)
+
+#### User Interface Enhancements
+
+*   **The Inbound MCP Tab Explains Why It Is Empty**
+    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
+    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
+    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
+
+*   **Inbound MCP Documentation Describes The Access Model**
+    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
 ### **(v0.261.060)**
 
 #### New Features

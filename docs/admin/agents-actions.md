@@ -222,26 +222,90 @@ interface for now.
 
 ### Inbound MCP {#inbound-mcp-configuration}
 
-The Inbound MCP section belongs to the Inbound MCP tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Inbound MCP lets an external MCP client — an editor, for example — call
+SimpleChat tools on a signed-in user's behalf. It is the one part of SimpleChat
+that accepts requests from software you do not control, so it is deny-by-default
+at five separate layers, and turning it on is the last step rather than the first.
 
-If the tab shows that the Inbound MCP admin UI is disabled, add the Azure App Service application setting `ENABLE_MCP_UI=true`, save the configuration, and restart the app if your host does not restart it automatically. This only exposes the preview configuration UI; the inbound MCP runtime remains off until **Enable inbound MCP server** is turned on after authentication, client allowlist, source, and governance prerequisites are ready.
+A request is served only if **all** of these hold:
 
-#### Settings
+1. the caller presents the required delegated scope;
+2. the signed-in user holds the required Entra app role;
+3. the caller's application id is on the client allowlist;
+4. the caller's tenant is allowed;
+5. the source value is allowed, **and** a governance policy grants that user or
+   group access to the tool.
+
+Today the tool surface is personal tools only, and every one of them needs a
+delegated user token. The app-only role is reserved for future service tools and
+grants nothing.
+
+#### If the settings are not shown
+
+The configuration is a preview and stays hidden until the deployment opts in. Add
+the Azure App Service application setting `ENABLE_MCP_UI=true`, save, and restart
+the app if your host does not restart it for you.
+
+That reveals the settings and nothing else. The endpoint stays closed until
+**Enable Inbound MCP Server** is switched on.
+
+#### Runtime gate
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable inbound MCP server | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_inbound_mcp_server`; capability toggle |
-| Required delegated scope | Default: DelegatedMcpServerAccess. VS Code and other user clients must present this delegated scope. | DelegatedMcpServerAccess | `inbound_mcp_required_scope` |
-| Required delegated user role | Default: InboundMCPUserAccess. Governance determines which users/groups can use tools after this Entra role and delegated scope pass. | InboundMCPUserAccess | `inbound_mcp_required_user_role` |
-| Required app-only role | Default: InboundMCPAppAccess. Reserved for future app-only MCP tools and still governed separately. | InboundMCPAppAccess | `inbound_mcp_required_app_role` |
-| Max request bytes | Default: 65536. Range: 1 KB to 1 MB. | 65536 | `inbound_mcp_max_request_bytes` |
-| Rate window seconds | Default: 60. Applies to each throttle category. | 60 | `inbound_mcp_rate_limit_window_seconds` |
-| Read limit | Default: 120. | 120 | `inbound_mcp_rate_limit_read_per_window` |
-| Search limit | Default: 30. | 30 | `inbound_mcp_rate_limit_search_per_window` |
-| Write limit | Default: 10. | 10 | `inbound_mcp_rate_limit_write_per_window` |
-| Allow additional tenant IDs | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `inbound_mcp_allow_external_tenants` |
-| Allow all source IDs | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `inbound_mcp_allow_all_source_ids` |
-| Source header name | Default: X-SimpleChat-MCP-Source. | X-SimpleChat-MCP-Source | `inbound_mcp_source_header` |
+| Enable Inbound MCP Server | Accepts requests from external MCP clients. Every check above still applies afterwards. | Off | `enable_inbound_mcp_server`; capability toggle |
+| Required Delegated Scope | The delegated scope a client must present. Must match the scope exposed on the Entra application registration, or every request is refused. | DelegatedMcpServerAccess | `inbound_mcp_required_scope` |
+| Required Delegated User Role | The Entra app role a signed-in user must hold to connect at all. Which tools they then get is decided by governance policy. | InboundMCPUserAccess | `inbound_mcp_required_user_role` |
+| Required App-Only Role | Reserved for future service-to-service tools. No tool uses it today. | InboundMCPAppAccess | `inbound_mcp_required_app_role` |
+
+#### Request limits
+
+Throttles are **on by default** while the server itself is off, so seeing them
+enabled does not mean the endpoint is reachable. They take effect only once the
+server is enabled, and are counted per caller and per tool category across app
+instances.
+
+| Setting | What it does | Default | Range |
+| --- | --- | --- | --- |
+| Enable Tool Throttles | Caps how often one caller may invoke each category of tool, so a client stuck in a loop cannot exhaust the deployment. | On | — |
+| Max Request Bytes | Largest request body accepted. Anything bigger is refused unread. | 65536 | 1 KB – 1 MB |
+| Throttle Window (Seconds) | The period each limit below is counted over. | 60 | 10 – 3600 |
+| Read Calls Per Window | Reads are cheap, so this is the most permissive limit. | 120 | 1 – 10000 |
+| Search Calls Per Window | Each search costs an index query, so it is limited harder than reads. | 30 | 1 – 10000 |
+| Write Calls Per Window | Writes change stored data, so this is the tightest limit. | 10 | 1 – 10000 |
+
+#### Allowlists
+
+Each allowlist row pairs the identifier the runtime matches with a description of
+who it belongs to. Fill the description in: a list of bare GUIDs becomes
+impossible to audit within weeks, and nobody can then say which entry is safe to
+remove.
+
+**Client app IDs are required.** While that list is empty no client can connect,
+whatever else is configured.
+
+**Source IDs are weaker than they look.** The source arrives in a request header
+the client sets, so it identifies rather than authenticates, and it can be
+spoofed unless a gateway or APIM policy sets and enforces it. Leaving **Allow all
+source IDs** on accepts any value at this layer; a governance policy still
+decides who gets tools. Turn it off only where something upstream controls the
+header.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Allowed Client App IDs | The Entra application ids permitted to connect. | Empty, so nothing can connect | `inbound_mcp_allowed_client_app_entries` |
+| Allow Additional Tenant IDs | Off restricts callers to this deployment's own tenant. | Off | `inbound_mcp_allow_external_tenants` |
+| Allowed Tenant IDs | Additional tenants whose users may connect. The deployment's own tenant is always included. | Empty | `inbound_mcp_allowed_tenant_entries` |
+| Allow All Source IDs | Accepts any source value at the allowlist layer. | On | `inbound_mcp_allow_all_source_ids` |
+| Source Header Name | The request header the source value is read from. | X-SimpleChat-MCP-Source | `inbound_mcp_source_header` |
+| Allowed Source IDs | The source values accepted when not allowing all of them. | Empty | `inbound_mcp_allowed_source_entries` |
+
+Turning **Allow Additional Tenant IDs** off does not delete the tenants you
+listed; it stops admitting them. Turning it back on restores them.
+
+Application Insights records `mcp_request_id`, the calling app, the delegated
+user, the source, the tool, duration, result and rate-limit category for each
+request — and never prompts, document content, bearer tokens or secrets.
 
 ## Common tasks
 
@@ -254,6 +318,10 @@ If the tab shows that the Inbound MCP admin UI is disabled, add the Azure App Se
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | An action is missing from an agent | The built-in action toggle or workspace action permission is disabled. | Enable the action and confirm the agent scope allows it. |
+| The Agents page returns an error instead of the catalog | **Enable Agents** is off. That page is served behind it. | Turn on Enable Agents, or remove the link from navigation. |
+| An agent setting has no effect | Workspace Mode changes where agents come from, so a global agent is unused in Workspace Mode unless the merge setting is on. | Check Workspace Mode first, then the merge setting. |
+| A document action ignores the limit you set | The value was outside the supported range and was clamped on save. | Re-open the setting to see the stored value. |
+| An MCP client is refused after the allowlist was updated | Every layer must pass, and a governance policy is still required after the allowlists. | Check the client app id, the tenant, the source, and the governance policy in that order. |
 
 ## Related
 

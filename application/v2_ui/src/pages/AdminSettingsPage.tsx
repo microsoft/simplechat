@@ -35,7 +35,9 @@ import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
+import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
+import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
 import { SaveBar } from '../components/admin/SaveBar';
@@ -305,7 +307,7 @@ export function AdminSettingsPage() {
                     // than at render time, so a section left with nothing to show
                     // disappears instead of leaving an empty titled panel behind.
                     const fields = (schema[section.id] ?? []).filter((field) =>
-                        isFieldVisible(field, settings, draft, fieldsByKey),
+                        isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags),
                     );
 
                     if (!fields.length && !capabilities.length) {
@@ -518,7 +520,7 @@ export function AdminSettingsPage() {
 
     /** Render one declared field, dispatching the types the page owns. */
     const renderField = (field: AdminField) => {
-        if (!isFieldVisible(field, settings, draft, fieldsByKey)) {
+        if (!isFieldVisible(field, settings, draft, fieldsByKey, runtimeFlags)) {
             return null;
         }
 
@@ -558,12 +560,27 @@ export function AdminSettingsPage() {
             );
         }
 
+        if (field.type === 'entry_list') {
+            return (
+                <EntryListEditor
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
         if (field.type === 'component') {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
                 case 'agent-orchestration':
                     return <OrchestrationCard key={key} help={field.help} />;
+                case 'inbound-mcp-disabled-notice':
+                    return <InboundMcpNotice key={key} />;
                 case 'promoted-popular-agents':
                     return (
                         <PromotedAgentsEditor

@@ -40,6 +40,11 @@ APP_DEFAULT_RE = re.compile(
 
 fields_module = import_app_module("admin_settings_fields")
 
+# Runtime flags the settings API sends alongside the schema. A field may depend on
+# one of these instead of on another field, for a capability gated outside the
+# settings document.
+RUNTIME_FLAGS = {"mcp_ui_enabled"}
+
 # Properties every field type must carry beyond the common ones, because the
 # renderer cannot draw the control without them.
 REQUIRED_PROPERTIES_BY_TYPE = {
@@ -52,6 +57,7 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "textarea": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
+    "entry_list": ("default", "value_label"),
     "image": ("upload_target", "accept", "version_key"),
     "component": ("component",),
 }
@@ -66,6 +72,7 @@ EXPECTED_DEFAULT_TYPES = {
     "number": int,
     "checkbox_set": list,
     "link_list": list,
+    "entry_list": list,
 }
 
 
@@ -237,8 +244,21 @@ def test_dependencies_reference_real_fields():
         for depends_on in fields_module.iter_dependencies(field):
             checked += 1
 
+            if depends_on.get("flag"):
+                # A runtime flag is resolved by the server, not by another field,
+                # so there is no declaration to point at. It must still be a flag
+                # the settings API actually sends.
+                if depends_on["flag"] not in RUNTIME_FLAGS:
+                    problems.append(
+                        f"{identity}: depends on unknown runtime flag "
+                        f"{depends_on['flag']!r}"
+                    )
+                if not isinstance(depends_on.get("equals"), bool):
+                    problems.append(f"{identity}: a flag condition must compare to a bool")
+                continue
+
             if "key" not in depends_on:
-                problems.append(f"{identity}: depends_on has no key")
+                problems.append(f"{identity}: depends_on names neither a key nor a flag")
                 continue
             if depends_on["key"] not in declared:
                 problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
