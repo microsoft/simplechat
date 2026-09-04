@@ -720,6 +720,20 @@ ADMIN_SETTINGS_FIELDS = {
                 "next time the connections are saved."
             ),
         },
+        {
+            "key": "enable_gpt_apim",
+            "type": "switch",
+            "label": "Send requests through API Management",
+            "help": (
+                "Routes GPT requests that use the classic endpoint through API Management "
+                "rather than straight to the Azure OpenAI resource, which is how a "
+                "deployment applies its own governance and monitoring to them. The APIM "
+                "endpoint, deployment and subscription key this needs are configured on "
+                "the classic admin page, so turning it on before those are set leaves "
+                "those requests with nowhere to go."
+            ),
+            "default": False,
+        },
     ],
     "actions-config": [
         {
