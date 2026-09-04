@@ -439,7 +439,7 @@ def test_switches_coerce_form_shaped_truthiness():
 if __name__ == "__main__":
     tests = [
         test_dependency_conditions_compare_by_declared_type,
-        test_dependency_reads_the_pending_save_before_stored_state,
+        test_every_condition_must_hold_for_a_multi_gated_field,
         test_numeric_values_are_clamped_to_declared_bounds,
         test_colours_must_be_hex,
         test_external_links_reject_unsafe_urls,
