@@ -49,7 +49,7 @@ CATALOG_TSX = (
     / "src"
     / "components"
     / "admin"
-    / "AppRoleRequirements.tsx"
+    / "AppRoleRoster.tsx"
 )
 
 SETTING_KEY_RE = re.compile(r"^\s*'(?P<key>[a-z0-9_]+)'\s*:", re.MULTILINE)
@@ -201,14 +201,31 @@ def test_catalog_is_declared_and_rendered():
         if field.get("type") == "component"
     }
 
-    assert "app-role-requirements" in declared_components, (
-        "No schema field declares the 'app-role-requirements' component, so the "
+    assert "app-role-requirements-roster" in declared_components, (
+        "No schema field declares the 'app-role-requirements-roster' component, so the "
         "catalog never renders. Declare it in app-role-requirements-section."
     )
 
     assert CATALOG_TSX.is_file(), f"Missing the catalog component: {CATALOG_TSX}"
 
-    print("  The catalog is declared by the schema and its component exists.")
+    source = CATALOG_TSX.read_text(encoding="utf-8")
+    missing = [
+        name
+        for name, fragment in (
+            ("the Entra role value", "entry.role"),
+            ("what enforcing it restricts", "entry.grants"),
+            ("who keeps access when it is off", "entry.whenOff"),
+            ("the marker for a requirement guarding a disabled feature", "entry.dependsOn"),
+        )
+        if fragment not in source
+    ]
+
+    assert not missing, (
+        "The roster no longer renders the registry detail it exists to surface, so the "
+        "registry is being maintained for nothing:\n  " + "\n  ".join(missing)
+    )
+
+    print("  The catalog is declared by the schema and renders the registry detail.")
     return True
 
 

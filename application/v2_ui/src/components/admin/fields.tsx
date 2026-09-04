@@ -10,7 +10,7 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, Check, Info, KeyRound, RotateCcw, TriangleAlert } from 'lucide-react';
+import { AlertCircle, Check, Info, KeyRound, RotateCcw } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import {
     asBoolean,
@@ -29,6 +29,36 @@ const inputClass = clsx(
     'focus:border-accent focus:outline-none',
     'disabled:cursor-not-allowed disabled:opacity-60',
 );
+
+/**
+ * Standing operational guidance a field carries, drawn beneath its control.
+ *
+ * Separate from `help`, which says what the setting does, and from the server's
+ * per-save warnings, which react to a value that was just submitted. A notice is true
+ * whenever the setting is on screen, so it renders regardless of the current value.
+ */
+export function FieldNotice({ field }: { field: AdminField }) {
+    if (!field.notice) {
+        return null;
+    }
+
+    const isWarning = field.notice_level === 'warning';
+    const Icon = isWarning ? AlertCircle : Info;
+
+    return (
+        <div
+            className={clsx(
+                'mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed',
+                isWarning
+                    ? 'border-warn/40 bg-warn-soft text-warn'
+                    : 'border-edge bg-surface-2 text-text-2',
+            )}
+        >
+            <Icon size={13} className="mt-0.5 shrink-0" />
+            <span>{field.notice}</span>
+        </div>
+    );
+}
 
 /** Label, help text, control and error, laid out consistently for every field type. */
 export function FieldShell({
@@ -63,6 +93,8 @@ export function FieldShell({
             {field.help ? (
                 <p className="mt-1.5 text-xs leading-relaxed text-text-3">{field.help}</p>
             ) : null}
+
+            <FieldNotice field={field} />
 
             {warning ? (
                 <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
@@ -224,42 +256,6 @@ function SecretControl({ field, value, error, warning, disabled, onChange }: Fie
 }
 
 /**
- * Standing prose declared by the schema rather than hard-coded in this file.
- *
- * Some settings carry a consequence that no label can hold — enabling Key Vault is
- * effectively one-way — and that warning has to sit next to the control, visible, rather
- * than behind a tooltip.
- */
-function NoteControl({ field }: FieldControlProps) {
-    const isWarning = field.tone === 'warning';
-    const Icon = isWarning ? TriangleAlert : Info;
-
-    return (
-        <div className="py-3">
-            <div
-                className={clsx(
-                    'flex items-start gap-2.5 rounded-lg border p-3',
-                    isWarning
-                        ? 'border-warn/30 bg-warn-soft'
-                        : 'border-edge bg-surface-1',
-                )}
-            >
-                <Icon
-                    size={15}
-                    className={clsx('mt-0.5 shrink-0', isWarning ? 'text-warn' : 'text-text-3')}
-                />
-                <div className="min-w-0">
-                    <p className="text-sm font-medium text-text-1">{field.label}</p>
-                    {field.body ? (
-                        <p className="mt-1 text-xs leading-relaxed text-text-2">{field.body}</p>
-                    ) : null}
-                </div>
-            </div>
-        </div>
-    );
-}
-
-/**
  * A short list of tokens, edited as comma-separated text.
  *
  * Stored as an array, so the control parses on the way out and joins on the way in. The
@@ -403,6 +399,13 @@ function SwitchControl({ field, value, error, warning, disabled, onChange }: Fie
                 disabled={disabled}
                 onChange={(next) => onChange(next)}
             />
+            {/* Indented to the switch's text column so a notice reads as part of the row
+                rather than as a page-level banner. */}
+            {field.notice ? (
+                <div className="ml-14">
+                    <FieldNotice field={field} />
+                </div>
+            ) : null}
             {warning ? (
                 <p className="mt-1 ml-14 text-xs text-warn">{warning}</p>
             ) : null}
@@ -590,8 +593,6 @@ export function SettingField(props: FieldControlProps) {
             return <NumberControl {...props} />;
         case 'string_list':
             return <StringListControl {...props} />;
-        case 'note':
-            return <NoteControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
         default:

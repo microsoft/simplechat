@@ -41,8 +41,10 @@ PANES_DIR = REPO_ROOT / "application" / "single_app" / "templates" / "admin" / "
 
 SECURITY_GROUP_ID = "security"
 
-# The six tabs that make up the Security group, and the sections each contributes.
-# Sourced from ADMIN_NAV, verified against it below.
+# The seven tabs that make up the Security group, and the sections each contributes.
+# Sourced from ADMIN_NAV, verified against it below. Workspace Identities arrived
+# with the Workspaces work and is declared by that schema entry, so it is listed
+# here to keep this test's view of the group complete.
 SECURITY_PANES = {
     "access-roles": (
         "permissions-section",
@@ -50,11 +52,18 @@ SECURITY_PANES = {
         "access-denied-message-section",
     ),
     "secrets": ("keyvault-section",),
+    "workspace-identities": ("workspace-identities-section",),
     "content-safety": ("content-safety-section",),
     "session": ("idle-timeout-section",),
     "network": ("front-door-section",),
     "rate-limiting": ("rate-limit-message-section",),
 }
+
+# Panes this test reads for V1 parity. Workspace Identities is excluded: its
+# parity is held by test_v2_admin_workspaces_parity.py, which owns that work.
+SECURITY_PARITY_PANES = tuple(
+    tab for tab in SECURITY_PANES if tab != "workspace-identities"
+)
 
 # Settings that must be declared as secrets, so the browser is handed a placeholder
 # instead of the stored credential. Declaring one of these as plain text would put
@@ -118,7 +127,7 @@ def security_schema_fields():
     """Return ``{key: field}`` for every field the Security sections declare."""
     section_ids = {
         section_id
-        for sections in SECURITY_PANES.values()
+        for sections in (SECURITY_PANES[tab] for tab in SECURITY_PARITY_PANES)
         for section_id in sections
     }
     return {
@@ -171,7 +180,7 @@ def test_every_v1_security_field_is_claimed():
 
     unclaimed = []
     total = 0
-    for pane_id in SECURITY_PANES:
+    for pane_id in SECURITY_PARITY_PANES:
         for name in sorted(collect_pane_field_names(read_pane(pane_id))):
             total += 1
             if name not in claimed and name not in excused:
@@ -193,7 +202,7 @@ def test_schema_does_not_invent_security_fields():
     print("\nTesting that the schema does not invent Security fields...")
 
     pane_fields = set()
-    for pane_id in SECURITY_PANES:
+    for pane_id in SECURITY_PARITY_PANES:
         pane_fields |= collect_pane_field_names(read_pane(pane_id))
 
     invented = []
@@ -241,7 +250,7 @@ def test_select_options_match_v1():
 
     checked = 0
     mismatches = []
-    for pane_id in SECURITY_PANES:
+    for pane_id in SECURITY_PARITY_PANES:
         for match in SELECT_BLOCK_RE.finditer(read_pane(pane_id)):
             name = match.group("name")
             field = schema_fields.get(name)
@@ -273,7 +282,7 @@ def test_number_bounds_match_v1():
 
     checked = 0
     mismatches = []
-    for pane_id in SECURITY_PANES:
+    for pane_id in SECURITY_PARITY_PANES:
         for match in NUMBER_BLOCK_RE.finditer(read_pane(pane_id)):
             attrs = dict(ATTR_RE.findall(match.group("attrs")))
             name = attrs.get("name")

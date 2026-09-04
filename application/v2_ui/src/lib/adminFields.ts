@@ -23,6 +23,8 @@ export type AdminFieldType =
     | 'note'
     | 'image'
     | 'link_list'
+    | 'id_list'
+    | 'group_picker'
     | 'component';
 
 export interface AdminFieldOption {
@@ -80,11 +82,19 @@ export interface AdminField {
     input_type?: 'text' | 'email' | 'url';
     /** String list fields only: per-item character cap. */
     max_item_length?: number;
-    /** Note fields only. */
-    tone?: 'info' | 'warning';
-    body?: string;
     /** Optional sub-heading grouping consecutive fields inside one section. */
     group?: string;
+    /** `id_list` and `group_picker`: the admin search endpoint that finds records. */
+    search_endpoint?: string;
+    /** `id_list` only: query parameter the endpoint reads the search term from. */
+    search_param?: string;
+    /** `id_list` only: fixed query parameters sent with every search. */
+    search_extra?: Record<string, string>;
+    /** `id_list` only: property on the response holding the result array. */
+    results_key?: string;
+    /** `id_list` only: what one assignable record is called, for summaries. */
+    item_noun?: string;
+    item_noun_plural?: string;
     /** Image fields only: which branding slot the upload endpoint should write. */
     upload_target?: 'logo' | 'logo_dark' | 'favicon';
     accept?: string;
@@ -93,6 +103,15 @@ export interface AdminField {
     component?: string;
     /** Connection test components only: which `test_connection` branch to call. */
     test_type?: string;
+    /**
+     * Standing guidance shown as a callout beneath the control.
+     *
+     * Distinct from `help`, which describes what the setting does, and from the
+     * server's per-save `warnings`, which react to a submitted value. A notice is
+     * an operational caveat that is true whenever the setting is on screen.
+     */
+    notice?: string;
+    notice_level?: 'info' | 'warning';
     depends_on?: AdminFieldDependency;
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
@@ -308,7 +327,103 @@ export function countWords(text: string): number {
 
 /** Text a field contributes to the page search index. */
 export function fieldSearchText(field: AdminField): string {
-    return [field.key ?? '', field.label, field.help ?? '', field.component ?? '']
+    return [
+        field.key ?? '',
+        field.label,
+        field.help ?? '',
+        field.notice ?? '',
+        field.component ?? '',
+    ]
         .join(' ')
         .toLowerCase();
+}
+
+/** Settings that gate a capability behind an Entra app role. */
+export const APP_ROLE_KEY_PREFIX = 'require_member_of_';
+
+/**
+ * The other naming a role requirement uses.
+ *
+ * `file_sync_personal_require_app_role` is the reason this exists: it gates a capability
+ * behind an app role exactly like the `require_member_of_*` settings, but it is named
+ * after its feature instead, so a prefix test alone leaves it out of the roster.
+ */
+export const APP_ROLE_KEY_SUFFIX = '_require_app_role';
+
+export function isAppRoleKey(key: string | undefined): boolean {
+    return Boolean(
+        key && (key.startsWith(APP_ROLE_KEY_PREFIX) || key.endsWith(APP_ROLE_KEY_SUFFIX)),
+    );
+}
+
+/** One app role requirement, with the section that owns its primary control. */
+export interface AppRoleEntry {
+    key: string;
+    label: string;
+    help?: string;
+    groupLabel: string;
+    tabLabel: string;
+    sectionLabel: string;
+    sectionId: string;
+    /** From the server registry: the Entra role value to assign. */
+    role?: string;
+    /** What enforcing the requirement restricts. */
+    grants?: string;
+    /** Who keeps access while it is not enforced. */
+    whenOff?: string;
+    /** The capability this requirement is meaningless without, if any. */
+    dependsOn?: string | null;
+}
+
+/**
+ * Collect every declared app role requirement, in navigation order.
+ *
+ * The roster in Security mirrors switches that live on other tabs, so it has to know
+ * where each one really belongs -- an administrator who flips a role here should be able
+ * to find the feature it governs. Walking the navigation rather than the schema dict is
+ * what puts the entries in the order the rest of the page uses, and it silently drops a
+ * field filed under a section navigation does not define, which could never be reached.
+ *
+ * The schema is the source of which requirements exist, because the page's `enable_*`
+ * fallback scan cannot see a role key: an undeclared one appears nowhere at all. The
+ * server registry supplies what the schema does not carry -- the Entra role value, and
+ * what changes in each direction -- keyed by settings key, so a requirement missing from
+ * the registry still renders, just without that detail.
+ */
+export function collectAppRoleEntries(
+    nav: import('./types').AdminNavGroup[],
+    schema: AdminFieldSchema,
+    requirements: AppRoleRequirement[] = [],
+): AppRoleEntry[] {
+    const byKey = new Map(requirements.map((entry) => [entry.key, entry]));
+    const entries: AppRoleEntry[] = [];
+
+    for (const group of nav) {
+        for (const tab of group.tabs) {
+            for (const section of tab.sections) {
+                for (const field of schema[section.id] ?? []) {
+                    if (!isAppRoleKey(field.key)) {
+                        continue;
+                    }
+                    const key = field.key as string;
+                    const registered = byKey.get(key);
+                    entries.push({
+                        key,
+                        label: field.label,
+                        help: field.help,
+                        groupLabel: group.label,
+                        tabLabel: tab.label,
+                        sectionLabel: section.label,
+                        sectionId: section.id,
+                        role: registered?.role,
+                        grants: registered?.grants,
+                        whenOff: registered?.when_off,
+                        dependsOn: registered?.depends_on ?? null,
+                    });
+                }
+            }
+        }
+    }
+
+    return entries;
 }

@@ -33,12 +33,15 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassButton, GlassPanel, Skeleton, Toggle } from '../components/ui/primitives';
 import { AdminModal } from '../components/admin/AdminModal';
 import { AdminMarkdown } from '../components/admin/AdminMarkdown';
-import { AppRoleRequirements } from '../components/admin/AppRoleRequirements';
+import { AppRoleRoster } from '../components/admin/AppRoleRoster';
+import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
+import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
+import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SettingField } from '../components/admin/fields';
@@ -50,6 +53,7 @@ import {
     asBoolean,
     asNumber,
     asString,
+    collectAppRoleEntries,
     evaluateSectionStatus,
     extractFieldErrors,
     fieldSearchText,
@@ -399,6 +403,39 @@ export function AdminSettingsPage() {
     const settingCount = declaredKeys.size + capabilityRows.length;
 
     /**
+     * App role requirements, for the roster that mirrors them into Security.
+     *
+     * Built from the navigation and the schema together so each entry can say which tab
+     * really owns it, and so the order matches the rest of the page. The server registry
+     * is merged in for the Entra role value and the before/after description, which the
+     * field schema has nowhere to put.
+     */
+    const appRoleEntries = useMemo(
+        () =>
+            data
+                ? collectAppRoleEntries(data.admin_nav, schema, data.app_role_requirements)
+                : [],
+        [data, schema],
+    );
+
+    const appRoleValues = useMemo(() => {
+        const values: Record<string, boolean> = {};
+        const read = (key: string) =>
+            asBoolean(
+                Object.prototype.hasOwnProperty.call(draft, key) ? draft[key] : settings[key],
+            );
+        for (const entry of appRoleEntries) {
+            values[entry.key] = read(entry.key);
+            // The capability each requirement guards, so the roster can say when one is
+            // enforced but currently doing nothing.
+            if (entry.dependsOn) {
+                values[entry.dependsOn] = read(entry.dependsOn);
+            }
+        }
+        return values;
+    }, [appRoleEntries, draft, settings]);
+
+    /**
      * Keys that gate a save rather than being stored.
      *
      * They ride along in the draft so they reach the PATCH, but they are not changes an
@@ -615,10 +652,50 @@ export function AdminSettingsPage() {
             );
         }
 
+        if (field.type === 'id_list') {
+            return (
+                <AssignmentPicker
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
+        if (field.type === 'group_picker') {
+            return (
+                <GroupAssignmentField
+                    key={key}
+                    field={field}
+                    value={value}
+                    error={error}
+                    disabled={saving}
+                    onChange={(next) => field.key && setValue(field.key, next)}
+                />
+            );
+        }
+
         if (field.type === 'component') {
             switch (field.component) {
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
+                case 'global-identities-list':
+                    return <GlobalIdentitiesList key={key} help={field.help} />;
+                case 'app-role-requirements-roster':
+                    return (
+                        <AppRoleRoster
+                            key={key}
+                            entries={appRoleEntries}
+                            values={appRoleValues}
+                            help={field.help}
+                            disabled={saving}
+                            onChange={setValue}
+                            onNavigate={goToSection}
+                        />
+                    );
                 case 'classification-banner-preview':
                     return (
                         <ClassificationBannerPreview
@@ -636,19 +713,6 @@ export function AdminSettingsPage() {
                         <UserAgreementPreview
                             key={key}
                             text={readSibling('user_agreement_text')}
-                        />
-                    );
-                case 'app-role-requirements':
-                    return (
-                        <AppRoleRequirements
-                            key={key}
-                            requirements={data?.app_role_requirements ?? []}
-                            help={field.help}
-                            settings={settings}
-                            draft={draft}
-                            disabled={saving}
-                            onChange={setValue}
-                            onNavigate={goToSection}
                         />
                     );
                 case 'connection-test':

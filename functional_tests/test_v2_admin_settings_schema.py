@@ -16,6 +16,7 @@ not contain, so a mismatch means the toggle an administrator reads disagrees wit
 the behaviour the application is actually applying.
 """
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -52,6 +53,17 @@ REQUIRED_PROPERTIES_BY_TYPE = {
     "textarea": ("default",),
     "switch": ("default",),
     "link_list": ("item_fields", "default"),
+    # An id_list resolves names through a search endpoint, so the renderer cannot
+    # draw its picker without knowing where to search and what the response holds.
+    "id_list": (
+        "default",
+        "id_kind",
+        "search_endpoint",
+        "results_key",
+        "item_noun",
+        "item_noun_plural",
+    ),
+    "group_picker": ("default", "search_endpoint"),
     "image": ("upload_target", "accept", "version_key"),
     "component": ("component",),
 }
@@ -66,6 +78,8 @@ EXPECTED_DEFAULT_TYPES = {
     "number": int,
     "checkbox_set": list,
     "link_list": list,
+    "id_list": list,
+    "group_picker": list,
 }
 
 
@@ -200,19 +214,24 @@ def test_dependencies_reference_real_fields():
     checked = 0
 
     for section_id, field in fields_module.iter_fields():
-        depends_on = field.get("depends_on")
-        if not depends_on:
+        if not field.get("depends_on"):
             continue
-        checked += 1
         identity = f"{section_id}.{field.get('key') or field.get('component')}"
 
-        if "key" not in depends_on:
-            problems.append(f"{identity}: depends_on has no key")
-            continue
-        if depends_on["key"] not in declared:
-            problems.append(f"{identity}: depends on undeclared key {depends_on['key']!r}")
-        if field.get("key") == depends_on["key"]:
-            problems.append(f"{identity}: depends on itself")
+        # A field may carry one condition or a list of them, so both shapes are read
+        # through the schema's own iterator rather than assumed here.
+        for condition in fields_module.iter_field_dependencies(field):
+            checked += 1
+
+            if "key" not in condition:
+                problems.append(f"{identity}: depends_on has no key")
+                continue
+            if condition["key"] not in declared:
+                problems.append(
+                    f"{identity}: depends on undeclared key {condition['key']!r}"
+                )
+            if field.get("key") == condition["key"]:
+                problems.append(f"{identity}: depends on itself")
 
     assert not problems, (
         "These visibility dependencies are broken:\n  " + "\n  ".join(problems)
@@ -263,7 +282,13 @@ def read_application_defaults():
         elif raw.lstrip("-").isdigit():
             defaults[key] = int(raw)
         else:
-            defaults[key] = raw[1:-1]
+            # Parsed rather than unquoted, so escape sequences become the characters
+            # they stand for. A default holding a newline would otherwise compare as
+            # the two characters backslash-n and never match the schema.
+            try:
+                defaults[key] = ast.literal_eval(raw)
+            except (SyntaxError, ValueError):
+                defaults[key] = raw[1:-1]
     assert defaults, "No settings defaults were found; the extraction likely broke."
     return defaults
 
