@@ -182,6 +182,10 @@ jobs:
 
     - name: Post PR comment (when notes needed but missing)
       if: steps.require-notes.outputs.needs_notes == 'true' && steps.changed-files.outputs.release_notes_any_changed != 'true'
+      # Best-effort reminder. Pull requests from forks and from Dependabot run with a
+      # read-only GITHUB_TOKEN, so creating a comment raises "Resource not accessible by
+      # integration". This reminder is advisory, so a failure here must not fail the job.
+      continue-on-error: true
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       with:
         script: |
@@ -239,6 +243,10 @@ jobs:
 
     - name: Post PR comment (when latest features likely needed but missing)
       if: steps.require-latest-features.outputs.needs_latest_features == 'true'
+      # Best-effort reminder. Pull requests from forks and from Dependabot run with a
+      # read-only GITHUB_TOKEN, so creating a comment raises "Resource not accessible by
+      # integration". This reminder is advisory, so a failure here must not fail the job.
+      continue-on-error: true
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       with:
         script: |
