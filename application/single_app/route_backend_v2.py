@@ -33,6 +33,7 @@ from admin_settings_fields import (
     normalize_admin_settings_updates,
 )
 from admin_settings_nav import ADMIN_NAV
+from functions_mcp_server_config import is_mcp_ui_enabled
 from config import (
     ensure_custom_favicon_file_exists,
     ensure_custom_logo_file_exists,
@@ -631,6 +632,11 @@ def register_route_backend_v2_admin(bp):
                         "admin_nav": ADMIN_NAV,
                         "field_schema": get_admin_settings_fields(),
                         "branding_assets": _build_branding_assets(settings),
+                        # Navigation sections may be conditional on a runtime flag
+                        # rather than a stored setting. Inbound MCP is gated by an
+                        # App Service application setting, so its value cannot be
+                        # read out of the settings document the SPA already holds.
+                        "runtime_flags": {"mcp_ui_enabled": is_mcp_ui_enabled()},
                         "version": VERSION,
                     }
                 ),

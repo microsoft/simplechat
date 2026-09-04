@@ -27,10 +27,16 @@ export interface AdminFieldOption {
     label: string;
 }
 
-/** Shows a field only while another field holds a given value. */
+/**
+ * Shows a field only while another field holds a given value.
+ *
+ * `equals` is usually a boolean, because most gates are switches. A string
+ * compares against a select's value, which is how the Agents page hides its
+ * gradient colour unless the two-tone mode is chosen.
+ */
 export interface AdminFieldDependency {
     key: string;
-    equals: boolean;
+    equals: boolean | string;
 }
 
 /**
@@ -71,7 +77,12 @@ export interface AdminField {
     version_key?: string;
     /** Component fields only: which bespoke widget to render. */
     component?: string;
-    depends_on?: AdminFieldDependency;
+    /** Optional sub-heading grouping several fields inside one section. */
+    group?: string;
+    /** Group fields only: start the group closed. Rarely-changed settings. */
+    collapsed?: boolean;
+    /** One condition, or a chain that must all hold. */
+    depends_on?: AdminFieldDependency | AdminFieldDependency[];
     requires_acknowledgement?: AdminFieldAcknowledgement;
 }
 
@@ -91,6 +102,13 @@ export interface AdminSettingsResponse {
     admin_nav: import('./types').AdminNavGroup[];
     field_schema: AdminFieldSchema;
     branding_assets: BrandingAssets;
+    /**
+     * Server-resolved flags a navigation section may be conditional on.
+     *
+     * `mcp_ui_enabled` comes from an App Service application setting rather than
+     * the settings document, so it cannot be read from `settings`.
+     */
+    runtime_flags?: Record<string, boolean>;
     version: string;
 }
 
@@ -170,16 +188,55 @@ export function asStringArray(value: unknown): string[] {
     return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-/** Whether a field's `depends_on` condition is currently satisfied. */
-export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
+/** Every `depends_on` condition a field declares, whether one or a chain. */
+export function fieldDependencies(field: AdminField): AdminFieldDependency[] {
     const dependency = field.depends_on;
     if (!dependency) {
+        return [];
+    }
+    return Array.isArray(dependency) ? dependency : [dependency];
+}
+
+/**
+ * Whether every one of a field's `depends_on` conditions is currently satisfied.
+ *
+ * Each condition is judged against the unsaved draft first, so a field appears
+ * or disappears as soon as its gate is flipped rather than only after a save.
+ */
+export function isFieldVisible(field: AdminField, settings: Json, draft: Json): boolean {
+    return fieldDependencies(field).every((dependency) => {
+        const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
+            ? draft[dependency.key]
+            : settings[dependency.key];
+        return typeof dependency.equals === 'string'
+            ? asString(current) === dependency.equals
+            : asBoolean(current) === dependency.equals;
+    });
+}
+
+/**
+ * Whether a navigation section's `condition` holds.
+ *
+ * A condition names either a settings key or a server-resolved runtime flag.
+ * Runtime flags win, because a flag such as `mcp_ui_enabled` deliberately has no
+ * entry in the settings document.
+ */
+export function isSectionVisible(
+    condition: string | undefined,
+    settings: Json,
+    draft: Json,
+    runtimeFlags: Record<string, boolean>,
+): boolean {
+    if (!condition) {
         return true;
     }
-    const current = Object.prototype.hasOwnProperty.call(draft, dependency.key)
-        ? draft[dependency.key]
-        : settings[dependency.key];
-    return asBoolean(current) === dependency.equals;
+    if (Object.prototype.hasOwnProperty.call(runtimeFlags, condition)) {
+        return runtimeFlags[condition];
+    }
+    const current = Object.prototype.hasOwnProperty.call(draft, condition)
+        ? draft[condition]
+        : settings[condition];
+    return asBoolean(current);
 }
 
 /** Turn `enable_document_classification` into `Document classification`. */
@@ -199,4 +256,46 @@ export function fieldSearchText(field: AdminField): string {
     return [field.key ?? '', field.label, field.help ?? '', field.component ?? '']
         .join(' ')
         .toLowerCase();
+}
+
+/** A run of fields sharing a `group`, or a single ungrouped field. */
+export type SectionBlock =
+    | { kind: 'field'; field: AdminField }
+    | { kind: 'group'; name: string; collapsed: boolean; fields: AdminField[] };
+
+/**
+ * Lay a section's fields out as ordered blocks.
+ *
+ * A group appears where its first field does, so declaration order still decides what an
+ * administrator reads first. Grouping exists because a section such as the Agents page
+ * holds three unrelated concerns -- the hero, the guidance text, and promotions -- and a
+ * flat list of eleven controls gives no clue which ones belong together.
+ */
+export function buildSectionBlocks(fields: AdminField[]): SectionBlock[] {
+    const blocks: SectionBlock[] = [];
+    const groups = new Map<string, Extract<SectionBlock, { kind: 'group' }>>();
+
+    for (const field of fields) {
+        if (!field.group) {
+            blocks.push({ kind: 'field', field });
+            continue;
+        }
+        const existing = groups.get(field.group);
+        if (existing) {
+            existing.fields.push(field);
+            continue;
+        }
+        const group: Extract<SectionBlock, { kind: 'group' }> = {
+            kind: 'group',
+            name: field.group,
+            // Only the first field of a group decides how it opens, so a group
+            // cannot end up half-collapsed depending on which field is read.
+            collapsed: Boolean(field.collapsed),
+            fields: [field],
+        };
+        groups.set(field.group, group);
+        blocks.push(group);
+    }
+
+    return blocks;
 }

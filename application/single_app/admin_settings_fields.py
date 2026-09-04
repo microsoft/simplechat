@@ -30,11 +30,12 @@ Two things keep this honest rather than becoming a third source of truth:
     to the same normalizers the server-rendered form uses. Both interfaces
     therefore agree on what a valid value is.
 
-Only the Appearance group is described in full so far. Sections with no entry
-here fall back to the V2 surface's ``enable_*`` scan, so undescribed groups keep
-working exactly as they did. A handful of individual fields outside Appearance
-are also declared: that scan places a key by guessing from shared word stems,
-and declaring a field is the only way to stop it guessing wrong.
+Only the Appearance and Agents & Actions groups are described in full so far.
+Sections with no entry here fall back to the V2 surface's ``enable_*`` scan, so
+undescribed groups keep working exactly as they did. A handful of individual
+fields outside those groups are also declared: that scan places a key by guessing
+from shared word stems, and declaring a field is the only way to stop it guessing
+wrong.
 """
 
 import re
@@ -80,6 +81,10 @@ NON_PATCHABLE_TYPES = ("image", "component")
 
 LANDING_PAGE_ALIGNMENTS = ("left", "center", "right")
 USER_AGREEMENT_APPLY_TO_VALUES = ("personal", "group", "public", "chat")
+
+# Mirrors AGENTS_PAGE_PROMOTED_POPULAR_ORDER_OPTIONS in functions_settings.py.
+AGENTS_PAGE_PROMOTED_POPULAR_ORDERS = ("before", "after", "mixed")
+AGENTS_PAGE_HERO_COLOR_MODES = ("single", "two_tone")
 
 LOGO_SCALE_MIN_PERCENT = 50
 LOGO_SCALE_MAX_PERCENT = 500
@@ -620,6 +625,297 @@ ADMIN_SETTINGS_FIELDS = {
             "default": True,
         },
     ],
+    # --- Agents & Actions -------------------------------------------------
+    #
+    # The V1 pane renders the whole Agents tab as one card with several nested
+    # cards inside it. The fields below are filed under those nested card ids,
+    # which ``ADMIN_NAV`` now names as sections, so the V2 surface can separate
+    # the runtime gate from the workspace permissions and the Agents page copy
+    # without the server-rendered page changing at all.
+    "agents-config": [
+        {
+            "key": "enable_semantic_kernel",
+            "type": "switch",
+            "label": "Enable Agents",
+            "help": (
+                "Runs the Semantic Kernel agent runtime. Everything else in this "
+                "group depends on it: the Agents catalog page, the global agent "
+                "and action tables, and every workspace permission are all "
+                "unavailable while it is off."
+            ),
+            "default": False,
+        },
+        {
+            "key": "per_user_semantic_kernel",
+            "type": "switch",
+            "label": "Workspace Mode",
+            "help": (
+                "Decides where agents and actions come from. Off means everyone "
+                "shares one global set and an administrator picks the single agent "
+                "that answers. On means each user and group keeps their own "
+                "collection, and the workspace permissions become available."
+            ),
+            "default": False,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "merge_global_semantic_kernel_with_workspace",
+            "type": "switch",
+            "label": "Add Global Agents and Actions to Workspaces",
+            "help": (
+                "Folds the global set into every workspace collection, so people "
+                "see both what they built and what the organisation publishes. "
+                "Without this, turning on Workspace Mode hides the global set."
+            ),
+            "default": False,
+            "depends_on": [
+                {"key": "enable_semantic_kernel", "equals": True},
+                {"key": "per_user_semantic_kernel", "equals": True},
+            ],
+        },
+        {
+            # Reads and writes through /api/orchestration_settings rather than the
+            # settings PATCH, and draws nothing while the deployment offers a
+            # single orchestration type, which is the case today.
+            "type": "component",
+            "component": "agent-orchestration",
+            "label": "Agent Orchestration",
+            "help": (
+                "How a chat is routed across agents. Only appears when this "
+                "deployment offers more than one orchestration type."
+            ),
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+    ],
+    # Rendered by V1 only while Workspace Mode is on, which ``ADMIN_NAV`` now
+    # states as a section condition, so V2 hides the section on the same terms.
+    "agent-toggles-card": [
+        {
+            "key": "allow_user_agents",
+            "type": "switch",
+            "label": "Allow Personal Agents",
+            "help": (
+                "People can build and keep agents in their own workspace. Use a "
+                "personal agent governance policy when only some of them should."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_agents",
+            "type": "switch",
+            "label": "Allow Group Agents",
+            "help": (
+                "Groups can own agents their members share. Group workspaces must "
+                "also be enabled under Workspaces, or the agents stay invisible."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_user_custom_endpoints",
+            "type": "switch",
+            "label": "Allow Personal Custom Endpoints",
+            "help": (
+                "People can point their own agents at a model endpoint they "
+                "configure themselves instead of the deployment's shared models. "
+                "This lets model traffic leave the endpoints you administer."
+            ),
+            "default": False,
+        },
+        {
+            "key": "allow_group_custom_endpoints",
+            "type": "switch",
+            "label": "Allow Group Custom Endpoints",
+            "help": (
+                "The same for group-owned agents. Group workspaces must also be "
+                "enabled under Workspaces."
+            ),
+            "default": False,
+        },
+        {
+            "key": "enable_agent_template_gallery",
+            "type": "switch",
+            "label": "Enable Agent Template Gallery",
+            "help": (
+                "Gives workspace users a gallery of approved agents to start from "
+                "rather than a blank editor, and adds the Agent Template Approvals "
+                "section below."
+            ),
+            "default": True,
+        },
+    ],
+    # Customises the /agents catalog page. That page carries
+    # @enabled_required('enable_semantic_kernel'), so none of this copy is
+    # reachable while agents are off -- which is why every field depends on it.
+    "agents-page-customization-card": [
+        {
+            "key": "agents_page_title",
+            "type": "text",
+            "label": "Hero Title",
+            "help": "Headline at the top of the Agents catalog page.",
+            "default": "Find your next AI partner",
+            "max_length": 120,
+            "fallback_when_empty": True,
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_subtitle",
+            "type": "text",
+            "label": "Hero Subtitle",
+            "help": "Supporting line under the headline.",
+            "default": "Explore specialized agents built to accelerate how you work.",
+            "max_length": 240,
+            "fallback_when_empty": True,
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_hero_color_mode",
+            "type": "select",
+            "label": "Hero Color Mode",
+            "help": "A flat colour, or a gradient between the two colours below.",
+            "default": "single",
+            "options": [
+                {"value": "single", "label": "Single color"},
+                {"value": "two_tone", "label": "Two tone gradient"},
+            ],
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_hero_primary_color",
+            "type": "color",
+            "label": "Primary Color",
+            "help": "Hero background, and the first stop of the gradient.",
+            "default": "#0f172a",
+            "group": "Hero",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_hero_secondary_color",
+            "type": "color",
+            "label": "Secondary Color",
+            "help": "Second stop of the gradient.",
+            "default": "#1e293b",
+            "group": "Hero",
+            "depends_on": [
+                {"key": "enable_semantic_kernel", "equals": True},
+                {"key": "agents_page_hero_color_mode", "equals": "two_tone"},
+            ],
+        },
+        {
+            "key": "agents_page_disclaimer_markdown",
+            "type": "textarea",
+            "label": "Disclaimer or Guidance Text",
+            "help": (
+                "Shown under the hero. Use it for who to contact about a new agent, "
+                "or the governance reminder people need before picking one."
+            ),
+            "default": "",
+            "rows": 4,
+            "markdown": True,
+            "max_length": 3000,
+            "placeholder": "Need a new agent? Contact ai-support@example.com.",
+            "group": "Guidance",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_show_instructions_in_details",
+            "type": "switch",
+            "label": "Show Agent Instructions in Details",
+            "help": (
+                "Reveals an agent's system prompt in its details popup and in the "
+                "catalog API response. Turn it off when instructions carry wording "
+                "or internal references you would rather not publish."
+            ),
+            "default": True,
+            "group": "Guidance",
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_promoted_popular_order",
+            "type": "select",
+            "label": "Promoted Placement",
+            "help": (
+                "Where promoted agents sit relative to the ones that earned their "
+                "place through usage."
+            ),
+            "default": "before",
+            "options": [
+                {"value": "before", "label": "Before actual popular agents"},
+                {"value": "after", "label": "After actual popular agents"},
+                {"value": "mixed", "label": "Mixed in by usage"},
+            ],
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_promoted_popular_tag_enabled",
+            "type": "switch",
+            "label": "Show Promoted Tag",
+            "help": "Marks promoted agents so their placement is not mistaken for usage.",
+            "default": True,
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+        {
+            "key": "agents_page_promoted_popular_tag_label",
+            "type": "text",
+            "label": "Promoted Tag Label",
+            "help": "Wording of that tag.",
+            "default": "Promoted",
+            "max_length": 40,
+            "fallback_when_empty": True,
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": [
+                {"key": "enable_semantic_kernel", "equals": True},
+                {"key": "agents_page_promoted_popular_tag_enabled", "equals": True},
+            ],
+        },
+        {
+            # Writes agents_page_promoted_popular_agents into the draft. The list
+            # is normalized on save by the delegated normalizer below.
+            "type": "component",
+            "component": "promoted-popular-agents",
+            "key": "agents_page_promoted_popular_agents",
+            "label": "Promoted Agents",
+            "help": (
+                "Puts chosen agents in the Popular tab before they have any usage "
+                "behind them, which is how a brand new agent gets discovered. "
+                "People only ever see agents already visible to them."
+            ),
+            "group": "Promoted agents",
+            "collapsed": True,
+            "depends_on": {"key": "enable_semantic_kernel", "equals": True},
+        },
+    ],
+    "agent-template-approvals-section": [
+        {
+            "key": "agent_templates_allow_user_submission",
+            "type": "switch",
+            "label": "Allow User Template Submissions",
+            "help": (
+                "Workspace users can offer an agent they built as a template for "
+                "everyone else, which is how a gallery grows without an admin "
+                "authoring every entry."
+            ),
+            "default": True,
+        },
+        {
+            "key": "agent_templates_require_approval",
+            "type": "switch",
+            "label": "Require Admin Approval",
+            "help": (
+                "Holds submissions in the approvals queue instead of publishing "
+                "them straight into the gallery."
+            ),
+            "default": True,
+            "depends_on": {"key": "agent_templates_allow_user_submission", "equals": True},
+        },
+    ],
     "actions-config": [
         {
             "key": "enable_text_plugin",
@@ -656,12 +952,26 @@ LEGACY_FIELD_NAMES = {
     "custom_favicon_base64": ["favicon_file"],
     # Collected as an acknowledgement on the toggle rather than a stored value.
     "enable_custom_pages": ["enable_custom_pages", "custom_pages_restart_acknowledged"],
+    # V1 round-trips the promoted agent list through a hidden JSON field that its
+    # script maintains; V2 edits the stored list directly.
+    "agents_page_promoted_popular_agents": ["agents_page_promoted_popular_agents_json"],
 }
 
-# Field names present in the V1 Appearance panes that intentionally have no V2
-# equivalent, with the reason. The parity test reads this, so an unexplained
-# omission fails rather than passing silently.
-LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {}
+# Field names present in the V1 panes that intentionally have no V2 equivalent,
+# with the reason. The parity tests read this, so an unexplained omission fails
+# rather than passing silently.
+LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
+    "orchestration_type": (
+        "Saved through POST /api/orchestration_settings, not the settings PATCH. "
+        "V2 renders it from the agent-orchestration component, which reads the "
+        "available types from the server rather than hard-coding them."
+    ),
+    "max_rounds_per_agent": (
+        "Saved through POST /api/orchestration_settings alongside "
+        "orchestration_type, and only meaningful for a multi-agent orchestration "
+        "type. Owned by the agent-orchestration component."
+    ),
+}
 
 
 def get_admin_settings_fields():
@@ -702,6 +1012,25 @@ def get_legacy_field_names():
             continue
         claimed.update(LEGACY_FIELD_NAMES.get(key, [key]))
     return claimed
+
+
+def iter_dependencies(field):
+    """Yield each ``depends_on`` condition a field declares.
+
+    ``depends_on`` started as a single condition and most fields still use one.
+    A chain such as Agents -> Workspace Mode -> merge behaviour needs every link
+    checked, otherwise a field reappears whenever an intermediate toggle is off
+    but its own gate happens to be on, so a list is accepted too.
+    """
+    dependency = field.get("depends_on")
+    if not dependency:
+        return
+    if isinstance(dependency, dict):
+        yield dependency
+        return
+    for entry in dependency:
+        if isinstance(entry, dict):
+            yield entry
 
 
 def _coerce_bool(value):
@@ -813,6 +1142,19 @@ def _normalize_number(value, field):
     return number, None
 
 
+def _normalize_promoted_popular_agents(value):
+    """Normalize the Agents page promotion list.
+
+    Imported lazily, and documented here as the exception to the imports-at-top
+    rule: ``functions_settings`` reaches ``config.py``, which builds a Cosmos
+    client at import time, so importing it at module scope would make this
+    schema module unimportable in a plain test process.
+    """
+    from functions_settings import normalize_agents_page_promoted_popular_agents
+
+    return normalize_agents_page_promoted_popular_agents(value)
+
+
 # Keys whose normalization already exists elsewhere. Reusing those functions is
 # what stops the two admin surfaces from disagreeing about, for example, which
 # frequency aliases are accepted or how a terms message is trimmed.
@@ -832,6 +1174,11 @@ _DELEGATED_NORMALIZERS = {
     "terms_of_use_decline_button_text": lambda value, field: normalize_terms_of_use_text(
         value, fallback="Cancel", max_length=TERMS_OF_USE_MAX_BUTTON_TEXT_LENGTH
     ),
+    # Declared as a component field, so it never reaches the type-driven
+    # normalization below and would otherwise be written through unvalidated.
+    "agents_page_promoted_popular_agents": lambda value, field: (
+        _normalize_promoted_popular_agents(value)
+    ),
 }
 
 
@@ -841,9 +1188,6 @@ def _normalize_field_value(key, value, field):
 
     if field_type in NON_PATCHABLE_TYPES:
         return None, f"{key} cannot be changed through this endpoint.", None
-
-    if key in _DELEGATED_NORMALIZERS:
-        return _DELEGATED_NORMALIZERS[key](value, field), None, None
 
     if field_type == "switch":
         return _coerce_bool(value), None, None
@@ -958,6 +1302,15 @@ def normalize_admin_settings_updates(updates, current_settings=None):
             continue
 
         field = get_field_definition(key)
+
+        # Delegated keys are normalized by the function that already owns them,
+        # whatever their field type. This runs before the field lookup so a
+        # component-backed key such as the Agents page promotion list is still
+        # validated rather than written straight through.
+        if key in _DELEGATED_NORMALIZERS:
+            normalized[key] = _DELEGATED_NORMALIZERS[key](value, field)
+            continue
+
         if field is None:
             normalized[key] = value
             continue
@@ -995,15 +1348,24 @@ def _check_minimum_selections(normalized, current_settings, errors):
         if not key or not minimum:
             continue
 
-        depends_on = field.get("depends_on")
-        if depends_on:
+        gated_off = False
+        for depends_on in iter_dependencies(field):
             gate_key = depends_on["key"]
             gate_value = (
                 normalized[gate_key] if gate_key in normalized
                 else current_settings.get(gate_key, False)
             )
-            if _coerce_bool(gate_value) != depends_on.get("equals", True):
-                continue
+            expected = depends_on.get("equals", True)
+            actual = (
+                _coerce_bool(gate_value)
+                if isinstance(expected, bool)
+                else str(gate_value or "")
+            )
+            if actual != expected:
+                gated_off = True
+                break
+        if gated_off:
+            continue
 
         selection = (
             normalized[key] if key in normalized else current_settings.get(key) or []
