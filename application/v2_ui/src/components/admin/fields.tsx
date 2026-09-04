@@ -10,7 +10,7 @@
 // rejected save points at the control that caused it.
 
 import { clsx } from 'clsx';
-import { AlertCircle, CheckCircle2, Info, ShieldCheck, X } from 'lucide-react';
+import { AlertCircle, Check, CheckCircle2, Info, KeyRound, RotateCcw } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import {
     asBoolean,
@@ -18,8 +18,7 @@ import {
     asString,
     asStringArray,
     countWords,
-    isRedactedSecret,
-    parseStringList,
+    SECRET_PLACEHOLDER,
     type AdminField,
 } from '../../lib/adminFields';
 import { Toggle } from '../ui/primitives';
@@ -132,7 +131,7 @@ function TextControl({ field, value, error, warning, disabled, onChange }: Field
         <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
             <input
                 id={id}
-                type="text"
+                type={field.input_type ?? 'text'}
                 className={inputClass}
                 value={asString(value)}
                 maxLength={field.max_length}
@@ -140,6 +139,188 @@ function TextControl({ field, value, error, warning, disabled, onChange }: Field
                 disabled={disabled}
                 onChange={(event) => onChange(event.target.value)}
             />
+        </FieldShell>
+    );
+}
+
+/**
+ * A write-only credential.
+ *
+ * The server sends a placeholder rather than the stored value, so there is nothing to
+ * reveal and no toggle to reveal it. What an administrator actually needs to know is
+ * whether a secret is stored at all, and to be able to replace it without being able to
+ * clear it by accident — hence the explicit Replace step rather than an editable input
+ * pre-filled with something that is not the real value.
+ */
+function SecretControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const current = asString(value);
+    const isStored = current === SECRET_PLACEHOLDER;
+
+    // Replace only switches this control into entry mode; it deliberately stages
+    // nothing. Staging an empty value there would queue a deletion of a working
+    // credential from a click that means "let me type a new one" -- and this control can
+    // unmount before anything is typed, because moving between groups, searching, or
+    // flipping a switch this field depends on all drop it. The escape hatch would go
+    // with it and the queued deletion would not.
+    const [replacing, setReplacing] = useState(false);
+    const [emitted, setEmitted] = useState(current);
+
+    if (current !== emitted) {
+        // Changed for a reason other than typing here: a save that restored the
+        // placeholder, or a discarded draft. Either way this edit is over.
+        setEmitted(current);
+        setReplacing(false);
+    }
+
+    const commit = (next: string) => {
+        setEmitted(next);
+        onChange(next);
+    };
+
+    if (isStored && !replacing) {
+        return (
+            <FieldShell field={field} error={error} warning={warning}>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-2">
+                        <Check size={14} className="text-ok" />
+                        Stored
+                    </span>
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => setReplacing(true)}
+                        className={clsx(
+                            'inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2',
+                            'text-sm text-text-2 transition-colors',
+                            disabled
+                                ? 'cursor-not-allowed opacity-60'
+                                : 'hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <RotateCcw size={14} />
+                        Replace
+                    </button>
+                </div>
+                <p className="mt-1.5 text-xs text-text-3">
+                    The stored value is never sent to the browser, so it cannot be shown
+                    here. Replacing it overwrites it.
+                </p>
+            </FieldShell>
+        );
+    }
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                replacing ? (
+                    <button
+                        type="button"
+                        className="text-xs text-text-3 transition-colors hover:text-text-1"
+                        onClick={() => setReplacing(false)}
+                    >
+                        Cancel
+                    </button>
+                ) : null
+            }
+        >
+            <div className="flex items-center gap-2">
+                <KeyRound size={15} className="shrink-0 text-text-3" />
+                <input
+                    id={id}
+                    type="password"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    className={inputClass}
+                    // While replacing, the placeholder is the untouched stored value, and
+                    // showing it in the box would invite someone to edit a string that is
+                    // not their secret.
+                    value={isStored ? '' : current}
+                    placeholder={field.placeholder ?? 'Paste the new value'}
+                    disabled={disabled}
+                    onChange={(event) => commit(event.target.value)}
+                />
+            </div>
+            {replacing ? (
+                <p className="mt-1.5 text-xs text-text-3">
+                    Left blank, the stored value is kept. Type a value to replace it, or
+                    clear a typed value to remove the secret entirely.
+                </p>
+            ) : null}
+        </FieldShell>
+    );
+}
+
+/**
+ * A short list of tokens, edited as comma-separated text.
+ *
+ * Stored as an array, so the control parses on the way out and joins on the way in. The
+ * chips below the input show what will actually be saved, which is the only way to see
+ * that stray whitespace and duplicates were folded away.
+ */
+function StringListControl({
+    field,
+    value,
+    error,
+    warning,
+    disabled,
+    onChange,
+}: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const items = asStringArray(value);
+    const incoming = items.join('\u0000');
+
+    const [text, setText] = useState(() => items.join(', '));
+    const [emitted, setEmitted] = useState(incoming);
+
+    if (incoming !== emitted) {
+        // The value changed for a reason other than typing here — a discarded draft, or
+        // a save that normalized the list. The text has to follow, or it keeps showing
+        // an edit that no longer exists anywhere.
+        setEmitted(incoming);
+        setText(items.join(', '));
+    }
+
+    const commit = (next: string) => {
+        setText(next);
+        const parsed: string[] = [];
+        for (const part of next.split(/[,;]/)) {
+            const item = part.trim().replace(/\s+/g, ' ').slice(0, field.max_item_length ?? 80);
+            if (item && !parsed.includes(item)) {
+                parsed.push(item);
+            }
+        }
+        setEmitted(parsed.join('\u0000'));
+        onChange(parsed);
+    };
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+            <input
+                id={id}
+                type="text"
+                className={inputClass}
+                value={text}
+                placeholder={field.placeholder}
+                disabled={disabled}
+                onChange={(event) => commit(event.target.value)}
+            />
+            {items.length ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {items.map((item) => (
+                        <span
+                            key={item}
+                            className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-xs text-text-2"
+                        >
+                            {item}
+                        </span>
+                    ))}
+                </div>
+            ) : null}
         </FieldShell>
     );
 }
@@ -398,199 +579,6 @@ function CheckboxSetControl({
 }
 
 /**
- * A credential.
- *
- * The server never sends a stored secret; it sends `SECRET_REDACTED_VALUE`. Two things
- * follow, and both are the point of this control existing separately from `text`:
- *
- * Revealing a still-redacted value shows the placeholder, not the credential, so the
- * button says "Replace" rather than "Show" until the field is edited. Offering "Show"
- * would promise something it cannot deliver.
- *
- * Clearing the box is a real edit -- an administrator removing a key -- so it is
- * reported upward as an empty string, which the server stores. Only the untouched
- * placeholder means "leave it alone".
- */
-function SecretControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
-    const id = `admin-field-${field.key}`;
-    const [revealed, setRevealed] = useState(false);
-    const current = asString(value);
-    const stored = isRedactedSecret(current);
-
-    return (
-        <FieldShell
-            field={field}
-            error={error}
-            warning={warning}
-            htmlFor={id}
-            trailing={
-                stored ? (
-                    <span className="flex items-center gap-1 text-xs text-text-3">
-                        <ShieldCheck size={12} />
-                        Stored
-                    </span>
-                ) : null
-            }
-        >
-            <div className="flex items-center gap-2">
-                <input
-                    id={id}
-                    type={revealed && !stored ? 'text' : 'password'}
-                    className={clsx(inputClass, 'font-mono')}
-                    value={current}
-                    placeholder={field.placeholder}
-                    disabled={disabled}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(event) => onChange(event.target.value)}
-                />
-                <button
-                    type="button"
-                    className={clsx(
-                        'shrink-0 rounded-lg border border-edge px-3 py-2 text-xs',
-                        'text-text-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60',
-                    )}
-                    disabled={disabled}
-                    onClick={() => {
-                        if (stored) {
-                            // Hand the field over for editing. Blanking it first is what
-                            // turns the next keystroke into a real change rather than an
-                            // edit of the placeholder text.
-                            onChange('');
-                            setRevealed(true);
-                        } else {
-                            setRevealed((previous) => !previous);
-                        }
-                    }}
-                >
-                    {stored ? 'Replace' : revealed ? 'Hide' : 'Show'}
-                </button>
-            </div>
-        </FieldShell>
-    );
-}
-
-/**
- * An editable list of short strings, stored newline-delimited.
- *
- * Used for the URL Access allow and block lists. Entries are added one at a time and
- * removed individually, rather than being edited as free text in a textarea, because a
- * stray newline in a domain list is invisible and silently widens or narrows a policy.
- */
-function StringListControl({
-    field,
-    value,
-    error,
-    warning,
-    disabled,
-    onChange,
-}: FieldControlProps) {
-    const id = `admin-field-${field.key}`;
-    const entries = parseStringList(value);
-    const [pending, setPending] = useState('');
-    const [entryError, setEntryError] = useState<string | null>(null);
-
-    const addEntry = () => {
-        const candidate = pending.trim();
-        if (!candidate) {
-            return;
-        }
-        if (entries.includes(candidate)) {
-            setEntryError('That entry is already in the list.');
-            return;
-        }
-        if (field.entry_pattern && !new RegExp(field.entry_pattern).test(candidate)) {
-            setEntryError(`Enter a valid ${field.entry_label ?? 'entry'}.`);
-            return;
-        }
-        if (field.max_entries && entries.length >= field.max_entries) {
-            setEntryError(`Enter at most ${field.max_entries} entries.`);
-            return;
-        }
-        setEntryError(null);
-        setPending('');
-        onChange([...entries, candidate]);
-    };
-
-    return (
-        <FieldShell
-            field={field}
-            error={error ?? entryError ?? undefined}
-            warning={warning}
-            htmlFor={id}
-            trailing={
-                <span className="text-xs tabular-nums text-text-3">
-                    {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
-                </span>
-            }
-        >
-            <div className="flex items-center gap-2">
-                <input
-                    id={id}
-                    type="text"
-                    className={inputClass}
-                    value={pending}
-                    placeholder={field.placeholder}
-                    disabled={disabled}
-                    spellCheck={false}
-                    onChange={(event) => {
-                        setPending(event.target.value);
-                        setEntryError(null);
-                    }}
-                    onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                            // This control lives inside the settings form; without this
-                            // the key would submit rather than add an entry.
-                            event.preventDefault();
-                            addEntry();
-                        }
-                    }}
-                />
-                <button
-                    type="button"
-                    className={clsx(
-                        'shrink-0 rounded-lg border border-edge px-3 py-2 text-xs',
-                        'text-text-2 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-60',
-                    )}
-                    disabled={disabled || !pending.trim()}
-                    onClick={addEntry}
-                >
-                    Add
-                </button>
-            </div>
-
-            {entries.length ? (
-                <ul className="mt-2 flex flex-wrap gap-1.5">
-                    {entries.map((entry) => (
-                        <li
-                            key={entry}
-                            className="flex items-center gap-1.5 rounded-full border border-edge bg-surface-1 py-1 pr-1 pl-3 text-xs text-text-2"
-                        >
-                            <span className="font-mono">{entry}</span>
-                            <button
-                                type="button"
-                                aria-label={`Remove ${entry}`}
-                                className="rounded-full p-0.5 text-text-3 hover:bg-surface-2 hover:text-danger disabled:cursor-not-allowed"
-                                disabled={disabled}
-                                onClick={() =>
-                                    onChange(
-                                        entries.filter((item) => item !== entry),
-                                    )
-                                }
-                            >
-                                <X size={12} />
-                            </button>
-                        </li>
-                    ))}
-                </ul>
-            ) : (
-                <p className="mt-2 text-xs text-text-3">No entries yet.</p>
-            )}
-        </FieldShell>
-    );
-}
-
-/**
  * A server-computed readout.
  *
  * Some of what an administrator needs here is not a setting: whether the FFmpeg audio
@@ -662,6 +650,8 @@ export function SettingField(props: FieldControlProps) {
             return <TextControl {...props} />;
         case 'textarea':
             return <TextAreaControl {...props} />;
+        case 'secret':
+            return <SecretControl {...props} />;
         case 'select':
             return <SelectControl {...props} />;
         case 'switch':
@@ -672,6 +662,8 @@ export function SettingField(props: FieldControlProps) {
             return <RangeControl {...props} />;
         case 'number':
             return <NumberControl {...props} />;
+        case 'string_list':
+            return <StringListControl {...props} />;
         case 'checkbox_set':
             return <CheckboxSetControl {...props} />;
         case 'secret':
