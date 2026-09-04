@@ -59,7 +59,7 @@ Individual connections can override the global choice, which is useful when only
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Use connections for chat | Routes chat through the connections listed here instead of the single classic endpoint. | Off | `enable_multi_model_endpoints`; capability toggle |
+| Use connections for chat | Routes chat through the connections listed here instead of the single classic endpoint. Switching this on cannot be undone, and carries the classic endpoint over as the first connection. | Off | `enable_multi_model_endpoints`; capability toggle |
 | Connections | The list of model connections, each saved on its own. | Empty | `model_endpoints`; edited through its own API |
 | Send an identity header with model requests | Adds a header identifying the signed-in user to every model request. | Off | `model_endpoint_identity_header_enabled` |
 | Header name | Rejected if it collides with a header the model call already sets, such as `authorization`. | x-simplechat-identity-key | `model_endpoint_identity_header_name` |
@@ -144,6 +144,7 @@ The Image Generation section belongs to the Image Generation tab. Use it with th
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A connection's models never appear in chat | **Use connections for chat** is off, so chat is running on the classic single endpoint. | Turn it on, or configure the classic endpoint under Chat instead. |
+| **Use connections for chat** will not turn off | Enabling connections is one-way, because chats, agents and workflows may already reference a model published from one. | Disable the individual connections instead, or point chat at the model you want by making it the default. |
 | **Discover models** is unavailable | The connection authenticates with an API key, which reaches inference but not Azure Resource Manager. | Switch to managed identity or a service principal, or add the deployment names by hand. |
 | Discovery returns nothing for an Azure OpenAI connection | The subscription id or resource group does not match the resource. | Correct them, then run **Test connection** before discovering again. |
 | Models are listed but nobody can choose them | Discovered models arrive switched off. | Turn on each model that should be available, then save the connection. |

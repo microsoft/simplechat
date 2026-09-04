@@ -2860,13 +2860,18 @@ def normalize_default_model_selection(selection):
     }
 
 
-def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled=True):
-    """Return a default model selection that still points at an enabled model.
+def resolve_model_selection(selection, endpoints, multi_endpoint_enabled=True, label="Default model"):
+    """Return a stored model selection that still points at an enabled model.
 
-    The stored default is a loose reference -- an endpoint id plus a model id -- so it
+    A stored selection is a loose reference -- an endpoint id plus a model id -- so it
     outlives the thing it names. Deleting an endpoint, disabling one, or turning off a
-    single model all leave a selection that resolves to nothing, and chat would then fall
-    back to a different model with no indication that it had.
+    single model all leave a selection that resolves to nothing.
+
+    What that costs depends on the selection. A dangling default model makes chat fall
+    back to a different model with no indication that it had; a dangling metadata
+    extraction model makes document ingestion raise instead, and the caller logs the
+    failure rather than surfacing it. Neither is acceptable, so both are re-resolved
+    whenever the endpoint list is written.
 
     Returns ``(selection, reason)``. ``reason`` is ``None`` when the selection survived,
     otherwise a short explanation of why it was cleared, which callers with somewhere to
@@ -2894,7 +2899,7 @@ def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled
     if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
         return (
             dict(EMPTY_DEFAULT_MODEL_SELECTION),
-            "Default model endpoint is not available. Please select a valid endpoint.",
+            f"{label} endpoint is not available. Please select a valid endpoint.",
         )
 
     models = endpoint_cfg.get("models", []) or []
@@ -2909,13 +2914,91 @@ def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled
     if not model_cfg or not model_cfg.get("enabled", True):
         return (
             dict(EMPTY_DEFAULT_MODEL_SELECTION),
-            "Default model is not available. Please select a valid model.",
+            f"{label} is not available. Please select a valid model.",
         )
 
     endpoint_provider = str(endpoint_cfg.get("provider") or "").strip().lower()
     if endpoint_provider:
         normalized["provider"] = endpoint_provider
     return normalized, None
+
+
+def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the chat default model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Default model"
+    )
+
+
+def resolve_metadata_extraction_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the metadata extraction model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Metadata extraction model"
+    )
+
+
+def build_migrated_model_endpoints_from_legacy(settings):
+    """Seed a connection list from the classic single-endpoint chat configuration.
+
+    Turning connections on is one-way: ``coerce_multi_model_endpoint_enablement`` keeps the
+    flag true once set. A deployment that had a working classic endpoint and then enabled
+    connections without carrying it over would be left with an empty model catalog and no
+    way back, so the existing configuration is migrated into the first connection.
+
+    Returns ``[]`` when there is nothing to migrate, which is the case for a deployment
+    that never configured the classic endpoint.
+    """
+    source = settings if isinstance(settings, dict) else {}
+    gpt_model = source.get("gpt_model") or {}
+    selected_models = gpt_model.get("selected") or [] if isinstance(gpt_model, dict) else []
+
+    migrated_models = []
+    for model in selected_models:
+        if not isinstance(model, dict):
+            continue
+        deployment_name = model.get("deploymentName") or model.get("deployment") or ""
+        if not deployment_name:
+            continue
+        migrated_models.append({
+            "id": str(uuid.uuid4()),
+            "deploymentName": deployment_name,
+            "modelName": model.get("modelName") or model.get("name") or "",
+            "displayName": deployment_name,
+            "description": "",
+            "enabled": True,
+        })
+
+    if not migrated_models:
+        return []
+
+    legacy_auth_type = source.get("azure_openai_gpt_authentication_type", "key")
+    migrated_auth_type = "api_key" if legacy_auth_type == "key" else legacy_auth_type
+
+    return [{
+        "id": str(uuid.uuid4()),
+        "name": "Migrated Azure OpenAI Endpoint",
+        "provider": "aoai",
+        "enabled": True,
+        "auth": {
+            "type": migrated_auth_type,
+            "managed_identity_type": "system_assigned",
+            "managed_identity_client_id": "",
+            "tenant_id": "",
+            "client_id": "",
+            "client_secret": "",
+            "api_key": source.get("azure_openai_gpt_key", ""),
+        },
+        "connection": {
+            "endpoint": source.get("azure_openai_gpt_endpoint", ""),
+            "api_version": source.get("azure_openai_gpt_api_version", ""),
+        },
+        "management": {
+            "subscription_id": source.get("azure_openai_gpt_subscription_id", ""),
+            "resource_group": source.get("azure_openai_gpt_resource_group", ""),
+            "location": "",
+        },
+        "models": migrated_models,
+    }]
 
 
 def encrypt_key(key):

@@ -22,10 +22,12 @@ These checks pin the replacement:
 
 import ast
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
+from test_support.app_stubs import import_app_module
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -105,7 +107,9 @@ def _load_selection_helpers():
     tree = _parse(SETTINGS_FILE)
     wanted_functions = {
         "normalize_default_model_selection",
+        "resolve_model_selection",
         "resolve_default_model_selection",
+        "resolve_metadata_extraction_model_selection",
     }
     wanted_constants = {"EMPTY_DEFAULT_MODEL_SELECTION"}
 
@@ -126,6 +130,30 @@ def _load_selection_helpers():
     namespace = {}
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(SETTINGS_FILE), "exec"), namespace)
     return namespace
+
+
+def _load_migration_builder():
+    """Exec ``build_migrated_model_endpoints_from_legacy`` out of functions_settings.py."""
+    tree = _parse(SETTINGS_FILE)
+    target = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "build_migrated_model_endpoints_from_legacy"
+        ),
+        None,
+    )
+    assert target is not None, "build_migrated_model_endpoints_from_legacy was not found"
+
+    namespace = {"uuid": uuid}
+    exec(compile(ast.Module(body=[target], type_ignores=[]), str(SETTINGS_FILE), "exec"), namespace)
+    return namespace["build_migrated_model_endpoints_from_legacy"]
+
+
+def _load_admin_fields_module():
+    """Import ``admin_settings_fields`` with the Azure-dependent seams stubbed."""
+    return import_app_module("admin_settings_fields")
 
 
 def test_crud_routes_exist_and_are_admin_gated():
@@ -350,6 +378,8 @@ def _load_persistence_helper():
 
     def fake_update_settings(updates):
         calls["updates"].append(updates)
+        if calls.get("fail_update"):
+            return False
         calls["settings"].update(updates)
         return True
 
@@ -363,6 +393,9 @@ def _load_persistence_helper():
         "update_settings": fake_update_settings,
         "resolve_default_model_selection": selection_helpers[
             "resolve_default_model_selection"
+        ],
+        "resolve_metadata_extraction_model_selection": selection_helpers[
+            "resolve_metadata_extraction_model_selection"
         ],
     }
     exec(compile(ast.Module(body=[target], type_ignores=[]), str(ROUTES_FILE), "exec"), namespace)
@@ -458,6 +491,143 @@ def test_an_unaffected_default_is_left_alone():
     return True
 
 
+def test_metadata_extraction_selection_is_revalidated():
+    """A dangling metadata selection makes document ingestion raise, not fall back."""
+    print("Testing metadata extraction selection re-resolution...")
+
+    persist, calls = _load_persistence_helper()
+    calls["settings"]["metadata_extraction_model_selection"] = {
+        "endpoint_id": "ep-gone",
+        "model_id": "gpt-4o",
+        "provider": "aoai",
+    }
+
+    existing = [
+        {
+            "id": "ep-gone",
+            "enabled": True,
+            "provider": "aoai",
+            "models": [{"id": "gpt-4o", "enabled": True}],
+        }
+    ]
+    persist([], existing)
+
+    written = calls["updates"][0]
+    assert "metadata_extraction_model_selection" in written, written
+    assert written["metadata_extraction_model_selection"] == {
+        "endpoint_id": "",
+        "model_id": "",
+        "provider": "",
+    }, written
+
+    print("  A dangling metadata selection is cleared alongside the default.")
+    return True
+
+
+def test_a_failed_settings_write_is_not_reported_as_success():
+    """Key Vault deletes already ran, so a silent failure leaves a broken endpoint."""
+    print("Testing failed settings write handling...")
+
+    persist, calls = _load_persistence_helper()
+    calls["fail_update"] = True
+
+    try:
+        persist([], [{"id": "ep-1", "enabled": True, "models": []}])
+    except RuntimeError:
+        print("  A failed settings write raises rather than reporting success.")
+        return True
+
+    raise AssertionError(
+        "_persist_global_model_endpoints ignored a failed update_settings call"
+    )
+
+
+def test_enabling_connections_cannot_be_undone_silently():
+    """update_settings coerces this key to existing-or-requested, so off never sticks."""
+    print("Testing the one-way connections toggle...")
+
+    fields_module = _load_admin_fields_module()
+    normalize = fields_module.normalize_admin_settings_updates
+
+    # Turning it on is allowed.
+    on, errors, _ = normalize(
+        {"enable_multi_model_endpoints": True},
+        {"enable_multi_model_endpoints": False},
+    )
+    assert not errors, errors
+    assert on["enable_multi_model_endpoints"] is True, on
+
+    # Turning it off once enabled must be refused rather than silently ignored, because
+    # update_settings would store True and the response would still say False.
+    _, errors, _ = normalize(
+        {"enable_multi_model_endpoints": False},
+        {"enable_multi_model_endpoints": True},
+    )
+    assert "enable_multi_model_endpoints" in errors, errors
+
+    # Leaving it off is not a change of state and must not error.
+    off, errors, _ = normalize(
+        {"enable_multi_model_endpoints": False},
+        {"enable_multi_model_endpoints": False},
+    )
+    assert not errors, errors
+    assert off["enable_multi_model_endpoints"] is False, off
+
+    print("  Switching connections off once enabled is refused with a message.")
+    return True
+
+
+def test_first_enable_carries_the_classic_endpoint_over():
+    """Enabling with an empty list would strand a deployment with no chat models."""
+    print("Testing first-enable migration...")
+
+    functions = _find_functions(_parse(ROUTES_FILE))
+    assert "_seed_connections_on_first_enable" in functions, (
+        "The V2 patch route must migrate the classic endpoint on first enable, as the "
+        "classic form does, or enabling from V2 leaves an empty model catalog"
+    )
+
+    patch_source = ast.dump(functions["v2_admin_patch_settings"])
+    assert "_seed_connections_on_first_enable" in patch_source, (
+        "v2_admin_patch_settings does not call the first-enable migration"
+    )
+
+    seed_source = ast.dump(functions["_seed_connections_on_first_enable"])
+    assert "build_migrated_model_endpoints_from_legacy" in seed_source, (
+        "The migration must reuse the shared builder so it cannot drift from the "
+        "classic form"
+    )
+    assert "keyvault_model_endpoint_save_helper" in seed_source, (
+        "A migrated endpoint carries the classic API key and must be stored through "
+        "Key Vault like any other"
+    )
+
+    # And the builder itself must actually produce the legacy configuration.
+    builder = _load_migration_builder()
+    migrated = builder(
+        {
+            "gpt_model": {"selected": [{"deploymentName": "gpt-4o", "modelName": "gpt-4o"}]},
+            "azure_openai_gpt_endpoint": "https://legacy.openai.azure.com",
+            "azure_openai_gpt_key": "legacy-key",
+            "azure_openai_gpt_authentication_type": "key",
+            "azure_openai_gpt_subscription_id": "sub",
+            "azure_openai_gpt_resource_group": "rg",
+        }
+    )
+    assert len(migrated) == 1, migrated
+    assert migrated[0]["connection"]["endpoint"] == "https://legacy.openai.azure.com"
+    # The classic form stores 'key'; the connection shape calls the same thing 'api_key'.
+    assert migrated[0]["auth"]["type"] == "api_key", migrated[0]["auth"]
+    assert migrated[0]["auth"]["api_key"] == "legacy-key"
+    assert [model["deploymentName"] for model in migrated[0]["models"]] == ["gpt-4o"]
+
+    # Nothing to migrate must not fabricate an empty endpoint.
+    assert builder({"gpt_model": {"selected": []}}) == []
+
+    print("  First enable carries the classic endpoint over, through the shared builder.")
+    return True
+
+
 def test_classic_form_shares_the_selection_rule():
     """Two copies of this rule would drift, which is what the shared helper prevents."""
     print("Testing classic form uses the shared helper...")
@@ -482,6 +652,10 @@ if __name__ == "__main__":
         test_persistence_runs_all_three_key_vault_passes,
         test_deleting_the_default_endpoint_clears_the_default,
         test_an_unaffected_default_is_left_alone,
+        test_metadata_extraction_selection_is_revalidated,
+        test_a_failed_settings_write_is_not_reported_as_success,
+        test_enabling_connections_cannot_be_undone_silently,
+        test_first_enable_carries_the_classic_endpoint_over,
         test_classic_form_shares_the_selection_rule,
     ]
 

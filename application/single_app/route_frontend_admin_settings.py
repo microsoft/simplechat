@@ -1618,50 +1618,8 @@ def register_route_frontend_admin_settings(bp):
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
             if should_migrate_endpoints and not parsed_model_endpoints:
-                default_endpoint_id = str(uuid.uuid4())
-                migrated_models = []
-                for model in gpt_model_obj.get('selected', []):
-                    deployment_name = model.get('deploymentName') or model.get('deployment') or ''
-                    model_name = model.get('modelName') or model.get('name') or ''
-                    if not deployment_name:
-                        continue
-                    migrated_models.append({
-                        'id': str(uuid.uuid4()),
-                        'deploymentName': deployment_name,
-                        'modelName': model_name,
-                        'displayName': deployment_name,
-                        'description': '',
-                        'enabled': True
-                    })
-
-                legacy_auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
-                migrated_auth_type = 'api_key' if legacy_auth_type == 'key' else legacy_auth_type
-
-                parsed_model_endpoints = [{
-                    'id': default_endpoint_id,
-                    'name': 'Migrated Azure OpenAI Endpoint',
-                    'provider': 'aoai',
-                    'enabled': True,
-                    'auth': {
-                        'type': migrated_auth_type,
-                        'managed_identity_type': 'system_assigned',
-                        'managed_identity_client_id': '',
-                        'tenant_id': '',
-                        'client_id': '',
-                        'client_secret': '',
-                        'api_key': settings.get('azure_openai_gpt_key', '')
-                    },
-                    'connection': {
-                        'endpoint': settings.get('azure_openai_gpt_endpoint', ''),
-                        'api_version': settings.get('azure_openai_gpt_api_version', '')
-                    },
-                    'management': {
-                        'subscription_id': settings.get('azure_openai_gpt_subscription_id', ''),
-                        'resource_group': settings.get('azure_openai_gpt_resource_group', ''),
-                        'location': ''
-                    },
-                    'models': migrated_models
-                }]
+                parsed_model_endpoints = build_migrated_model_endpoints_from_legacy(settings)
+                migrated_models = parsed_model_endpoints[0]['models'] if parsed_model_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
                 debug_print(
                     f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
