@@ -2,8 +2,8 @@
 # test_v2_admin_secret_fields.py
 """
 Functional test for the Admin Settings ``password`` field type.
-Version: 0.261.075
-Implemented in: 0.261.075
+Version: 0.261.082
+Implemented in: 0.261.082
 
 Before this type existed, a secret declared in the field schema would have been drawn by
 the generic text control: a live Azure OpenAI key in a plain ``<input type="text">``,
@@ -124,7 +124,7 @@ def test_password_is_a_known_field_type():
     """Without the type registered, a declared secret would render as nothing."""
     print("Testing that 'password' is a declared field type...")
 
-    assert_app_version_at_least("0.261.075")
+    assert_app_version_at_least("0.261.082")
 
     assert "password" in fields_module.FIELD_TYPES, (
         "'password' is not in FIELD_TYPES, so the schema test would reject any field "

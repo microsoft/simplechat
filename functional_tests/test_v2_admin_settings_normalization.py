@@ -29,7 +29,7 @@ def test_dependency_conditions_compare_by_declared_type():
     """A string condition compared for truthiness would match every non-empty choice."""
     print("Testing depends_on comparison semantics...")
 
-    assert_app_version_at_least("0.261.075")
+    assert_app_version_at_least("0.261.082")
 
     satisfied = fields_module._dependency_is_satisfied
 

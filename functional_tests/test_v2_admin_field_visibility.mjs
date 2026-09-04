@@ -1,8 +1,8 @@
 // test_v2_admin_field_visibility.mjs
 //
 // Runtime test for V2 admin field visibility and the deployment picker's pure logic.
-// Version: 0.261.075
-// Implemented in: 0.261.075
+// Version: 0.261.082
+// Implemented in: 0.261.082
 //
 // Two rules are exercised here because both are invisible until a specific combination
 // of settings is on screen, and both fail silently when wrong.
