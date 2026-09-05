@@ -26,8 +26,25 @@
                     <div id="redis_cache_settings" class="{% if not settings.enable_redis_cache %}d-none{% endif %}">
                         <div class="mb-3">
                             <label for="redis_url" class="form-label">Redis Server Host Name</label>
-                            <p class="text-muted">(example: simple-chat.redis.cache.windows.net)</p>
+                            <p class="text-muted">(Azure Managed Redis: simple-chat.eastus.redis.azure.net &mdash; Azure Cache for Redis: simple-chat.redis.cache.windows.net)</p>
                             <input type="text" class="form-control" id="redis_url" name="redis_url" value="{{ settings.redis_url or '' }}">
+                        </div>
+                        <div class="mb-3">
+                            <label for="redis_service_type" class="form-label">Redis Service</label>
+                            {% set redis_service_type_value = settings.redis_service_type | default('auto', true) %}
+                            <select class="form-select" id="redis_service_type" name="redis_service_type">
+                                <option value="auto" {% if redis_service_type_value == 'auto' %}selected{% endif %}>Detect from host name</option>
+                                <option value="azure_managed_redis" {% if redis_service_type_value == 'azure_managed_redis' %}selected{% endif %}>Azure Managed Redis</option>
+                                <option value="azure_cache_for_redis" {% if redis_service_type_value == 'azure_cache_for_redis' %}selected{% endif %}>Azure Cache for Redis</option>
+                            </select>
+                            <div class="form-text text-muted">
+                                Detection reads the host name suffix and selects port 10000 for Azure Managed Redis or port 6380 for Azure Cache for Redis.
+                                Choose the service explicitly when a custom DNS name or private endpoint hides the Azure suffix.
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="redis_port" class="form-label">Redis Port</label>
+                            <input type="number" class="form-control" id="redis_port" name="redis_port" min="1" max="65535" placeholder="Leave blank to use the port for the selected service" value="{{ settings.redis_port or '' }}">
                         </div>
                         <div class="mb-3">
                             <label for="redis_auth_type" class="form-label">Redis Authentication Type</label>
@@ -107,6 +124,13 @@
                             </div>
                         </div>
                         <div class="row g-3">
+                            <div class="col-md-3">
+                                <div class="border rounded p-3 h-100">
+                                    <div class="text-muted small">Redis Service</div>
+                                    <div class="fw-semibold" id="redis-monitoring-service-type">Not loaded</div>
+                                    <div class="text-muted small" id="redis-monitoring-service-port">Not loaded</div>
+                                </div>
+                            </div>
                             <div class="col-md-3">
                                 <div class="border rounded p-3 h-100">
                                     <div class="text-muted small">Ping Latency</div>

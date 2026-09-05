@@ -1006,6 +1006,24 @@
                                         >
                                     </div>
                                     <div class="mb-3">
+                                        <label for="latest_features_redis_service_type" class="form-label">Redis Service</label>
+                                        {% set redis_service_type_value = settings.redis_service_type | default('auto', true) %}
+                                        <select
+                                            class="form-select"
+                                            id="latest_features_redis_service_type"
+                                            name="latest_features_redis_service_type_proxy"
+                                            autocomplete="off"
+                                            data-ignore-settings-change="true"
+                                            data-lpignore="true"
+                                            data-1p-ignore="true"
+                                            data-bwignore="true"
+                                        >
+                                            <option value="auto" {% if redis_service_type_value == 'auto' %}selected{% endif %}>Detect from host name</option>
+                                            <option value="azure_managed_redis" {% if redis_service_type_value == 'azure_managed_redis' %}selected{% endif %}>Azure Managed Redis</option>
+                                            <option value="azure_cache_for_redis" {% if redis_service_type_value == 'azure_cache_for_redis' %}selected{% endif %}>Azure Cache for Redis</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
                                         <label for="latest_features_redis_auth_type" class="form-label">Redis Authentication Type</label>
                                         <select
                                             class="form-select"

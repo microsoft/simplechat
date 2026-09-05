@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for synthetic streaming of completed model responses.
-Version: 0.261.015
-Implemented in: 0.261.015
+Version: 0.261.017
+Implemented in: 0.261.017
 
 SimpleChat only supports streaming responses; the non-streaming path is legacy.
 Some providers and code paths can only return a completed answer -- notably tool
@@ -246,7 +246,7 @@ def test_version_bumped():
     """Synthetic streaming ships at or after its implementation version."""
     print("Testing config version...")
     try:
-        assert_app_version_at_least("0.261.015")
+        assert_app_version_at_least("0.261.017")
         print("Config version check passed")
         return True
     except Exception as e:

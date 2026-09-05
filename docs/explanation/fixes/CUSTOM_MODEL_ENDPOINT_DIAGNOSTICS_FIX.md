@@ -16,7 +16,7 @@ This was made worse by URL normalization. SimpleChat rewrites a configured
 endpoint URL into a request URL, and that rewrite was invisible, so an
 administrator debugging a 404 could not see the URL that was actually called.
 
-**Fixed in version: 0.261.013**
+**Fixed in version: 0.261.015**
 
 ## Root cause
 

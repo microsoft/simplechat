@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for on-premises Custom model endpoint support.
-Version: 0.261.016
-Implemented in: 0.261.016
+Version: 0.261.018
+Implemented in: 0.261.018
 
 On-premises inference was effectively unreachable. The administrator gate named
 "allow private Custom endpoint hosts" did not permit the two most common
@@ -269,7 +269,7 @@ def test_version_bumped():
     """On-premises support ships at or after its implementation version."""
     print("Testing config version...")
     try:
-        assert_app_version_at_least("0.261.016")
+        assert_app_version_at_least("0.261.018")
         print("Config version check passed")
         return True
     except Exception as e:

@@ -47,7 +47,6 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
-import redis 
 import time
 import uuid
 
@@ -1660,47 +1659,71 @@ def _test_gpt_connection(payload):
 
 def _test_redis_connection(payload):
     """
-    Attempts to connect to Azure Redis using key or managed identity auth.
-    Performs a simple SET/GET round-trip test.
+    Attempts to connect to Azure Cache for Redis or Azure Managed Redis using the
+    credentials supplied by the admin form, then performs a SET/GET round trip.
     """
+    import functions_redis_client
+
     redis_host = payload.get('endpoint', '').strip()
     redis_key = payload.get('key', '').strip()
     redis_auth_type = payload.get('auth_type', 'key').strip()
+    redis_service_type = payload.get('service_type', '').strip()
+    redis_port = payload.get('port', '').strip()
 
     if not redis_host:
         return jsonify({'error': 'Redis host is required'}), 400
 
-    try:
-        if redis_auth_type == 'managed_identity':
-            # Acquire token from managed identity for Redis scope
-            from config import get_redis_cache_infrastructure_endpoint
-            credential = DefaultAzureCredential()
-            redis_hostname = redis_host.split('.')[0]
-            cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
-            token = credential.get_token(cache_endpoint)
-            redis_password = token.token
-        elif redis_auth_type == 'key_vault':
-            if not redis_key:
-                return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
-            try:
-                from functions_keyvault import retrieve_secret_direct
-                redis_password = retrieve_secret_direct(redis_key)
-            except Exception as kv_err:
-                log_event(f"[REDIS_TEST] Key Vault retrieval failed for secret '{redis_key}': {str(kv_err)}", level="error")
-                return jsonify({'error': 'Failed to retrieve Redis key from Key Vault. Check Application Insights using "[REDIS_TEST]" for details.'}), 500
-        else:
-            if not redis_key:
-                return jsonify({'error': 'Redis key is required for key authentication'}), 400
-            redis_password = redis_key
+    if redis_auth_type == 'key_vault' and not redis_key:
+        return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
+    if redis_auth_type == 'key' and not redis_key:
+        return jsonify({'error': 'Redis key is required for key authentication'}), 400
 
-        r = redis.Redis(
-            host=redis_host,
-            port=6380,
-            password=redis_password,
-            ssl=True,
+    settings = get_settings()
+    test_settings = dict(settings)
+    test_settings.update({
+        'redis_url': redis_host,
+        'redis_auth_type': redis_auth_type,
+        'redis_key': redis_key,
+        'redis_service_type': redis_service_type or 'auto',
+        'redis_port': redis_port,
+    })
+
+    try:
+        # streaming_credentials=False keeps this ad-hoc test from starting a background
+        # token refresh thread every time an admin clicks Test.
+        r = functions_redis_client.create_redis_client(
+            settings=test_settings,
+            streaming_credentials=False,
             socket_connect_timeout=5
         )
+    except ValueError as validation_error:
+        # The factory raises ValueError for missing host, key, or Key Vault secret name. The
+        # route already returns a specific 400 for each of those above, so anything reaching
+        # here is unexpected. Log the exception type and let the traceback carry the detail
+        # rather than interpolating a message that resolved credentials may have touched.
+        log_event(
+            f"[REDIS_TEST] Redis settings validation failed ({type(validation_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'error': 'Redis settings are incomplete. Check the host name, service, port, and credential fields.'
+        }), 400
+    except Exception as client_error:
+        # Client construction resolves credentials, so the message can carry Key Vault secret
+        # names, vault URIs, or token details. Record the type plus the traceback and keep
+        # both the log message and the response free of the resolved secret material.
+        log_event(
+            f"[REDIS_TEST] Redis client construction failed for auth type "
+            f"'{redis_auth_type}' ({type(client_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'error': 'Failed to build the Redis connection. Check Application Insights using "[REDIS_TEST]" for details.'
+        }), 500
 
+    try:
         test_key = "test_key_simplechat"
         test_value = "hello_redis"
         r.set(test_key, test_value, ex=10)

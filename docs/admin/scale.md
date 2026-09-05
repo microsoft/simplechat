@@ -32,11 +32,25 @@ Scale settings trade latency, freshness, and Azure spend. Caches can make the ap
 
 ### Redis Cache {#redis-cache-section}
 
-The Redis Cache section belongs to the Redis & Caching tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+SimpleChat connects to either Azure Managed Redis or Azure Cache for Redis. The two services
+listen on different TLS ports, so SimpleChat reads the host name suffix and picks the port for
+you: `*.<region>.redis.azure.net` is Azure Managed Redis on port 10000, and
+`*.redis.cache.windows.net` (or the Azure Government and 21Vianet equivalents) is Azure Cache
+for Redis on port 6380. Set the service explicitly only when a custom DNS name or private
+endpoint hides that suffix, because detection has nothing to read in that case and falls back
+to Azure Cache for Redis.
+
+Azure Cache for Redis Basic, Standard, and Premium retire on September 30, 2028. New
+deployments provision Azure Managed Redis; an existing Azure Cache for Redis instance keeps
+working, and moving to Azure Managed Redis is a host name change rather than a code change.
 
 ### Redis Metrics {#redis-monitoring-section}
 
-The Redis Metrics section belongs to the Redis & Caching tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+The Redis Metrics section reports the service and port SimpleChat resolved, along with live
+health and capacity counters read from the Redis `INFO` command. Azure Managed Redis runs the
+Redis Enterprise engine, which reports a different set of `INFO` fields than open-source
+Redis, so some counters show "Not available" there. That is expected and does not indicate a
+connection problem &mdash; check the Health badge and ping latency instead.
 
 ### Conversation Cache {#conversation-cache-section}
 
@@ -48,6 +62,8 @@ The Conversation Cache section belongs to the Redis & Caching tab. Use it with t
 | --- | --- | --- | --- |
 | Enable Redis Cache | Uses Redis for shared cache/session scenarios so multiple app instances can share cached state. | Off | `enable_redis_cache`; capability toggle |
 | Redis Server Host Name | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | `redis_url` |
+| Redis Service | Selects which Azure Redis offering SimpleChat is talking to, which determines the TLS port. Leave on detection unless a custom DNS name hides the Azure host name suffix. | Detect from host name | `redis_service_type` |
+| Redis Port | Overrides the port derived from the selected service. Only needed for a proxy or a non-standard listener. | Empty | `redis_port` |
 | Redis Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | Empty | `redis_auth_type` |
 | Key Vault Secret Name Redis Access Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `redis_key` |
 | Enable conversation cache | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_conversation_cache`; capability toggle |

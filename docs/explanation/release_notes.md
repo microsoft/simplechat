@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.018)**
+### **(v0.261.020)**
 
 #### Bug Fixes
 
@@ -17,7 +17,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The suffix must now begin with a letter, which removes the ambiguity while matching exactly the same version segments.
     *   (Ref: `model_endpoint_clients.py`, [#1437](https://github.com/microsoft/simplechat/pull/1437))
 
-### **(v0.261.017)**
+### **(v0.261.019)**
 
 #### New Features
 
@@ -29,7 +29,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Added mTLS client certificates.** Certificates are referenced by file path so a private key is mounted into the deployment and never written to the configuration database.
     *   (Ref: `functions_model_endpoint_auth.py`, `functions_model_endpoint_providers.py`, `functions_model_endpoint_validation.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.016)**
+### **(v0.261.018)**
 
 #### New Features
 
@@ -41,7 +41,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Saving an endpoint no longer requires the host name to resolve from the application tier, so configuration can be seeded or restored from backup ahead of connectivity. Policy violations are still refused at save time, and the connection-time check is unchanged.
     *   (Ref: `functions_model_endpoint_validation.py`, `model_endpoint_clients.py`, `allow_insecure_custom_model_endpoints`, `custom_model_endpoint_ca_bundle_path`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.015)**
+### **(v0.261.017)**
 
 #### Bug Fixes
 
@@ -52,7 +52,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Streaming responses can report token usage again.** `stream_options` was stripped from every OpenAI-compatible request, which suppressed usage reporting for all of them. It is now dropped only for surfaces that reject it.
     *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_providers.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.014)**
+### **(v0.261.016)**
 
 #### Bug Fixes
 
@@ -63,7 +63,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   **Test Connection now reports the URL that was actually called.** URL normalization rewrites the configured endpoint, and that rewrite was previously invisible, so a misdirected request looked identical to a correct one.
     *   (Ref: `model_endpoint_clients.py`, `route_backend_models.py`, `_multiendpoint_modal.html`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.013)**
+### **(v0.261.015)**
 
 #### Bug Fixes
 
@@ -75,7 +75,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The resolved request URL is included deliberately: URL normalization can rewrite what the administrator typed, and that rewrite was previously invisible.
     *   (Ref: `functions_model_endpoint_diagnostics.py`, `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.012)**
+### **(v0.261.014)**
 
 #### New Features
 
@@ -87,7 +87,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The three existing API types are unchanged, and an unregistered API type is still refused.
     *   (Ref: `functions_model_endpoint_providers.py`, `functions_model_endpoint_types.py`, `model_endpoint_clients.py`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, `_multiendpoint_modal.html`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.011)**
+### **(v0.261.013)**
 
 #### New Features
 
@@ -98,7 +98,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The catalog is now validated against a published JSON schema, so a malformed or incomplete model record fails a test rather than silently degrading capability answers at runtime.
     *   (Ref: `functions_model_capabilities.py`, `model_capabilities.json`, `model_capabilities.schema.json`, `MODEL_CAPABILITY_CATALOG.md`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.010)**
+### **(v0.261.012)**
 
 #### New Features
 
@@ -107,6 +107,53 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
     *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
     *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
+
+### **(v0.261.011)**
+
+#### Bug Fixes
+
+*   **Redis Connection Test No Longer Returns Credential Errors To The Browser**
+    *   Restored the hardening that a refactor had dropped: when the admin Redis connection test fails while resolving credentials, the details are logged under `[REDIS_TEST]` and the browser receives a generic message instead of the raw exception, which could carry Key Vault secret names, vault URIs, or token details.
+    *   Validation problems such as a missing host name or access key are still returned directly, because those messages are generated by SimpleChat and are what the admin needs to fix the form.
+    *   (Ref: `route_backend_settings.py`, `test_redis_client_factory.py`)
+
+*   **Deployer Redis Kind Detection Matches The Full Host Name Suffix**
+    *   The postprovision fallback that infers the Redis offering from a host name used a substring check, so a host name that merely contained `.redis.azure.net` anywhere could be misread as Azure Managed Redis and configured with the wrong port.
+    *   It now matches the full suffix, consistent with the application's own detection.
+    *   (Ref: `deployers/bicep/postconfig.py`)
+
+### **(v0.261.010)**
+
+#### New Features
+
+*   **Azure Managed Redis Support**
+    *   SimpleChat now connects to Azure Managed Redis as well as Azure Cache for Redis, ahead of the September 30, 2028 retirement of the Azure Cache for Redis Basic, Standard, and Premium tiers.
+    *   The two services listen on different TLS ports, so SimpleChat resolves the port from the host name suffix: `*.<region>.redis.azure.net` connects on port 10000 and `*.redis.cache.windows.net` (plus the Azure Government and 21Vianet equivalents) on port 6380.
+    *   New **Redis Service** and **Redis Port** settings let an administrator state the service explicitly when a custom DNS name or private endpoint hides the Azure suffix. Existing deployments are unaffected: unrecognized host names keep the previous Azure Cache for Redis behavior.
+    *   The Redis Metrics panel now reports which service and port were resolved, and whether that came from detection or an explicit setting.
+    *   Both services are supported because Azure Managed Redis is not available in Azure Government or Azure operated by 21Vianet.
+    *   (Ref: `functions_redis_client.py`, `app_settings_cache.py`, `app.py`, `redis-caching.html`, [Azure Managed Redis Support](features/AZURE_MANAGED_REDIS_SUPPORT.md))
+
+*   **Redis Deployment Uses Azure Managed Redis**
+    *   The Bicep deployer now provisions Azure Managed Redis `Balanced_B0` with high availability enabled, Microsoft's documented replacement for the Azure Cache for Redis Standard C0 it previously deployed. That is twice the memory for less cost.
+    *   A new `redisCacheKind` parameter still deploys classic Azure Cache for Redis for sovereign clouds where Azure Managed Redis is unavailable.
+    *   The database is created with the `NoCluster` clustering policy. The service default is `OSSCluster`, which requires a cluster-aware Redis client that SimpleChat does not use.
+    *   Managed identity deployments disable access keys and grant the web app the built-in `default` access policy on the Azure Managed Redis database.
+    *   (Ref: `deployers/bicep/modules/redisCache.bicep`, `setPermissions.bicep`, `setNativeWebAppPermissions.bicep`, `postconfig.py`, `deployers/version.txt`)
+
+#### Bug Fixes
+
+*   **Redis Managed Identity Tokens Refresh On Open Connections**
+    *   Redis managed identity authentication now uses the `redis-entraid` streaming credential provider, which renews the Microsoft Entra token in the background and re-issues `AUTH` on connections that are already open. Previously credentials were supplied only at connect time, so a long-lived pooled connection relied on the server dropping it once the token expired.
+    *   The shared application cache and Flask session storage each get their own provider instance, because the provider holds a single re-authentication callback slot and sharing one would leave the first client's connections unrefreshed.
+    *   The admin "Test Redis Connection" button uses a connect-time-only provider, so repeated clicks no longer accumulate background threads, event loops, and recurring token requests.
+    *   The package is imported defensively, falling back to the previous in-repo provider if it is missing, so an application updated without reinstalling requirements still starts.
+    *   (Ref: `functions_redis_client.py`, `requirements.txt`, `test_redis_entra_token_auth.py`)
+
+*   **Redis Connection Test Uses The Same Token Scope As The Application**
+    *   The admin Redis connection test acquired its managed identity token from the legacy cache infrastructure endpoint while the running application used the `https://redis.azure.com/.default` scope, so a passing test did not prove the application could connect.
+    *   The test now builds its client through the same factory as the application, including service and port resolution.
+    *   (Ref: `route_backend_settings.py`)
 
 ### **(v0.261.009)**
 
@@ -123,7 +170,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
     *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
     *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
-
 
 ### **(v0.261.007)**
 

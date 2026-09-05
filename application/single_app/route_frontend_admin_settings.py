@@ -1386,6 +1386,8 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'redis_service_type': form_data.get('redis_service_type', '').strip() or 'auto',
+                'redis_port': form_data.get('redis_port', '').strip(),
                 'enable_file_sync': requested_enable_file_sync,
                 'enable_file_sync_personal': form_data.get('enable_file_sync_personal') == 'on',
                 'enable_file_sync_group': form_data.get('enable_file_sync_group') == 'on',
@@ -2536,6 +2538,8 @@ def register_route_frontend_admin_settings(bp):
                 'redis_url': form_data.get('redis_url', '').strip(),
                 'redis_key': admin_secret('redis_key'),
                 'redis_auth_type': form_data.get('redis_auth_type', '').strip(),
+                'redis_service_type': form_data.get('redis_service_type', '').strip() or 'auto',
+                'redis_port': form_data.get('redis_port', '').strip(),
                 'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
                 'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
 

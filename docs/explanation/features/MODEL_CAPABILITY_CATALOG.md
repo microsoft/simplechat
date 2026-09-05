@@ -16,7 +16,7 @@ returned the wrong answer.
 The model capability catalog makes those answers data-driven, and lets an
 administrator override them per model or per endpoint.
 
-**Implemented in version: 0.261.011**
+**Implemented in version: 0.261.013**
 
 ## Dependencies
 

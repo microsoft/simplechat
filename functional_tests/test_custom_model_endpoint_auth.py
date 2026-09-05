@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Custom model endpoint authentication schemes.
-Version: 0.261.017
-Implemented in: 0.261.017
+Version: 0.261.019
+Implemented in: 0.261.019
 
 Custom endpoints supported one authentication scheme: an API key sent in whichever
 header the built-in providers happened to use. That covers OpenAI and Anthropic
@@ -455,7 +455,7 @@ def test_version_bumped():
     """Authentication schemes ship at or after their implementation version."""
     print("Testing config version...")
     try:
-        assert_app_version_at_least("0.261.017")
+        assert_app_version_at_least("0.261.019")
         print("Config version check passed")
         return True
     except Exception as e:
