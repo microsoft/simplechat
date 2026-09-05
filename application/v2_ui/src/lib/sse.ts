@@ -253,9 +253,9 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
-        if (event.error) {
+        if (event.error || event.auth_required === true) {
             result.errored = true;
-            reportError(event.error, event);
+            reportError(event.error || 'Foundry sign-in or consent is required.', event);
             return true;
         }
 
@@ -492,14 +492,21 @@ export async function streamChat(
         response = undefined as unknown as Response;
     }
 
-    if (!pendingError && (!response.ok || !response.body)) {
+    if (!pendingError && response.body && response.headers.get('Content-Type')?.includes('text/event-stream')) {
+        // A denied request can still carry an SSE error frame, including its consent handoff.
+        await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
+    } else if (!pendingError && (!response.ok || !response.body)) {
         // A failure before the stream opens comes back as a normal JSON error response.
         let message = `Stream failed with status ${response.status}`;
+        let event: ChatStreamEvent | undefined;
         try {
-            const payload = (await response.json()) as { error?: string };
+            const payload = (await response.json()) as ChatStreamEvent;
             if (payload?.error) {
                 message = payload.error;
+            } else if (payload?.auth_required === true) {
+                message = 'Foundry sign-in or consent is required.';
             }
+            event = payload;
         } catch {
             /* Non-JSON error body; keep the status-based message. */
         }
@@ -507,12 +514,13 @@ export async function streamChat(
         // modelled by result.errored, and throwing here would escape as an unhandled
         // rejection and skip the caller's post-stream cleanup.
         result.errored = true;
-        captureError(message);
+        captureError(message, event);
     } else if (!pendingError) {
         await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
     }
 
-    if (pendingError && !signal?.aborted && conversationId && options.allowRecovery !== false) {
+    const requiresAuth = (pendingError as DeferredStreamError | null)?.event?.auth_required === true;
+    if (pendingError && !requiresAuth && !signal?.aborted && conversationId && options.allowRecovery !== false) {
         // The answer is generated on the server and outlives the HTTP connection, so a
         // dropped transport is recoverable. attachToLiveStream reports its own failures.
         const attached = await attachToLiveStream(

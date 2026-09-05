@@ -19,6 +19,7 @@ from config import cosmos_personal_agents_container
 from functions_settings import get_settings, get_user_settings, update_user_settings
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_agent_payload import sanitize_agent_payload
+from functions_agent_delegation import validate_agent_delegation_bindings
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
@@ -159,6 +160,11 @@ def save_personal_agent(user_id, agent_data, actor_user_id=None):
             pass
         except Exception:
             pass
+
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type="personal", scope_id=user_id,
+            existing_agent=existing_agent,
+        )
 
         now = datetime.utcnow().isoformat()
         if existing_agent:

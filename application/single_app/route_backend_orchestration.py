@@ -25,6 +25,7 @@ import logging
 import queue
 import threading
 import uuid
+from agent_execution_context import capture_execution_identity
 from datetime import datetime, timezone
 
 from flask import Response, jsonify, request, session
@@ -794,6 +795,7 @@ def register_route_backend_orchestration(bp):
         # streamed response's generator body runs after the view has returned, so reading
         # the session from inside it would be reading a context that is already gone.
         identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
+        agent_execution_identity = capture_execution_identity(user_id, conversation_id)
 
         # Resolved again rather than read back off the plan. Planning and running are
         # separate requests, and an agent the user could reach when the plan was made is not
@@ -892,6 +894,7 @@ def register_route_backend_orchestration(bp):
                 user_enable_agents=identity.get('user_enable_agents', True),
                 active_group_id=(seeds.get('active_group_ids') or [None])[0],
                 agent_catalog=agent_catalog,
+                agent_execution_identity=agent_execution_identity,
             )
 
             cancel_requested = _make_cancel_probe(run_id, user_id, conversation_id)

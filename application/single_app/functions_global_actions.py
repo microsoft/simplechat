@@ -22,6 +22,7 @@ from functions_workspace_identities import (
     validate_action_identity_reference,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_agent_delegation import validate_agent_action_for_scope
 from json_schema_validation import is_legacy_msgraph_type, normalize_m365_action_payload, validate_legacy_action_update
 from functions_legacy_action_management import (
     authorize_scoped_mcp_secret_read,
@@ -140,6 +141,10 @@ def save_global_action(action_data, user_id=None):
         actor_user_id = user_id
         if not user_id:
             user_id = "system"
+
+        action_data = validate_agent_action_for_scope(
+            action_data, user_id=user_id, scope_type="global", scope_id="global",
+        )
 
         # Ensure required fields
         if not action_data.get('id'):

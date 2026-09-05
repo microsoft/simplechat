@@ -17,6 +17,7 @@ from config import cosmos_global_agents_container
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
 from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
+from functions_agent_delegation import validate_agent_delegation_bindings
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
 
@@ -218,6 +219,11 @@ def save_global_agent(agent_data, user_id=None):
             )
         except Exception:
             pass
+
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type="global", scope_id="global",
+            existing_agent=existing_agent,
+        )
 
         if existing_agent:
             cleaned_agent['created_by'] = existing_agent.get('created_by', user_id)

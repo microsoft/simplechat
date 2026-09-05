@@ -54,6 +54,8 @@ import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
 import { PromotedAgentsEditor } from '../components/admin/PromotedAgentsEditor';
+import { AgentDelegationManager } from '../components/agents/AgentDelegationManager';
+import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
@@ -210,6 +212,7 @@ export function AdminSettingsPage() {
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
+    const [delegationDirty, setDelegationDirty] = useState(false);
 
     const [draft, setDraft] = useState<Json>({});
     const [saving, setSaving] = useState(false);
@@ -972,6 +975,9 @@ export function AdminSettingsPage() {
         (section) =>
             section.capabilities.length > 0 && (!activeGroup || section.groupId === activeGroup),
     );
+    const showDelegationManager = !loading && Boolean(data) && !error &&
+        (activeGroup === 'agents-actions' ||
+            (activeGroup === null && /call agent|delegation/i.test(query)));
 
     return (
         <>
@@ -988,6 +994,7 @@ export function AdminSettingsPage() {
                 <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block">
                     <button
                         type="button"
+                        disabled={delegationDirty}
                         onClick={() => setActiveGroup(null)}
                         className={clsx(
                             'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
@@ -1002,6 +1009,7 @@ export function AdminSettingsPage() {
                         <button
                             key={group.id}
                             type="button"
+                            disabled={delegationDirty}
                             onClick={() => setActiveGroup(group.id)}
                             className={clsx(
                                 'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
@@ -1017,6 +1025,17 @@ export function AdminSettingsPage() {
 
                 <div className="flex min-w-0 flex-1 flex-col">
                     <div className="shrink-0 border-b border-edge p-4">
+                        <div className="mx-auto mb-3 max-w-2xl lg:hidden">
+                            <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
+                            <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
+                                onChange={(event) => setActiveGroup(event.target.value || null)}
+                                className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
+                                <option value="">All settings</option>
+                                {(data?.admin_nav ?? []).map((group) => (
+                                    <option key={group.id} value={group.id}>{group.label}</option>
+                                ))}
+                            </select>
+                        </div>
                         <div className="relative mx-auto max-w-2xl">
                             <Search
                                 size={16}
@@ -1029,6 +1048,7 @@ export function AdminSettingsPage() {
                                 onChange={(event) => setQuery(event.target.value)}
                                 placeholder="Search every setting…  (press / to focus)"
                                 aria-label="Search settings"
+                                disabled={delegationDirty}
                                 className={clsx(
                                     'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
                                     'text-sm text-text-1 placeholder:text-text-3',
@@ -1058,7 +1078,17 @@ export function AdminSettingsPage() {
                                 </div>
                             )}
 
-                            {!loading && visibleSections.length === 0 && (
+                            {showDelegationManager ? (
+                                <GlassPanel elevation="flat" className="space-y-3 p-4">
+                                    <h2 className="text-base font-semibold text-text-1">Global agent delegation</h2>
+                                    <AgentDelegationManager scope={GLOBAL_DELEGATION_SCOPE}
+                                        allowManage={isAdmin} onDirtyChange={setDelegationDirty} />
+                                    {delegationDirty ? <p className="text-xs text-warn">Save or cancel Call agent changes before changing settings categories.</p> : null}
+                                    <p className="text-xs text-text-3">These resources save separately from settings. Full global agent and other connector management remains on the <a href="/admin/settings" className="text-accent underline">classic admin page</a>.</p>
+                                </GlassPanel>
+                            ) : null}
+
+                            {!loading && !showDelegationManager && visibleSections.length === 0 && (
                                 <p className="py-12 text-center text-sm text-text-3">
                                     No settings match “{query}”.
                                 </p>

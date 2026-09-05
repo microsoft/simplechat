@@ -162,6 +162,12 @@ from functions_msgraph_operations import (
 )
 from functions_m365_operations import M365_PLUGIN_TYPES, get_m365_action_definition, get_m365_default_config
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
+from functions_agent_delegation import (
+    AGENT_DEFAULT_ENDPOINT,
+    AGENT_PLUGIN_TYPE,
+    build_agent_delegation_catalog,
+    resolve_delegation_group_scope,
+)
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
     WORKSPACE_IDENTITY_SCOPE_GROUP,
@@ -355,6 +361,11 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         auth = plugin_payload.get('auth') if isinstance(plugin_payload.get('auth'), dict) else {}
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
+
+    elif plugin_type == AGENT_PLUGIN_TYPE:
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = AGENT_DEFAULT_ENDPOINT
+        plugin_payload.setdefault('auth', {'type': 'user'})
 
     return plugin_payload
 
@@ -701,6 +712,33 @@ def _handle_legacy_action_error(exc):
     )
     status = 409 if isinstance(exc, LegacyActionConflictError) else 500
     return jsonify({'success': False, 'error': exc.public_message, 'error_type': exc.code}), status
+
+
+@bpap.route('/api/plugins/agent-targets', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+def get_agent_action_targets():
+    """List authorized, scope-compatible targets without exposing agent configuration."""
+    user_id = get_current_user_id()
+    try:
+        catalog = build_agent_delegation_catalog(
+            user_id, request.args.get('scope', 'personal'), request.args.get('group_id'),
+        )
+        return jsonify(catalog)
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to configure agent calls in this workspace.'}), 403
+    except LookupError:
+        return jsonify({'error': 'The requested agent workspace is unavailable.'}), 404
+    except ValueError:
+        return jsonify({'error': 'Invalid agent action scope.'}), 400
+    except CosmosHttpResponseError as exc:
+        log_event(
+            "[AGENT_DELEGATION] Unable to load the target catalogue.",
+            level=logging.ERROR, extra={'error_type': type(exc).__name__},
+        )
+        return jsonify({'error': 'Unable to load available agents.'}), 503
 
 
 def _redact_plugin_for_logging(plugin):
@@ -1166,7 +1204,7 @@ def _save_personal_action_or_error(user_id, plugin_to_save, legacy_locator=None)
         return None, (jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400)
     except (LegacyActionConflictError, LegacyActionSourceUpdateError) as exc:
         return None, _handle_legacy_action_error(exc)
-    except ValueError as exc:
+    except (ValueError, LookupError) as exc:
         debug_print(f"Validation error saving personal action for user {user_id}: {exc}")
         return None, (jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400)
     except PermissionError as exc:
@@ -1494,7 +1532,7 @@ def delete_user_plugin(action_id):
 def get_group_actions_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1533,7 +1571,7 @@ def get_group_actions_route():
 def get_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1565,7 +1603,7 @@ def get_group_action_route(action_id):
 def create_group_action_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
@@ -1625,7 +1663,7 @@ def create_group_action_route():
 
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
-    except ValueError as exc:
+    except (ValueError, LookupError) as exc:
         debug_print('Validation error saving group action: %s', exc)
         return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as exc:
@@ -1650,7 +1688,7 @@ def create_group_action_route():
 def update_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
@@ -1721,7 +1759,7 @@ def update_group_action_route(action_id):
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
-    except ValueError as exc:
+    except (ValueError, LookupError) as exc:
         debug_print('Validation error updating group action %s: %s', action_id, exc)
         return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as exc:
@@ -1746,7 +1784,7 @@ def update_group_action_route(action_id):
 def delete_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
@@ -2046,9 +2084,11 @@ def add_plugin():
         return jsonify({'success': True})
     except McpConfigurationError as exc:
         return _handle_mcp_configuration_error(exc)
-    except ValueError as e:
+    except (ValueError, LookupError) as e:
         log_event(f"Validation error adding plugin: {e}", level=logging.WARNING)
         return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
     except RuntimeError as e:
         log_event(f"Key Vault error adding plugin: {e}", level=logging.ERROR)
         return jsonify({'error': PLUGIN_KEY_VAULT_ERROR_MESSAGE}), 500
@@ -2176,9 +2216,11 @@ def edit_plugin(plugin_name):
         return jsonify({'error': 'Plugin not found.'}), 404
     except McpConfigurationError as exc:
         return _handle_mcp_configuration_error(exc)
-    except ValueError as e:
+    except (ValueError, LookupError) as e:
         log_event(f"Validation error editing plugin: {e}", level=logging.WARNING)
         return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
     except RuntimeError as e:
         log_event(f"Key Vault error editing plugin: {e}", level=logging.ERROR)
         return jsonify({'error': PLUGIN_KEY_VAULT_ERROR_MESSAGE}), 500

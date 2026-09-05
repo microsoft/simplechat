@@ -47,6 +47,11 @@ Binding an action to an agent turns a broad tool into a safer task assistant. Us
 
 7. Use `#` references from **Selected Actions & Knowledge** when helpful, then save the agent.
 
+An action can also call another agent. Create a **Call agent** action for the
+specialist, attach it here, and explain when the caller should delegate. The
+specialist receives the task and explicitly supplied context, not the whole
+conversation. See [Call another agent]({{ '/guides/call-another-agent/' | relative_url }}).
+
 ## Verify it worked
 
 In chat, select the agent and ask for a task that requires the action. The response should follow the agent instructions and use the attached action only when appropriate.

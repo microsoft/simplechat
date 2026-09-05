@@ -17,6 +17,7 @@ from functions_keyvault import (
     keyvault_agent_save_helper,
 )
 from functions_agent_payload import sanitize_agent_payload
+from functions_agent_delegation import validate_agent_delegation_bindings
 from functions_governance import ensure_governance_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
@@ -90,6 +91,11 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optiona
         pass
     except Exception:
         pass
+
+    validate_agent_delegation_bindings(
+        payload, user_id=user_id, scope_type="group", scope_id=group_id,
+        existing_agent=existing_agent,
+    )
 
     if existing_agent:
         payload["created_by"] = existing_agent.get("created_by", user_id)

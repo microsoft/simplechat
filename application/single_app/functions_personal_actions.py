@@ -56,6 +56,7 @@ from functions_workspace_identities import (
 from config import cosmos_personal_actions_container, cosmos_user_settings_container
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
+from functions_agent_delegation import validate_agent_action_for_scope
 from json_schema_validation import (
     ACTION_MIGRATION_ID_PREFIX,
     is_legacy_msgraph_type,
@@ -237,6 +238,9 @@ def _save_personal_action(user_id, action_data, enforce_governance=True, migrati
         submitted_action = action_data
         action_data = normalize_m365_action_payload(action_data)
         action_data = prepare_scoped_action(action_data, "personal", user_id)
+        action_data = validate_agent_action_for_scope(
+            action_data, user_id=user_id, scope_type="personal", scope_id=user_id,
+        )
         legacy_type = is_legacy_msgraph_type(action_data.get('type'))
         if action_data.get("id") and (
             not isinstance(action_data["id"], str) or action_data["id"].startswith(LEGACY_ACTION_PREFIX)
