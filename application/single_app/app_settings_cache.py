@@ -13,12 +13,9 @@ from datetime import datetime, timedelta
 
 # Redis client construction lives in functions_redis_client so session, cache, and admin
 # diagnostics code paths share one place that resolves service type, port, and credentials.
-# These names are re-exported for existing callers.
-from functions_redis_client import (  # noqa: F401
+from functions_redis_client import (
     AUTH_TYPE_MANAGED_IDENTITY,
     CREDENTIAL_PURPOSE_APP_CACHE,
-    REDIS_ENTRA_TOKEN_SCOPE,
-    RedisManagedIdentityCredentialProvider,
     create_redis_client,
 )
 

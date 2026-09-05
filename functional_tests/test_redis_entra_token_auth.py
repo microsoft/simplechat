@@ -77,22 +77,6 @@ def test_redis_credential_provider_uses_oid_username_and_scope():
     return True
 
 
-def test_credential_provider_is_reexported_from_app_settings_cache():
-    """Existing imports of the provider through app_settings_cache must keep working."""
-    print("Testing app_settings_cache re-export...")
-    import app_settings_cache
-    import functions_redis_client as redis_client
-
-    assert (
-        app_settings_cache.RedisManagedIdentityCredentialProvider
-        is redis_client.RedisManagedIdentityCredentialProvider
-    )
-    assert app_settings_cache.REDIS_ENTRA_TOKEN_SCOPE == "https://redis.azure.com/.default"
-
-    print("Test passed!")
-    return True
-
-
 def test_create_redis_managed_identity_client_uses_credential_provider():
     """Validate Redis client construction passes a credential provider on both services."""
     print("Testing managed identity client construction...")
@@ -219,7 +203,6 @@ def test_version_includes_managed_redis_support():
 if __name__ == "__main__":
     tests = [
         test_redis_credential_provider_uses_oid_username_and_scope,
-        test_credential_provider_is_reexported_from_app_settings_cache,
         test_create_redis_managed_identity_client_uses_credential_provider,
         test_streaming_provider_refreshes_tokens_when_available,
         test_sovereign_cloud_authority_is_passed_to_the_provider,
