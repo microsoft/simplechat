@@ -2713,7 +2713,11 @@ def test_yamcs_connection():
                 ACTION_ADDITIONAL_SECRET_SOURCES,
             )
         except ValueError as exc:
-            return jsonify({'success': False, 'error': str(exc)}), 400
+            logging.warning("Failed to resolve Yamcs basic auth password for action test: %s", exc)
+            return jsonify({
+                'success': False,
+                'error': 'Invalid Yamcs authentication configuration.'
+            }), 400
 
         if not basic_auth_username:
             return jsonify({'success': False, 'error': 'A username is required for Yamcs HTTP Basic authentication.'}), 400
