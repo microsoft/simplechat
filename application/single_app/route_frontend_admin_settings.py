@@ -9,6 +9,11 @@ from functions_authentication import *
 from flask import current_app, jsonify, request
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    validate_custom_model_endpoints,
+)
 from functions_settings import *
 from functions_content_safety import normalize_content_safety_violation_message
 from functions_rate_limit import normalize_rate_limit_message
@@ -780,6 +785,8 @@ def register_route_frontend_admin_settings(bp):
             settings['allow_user_agents'] = False
         if 'allow_user_custom_endpoints' not in settings:
             settings['allow_user_custom_endpoints'] = settings.get('allow_user_custom_agent_endpoints', False)
+        if 'allow_private_custom_model_endpoints' not in settings:
+            settings['allow_private_custom_model_endpoints'] = False
         if 'allow_user_plugins' not in settings:
             settings['allow_user_plugins'] = False
         if 'allow_user_workflows' not in settings:
@@ -1722,6 +1729,26 @@ def register_route_frontend_admin_settings(bp):
 
             parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
             parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
+            custom_endpoint_validation_settings = dict(settings)
+            custom_endpoint_validation_settings['allow_private_custom_model_endpoints'] = (
+                form_data.get('allow_private_custom_model_endpoints') == 'on'
+            )
+            custom_endpoint_validation_settings['allow_insecure_custom_model_endpoints'] = (
+                form_data.get('allow_insecure_custom_model_endpoints') == 'on'
+            )
+            try:
+                validate_custom_model_endpoints(
+                    parsed_model_endpoints,
+                    custom_endpoint_validation_settings,
+                )
+            except ModelEndpointValidationError as exc:
+                log_event(
+                    "[MODEL_ENDPOINT] Custom model endpoint validation failed",
+                    extra={"exception_type": type(exc).__name__},
+                    level=logging.WARNING,
+                )
+                flash(str(exc), 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_endpoints_by_id = {
                 endpoint.get('id'): endpoint
@@ -1884,9 +1911,10 @@ def register_route_frontend_admin_settings(bp):
                         if endpoint_provider:
                             normalized_metadata_model_selection['provider'] = endpoint_provider
                         metadata_extraction_model_deployment = str(
-                            model_cfg.get('deploymentName')
-                            or model_cfg.get('deployment')
-                            or ''
+                            resolve_model_endpoint_request_model(
+                                endpoint_cfg,
+                                model_cfg,
+                            )
                         ).strip()
             else:
                 normalized_metadata_model_selection = {
@@ -2455,6 +2483,15 @@ def register_route_frontend_admin_settings(bp):
                 'gpt_model': gpt_model_obj,
                 'enable_multi_model_endpoints': enable_multi_model_endpoints,
                 'model_endpoints': parsed_model_endpoints,
+                'allow_private_custom_model_endpoints': (
+                    form_data.get('allow_private_custom_model_endpoints') == 'on'
+                ),
+                'allow_insecure_custom_model_endpoints': (
+                    form_data.get('allow_insecure_custom_model_endpoints') == 'on'
+                ),
+                'custom_model_endpoint_ca_bundle_path': (
+                    form_data.get('custom_model_endpoint_ca_bundle_path', '').strip()
+                ),
                 'model_endpoint_identity_header_enabled': model_endpoint_identity_header_enabled,
                 'model_endpoint_identity_header_name': model_endpoint_identity_header_name,
                 'model_endpoint_identity_header_value_type': model_endpoint_identity_header_value_type,

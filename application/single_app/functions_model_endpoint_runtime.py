@@ -1,13 +1,28 @@
 # functions_model_endpoint_runtime.py
 """Runtime helpers for configured model endpoint clients and Semantic Kernel services."""
 
-from openai import AsyncOpenAI, AzureOpenAI
+from openai import AsyncAzureOpenAI, AsyncOpenAI, AzureOpenAI
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIChatCompletion
 
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_auth import (
+    normalize_custom_endpoint_auth_type,
+    resolve_custom_endpoint_credentials,
+)
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_custom_endpoint_url_mode,
+)
+from functions_model_endpoint_types import (
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
+from functions_model_endpoint_validation import validate_custom_model_endpoint_url
 from functions_settings import resolve_model_endpoint_foundry_scope
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -15,14 +30,27 @@ from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     AnthropicSemanticKernelChatCompletion,
     build_anthropic_chat_client,
+    build_custom_openai_async_http_client,
+    build_custom_openai_sync_http_client,
     build_openai_style_chat_client,
     infer_model_endpoint_protocol,
+    normalize_custom_openai_base_url,
+    resolve_custom_openai_base_url,
     normalize_openai_style_base_url,
     resolve_openai_style_request_api_version,
+    SanitizedCustomChatCompletionClient,
+    sanitize_custom_async_openai_client,
 )
 
 
-MODEL_ENDPOINT_PROVIDER_ALLOWLIST = {'aoai', 'aifoundry', 'new_foundry', 'anthropic', 'claude'}
+MODEL_ENDPOINT_PROVIDER_ALLOWLIST = {
+    'aoai',
+    'aifoundry',
+    'new_foundry',
+    'anthropic',
+    'claude',
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
+}
 MODEL_CONTEXT_AUTH_FIELDS = (
     'type',
     'tenant_id',
@@ -62,9 +90,12 @@ def build_model_endpoint_context(
     endpoint=None,
     auth=None,
     api_version=None,
+    api_type=None,
+    anthropic_version=None,
     endpoint_id=None,
     model_id=None,
     model_deployment=None,
+    request_model=None,
     user_id=None,
     active_group_ids=None,
 ):
@@ -73,9 +104,12 @@ def build_model_endpoint_context(
         'provider': str(provider or '').strip().lower(),
         'endpoint': str(endpoint or '').strip(),
         'api_version': str(api_version or '').strip(),
+        'api_type': str(api_type or '').strip().lower(),
+        'anthropic_version': str(anthropic_version or '').strip(),
         'endpoint_id': str(endpoint_id or '').strip(),
         'model_id': str(model_id or '').strip(),
         'model_deployment': str(model_deployment or '').strip(),
+        'request_model': str(request_model or model_deployment or '').strip(),
     }
 
     normalized_user_id = str(user_id or '').strip()
@@ -125,6 +159,12 @@ def build_model_endpoint_sync_chat_client(
     api_version,
     deployment_name='',
     *,
+    api_type='',
+    url_mode='',
+    anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+    allow_private_custom_endpoints=False,
+    allow_insecure_custom_endpoints=False,
+    custom_endpoint_ca_bundle_path='',
     settings=None,
     endpoint_config=None,
     identity_context=None,
@@ -137,8 +177,44 @@ def build_model_endpoint_sync_chat_client(
         identity_context=identity_context,
     )
     normalized_provider = str(provider or 'aoai').strip().lower()
-    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
+    direct_custom = normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM
+    if direct_custom:
+        endpoint = validate_custom_model_endpoint_url(
+            endpoint,
+            allow_private=allow_private_custom_endpoints,
+            allow_insecure=allow_insecure_custom_endpoints,
+        )
+    runtime_protocol = infer_model_endpoint_protocol(
+        normalized_provider,
+        endpoint,
+        deployment_name,
+        api_type,
+    )
     auth_type = str(auth_settings.get('type') or 'managed_identity').strip().lower()
+    if direct_custom:
+        normalized_custom_auth = normalize_custom_endpoint_auth_type(auth_type)
+        if not normalized_custom_auth:
+            raise ValueError(
+                'Custom model endpoints support API key, bearer token, or OAuth2 '
+                'client credentials authentication.'
+            )
+        registered_provider = get_model_endpoint_provider(api_type)
+        credential, credential_headers = resolve_custom_endpoint_credentials(
+            auth_settings,
+            default_api_key_header=(
+                registered_provider.default_api_key_header if registered_provider else ''
+            ),
+            default_api_key_prefix=(
+                registered_provider.default_api_key_prefix if registered_provider else ''
+            ),
+            allow_private=allow_private_custom_endpoints,
+            allow_insecure=allow_insecure_custom_endpoints,
+            ca_bundle_path=custom_endpoint_ca_bundle_path,
+        )
+        if credential_headers:
+            extra_headers = {**(extra_headers or {}), **credential_headers}
+        auth_type = 'api_key'
+        auth_settings = {**auth_settings, 'type': 'api_key', 'api_key': credential}
 
     if auth_type in ('api_key', 'key'):
         api_key = auth_settings.get('api_key')
@@ -148,6 +224,10 @@ def build_model_endpoint_sync_chat_client(
             return build_anthropic_chat_client(
                 endpoint=endpoint,
                 api_key=api_key,
+                anthropic_version=anthropic_version,
+                direct_custom=direct_custom,
+                allow_private_custom_endpoints=allow_private_custom_endpoints,
+                custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
                 extra_headers=extra_headers,
             ), runtime_protocol
         if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
@@ -155,14 +235,33 @@ def build_model_endpoint_sync_chat_client(
                 api_key,
                 endpoint,
                 api_version,
+                direct_custom=direct_custom,
+                allow_private_custom_endpoints=allow_private_custom_endpoints,
                 default_headers=extra_headers,
+                api_type=api_type,
+                url_mode=url_mode,
+                ca_bundle_path=custom_endpoint_ca_bundle_path,
             ), runtime_protocol
-        return AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=api_key,
-            default_headers=extra_headers or None,
-        ), runtime_protocol
+        client_kwargs = {
+            'api_version': api_version,
+            'azure_endpoint': endpoint,
+            'api_key': api_key,
+        }
+        if extra_headers:
+            client_kwargs['default_headers'] = extra_headers
+        if direct_custom:
+            client_kwargs['http_client'] = build_custom_openai_sync_http_client(
+                allow_private=allow_private_custom_endpoints,
+                ca_bundle_path=custom_endpoint_ca_bundle_path,
+            )
+        client = AzureOpenAI(**client_kwargs)
+        if direct_custom:
+            client = SanitizedCustomChatCompletionClient(
+                client,
+                api_type=api_type,
+                request_url=endpoint,
+            )
+        return client, runtime_protocol
 
     credential = resolve_credential_for_model_endpoint_auth(auth_settings)
     scope = cognitive_services_scope
@@ -210,11 +309,15 @@ def resolve_model_endpoint_from_context(settings, model_context):
     model_context = model_context if isinstance(model_context, dict) else {}
     requested_endpoint_id = str(model_context.get('endpoint_id') or '').strip()
     requested_model_id = str(model_context.get('model_id') or '').strip()
-    requested_deployment = str(model_context.get('model_deployment') or '').strip()
+    requested_model_name = str(
+        model_context.get('request_model')
+        or model_context.get('model_deployment')
+        or ''
+    ).strip()
     requested_provider = str(model_context.get('provider') or '').strip().lower()
     if not settings.get('enable_multi_model_endpoints', False):
         return None
-    if not (requested_endpoint_id or requested_model_id or requested_deployment):
+    if not (requested_endpoint_id or requested_model_id or requested_model_name):
         return None
 
     endpoints = []
@@ -252,11 +355,11 @@ def resolve_model_endpoint_from_context(settings, model_context):
         models = endpoint_cfg.get('models', []) or []
         matched_model = None
         for model_cfg in models:
-            deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
             if requested_model_id and str(model_cfg.get('id') or '').strip() == requested_model_id:
                 matched_model = model_cfg
                 break
-            if requested_deployment and deployment == requested_deployment:
+            request_model = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+            if requested_model_name and request_model == requested_model_name:
                 matched_model = model_cfg
                 break
         if not matched_model or not matched_model.get('enabled', True):
@@ -296,17 +399,37 @@ def build_semantic_kernel_chat_service_for_model(
     provider = str(model_context.get('provider') or '').strip().lower()
     endpoint = str(model_context.get('endpoint') or '').strip()
     api_version = str(model_context.get('api_version') or '').strip()
+    api_type = str(model_context.get('api_type') or '').strip().lower()
+    url_mode = normalize_custom_endpoint_url_mode(model_context.get('url_mode'))
+    anthropic_version = str(
+        model_context.get('anthropic_version')
+        or DEFAULT_ANTHROPIC_VERSION
+    ).strip()
     auth_settings = model_context.get('auth') if isinstance(model_context.get('auth'), dict) else {}
-    deployment_name = str(model_context.get('model_deployment') or gpt_model or '').strip()
+    request_model = str(
+        model_context.get('request_model')
+        or model_context.get('model_deployment')
+        or gpt_model
+        or ''
+    ).strip()
 
     if resolved_model_endpoint:
         provider = str(resolved_model_endpoint.get('provider') or provider or 'aoai').strip().lower()
         connection = resolved_model_endpoint.get('connection', {}) or {}
         endpoint = str(connection.get('endpoint') or endpoint).strip()
+        api_type = get_model_endpoint_api_type(resolved_model_endpoint) or api_type
+        url_mode = normalize_custom_endpoint_url_mode(
+            connection.get('url_mode') or url_mode
+        )
         api_version = str(
             connection.get('openai_api_version')
             or connection.get('api_version')
             or api_version
+        ).strip()
+        anthropic_version = str(
+            connection.get('anthropic_version')
+            or anthropic_version
+            or DEFAULT_ANTHROPIC_VERSION
         ).strip()
         auth_settings = resolved_model_endpoint.get('auth', {}) or auth_settings
         resolved_models = resolved_model_endpoint.get('models', []) or []
@@ -317,27 +440,77 @@ def build_semantic_kernel_chat_service_for_model(
                 (model for model in resolved_models if str(model.get('id') or '').strip() == requested_model_id),
                 None,
             )
-        if matched_model is None and deployment_name:
+        if matched_model is None and request_model:
             matched_model = next(
                 (
                     model for model in resolved_models
-                    if str(model.get('deploymentName') or model.get('deployment') or '').strip() == deployment_name
+                    if resolve_model_endpoint_request_model(
+                        resolved_model_endpoint,
+                        model,
+                    ) == request_model
                 ),
                 None,
             )
         if matched_model:
-            deployment_name = str(
-                matched_model.get('deploymentName') or matched_model.get('deployment') or deployment_name
-            ).strip()
+            request_model = resolve_model_endpoint_request_model(
+                resolved_model_endpoint,
+                matched_model,
+            )
 
-    if provider and endpoint and deployment_name:
-        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)
+    if provider and endpoint and request_model:
+        direct_custom = provider == MODEL_ENDPOINT_PROVIDER_CUSTOM
+        allow_private_custom_endpoints = bool(
+            settings.get('allow_private_custom_model_endpoints', False)
+        )
+        allow_insecure_custom_endpoints = bool(
+            settings.get('allow_insecure_custom_model_endpoints', False)
+        )
+        custom_endpoint_ca_bundle_path = str(
+            settings.get('custom_model_endpoint_ca_bundle_path') or ''
+        ).strip()
+        if direct_custom:
+            endpoint = validate_custom_model_endpoint_url(
+                endpoint,
+                allow_private=allow_private_custom_endpoints,
+                allow_insecure=allow_insecure_custom_endpoints,
+            )
+        runtime_protocol = infer_model_endpoint_protocol(
+            provider,
+            endpoint,
+            request_model,
+            api_type,
+        )
         auth_type = str(auth_settings.get('type') or 'managed_identity').lower()
         extra_headers = build_model_endpoint_identity_headers(
             settings,
             endpoint_config=resolved_model_endpoint,
             identity_context=model_context,
         )
+        if direct_custom:
+            normalized_custom_auth = normalize_custom_endpoint_auth_type(auth_type)
+            if not normalized_custom_auth:
+                raise ValueError(
+                    'Custom model endpoints support API key, bearer token, or OAuth2 '
+                    'client credentials authentication.'
+                )
+            registered_provider = get_model_endpoint_provider(api_type)
+            credential, credential_headers = resolve_custom_endpoint_credentials(
+                auth_settings,
+                default_api_key_header=(
+                    registered_provider.default_api_key_header if registered_provider else ''
+                ),
+                default_api_key_prefix=(
+                    registered_provider.default_api_key_prefix if registered_provider else ''
+                ),
+                allow_private=allow_private_custom_endpoints,
+                allow_insecure=allow_insecure_custom_endpoints,
+                ca_bundle_path=custom_endpoint_ca_bundle_path,
+            )
+            if credential_headers:
+                extra_headers = {**(extra_headers or {}), **credential_headers}
+            auth_type = 'api_key'
+            auth_settings = {**auth_settings, 'type': 'api_key', 'api_key': credential}
+
         if auth_type in ('api_key', 'key'):
             api_key = auth_settings.get('api_key')
             if not api_key:
@@ -345,29 +518,70 @@ def build_semantic_kernel_chat_service_for_model(
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC:
                 return AnthropicSemanticKernelChatCompletion(
                     service_id=service_id,
-                    deployment_name=deployment_name,
+                    deployment_name=request_model,
                     endpoint=endpoint,
                     api_key=api_key,
+                    anthropic_version=anthropic_version,
+                    direct_custom=direct_custom,
+                    allow_private_custom_endpoints=allow_private_custom_endpoints,
+                    custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
                     extra_headers=extra_headers,
                 ), runtime_protocol
             if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
                 request_api_version = resolve_openai_style_request_api_version(api_version)
                 client_kwargs = {
                     'api_key': api_key,
-                    'base_url': normalize_openai_style_base_url(endpoint),
+                    'base_url': (
+                        resolve_custom_openai_base_url(endpoint, api_type, url_mode)
+                        if direct_custom
+                        else normalize_openai_style_base_url(endpoint)
+                    ),
                 }
+                if direct_custom:
+                    client_kwargs['http_client'] = build_custom_openai_async_http_client(
+                        allow_private=allow_private_custom_endpoints,
+                        ca_bundle_path=custom_endpoint_ca_bundle_path,
+                    )
                 if extra_headers:
                     client_kwargs['default_headers'] = extra_headers
                 if request_api_version:
                     client_kwargs['default_query'] = {'api-version': request_api_version}
+                async_client = AsyncOpenAI(**client_kwargs)
+                if direct_custom:
+                    async_client = sanitize_custom_async_openai_client(
+                        async_client,
+                        api_type=api_type,
+                        request_url=client_kwargs['base_url'],
+                    )
                 return OpenAIChatCompletion(
                     service_id=service_id,
-                    ai_model_id=deployment_name,
-                    async_client=AsyncOpenAI(**client_kwargs),
+                    ai_model_id=request_model,
+                    async_client=async_client,
+                ), runtime_protocol
+            if direct_custom:
+                async_client = AsyncAzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    api_key=api_key,
+                    default_headers=extra_headers or None,
+                    http_client=build_custom_openai_async_http_client(
+                        allow_private=allow_private_custom_endpoints,
+                        ca_bundle_path=custom_endpoint_ca_bundle_path,
+                    ),
+                )
+                async_client = sanitize_custom_async_openai_client(
+                    async_client,
+                    api_type=api_type,
+                    request_url=endpoint,
+                )
+                return AzureChatCompletion(
+                    service_id=service_id,
+                    deployment_name=request_model,
+                    async_client=async_client,
                 ), runtime_protocol
             return _build_azure_chat_completion(
                 service_id=service_id,
-                deployment_name=deployment_name,
+                deployment_name=request_model,
                 endpoint=endpoint,
                 api_key=api_key,
                 api_version=api_version,
@@ -383,7 +597,7 @@ def build_semantic_kernel_chat_service_for_model(
             token = credential.get_token(scope).token
             return AnthropicSemanticKernelChatCompletion(
                 service_id=service_id,
-                deployment_name=deployment_name,
+                deployment_name=request_model,
                 endpoint=endpoint,
                 bearer_token=token,
                 extra_headers=extra_headers,
@@ -402,7 +616,7 @@ def build_semantic_kernel_chat_service_for_model(
                 client_kwargs['default_query'] = {'api-version': request_api_version}
             return OpenAIChatCompletion(
                 service_id=service_id,
-                ai_model_id=deployment_name,
+                ai_model_id=request_model,
                 async_client=AsyncOpenAI(**client_kwargs),
             ), runtime_protocol
 
@@ -410,7 +624,7 @@ def build_semantic_kernel_chat_service_for_model(
         try:
             return _build_azure_chat_completion(
                 service_id=service_id,
-                deployment_name=deployment_name,
+                deployment_name=request_model,
                 endpoint=endpoint,
                 api_version=api_version,
                 azure_ad_token_provider=token_provider,
@@ -419,7 +633,7 @@ def build_semantic_kernel_chat_service_for_model(
         except TypeError:
             return _build_azure_chat_completion(
                 service_id=service_id,
-                deployment_name=deployment_name,
+                deployment_name=request_model,
                 endpoint=endpoint,
                 api_version=api_version,
                 ad_token_provider=token_provider,

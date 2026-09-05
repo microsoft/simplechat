@@ -1,6 +1,6 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "lastUpdated": "2026-08-04",
   "description": "SimpleChat model capability catalog. Capability flags remain data-only; optional model token-limit fields are consumed by durable tabular batch planning when present.",
   "capabilityFields": {
@@ -15,14 +15,17 @@
     "processesBinaryFiles": "Accepts uploaded files or binary/document payloads through the provider API.",
     "optimizedForCoding": "Documented or positioned for coding, agentic software tasks, code generation, or code understanding.",
     "toolCalling": "Supports function/tool calling or provider-equivalent tool use.",
-    "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses."
+    "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses.",
+    "supportsStreaming": "Supports incremental token streaming for chat responses. SimpleChat wraps models without streaming support so they still deliver through the stream.",
+    "reasoning": "Performs extended reasoning or thinking before responding."
   },
   "coverageNotes": [
     "OpenAI coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
     "xAI coverage includes Grok chat/coding models plus documented Imagine and Voice model SKUs.",
-    "Microsoft coverage includes public Phi and MAI model cards with clear capability statements."
+    "Microsoft coverage includes public Phi and MAI model cards with clear capability statements.",
+    "Google coverage includes the generally available Gemini chat model tiers that expose generateContent and streamGenerateContent."
   ],
   "sources": [
     {
@@ -167,7 +170,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Frontier GPT-5.6 tier; text and image input with text output."],
       "sourceIds": ["openai-gpt5-6", "azure-openai-gpt5"]
@@ -192,7 +197,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["GPT-5.6 lower-latency tier; Azure catalog documents text and image processing."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -217,7 +224,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["GPT-5.6 smallest tier; Azure catalog documents text and image processing."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -242,7 +251,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents reasoning, Responses API, structured outputs, text and image processing, and tool calling."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -267,7 +278,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Azure catalog describes this preview model as Chat Completions/Responses with structured outputs and tools."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -292,7 +305,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents text and image processing plus tools."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -317,7 +332,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents Responses API, text and image processing, and functions/tools."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -342,7 +359,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents text and image processing plus parallel tool calling."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -367,7 +386,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents text and image processing plus parallel tool calling."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -392,7 +413,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents optimization for Codex CLI and Codex VS Code extension."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -417,7 +440,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Preview chat model; Azure catalog does not list image processing for this entry."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -442,7 +467,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents optimization for Codex CLI and Codex VS Code extension."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -467,7 +494,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents text and image processing plus tools."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -492,7 +521,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Preview chat model; Azure catalog does not list image processing for this entry."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -517,7 +548,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["OpenAI and Azure docs document text and image input with text output."],
       "sourceIds": ["openai-gpt5-1", "azure-openai-gpt5"]
@@ -542,7 +575,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Preview chat model; Azure catalog documents tools and structured outputs but not image processing."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -567,7 +602,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents Responses API only and Codex optimization."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -592,7 +629,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents Responses API only and Codex optimization."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -617,7 +656,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents Responses API only, Codex optimization, and xhigh reasoning effort."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -642,7 +683,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["OpenAI and Azure docs document text and image input with text output."],
       "sourceIds": ["openai-gpt5", "azure-openai-gpt5"]
@@ -667,7 +710,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents Responses API, text and image processing, and functions/tools."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -692,7 +737,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Azure catalog documents Responses API only and Codex optimization."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -717,7 +764,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["OpenAI and Azure docs document text and image input with text output."],
       "sourceIds": ["openai-gpt5", "azure-openai-gpt5"]
@@ -742,7 +791,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["OpenAI positions this as fastest and cost-efficient for summarization and classification."],
       "sourceIds": ["openai-gpt5", "azure-openai-gpt5"]
@@ -767,7 +818,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Azure catalog explicitly lists input as text/image and output as text only."],
       "sourceIds": ["azure-openai-gpt5"]
@@ -792,7 +845,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Anthropic describes this as next-generation intelligence for long-running agents; current Claude models support text and image input with text output."],
       "sourceIds": ["anthropic-models"]
@@ -817,7 +872,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Invitation-only Project Glasswing model sharing Fable 5 specs."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -842,7 +899,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Anthropic positions Opus 5 for complex agentic coding and enterprise work."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -867,7 +926,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Anthropic positions Sonnet 5 as a speed/intelligence balance."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -892,7 +953,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Current Opus 4.x model with text and image input support."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -917,7 +980,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Current Opus 4.x model with text and image input support."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -942,7 +1007,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Current Opus 4.x model with text and image input support."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -967,7 +1034,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Current Opus 4.5 model listed in Anthropic lifecycle docs."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -992,7 +1061,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Current Sonnet 4.x model with text and image input support."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -1017,7 +1088,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Current Sonnet 4.5 model listed in Anthropic lifecycle docs."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -1042,7 +1115,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Fastest current Claude model; current Claude models support vision."],
       "sourceIds": ["anthropic-models", "anthropic-deprecations"]
@@ -1067,7 +1142,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Deprecated; scheduled retirement listed by Anthropic."],
       "sourceIds": ["anthropic-deprecations"]
@@ -1092,7 +1169,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Recently retired; included for two-year Claude coverage."],
       "sourceIds": ["anthropic-deprecations"]
@@ -1117,7 +1196,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Recently retired; included for two-year Claude coverage."],
       "sourceIds": ["anthropic-deprecations"]
@@ -1142,7 +1223,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Retired; included because it falls within the requested two-year Claude window."],
       "sourceIds": ["anthropic-deprecations"]
@@ -1167,7 +1250,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Retired; included because it falls within the requested two-year Claude window."],
       "sourceIds": ["anthropic-deprecations"]
@@ -1192,7 +1277,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Retired; included because it falls within the requested two-year Claude window."],
       "sourceIds": ["anthropic-deprecations"]
@@ -1217,7 +1304,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card lists multilingual text and image input with multilingual text and code output."],
       "sourceIds": ["meta-llama4"]
@@ -1242,7 +1331,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card lists multilingual text and image input with multilingual text and code output."],
       "sourceIds": ["meta-llama4"]
@@ -1267,7 +1358,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card lists multilingual text input and multilingual text/code output; Transformers examples document tool use."],
       "sourceIds": ["meta-llama33"]
@@ -1292,7 +1385,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card describes text + image input with text output."],
       "sourceIds": ["meta-llama32-vision"]
@@ -1317,7 +1412,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card describes the 11B and 90B Llama 3.2 Vision sizes as text + image input with text output."],
       "sourceIds": ["meta-llama32-vision"]
@@ -1342,7 +1439,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card describes Code Llama as text-only input/output designed for code synthesis and understanding."],
       "sourceIds": ["meta-codellama"]
@@ -1367,7 +1466,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["xAI describes Grok 4.5 as text,image -> text and recommends it for code and agentic software tasks."],
       "sourceIds": ["xai-grok45", "xai-models"]
@@ -1392,7 +1493,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Listed in xAI text API pricing; xAI overview documents image input constraints for image-input models."],
       "sourceIds": ["xai-models"]
@@ -1417,7 +1520,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Listed in xAI text API pricing as a reasoning model."],
       "sourceIds": ["xai-models"]
@@ -1442,7 +1547,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Listed in xAI text API pricing as a non-reasoning model."],
       "sourceIds": ["xai-models"]
@@ -1467,7 +1574,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Listed in xAI model pricing; Grok 4.5 page aliases grok-build-latest to Grok 4.5."],
       "sourceIds": ["xai-models", "xai-grok45"]
@@ -1492,7 +1601,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": true,
-        "structuredOutput": true
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Listed in xAI model pricing as a multi-agent model."],
       "sourceIds": ["xai-models"]
@@ -1517,7 +1628,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": false,
+        "reasoning": false
       },
       "notes": ["xAI documents modalities as text,image -> image."],
       "sourceIds": ["xai-imagine-image"]
@@ -1542,7 +1655,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": false,
+        "reasoning": false
       },
       "notes": ["xAI overview lists this as an Imagine image model."],
       "sourceIds": ["xai-models", "xai-imagine-image"]
@@ -1567,7 +1682,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": false,
+        "reasoning": false
       },
       "notes": ["xAI documents modalities as text,image -> video."],
       "sourceIds": ["xai-imagine-video"]
@@ -1592,7 +1709,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": false,
+        "reasoning": false
       },
       "notes": ["xAI overview lists this as an Imagine video model."],
       "sourceIds": ["xai-models", "xai-imagine-video"]
@@ -1617,7 +1736,9 @@
         "processesBinaryFiles": true,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["xAI Voice API documents speech-to-speech, speech-to-text, and text-to-speech powered by Grok."],
       "sourceIds": ["xai-voice", "xai-models"]
@@ -1642,7 +1763,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card says it processes text, image, and audio inputs, generates text outputs, and supports multi-image or video clip summarization."],
       "sourceIds": ["microsoft-phi4-multimodal"]
@@ -1667,7 +1790,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": true,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card documents instruction following and function calling for a text model."],
       "sourceIds": ["microsoft-phi4-mini"]
@@ -1692,7 +1817,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Model card says Phi-4 reasoning is trained for math, science, and coding skills with text input and text output."],
       "sourceIds": ["microsoft-phi4-reasoning"]
@@ -1717,7 +1844,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": true
       },
       "notes": ["Model card positions this compact model for math reasoning, not general multimodal or coding use."],
       "sourceIds": ["microsoft-phi4-mini"]
@@ -1742,7 +1871,9 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": false,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card describes visual and text input, multi-image comparison, and video clip summarization."],
       "sourceIds": ["microsoft-phi35-vision"]
@@ -1767,10 +1898,282 @@
         "processesBinaryFiles": false,
         "optimizedForCoding": true,
         "toolCalling": false,
-        "structuredOutput": false
+        "structuredOutput": false,
+        "supportsStreaming": true,
+        "reasoning": false
       },
       "notes": ["Model card describes broad text generation, reasoning, problem solving, code generation, and code comprehension."],
       "sourceIds": ["microsoft-mai-ds-r1"]
+    },
+    {
+      "id": "gemini-3.8-flash",
+      "provider": "google",
+      "displayName": "Gemini 3.8 Flash",
+      "aliases": [],
+      "family": "gemini-3.8",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Current Gemini 3.8 Flash tier; multimodal input with text output."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "provider": "google",
+      "displayName": "Gemini 3.7 Flash",
+      "aliases": [],
+      "family": "gemini-3.7",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Gemini 3.7 Flash; multimodal input with text output."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "provider": "google",
+      "displayName": "Gemini 3.6 Flash",
+      "aliases": [],
+      "family": "gemini-3.6",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Gemini 3.6 Flash; multimodal input with text output."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "provider": "google",
+      "displayName": "Gemini 3.5 Flash",
+      "aliases": [],
+      "family": "gemini-3.5",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Gemini 3.5 Flash; multimodal input with text output."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-3.5-flash-lite",
+      "provider": "google",
+      "displayName": "Gemini 3.5 Flash-Lite",
+      "aliases": [],
+      "family": "gemini-3.5",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Cost-optimized Gemini 3.5 Flash-Lite tier."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-3.1-pro-preview",
+      "provider": "google",
+      "displayName": "Gemini 3.1 Pro Preview",
+      "aliases": ["gemini-3.1-pro"],
+      "family": "gemini-3.1",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Gemini 3.1 Pro preview tier; strongest Gemini 3.1 reasoning and coding tier."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "provider": "google",
+      "displayName": "Gemini 2.5 Pro",
+      "aliases": [],
+      "family": "gemini-2.5",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Gemini 2.5 Pro; multimodal input with text output and thinking support."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "provider": "google",
+      "displayName": "Gemini 2.5 Flash",
+      "aliases": [],
+      "family": "gemini-2.5",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Gemini 2.5 Flash; balanced multimodal tier with thinking support."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "provider": "google",
+      "displayName": "Gemini 2.5 Flash-Lite",
+      "aliases": [],
+      "family": "gemini-2.5",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": true
+      },
+      "notes": ["Cost-optimized Gemini 2.5 Flash-Lite tier."],
+      "sourceIds": ["google-gemini-api"]
+    },
+    {
+      "id": "gemini-2.0-flash",
+      "provider": "google",
+      "displayName": "Gemini 2.0 Flash",
+      "aliases": [],
+      "family": "gemini-2.0",
+      "lifecycle": "current",
+      "releaseDate": null,
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "processesAudio": true,
+        "generatesAudio": false,
+        "processesVideo": true,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true,
+        "supportsStreaming": true,
+        "reasoning": false
+      },
+      "notes": ["Gemini 2.0 Flash; multimodal input with text output."],
+      "sourceIds": ["google-gemini-api"]
     }
   ]
 }
