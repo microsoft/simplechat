@@ -315,6 +315,63 @@ html[data-font-size='xl'] {
 }
 
 @layer utilities {
+    .admin-settings-distinct {
+        container-type: inline-size;
+        overflow-wrap: anywhere;
+    }
+
+    /* Same layer as field borders; focus utilities retain their higher specificity. */
+    .admin-settings-distinct :where(input:not([type='checkbox']), select, textarea) {
+        border-color: color-mix(in srgb, var(--text-3) 85%, transparent);
+    }
+
+    /* Relative to the card, not the viewport, so text scaling also triggers wrapping. */
+    @container (max-width: 16rem) {
+        .admin-settings-distinct .admin-section-body {
+            padding: 0.75rem;
+        }
+
+        .admin-settings-distinct :where(
+            label:has(input[type='checkbox']),
+            .admin-field-heading,
+            .admin-color-controls,
+            .admin-promoted-agents-picker,
+            .admin-promoted-agent-row
+        ) {
+            flex-wrap: wrap;
+        }
+
+        .admin-settings-distinct label:has(input[type='checkbox']) > span:last-child,
+        .admin-settings-distinct .admin-promoted-agents-picker > select,
+        .admin-settings-distinct .admin-promoted-agent-row > div {
+            flex-basis: 100%;
+        }
+
+        .admin-settings-distinct .admin-promoted-agent-row > select {
+            min-width: 0;
+            max-width: 100%;
+            flex-shrink: 1;
+        }
+
+        .admin-settings-distinct .admin-promoted-agents-picker > button {
+            height: auto;
+            min-height: 2rem;
+            max-width: 100%;
+            flex-wrap: wrap;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .admin-settings-distinct button[aria-expanded] {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+        }
+
+        .admin-settings-distinct button[aria-expanded] > span:last-child:not(:first-of-type) {
+            grid-column: 2;
+            margin-inline-start: 0;
+        }
+    }
+
     /*
      * Respect users who have asked for less motion or less transparency. The second is
      * important for readability: transparency is dropped for solid surfaces rather than
