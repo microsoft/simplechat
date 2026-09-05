@@ -80,7 +80,7 @@ export function FieldShell({
 }) {
     return (
         <div className="py-3">
-            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+            <div className="admin-field-heading mb-1.5 flex items-baseline justify-between gap-3">
                 <label
                     htmlFor={htmlFor}
                     className="text-sm font-medium text-text-1"
@@ -426,7 +426,7 @@ function ColorControl({ field, value, error, warning, disabled, onChange }: Fiel
 
     return (
         <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
-            <div className="flex items-center gap-2">
+            <div className="admin-color-controls flex items-center gap-2">
                 <input
                     id={id}
                     type="color"
