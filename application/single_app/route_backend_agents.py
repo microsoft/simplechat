@@ -5,7 +5,8 @@ import uuid
 import logging
 import builtins
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from flask import Blueprint, jsonify, request, current_app, session
+from azure.cosmos.exceptions import CosmosHttpResponseError
+from flask import Blueprint, jsonify, redirect, request, current_app, session
 from config import (
     AzureOpenAI,
     cognitive_services_scope,
@@ -13,7 +14,7 @@ from config import (
     cosmos_group_agents_container,
     cosmos_personal_agents_container,
 )
-from semantic_kernel_loader import get_agent_orchestration_types
+from semantic_kernel_loader import get_agent_orchestration_types, resolve_agent_config
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings, sanitize_model_endpoints_for_frontend
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent, update_global_agent_enabled
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
@@ -40,6 +41,8 @@ from functions_group_agents import (
 )
 from functions_debug import debug_print
 from functions_authentication import *
+from functions_authentication import _build_msal_app, _build_plugin_auth_response, _load_cache
+from foundry_agent_runtime import _resolve_foundry_authentication_type, _resolve_foundry_scope
 from functions_appinsights import log_event
 from functions_agent_catalog import (
     apply_agent_popular_promotions,
@@ -58,9 +61,125 @@ from functions_activity_logging import (
 )
 from functions_governance import ensure_governance_access, upsert_item_policy
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_agent_delegation import (
+    AgentDelegationConflictError,
+    resolve_delegation_agent,
+    resolve_delegation_group_scope,
+    update_agent_delegation_bindings,
+    validate_agent_delegation_bindings,
+)
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
+
+
+@bpa.route('/api/agents/foundry-auth', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+def initiate_delegated_foundry_auth():
+    """Persist current, server-derived consent scopes before redirecting to Entra."""
+    if set(request.args) != {'id', 'scope_type', 'scope_id'}:
+        return jsonify({'error': 'Select an available Foundry agent to sign in.'}), 400
+    user_id = get_current_user_id()
+    try:
+        settings = get_settings()
+        target = resolve_delegation_agent(
+            {key: request.args[key] for key in ('id', 'scope_type', 'scope_id')},
+            user_id=user_id, settings=settings,
+        )
+        kind = {
+            'aifoundry': 'azure_ai_foundry',
+            'new_foundry': 'new_foundry',
+            'foundry_workflow': 'foundry_workflow',
+        }.get(target.get('agent_type'))
+        if kind is None:
+            return jsonify({'error': 'This agent does not use Foundry sign-in.'}), 400
+        config = resolve_agent_config(
+            target, settings, group_scope_id=target.get('group_id'), execution_user_id=user_id,
+        )
+        foundry_settings = (config.get('other_settings') or {}).get(kind) or {}
+        if _resolve_foundry_authentication_type(foundry_settings, settings) != 'delegated_user':
+            return jsonify({'error': 'This agent does not use delegated-user sign-in.'}), 400
+        scope = _resolve_foundry_scope(foundry_settings, settings)
+        auth_response = _build_plugin_auth_response(
+            _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority()),
+            session.get('user') or {}, [scope],
+            error='interactive_auth_required',
+            message='Sign in to use the selected Foundry agent.',
+        )
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to sign in for this agent.'}), 403
+    except LookupError:
+        return jsonify({'error': 'The selected agent is unavailable.'}), 404
+    except ValueError:
+        return jsonify({'error': 'The selected agent authentication configuration is invalid.'}), 400
+    except CosmosHttpResponseError as exc:
+        log_event(
+            "[AGENT_DELEGATION] Unable to prepare Foundry authentication.",
+            level=logging.ERROR, extra={'error_type': type(exc).__name__},
+        )
+        return jsonify({'error': 'Unable to prepare Foundry sign-in.'}), 503
+    response = redirect(auth_response['auth_url'])
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+def _save_agent_action_bindings_response(scope_type, agent_id):
+    user_id = get_current_user_id()
+    try:
+        result = update_agent_delegation_bindings(
+            user_id, scope_type, agent_id, request.get_json(silent=True),
+            request.args.get('group_id') if scope_type == 'group' else None,
+        )
+        return jsonify(result)
+    except AgentDelegationConflictError:
+        return jsonify({'error': 'Agent actions changed. Reload the agent before saving.'}), 409
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to configure these agent calls.'}), 403
+    except LookupError:
+        return jsonify({'error': 'An agent or action is no longer available.'}), 404
+    except ValueError:
+        return jsonify({'error': 'Invalid Call agent action selection.'}), 400
+    except CosmosHttpResponseError as exc:
+        log_event(
+            "[AGENT_DELEGATION] Unable to save agent action bindings.",
+            level=logging.ERROR,
+            extra={'agent_id': agent_id, 'scope_type': scope_type, 'error_type': type(exc).__name__},
+        )
+        return jsonify({'error': 'Unable to save agent actions.'}), 503
+
+
+@bpa.route('/api/user/agents/<agent_id>/agent-actions', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+@enabled_required('allow_user_agents')
+def update_personal_agent_action_bindings(agent_id):
+    return _save_agent_action_bindings_response('personal', agent_id)
+
+
+@bpa.route('/api/group/agents/<agent_id>/agent-actions', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+@enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
+def update_group_agent_action_bindings(agent_id):
+    return _save_agent_action_bindings_response('group', agent_id)
+
+
+@bpa.route('/api/admin/agents/<agent_id>/agent-actions', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@admin_required
+@enabled_required('enable_semantic_kernel')
+def update_global_agent_action_bindings(agent_id):
+    return _save_agent_action_bindings_response('global', agent_id)
+
 
 AGENT_INSTRUCTION_FIELD_LIMIT = 6000
 AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
@@ -1102,6 +1221,20 @@ def _prepare_personal_agent_payload(user_id, agent, settings):
     if validation_error:
         return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
 
+    try:
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type='personal', scope_id=user_id,
+            settings=settings,
+            existing_agent=(
+                _find_personal_agent(user_id, cleaned_agent.get('id'))
+                if cleaned_agent.get('actions_to_load') else None
+            ),
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)
+    except (ValueError, LookupError):
+        return None, (jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400)
+
     return cleaned_agent, None
 
 
@@ -1350,7 +1483,7 @@ def delete_user_agent(agent_id):
 def get_group_agents_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1382,7 +1515,7 @@ def get_group_agents_route():
 def get_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1448,6 +1581,8 @@ def create_group_agent_route():
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
     except Exception as exc:
@@ -1522,6 +1657,8 @@ def update_group_agent_route(agent_id):
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
     except Exception as exc:
@@ -2059,6 +2196,10 @@ def add_agent():
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except Exception as e:
         log_event(f"Error adding agent: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to add agent.'}), 500
@@ -2199,6 +2340,10 @@ def edit_agent(agent_name):
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except Exception as e:
         log_event(f"Error editing agent: {e}", level=logging.ERROR, exceptionTraceback=True)
         return jsonify({'error': 'Failed to edit agent.'}), 500

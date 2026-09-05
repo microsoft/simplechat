@@ -233,7 +233,10 @@ function normalizeStreamHttpUrl(value) {
     }
 
     try {
-        const parsedUrl = new URL(rawUrl);
+        const localBase = rawUrl.startsWith('/') && !rawUrl.startsWith('//')
+            ? window.location.origin
+            : undefined;
+        const parsedUrl = new URL(rawUrl, localBase);
         if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
             return '';
         }

@@ -1,9 +1,7 @@
 // ActionsSection.tsx
 // Personal actions: the tools an agent is allowed to call.
 //
-// Listing and removal only. Each connector type has its own configuration -- endpoints,
-// credentials, query templates -- and there are more than twenty of them, so authoring
-// stays in the classic interface for now rather than being half-represented here.
+// Call agent authoring is native; unrelated connector editors remain in classic.
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -21,6 +19,8 @@ import {
     useSectionResource,
 } from '../../components/workspace/useSectionResource';
 import { deleteAction, fetchActions } from '../../lib/workspaceApi';
+import { PERSONAL_DELEGATION_SCOPE } from '../../lib/agentDelegation';
+import { AgentDelegationManager } from '../../components/agents/AgentDelegationManager';
 import type { WorkspaceAction } from '../../lib/types';
 
 /** Render a connector type as something readable: `document_search` -> `Document search`. */
@@ -28,6 +28,9 @@ export function actionTypeLabel(type: unknown): string {
     const raw = String(type ?? '').trim();
     if (!raw) {
         return 'Unknown';
+    }
+    if (raw === 'agent') {
+        return 'Call agent';
     }
     const spaced = raw.replace(/[_-]+/g, ' ');
     return spaced.charAt(0).toUpperCase() + spaced.slice(1);
@@ -41,13 +44,14 @@ export function ActionsSection({ agentsEnabled }: { agentsEnabled: boolean }) {
 
     const [query, setQuery] = useState('');
     const [busyId, setBusyId] = useState<string | null>(null);
+    const hasOtherActions = items.some((action) => action.type !== 'agent');
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
         if (!needle) {
-            return items;
+            return items.filter((action) => action.type !== 'agent');
         }
-        return items.filter((action) =>
+        return items.filter((action) => action.type !== 'agent' &&
             `${action.displayName ?? ''} ${action.name ?? ''} ${action.type ?? ''}`
                 .toLowerCase()
                 .includes(needle),
@@ -77,7 +81,7 @@ export function ActionsSection({ agentsEnabled }: { agentsEnabled: boolean }) {
             />
 
             <p className="text-xs text-text-3">
-                Adding and configuring actions is still done in the{' '}
+                Create and edit Call agent actions below. Other connectors are configured in the{' '}
                 <a href="/workspace" className="text-accent hover:underline">
                     classic workspace
                 </a>
@@ -93,6 +97,9 @@ export function ActionsSection({ agentsEnabled }: { agentsEnabled: boolean }) {
                 ) : null}
             </p>
 
+            <AgentDelegationManager scope={PERSONAL_DELEGATION_SCOPE} mode="actions" />
+
+            <h2 className="text-base font-semibold text-text-1">Other actions</h2>
             <SectionSearch value={query} onChange={setQuery} placeholder="Search actions" />
 
             <SectionList
@@ -101,10 +108,10 @@ export function ActionsSection({ agentsEnabled }: { agentsEnabled: boolean }) {
                 error={error}
                 emptyIcon={<Plug size={28} />}
                 emptyTitle={
-                    items.length === 0 ? 'No actions yet' : 'No actions match your search'
+                    !hasOtherActions ? 'No other actions yet' : 'No actions match your search'
                 }
                 emptyDescription={
-                    items.length === 0
+                    !hasOtherActions
                         ? 'Actions let an agent reach a system outside this chat.'
                         : undefined
                 }

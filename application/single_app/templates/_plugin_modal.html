@@ -672,6 +672,56 @@
             </div>
           </div>
 
+          <div id="agent-config-section" class="d-none">
+            <div class="alert alert-info mb-3">
+              <strong>Call agent action:</strong> Delegate a task to one explicitly selected agent in this workspace.
+              Only the task and context you provide are shared with it, not the full conversation or these instructions.
+              Nested calls are limited to 3 delegation levels and 10 delegated calls per turn, with a 120 second limit per call;
+              direct and indirect self-calls are always blocked.
+            </div>
+
+            <div class="simplechat-config-card mb-0">
+              <div class="config-section-label">
+                <i class="bi bi-diagram-3 me-2"></i>Target Agent
+              </div>
+
+              <div class="mb-3">
+                <label for="agent-target-search" class="form-label">Search agents</label>
+                <input type="search" class="form-control" id="agent-target-search" placeholder="Search by name or description..." autocomplete="off" />
+                <div class="form-text">Only agents you are permitted to call from this workspace are shown.</div>
+              </div>
+
+              <div id="agent-target-loading" class="d-flex align-items-center gap-2 text-muted small mb-2 d-none">
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span>Loading available agents...</span>
+              </div>
+
+              <div id="agent-target-error" class="alert alert-danger py-2 px-3 small d-none" role="alert"></div>
+
+              <div id="agent-target-empty" class="alert alert-secondary py-2 px-3 small d-none" role="alert">
+                No eligible agents are available to call from this workspace.
+              </div>
+
+              <div id="agent-target-unavailable" class="alert alert-warning py-2 px-3 small d-none" role="alert"></div>
+
+              <div id="agent-target-list" class="list-group agent-target-list mb-3 d-none" style="max-height: 260px; overflow-y: auto;" role="listbox" aria-label="Available agents"></div>
+
+              <div id="agent-target-selected-summary" class="border rounded p-3 bg-light d-none">
+                <div class="d-flex justify-content-between align-items-start">
+                  <div>
+                    <div class="fw-semibold" id="agent-target-selected-name">-</div>
+                    <div class="text-muted small" id="agent-target-selected-description"></div>
+                    <div class="mt-1">
+                      <span class="badge bg-secondary me-1" id="agent-target-selected-type-badge"></span>
+                      <span class="badge bg-info text-dark" id="agent-target-selected-scope-badge"></span>
+                    </div>
+                  </div>
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="agent-target-change-btn">Change</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div id="mcp-config-section" class="d-none">
             <div class="alert alert-info mb-3">
               <strong>MCP action:</strong> Connect to a Model Context Protocol server and expose selected server tools to agents through Semantic Kernel.
@@ -2426,6 +2476,36 @@
             </div>
           </div>
 
+          <div class="card mb-3 border-0 shadow-sm" id="summary-agent-section" style="display: none;">
+            <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #6f42c1 0%, #4b2e83 100%);">
+              <h6 class="mb-0 fw-bold">
+                <i class="bi bi-diagram-3 me-2"></i>Call Agent Target
+              </h6>
+            </div>
+            <div class="card-body p-3">
+              <div class="row g-3">
+                <div class="col-12">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Target Agent</label>
+                    <span class="fw-medium" id="summary-agent-target-name">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Agent Type</label>
+                    <span class="fw-medium" id="summary-agent-target-type">-</span>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="d-flex flex-column">
+                    <label class="text-muted small mb-1">Workspace</label>
+                    <span class="fw-medium" id="summary-agent-target-scope">-</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="card mb-3 border-0 shadow-sm" id="summary-document-search-section" style="display: none;">
             <div class="card-header text-white p-3" style="background: linear-gradient(135deg, #198754 0%, #146c43 100%);">
               <h6 class="mb-0 fw-bold">
@@ -2644,6 +2724,22 @@
   font-size: 0.875rem;
   color: #6c757d;
   margin-bottom: 0;
+}
+
+/* Call agent target picker */
+.agent-target-list .list-group-item {
+  cursor: pointer;
+}
+
+.agent-target-list .list-group-item.active {
+  border-color: #0d6efd;
+  background-color: #e7f1ff;
+  color: inherit;
+}
+
+.agent-target-list .list-group-item[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 /* OpenAPI configuration styling */

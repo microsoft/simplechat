@@ -84,6 +84,20 @@ const ACTION_CONNECTION_TEST_CONFIG = {
 };
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
+// Call agent action: one explicitly selected target, never a discoverable/dynamic endpoint.
+const AGENT_PLUGIN_TYPE = 'agent';
+const AGENT_DEFAULT_ENDPOINT = 'internal://agent';
+const AGENT_TYPE_LABELS = {
+  local: 'Local (Semantic Kernel)',
+  aifoundry: 'Foundry (classic)',
+  new_foundry: 'New Foundry',
+  foundry_workflow: 'Foundry Workflow'
+};
+const AGENT_SCOPE_LABELS = {
+  personal: 'Personal',
+  group: 'Group',
+  global: 'Global'
+};
 const MSGRAPH_DEFAULT_ENDPOINT = 'https://graph.microsoft.com';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL = 'draft_manual';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED = 'draft_delayed';
@@ -366,6 +380,12 @@ export class PluginModalStepper {
     this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
+    // Call agent target picker state: cached catalogue per scope plus the single selected reference.
+    this.selectedAgentTarget = null;
+    this.agentTargetsCache = {};
+    this.agentTargetsLoaded = {};
+    this._agentTargetsRaw = [];
+    this._agentTargetEventsBound = false;
     this.mcpServerPresets = MCP_FALLBACK_SERVER_PRESETS;
     this.mcpServerPresetMap = {};
     this.mcpDefaultServerPreset = MCP_DEFAULT_SERVER_PROFILE;
@@ -1393,6 +1413,10 @@ export class PluginModalStepper {
     return !!(type && type.toLowerCase() === 'chart');
   }
 
+  isAgentType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === AGENT_PLUGIN_TYPE);
+  }
+
   getDefaultSimpleChatCapabilities() {
     const defaults = {};
     SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
@@ -1852,6 +1876,300 @@ export class PluginModalStepper {
 
   getSelectedChartCapabilities() {
     return this.normalizeChartCapabilities(this.chartCapabilityState);
+  }
+
+  // --- Call agent target picker -------------------------------------------------
+  // The picker never accepts a free-form endpoint, credential, or identity. It only
+  // lets the user choose one target from the server-authorized catalogue, and the
+  // runtime re-validates that reference again immediately before invocation.
+
+  formatAgentTypeLabel(agentType) {
+    return AGENT_TYPE_LABELS[agentType] || 'Local (Semantic Kernel)';
+  }
+
+  formatAgentScopeLabel(scopeType) {
+    return AGENT_SCOPE_LABELS[scopeType] || 'Personal';
+  }
+
+  getAgentTargetScope() {
+    const scope = this.actionIdentityScope?.scope || 'personal';
+    if (scope === 'global' || window.location.pathname.includes('admin')) {
+      return 'global';
+    }
+    if (scope === 'group') {
+      return 'group';
+    }
+    return 'personal';
+  }
+
+  getAgentTargetsEndpoint() {
+    const params = new URLSearchParams({ scope: this.getAgentTargetScope() });
+    return `/api/plugins/agent-targets?${params.toString()}`;
+  }
+
+  renderAgentConfiguration() {
+    this.bindAgentTargetEvents();
+    this.fetchAgentTargets();
+  }
+
+  bindAgentTargetEvents() {
+    if (this._agentTargetEventsBound) {
+      return;
+    }
+    this._agentTargetEventsBound = true;
+
+    const searchInput = document.getElementById('agent-target-search');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        this.renderAgentTargetList(this._agentTargetsRaw || []);
+      });
+    }
+
+    const changeBtn = document.getElementById('agent-target-change-btn');
+    if (changeBtn) {
+      changeBtn.addEventListener('click', () => {
+        this.selectedAgentTarget = null;
+        this.applyAgentTargetSelectionState();
+        searchInput?.focus();
+      });
+    }
+  }
+
+  setAgentTargetLoading(isLoading) {
+    const loadingEl = document.getElementById('agent-target-loading');
+    if (loadingEl) {
+      loadingEl.classList.toggle('d-none', !isLoading);
+    }
+  }
+
+  setAgentTargetError(message) {
+    const errorEl = document.getElementById('agent-target-error');
+    if (!errorEl) {
+      return;
+    }
+    if (message) {
+      errorEl.textContent = message;
+      errorEl.classList.remove('d-none');
+    } else {
+      errorEl.textContent = '';
+      errorEl.classList.add('d-none');
+    }
+  }
+
+  async fetchAgentTargets(forceReload = false) {
+    const scope = this.getAgentTargetScope();
+
+    if (!forceReload && this.agentTargetsLoaded[scope]) {
+      this.renderAgentTargetList(this.agentTargetsCache[scope] || []);
+      return;
+    }
+
+    this.setAgentTargetLoading(true);
+    this.setAgentTargetError('');
+
+    try {
+      const response = await fetch(this.getAgentTargetsEndpoint());
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to load available agents.');
+      }
+
+      const targets = Array.isArray(payload.targets) ? payload.targets : [];
+      this.agentTargetsCache[scope] = targets;
+      this.agentTargetsLoaded[scope] = true;
+      this.renderAgentTargetList(targets);
+    } catch (error) {
+      console.error('Error loading agent targets:', error);
+      this.setAgentTargetError(error.message || 'Unable to load available agents.');
+      this.renderAgentTargetList([]);
+    } finally {
+      this.setAgentTargetLoading(false);
+    }
+  }
+
+  renderAgentTargetList(targets) {
+    this._agentTargetsRaw = Array.isArray(targets) ? targets : [];
+
+    const listEl = document.getElementById('agent-target-list');
+    const emptyEl = document.getElementById('agent-target-empty');
+    if (!listEl || !emptyEl) {
+      return;
+    }
+
+    const searchTerm = (document.getElementById('agent-target-search')?.value || '').trim().toLowerCase();
+    const filtered = searchTerm
+      ? this._agentTargetsRaw.filter(target => {
+        const name = String(target.display_name || target.name || '').toLowerCase();
+        const description = String(target.description || '').toLowerCase();
+        return name.includes(searchTerm) || description.includes(searchTerm);
+      })
+      : this._agentTargetsRaw;
+
+    listEl.innerHTML = '';
+
+    if (!this._agentTargetsRaw.length) {
+      listEl.classList.add('d-none');
+      emptyEl.textContent = 'No eligible agents are available to call from this workspace.';
+      emptyEl.classList.remove('d-none');
+      this.applyAgentTargetSelectionState();
+      return;
+    }
+
+    if (!filtered.length) {
+      listEl.classList.add('d-none');
+      emptyEl.textContent = 'No agents match your search.';
+      emptyEl.classList.remove('d-none');
+      this.applyAgentTargetSelectionState();
+      return;
+    }
+
+    emptyEl.classList.add('d-none');
+    listEl.classList.remove('d-none');
+
+    filtered.forEach(target => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'list-group-item list-group-item-action';
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', 'false');
+      item.dataset.targetId = target.id || '';
+      item.dataset.scopeType = target.scope_type || '';
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'fw-semibold';
+      nameEl.textContent = target.display_name || target.name || target.id || 'Untitled agent';
+      item.appendChild(nameEl);
+
+      if (target.description) {
+        const descEl = document.createElement('div');
+        descEl.className = 'text-muted small';
+        descEl.textContent = target.description;
+        item.appendChild(descEl);
+      }
+
+      const badgeRow = document.createElement('div');
+      badgeRow.className = 'mt-1';
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'badge bg-secondary me-1';
+      typeBadge.textContent = this.formatAgentTypeLabel(target.agent_type);
+      badgeRow.appendChild(typeBadge);
+
+      const scopeBadge = document.createElement('span');
+      scopeBadge.className = 'badge bg-info text-dark';
+      scopeBadge.textContent = this.formatAgentScopeLabel(target.scope_type);
+      badgeRow.appendChild(scopeBadge);
+
+      item.appendChild(badgeRow);
+
+      item.addEventListener('click', () => this.selectAgentTarget(target));
+      listEl.appendChild(item);
+    });
+
+    this.applyAgentTargetSelectionState();
+  }
+
+  selectAgentTarget(target) {
+    if (!target || !target.id) {
+      return;
+    }
+    this.selectedAgentTarget = {
+      id: target.id,
+      scope_type: target.scope_type,
+      scope_id: target.scope_id
+    };
+    this.applyAgentTargetSelectionState();
+  }
+
+  applyAgentTargetSelectionState() {
+    const listEl = document.getElementById('agent-target-list');
+    const selected = this.selectedAgentTarget;
+
+    if (listEl) {
+      Array.from(listEl.children).forEach(item => {
+        const matches = !!selected
+          && item.dataset.targetId === selected.id
+          && item.dataset.scopeType === selected.scope_type;
+        item.classList.toggle('active', matches);
+        item.setAttribute('aria-selected', matches ? 'true' : 'false');
+      });
+    }
+
+    const summaryEl = document.getElementById('agent-target-selected-summary');
+    const unavailableEl = document.getElementById('agent-target-unavailable');
+
+    if (!selected) {
+      if (summaryEl) {
+        summaryEl.classList.add('d-none');
+      }
+      if (unavailableEl) {
+        unavailableEl.classList.add('d-none');
+      }
+      return;
+    }
+
+    const match = (this._agentTargetsRaw || []).find(target => (
+      target.id === selected.id && target.scope_type === selected.scope_type
+    ));
+
+    if (match) {
+      if (unavailableEl) {
+        unavailableEl.classList.add('d-none');
+      }
+      this.showAgentTargetSummary(match);
+      return;
+    }
+
+    // The stored reference is preserved (never cleared) so an existing binding is
+    // not silently dropped while the catalogue is loading or the target is denied.
+    if (summaryEl) {
+      summaryEl.classList.add('d-none');
+    }
+    if (unavailableEl) {
+      const scope = this.getAgentTargetScope();
+      unavailableEl.textContent = this.agentTargetsLoaded[scope]
+        ? `The previously selected agent (ID: ${selected.id}) is unavailable, disabled, or you are no longer permitted to call it. Select a different agent, or leave this action unchanged to keep the existing reference.`
+        : 'Checking the previously selected agent...';
+      unavailableEl.classList.remove('d-none');
+    }
+  }
+
+  showAgentTargetSummary(target) {
+    const summaryEl = document.getElementById('agent-target-selected-summary');
+    if (!summaryEl) {
+      return;
+    }
+
+    const nameEl = document.getElementById('agent-target-selected-name');
+    const descriptionEl = document.getElementById('agent-target-selected-description');
+    const typeBadgeEl = document.getElementById('agent-target-selected-type-badge');
+    const scopeBadgeEl = document.getElementById('agent-target-selected-scope-badge');
+
+    if (nameEl) {
+      nameEl.textContent = target.display_name || target.name || target.id;
+    }
+    if (descriptionEl) {
+      descriptionEl.textContent = target.description || '';
+    }
+    if (typeBadgeEl) {
+      typeBadgeEl.textContent = this.formatAgentTypeLabel(target.agent_type);
+    }
+    if (scopeBadgeEl) {
+      scopeBadgeEl.textContent = this.formatAgentScopeLabel(target.scope_type);
+    }
+
+    summaryEl.classList.remove('d-none');
+  }
+
+  getSelectedAgentTargetPayload() {
+    if (!this.selectedAgentTarget || !this.selectedAgentTarget.id) {
+      throw new Error('Select an agent to call before saving this action.');
+    }
+    return {
+      id: this.selectedAgentTarget.id,
+      scope_type: this.selectedAgentTarget.scope_type,
+      scope_id: this.selectedAgentTarget.scope_id
+    };
   }
 
   getDefaultBlobStorageCapabilities() {
@@ -3524,7 +3842,7 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type);
+    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type) || this.isAgentType(type);
   }
 
   showConfigSectionForType() {
@@ -3545,7 +3863,8 @@ export class PluginModalStepper {
       mcp: document.getElementById('mcp-config-section'),
       azureMaps: document.getElementById('azure-maps-config-section'),
       logAnalytics: document.getElementById('log-analytics-config-section'),
-      chart: document.getElementById('chart-config-section')
+      chart: document.getElementById('chart-config-section'),
+      agent: document.getElementById('agent-config-section')
     };
 
     const showOnly = (sectionKey) => {
@@ -3605,6 +3924,9 @@ export class PluginModalStepper {
     } else if (this.isChartType()) {
       showOnly('chart');
       this.renderChartConfiguration();
+    } else if (this.isAgentType()) {
+      showOnly('agent');
+      this.renderAgentConfiguration();
     } else {
       showOnly('generic');
     }
@@ -3674,6 +3996,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Log Analytics Configuration';
         } else if (isChartType) {
           titleEl.textContent = 'Chart Configuration';
+        } else if (this.isAgentType()) {
+          titleEl.textContent = 'Call Agent Configuration';
         } else {
           titleEl.textContent = 'Configuration';
         }
@@ -3862,6 +4186,7 @@ export class PluginModalStepper {
         const azureMapsSection = document.getElementById('azure-maps-config-section');
         const chartSection = document.getElementById('chart-config-section');
         const logAnalyticsSection = document.getElementById('log-analytics-config-section');
+        const agentSection = document.getElementById('agent-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
@@ -3878,6 +4203,7 @@ export class PluginModalStepper {
         const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
         const isChartVisible = !chartSection.classList.contains('d-none');
         const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
+        const isAgentVisible = !!agentSection && !agentSection.classList.contains('d-none');
 
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -4429,6 +4755,11 @@ export class PluginModalStepper {
           const capabilityValues = Object.values(this.getSelectedChartCapabilities());
           if (!capabilityValues.some(Boolean)) {
             this.showError('Enable at least one chart type before continuing.');
+            return false;
+          }
+        } else if (isAgentVisible) {
+          if (!this.selectedAgentTarget || !this.selectedAgentTarget.id) {
+            this.showError('Select an agent to call before continuing.');
             return false;
           }
         } else if (isDocumentSearchVisible) {
@@ -6395,6 +6726,13 @@ export class PluginModalStepper {
     } else if (this.isChartType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setChartCapabilities(additionalFields.chart_capabilities || plugin.chart_capabilities || null);
+    } else if (this.isAgentType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      const targetAgent = additionalFields.target_agent || null;
+      this.selectedAgentTarget = (targetAgent && targetAgent.id && targetAgent.scope_type && targetAgent.scope_id)
+        ? { id: targetAgent.id, scope_type: targetAgent.scope_type, scope_id: targetAgent.scope_id }
+        : null;
+      this.applyAgentTargetSelectionState();
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -6715,6 +7053,10 @@ export class PluginModalStepper {
       endpoint = CHART_DEFAULT_ENDPOINT;
       auth.type = 'user';
       additionalFields.chart_capabilities = this.getSelectedChartCapabilities();
+    } else if (this.isAgentType()) {
+      endpoint = AGENT_DEFAULT_ENDPOINT;
+      auth.type = 'user';
+      additionalFields.target_agent = this.getSelectedAgentTargetPayload();
     } else {
       // Collect generic plugin data
       console.log("Collecting generic plugin data");
@@ -6825,6 +7167,7 @@ export class PluginModalStepper {
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
     const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
     const isRocksDbType = this.isRocksDbType();
+    const isAgentType = this.isAgentType();
 
     if (isSqlType) {
       // Hide endpoint for SQL plugins since they don't use endpoints
@@ -6897,6 +7240,10 @@ export class PluginModalStepper {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Built-in chart action';
       databaseTypeRow.style.display = '';
+    } else if (isAgentType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Call agent action';
+      databaseTypeRow.style.display = '';
     } else {
       // Show endpoint for non-SQL plugins (OpenAPI, generic, etc.)
       const endpoint = this.getEndpointValue();
@@ -6919,10 +7266,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType) {
+    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -6941,6 +7288,7 @@ export class PluginModalStepper {
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
     this.populateChartSummary();
+    this.populateAgentSummary();
     this.populateAdvancedSummary();
     this.populateChangesSummary();
   }
@@ -6997,6 +7345,8 @@ export class PluginModalStepper {
       return MSGRAPH_DEFAULT_ENDPOINT;
     } else if (isChartType) {
       return CHART_DEFAULT_ENDPOINT;
+    } else if (this.isAgentType()) {
+      return AGENT_DEFAULT_ENDPOINT;
     } else {
       return document.getElementById('plugin-endpoint-generic').value.trim();
     }
@@ -7071,6 +7421,8 @@ export class PluginModalStepper {
       }
       return this.formatAuthType(document.getElementById('log-analytics-auth-method')?.value || 'identity');
     } else if (isChartType) {
+      return 'User';
+    } else if (this.isAgentType()) {
       return 'User';
     } else {
       const authType = document.getElementById('plugin-auth-type-generic').value;
@@ -7572,6 +7924,42 @@ export class PluginModalStepper {
     enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
     disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
     chartSection.style.display = '';
+  }
+
+  populateAgentSummary() {
+    const agentSection = document.getElementById('summary-agent-section');
+    const nameEl = document.getElementById('summary-agent-target-name');
+    const typeEl = document.getElementById('summary-agent-target-type');
+    const scopeEl = document.getElementById('summary-agent-target-scope');
+    if (!agentSection || !nameEl || !typeEl || !scopeEl) {
+      return;
+    }
+
+    if (!this.isAgentType()) {
+      agentSection.style.display = 'none';
+      return;
+    }
+
+    const selected = this.selectedAgentTarget;
+    const match = selected
+      ? (this._agentTargetsRaw || []).find(target => target.id === selected.id && target.scope_type === selected.scope_type)
+      : null;
+
+    if (!selected) {
+      nameEl.textContent = 'No agent selected';
+      typeEl.textContent = '-';
+      scopeEl.textContent = '-';
+    } else if (match) {
+      nameEl.textContent = match.display_name || match.name || match.id;
+      typeEl.textContent = this.formatAgentTypeLabel(match.agent_type);
+      scopeEl.textContent = this.formatAgentScopeLabel(match.scope_type);
+    } else {
+      nameEl.textContent = `Unavailable agent (ID: ${selected.id})`;
+      typeEl.textContent = '-';
+      scopeEl.textContent = this.formatAgentScopeLabel(selected.scope_type);
+    }
+
+    agentSection.style.display = '';
   }
 
   populateSqlOptionalSetting(inputId, summaryId, rowId) {
@@ -8195,6 +8583,8 @@ export class PluginModalStepper {
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
     this.renderBlobStorageConfiguration();
+    this.selectedAgentTarget = null;
+    this.applyAgentTargetSelectionState();
     this.clearKeyVaultReminderForm();
 
     // Clear any type selection

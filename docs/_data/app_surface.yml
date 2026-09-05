@@ -5,7 +5,7 @@ counts:
   admin_groups: 15
   admin_tabs: 47
   admin_sections: 108
-  actions: 27
+  actions: 28
   chat_controls: 47
   sub_elements: 3
   app_pages: 28
@@ -906,6 +906,9 @@ admin_sections:
   tab: chat-experience
   group: chat
 actions:
+- slug: agent
+  module: agent_plugin.py
+  class_name: AgentPlugin
 - slug: azure-maps-openlayers
   module: azure_maps_openlayers_plugin.py
   class_name: AzureMapsOpenLayersPlugin

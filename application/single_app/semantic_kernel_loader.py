@@ -8,6 +8,7 @@ Loader for Semantic Kernel plugins/actions from app settings.
 import logging
 import builtins
 import os
+from agent_execution_context import execution_user_id as get_execution_user_id
 from openai import AsyncOpenAI
 from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
 from agent_orchestrator_groupchat import OrchestratorAgent, SCGroupChatManager
@@ -300,7 +301,7 @@ def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
         return endpoint
     return settings.get("azure_ai_foundry_endpoint") or os.getenv("AZURE_AI_AGENT_ENDPOINT")
 
-def resolve_agent_config(agent, settings, group_scope_id=None):
+def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id=None):
     debug_print(f"[SK_LOADER] resolve_agent_config called for agent: {agent.get('name')}")
     debug_print(f"[SK_LOADER] Agent config: {agent}")
     debug_print(f"[SK_LOADER] Agent is_global flag: {agent.get('is_global')}")
@@ -357,7 +358,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         if persisted_group_id:
             return persisted_group_id
 
-        scope_user_id = get_current_user_id_or_none()
+        scope_user_id = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
         if not scope_user_id:
             debug_print("[SK_LOADER] No request-scoped user available while resolving group endpoint scope.")
             log_event(
@@ -539,7 +540,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
-                endpoint_user_id = get_current_user_id_or_none()
+                endpoint_user_id = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
                 if endpoint_user_id:
                     user_settings = get_user_settings(endpoint_user_id)
                     endpoints.extend([
@@ -659,7 +660,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
-                endpoint_user_id = get_current_user_id_or_none()
+                endpoint_user_id = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
                 if endpoint_user_id:
                     user_settings = get_user_settings(endpoint_user_id)
                     endpoints.extend([
@@ -1117,6 +1118,11 @@ def load_core_plugins_only(kernel: Kernel, settings):
         log_event(f"[SK_LOADER] Failed to load Conversation Charts plugin: {e}", level=logging.WARNING)
 
 # =================== Semantic Kernel Initialization ===================
+def load_agent_core_plugins(kernel: Kernel, settings):
+    """Load the normal enabled agent core tools without any stored action manifests."""
+    load_plugins_for_kernel(kernel, [], settings, mode_label="agent-core")
+
+
 def initialize_semantic_kernel(user_id: str=None, redis_client=None):
     debug_print(f"[SK_LOADER] Initializing Semantic Kernel and plugins...")
     log_event(
@@ -1204,7 +1210,7 @@ def _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.
     return filter_governed_global_actions_for_user(user_id, global_manifests)
 
 
-def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None):
+def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="global", user_id=None, group_id=None, agent_other_settings=None, allow_agent_actions=False):
     """
     Load specific plugins by name for an agent with enhanced logging.
     
@@ -1257,7 +1263,8 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
         # Check both 'name' and 'id' fields to support both UUID and name references
         plugin_manifests = [
             p for p in all_plugin_manifests 
-            if p.get('name') in plugin_names or p.get('id') in plugin_names
+            if (p.get('type') != 'agent' or allow_agent_actions)
+            and (p.get('id') in plugin_names or (p.get('type') != 'agent' and p.get('name') in plugin_names))
         ]
 
         plugin_manifests = _apply_agent_plugin_runtime_overlays(
@@ -1353,7 +1360,11 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
             else:
                 all_plugin_manifests = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
 
-            plugin_manifests = [p for p in all_plugin_manifests if p.get('name') in plugin_names or p.get('id') in plugin_names]
+            plugin_manifests = [
+                p for p in all_plugin_manifests
+                if (p.get('type') != 'agent' or allow_agent_actions)
+                and (p.get('id') in plugin_names or (p.get('type') != 'agent' and p.get('name') in plugin_names))
+            ]
             plugin_manifests = _apply_agent_plugin_runtime_overlays(
                 plugin_manifests,
                 agent_other_settings=agent_other_settings,
@@ -1380,7 +1391,7 @@ def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=
     overlaid_manifests = []
     for manifest in plugin_manifests or []:
         manifest_copy = dict(manifest)
-        if group_id and not manifest_copy.get('group_id'):
+        if group_id and manifest_copy.get('type') != 'agent' and not manifest_copy.get('group_id'):
             manifest_copy['default_group_id'] = group_id
 
         if manifest_copy.get('type') == SIMPLECHAT_PLUGIN_TYPE:
@@ -1775,7 +1786,25 @@ def _extract_cosmos_context_for_instructions(kernel) -> str:
     return "\n\n".join(cosmos_parts)
 
 
-def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None):
+def _has_agent_delegation_actions(agent_cfg, settings, user_id):
+    """Identify opt-in bindings without constructing or resolving any target."""
+    action_ids = agent_cfg.get("actions_to_load") or []
+    if not action_ids:
+        return False
+    if agent_cfg.get("is_global"):
+        manifests = _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
+    elif agent_cfg.get("is_group"):
+        manifests = _get_governed_group_plugin_manifests(user_id, agent_cfg.get("group_id"), return_type=SecretReturnType.NAME)
+    elif user_id:
+        manifests = _get_governed_personal_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
+    else:
+        return False
+    if not agent_cfg.get("is_global") and settings.get("merge_global_semantic_kernel_with_workspace"):
+        manifests = list(manifests) + _get_governed_global_plugin_manifests(user_id, return_type=SecretReturnType.NAME)
+    return any(manifest.get("type") == "agent" and manifest.get("id") in action_ids for manifest in manifests)
+
+
+def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis_client=None, mode_label="global", group_scope_id=None, execution_user_id=None):
     """
     DRY helper to load a single agent (default agent) for the kernel.
     - context_obj: g (per-user) or builtins (global)
@@ -1790,7 +1819,12 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     if mode_label == "per-user":
         context_obj.redis_client = redis_client
     agent_objs = {}
-    agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id)
+    resolved_execution_user = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
+    delegation_enabled = _has_agent_delegation_actions(agent_cfg, settings, resolved_execution_user)
+    if delegation_enabled:
+        kernel = Kernel()
+        load_agent_core_plugins(kernel, settings)
+    agent_config = resolve_agent_config(agent_cfg, settings, group_scope_id=group_scope_id, execution_user_id=execution_user_id)
     agent_type = (agent_config.get("agent_type") or agent_cfg.get("agent_type") or "local").lower()
     service_id = f"aoai-chat-{agent_config['name']}"
     chat_service = None
@@ -1938,7 +1972,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             else:
                 plugin_mode = mode_label
 
-            resolved_user_id = get_current_user_id_or_none()
+            resolved_user_id = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
             group_id = agent_config.get("group_id") if agent_is_group else None
             print(f"[SK_LOADER] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
             load_agent_specific_plugins(
@@ -1949,6 +1983,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
                 user_id=resolved_user_id,
                 group_id=group_id,
                 agent_other_settings=agent_config.get("other_settings"),
+                allow_agent_actions=delegation_enabled,
             )
 
             # Auto-inject SQL database schema into agent instructions if SQL plugins are loaded
@@ -2206,6 +2241,8 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     """
     DRY helper to load plugins from a manifest list (user or global).
     """
+    # Agent actions are opt-in bindings, never blanket/global capabilities.
+    plugin_manifests = [p for p in plugin_manifests if p.get("type") != "agent"]
     if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name"):
         try:
             plugin_manifests = [resolve_key_vault_secrets_in_plugins(p, settings) for p in plugin_manifests]
@@ -2303,7 +2340,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     
     # Use the logged plugin loader for custom plugins
     try:
-        user_id = get_current_user_id_or_none()
+        user_id = get_execution_user_id() or get_current_user_id_or_none()
         
         # Load plugins with enhanced logging
         results = logged_loader.load_multiple_plugins(plugin_manifests, user_id)
@@ -2344,6 +2381,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
         discovered_plugins = discover_plugins()
         for manifest in plugin_manifests:
             plugin_type = manifest.get('type')
+            if plugin_type == 'agent':
+                continue
             name = manifest.get('name')
             description = manifest.get('description', '')
             # Normalize for matching

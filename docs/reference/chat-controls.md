@@ -24,6 +24,14 @@ Use this page when you can see a control in Chat but are not sure what it does o
 
 ## Conversation header and status
 
+### Foundry sign-in requests
+
+From version **0.261.093**, when a called Foundry agent needs delegated sign-in
+or consent, the chat error notice offers **Sign in or grant Foundry access**.
+The link opens an authenticated, same-app preparation request before redirecting
+to Entra, so the OAuth callback receives the required scopes even when the error
+arrived during streaming. After granting access, send the message again.
+
 {% include media.html src="reference/chat-controls-conversation-header.png" alt="Conversation header with title actions, scope lock, workflow activity, contents, and document buttons visible." title="Conversation header" capture="Capture the conversation header with title actions, scope lock, workflow activity, contents, and document buttons visible. Redact conversation title." %}
 
 | Control | What it does | Why you would use it | Enabled by |

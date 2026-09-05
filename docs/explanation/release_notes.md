@@ -2,6 +2,30 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.095)**
+
+#### New Features
+
+*   **Agents Can Call Explicitly Selected Specialists**
+    *   Create a **Call agent** action, choose a local or Foundry-backed target, and attach it to a local agent. The caller supplies a task and relevant context, receives the specialist's result, and continues its own answer without automatically sharing the whole conversation.
+    *   Targets retain their own instructions, model configuration, authorized knowledge, and tools. Calls stay in the same workspace or use permitted global agents, with access checked again when each call runs.
+    *   Nested delegation is bounded by **3 levels, 10 delegated attempts per root turn, and 120 seconds per call**. Self-calls and loops are blocked; cancellation preserves completed child citations and observed usage.
+    *   Delegation works in ordinary and streaming chat, agent workflows, and V2 orchestration. Foundry-backed agents are callable targets; their own tools remain configured in Foundry.
+    *   (Ref: `functions_agent_delegation.py`, `agent_delegation_runtime.py`, `semantic_kernel_plugins/agent_plugin.py`, [Agent Delegation Actions](features/AGENT_DELEGATION_ACTION.md))
+
+#### User Interface Enhancements
+
+*   **Configure Agent Calls In Classic And V2**
+    *   Both interfaces provide scoped target selection and action attachment for personal, group, and global agents. V2 adds focused controls rather than requiring a trip to classic for Call agent configuration.
+    *   V2 supports confirmed deletion of owned Call agent actions, preserves unrelated bindings and configuration, and reports conflicting edits instead of overwriting them. Selecting a group for configuration does not switch the active workspace.
+    *   (Ref: `plugin_modal_stepper.js`, `agent_modal_stepper.js`, `components/agents/AgentDelegationManager.tsx`, `pages/GroupAgentDelegationPage.tsx`, [Call Another Agent](../guides/call-another-agent.md))
+
+#### Bug Fixes
+
+*   **Group Workflow Agents Use The Run Actor's Permissions**
+    *   A manually started group workflow now authorizes agent calls as the authenticated member running it, rather than inheriting the workflow creator's access. Scheduled runs without an interactive actor retain the workflow owner's execution identity.
+    *   (Ref: `functions_workflow_runner.py` workflow execution identity capture and agent execution contexts)
+
 ### **(v0.261.092)**
 
 #### New Features

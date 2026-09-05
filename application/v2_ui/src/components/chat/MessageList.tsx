@@ -828,6 +828,7 @@ export function MessageList() {
         streaming,
         streamingContent,
         streamError,
+        streamAuthUrl,
         activeConversationId,
     } = useChatStore();
     const appTitle = useBootstrapStore((state) => state.data?.branding?.app_title);
@@ -999,11 +1000,23 @@ export function MessageList() {
 
                 {streamError && (
                     <GlassPanel
+                        role="alert"
                         elevation="flat"
                         className="flex items-start gap-2 p-3 text-sm text-danger"
                     >
                         <TriangleAlert size={16} className="mt-0.5 shrink-0" />
-                        <span>{streamError}</span>
+                        <div className="min-w-0 space-y-2 break-words">
+                            <p>{streamError}</p>
+                            {streamAuthUrl ? (
+                                <>
+                                    <a href={streamAuthUrl} target="_blank" rel="noopener noreferrer"
+                                        className="inline-block text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                                        Sign in or grant Foundry access
+                                    </a>
+                                    <p className="text-text-2">After signing in, return to this chat and retry your message. It will not retry automatically.</p>
+                                </>
+                            ) : null}
+                        </div>
                     </GlassPanel>
                 )}
             </div>

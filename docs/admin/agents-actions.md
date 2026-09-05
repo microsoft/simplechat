@@ -152,6 +152,24 @@ than here.
 
 ## Actions {#actions}
 
+### Calling another agent
+
+From version **0.261.093**, a local agent can use a **Call agent** action to
+delegate to an explicitly configured local or Foundry-backed specialist.
+Creating and attaching the action is the opt-in; it uses existing agent/action
+permissions and governance rather than a separate orchestration toggle.
+
+Calls stay in the same personal or group workspace, with permitted global
+agents available when global merging is enabled. Global actions target global
+agents only. Runtime checks do not trust the permissions held by the person who
+originally configured an action.
+
+Classic and V2 both provide focused authoring and attachment controls for
+personal, group, and global agents. V2 global resource changes use agent/action
+APIs independently of the Admin Settings save bar. See
+[Call another agent]({{ '/guides/call-another-agent/' | relative_url }}) for the
+workflow, context-sharing rules, and execution limits.
+
 ### Document Actions {#document-action-capabilities-card}
 
 **Analyze** and **Document Comparison** appear in the **Action** menu in chat and

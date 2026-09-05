@@ -94,6 +94,10 @@ def _format_math_content(invocation, actor_label, parameters):
 def _format_plugin_content(invocation, actor_label, parameters):
     plugin_name = getattr(invocation, 'plugin_name', '')
     function_name = getattr(invocation, 'function_name', '')
+    provenance = getattr(invocation, 'provenance', None) or {}
+    if plugin_name == 'AgentPlugin':
+        label = provenance.get('target_label') or 'configured agent'
+        return f"{actor_label} called {label}{_format_duration_suffix(invocation)}{_format_success_suffix(invocation)}"
 
     if plugin_name == 'WaitPlugin' and function_name == 'wait':
         return _format_wait_content(invocation, actor_label, parameters)
@@ -138,16 +142,19 @@ def _build_plugin_activity_payload(invocation_or_start, state):
     plugin_name = getattr(invocation_or_start, 'plugin_name', '')
     function_name = getattr(invocation_or_start, 'function_name', '')
     invocation_id = getattr(invocation_or_start, 'invocation_id', None)
+    provenance = getattr(invocation_or_start, 'provenance', None) or {}
+    title = f"Call agent: {provenance.get('target_label') or 'configured agent'}" if plugin_name == 'AgentPlugin' else f'{plugin_name}.{function_name}'
     return {
         'activity_key': invocation_id or f'{plugin_name}.{function_name}',
         'kind': 'tool_invocation',
-        'title': f'{plugin_name}.{function_name}',
+        'title': title,
         'status': state,
         'state': state,
         'lane_key': plugin_name or 'tool',
         'lane_label': plugin_name or 'Tool',
         'plugin_name': plugin_name,
         'function_name': function_name,
+        'delegation': provenance or None,
     }
 
 
@@ -161,9 +168,11 @@ def format_plugin_invocation_start_thought(invocation_start):
         for parameter_name, parameter_value in parameters.items()
         if parameter_name not in EXCLUDED_PARAMETER_NAMES and _format_value(parameter_value, max_length=80) is not None
     )
+    provenance = getattr(invocation_start, 'provenance', None) or {}
+    content = f"Calling agent {provenance.get('target_label') or 'configured agent'}" if plugin_name == 'AgentPlugin' else f"Invoking {plugin_name}.{function_name}"
     return {
         'step_type': 'agent_tool_call',
-        'content': f"Invoking {plugin_name}.{function_name}",
+        'content': content,
         'detail': detail or None,
         'activity': _build_plugin_activity_payload(invocation_start, 'running'),
     }
@@ -190,9 +199,12 @@ def register_plugin_invocation_thought_callback(
     conversation_id,
     actor_label='Agent',
     live_thought_callback=None,
+    root_id=None,
 ):
     """Register a logger callback that writes plugin invocation thoughts."""
     callback_key = f"{user_id}:{conversation_id}"
+    if root_id:
+        callback_key = f"{callback_key}:{root_id}"
 
     def add_and_publish_live_thought(thought_payload):
         thought_tracker.add_thought(

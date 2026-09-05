@@ -19,6 +19,7 @@ from functions_workspace_identities import (
     validate_action_identity_reference,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_agent_delegation import validate_agent_action_for_scope
 
 def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=False):
     """
@@ -108,6 +109,10 @@ def save_global_action(action_data, user_id=None):
             user_id = get_current_user_id()
         if not user_id:
             user_id = "system"
+
+        action_data = validate_agent_action_for_scope(
+            action_data, user_id=user_id, scope_type="global", scope_id="global",
+        )
 
         # Ensure required fields
         if 'id' not in action_data:

@@ -84,6 +84,7 @@ from functions_mcp_operations import (
     validate_mcp_endpoint_for_transport,
 )
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT
+from functions_agent_delegation import AGENT_ACTION_VALIDATION_ERROR, AGENT_PLUGIN_TYPE, validate_agent_action_manifest
 from json_schema_validation import validate_plugin_auth_type_allowed
 from semantic_kernel_plugins.rocksdb_plugin import (
     AUTH_SCHEME_NONE,
@@ -141,6 +142,13 @@ class PluginHealthChecker:
         for field in required_fields:
             if field not in manifest:
                 errors.append(f"Missing required field: {field}")
+
+        if plugin_type == AGENT_PLUGIN_TYPE:
+            try:
+                validate_agent_action_manifest(manifest)
+            except ValueError:
+                errors.append(AGENT_ACTION_VALIDATION_ERROR)
+            return not errors, errors
 
         auth_type_error = validate_plugin_auth_type_allowed(manifest)
         if auth_type_error:
