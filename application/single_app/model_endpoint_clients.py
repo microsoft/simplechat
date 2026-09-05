@@ -44,8 +44,6 @@ from functions_model_endpoint_providers import (
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
-    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-    MODEL_ENDPOINT_API_TYPE_OPENAI,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
     normalize_model_endpoint_api_type,
 )
@@ -216,7 +214,13 @@ def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
 
 
 CUSTOM_OPENAI_OPERATION_SUFFIXES = ("/chat/completions", "/responses", "/models")
-CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(r"^v\d+[a-z0-9]*$", re.IGNORECASE)
+# The optional suffix must start with a letter. Allowing it to start with a digit
+# would make it ambiguous with the preceding \d+, which backtracks quadratically
+# on a long run of digits.
+CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(
+    r"^v\d+(?:[a-z][a-z0-9]*)?$",
+    re.IGNORECASE,
+)
 
 
 def _endpoint_path_names_a_version(endpoint: str) -> bool:

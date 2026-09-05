@@ -7,17 +7,14 @@ import socket
 from typing import Any, Dict, Iterable
 from urllib.parse import urlparse, urlunparse
 
-from functions_model_endpoint_auth import (
+from functions_model_endpoint_providers import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_BEARER,
     AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
+    get_model_endpoint_provider,
     normalize_custom_endpoint_auth_type,
 )
-from functions_model_endpoint_providers import get_model_endpoint_provider
 from functions_model_endpoint_types import (
-    DEFAULT_ANTHROPIC_VERSION,
-    MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
-    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,

@@ -207,6 +207,9 @@ def build_model_endpoint_sync_chat_client(
             default_api_key_prefix=(
                 registered_provider.default_api_key_prefix if registered_provider else ''
             ),
+            allow_private=allow_private_custom_endpoints,
+            allow_insecure=allow_insecure_custom_endpoints,
+            ca_bundle_path=custom_endpoint_ca_bundle_path,
         )
         if credential_headers:
             extra_headers = {**(extra_headers or {}), **credential_headers}
@@ -499,6 +502,9 @@ def build_semantic_kernel_chat_service_for_model(
                 default_api_key_prefix=(
                     registered_provider.default_api_key_prefix if registered_provider else ''
                 ),
+                allow_private=allow_private_custom_endpoints,
+                allow_insecure=allow_insecure_custom_endpoints,
+                ca_bundle_path=custom_endpoint_ca_bundle_path,
             )
             if credential_headers:
                 extra_headers = {**(extra_headers or {}), **credential_headers}

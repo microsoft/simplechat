@@ -13,13 +13,27 @@ from functions_model_endpoint_providers import (
     DEFAULT_ANTHROPIC_VERSION,
     MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
     MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-    MODEL_ENDPOINT_API_TYPE_GEMINI,
     MODEL_ENDPOINT_API_TYPE_OPENAI,
     MODEL_ENDPOINT_CUSTOM_API_TYPES,
     MODEL_ENDPOINT_PROVIDER_CUSTOM,
     get_model_endpoint_provider,
     normalize_api_type_value,
 )
+
+
+# Callers have long imported these constants from this module rather than from the
+# registry that now owns them, so they are re-exported deliberately.
+__all__ = [
+    "DEFAULT_ANTHROPIC_VERSION",
+    "MODEL_ENDPOINT_API_TYPE_ANTHROPIC",
+    "MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI",
+    "MODEL_ENDPOINT_API_TYPE_OPENAI",
+    "MODEL_ENDPOINT_CUSTOM_API_TYPES",
+    "MODEL_ENDPOINT_PROVIDER_CUSTOM",
+    "get_model_endpoint_api_type",
+    "normalize_model_endpoint_api_type",
+    "resolve_model_endpoint_request_model",
+]
 
 
 def normalize_model_endpoint_api_type(provider: Any, api_type: Any) -> str:

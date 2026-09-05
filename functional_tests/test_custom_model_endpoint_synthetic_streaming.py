@@ -218,15 +218,14 @@ def test_stream_options_are_kept_where_supported():
             "OpenAI accepts stream_options.include_usage, which reports token usage."
         )
 
-        source = open(
-            os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "application",
-                "single_app",
-                "model_endpoint_clients.py",
-            ),
-            encoding="utf-8",
-        ).read()
+        source_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "application",
+            "single_app",
+            "model_endpoint_clients.py",
+        )
+        with open(source_path, encoding="utf-8") as source_file:
+            source = source_file.read()
         assert (
             'request_kwargs = dict(kwargs)\n        request_kwargs.pop("stream_options", None)'
             not in source

@@ -21,21 +21,18 @@ import threading
 import time
 from typing import Any, Dict, Tuple
 
-import httpx
-
 from functions_model_endpoint_diagnostics import build_sanitized_model_endpoint_error
-
-
-AUTH_TYPE_API_KEY = "api_key"
-AUTH_TYPE_KEY = "key"
-AUTH_TYPE_BEARER = "bearer"
-AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
-
-CUSTOM_ENDPOINT_AUTH_TYPES = (
+from functions_model_endpoint_providers import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_BEARER,
     AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
+    DEFAULT_CUSTOM_AUTH_TYPES,
+    normalize_custom_endpoint_auth_type,
 )
+from functions_model_endpoint_validation import validate_custom_model_endpoint_url
+
+
+CUSTOM_ENDPOINT_AUTH_TYPES = DEFAULT_CUSTOM_AUTH_TYPES
 
 # Refresh slightly before expiry so a token cannot lapse mid-request.
 OAUTH2_EXPIRY_SKEW_SECONDS = 60
@@ -44,14 +41,6 @@ OAUTH2_REQUEST_TIMEOUT_SECONDS = 30
 
 _TOKEN_CACHE: Dict[Tuple[str, str, str], Tuple[str, float]] = {}
 _TOKEN_CACHE_LOCK = threading.Lock()
-
-
-def normalize_custom_endpoint_auth_type(auth_type: Any) -> str:
-    """Return a supported Custom endpoint auth type, defaulting to API key."""
-    normalized = str(auth_type or "").strip().lower()
-    if normalized == AUTH_TYPE_KEY:
-        return AUTH_TYPE_API_KEY
-    return normalized if normalized in CUSTOM_ENDPOINT_AUTH_TYPES else ""
 
 
 def resolve_api_key_header(
@@ -122,14 +111,22 @@ def clear_oauth2_token_cache() -> None:
 def fetch_oauth2_client_credentials_token(
     auth: Dict[str, Any],
     *,
-    verify: Any = True,
+    allow_private: bool = False,
+    allow_insecure: bool = False,
+    ca_bundle_path: str = "",
     http_client_factory=None,
 ) -> str:
     """Return an OAuth2 client-credentials access token, using the cache when valid.
 
-    The token endpoint is normally a different host from the inference endpoint,
-    and commonly redirects, so it is fetched with an ordinary client rather than
-    the no-redirect pinned transport used for inference.
+    The token endpoint is a separate, administrator-supplied host, so it is an
+    outbound request target in its own right and is held to the same policy as the
+    inference endpoint: the URL is revalidated here rather than trusted from
+    configuration time, the connection is pinned to the validated addresses, and
+    redirects are refused.
+
+    Refusing redirects is safe for this grant. Redirects belong to the browser-based
+    authorization-code flow; a client-credentials token endpoint answers a
+    server-to-server POST with a JSON body.
     """
     token_url = str(auth.get("token_url") or "").strip()
     client_id = str(auth.get("client_id") or "").strip()
@@ -138,6 +135,17 @@ def fetch_oauth2_client_credentials_token(
         raise ValueError(
             "OAuth2 model endpoints require a token URL, client ID, and client secret."
         )
+
+    # Imported here rather than at module scope: the transport lives with the
+    # model endpoint clients, which pull in the OpenAI and Semantic Kernel SDKs.
+    # Deferring keeps this module importable without that cost.
+    from model_endpoint_clients import build_custom_openai_sync_http_client
+
+    token_url = validate_custom_model_endpoint_url(
+        token_url,
+        allow_private=allow_private,
+        allow_insecure=allow_insecure,
+    )
 
     cache_key = _token_cache_key(auth)
     now = time.monotonic()
@@ -155,11 +163,13 @@ def fetch_oauth2_client_credentials_token(
     if scope:
         payload["scope"] = scope
 
-    client = (http_client_factory or httpx.Client)(
-        timeout=OAUTH2_REQUEST_TIMEOUT_SECONDS,
-        verify=verify,
-        trust_env=False,
-    )
+    if http_client_factory is not None:
+        client = http_client_factory(timeout=OAUTH2_REQUEST_TIMEOUT_SECONDS)
+    else:
+        client = build_custom_openai_sync_http_client(
+            allow_private=allow_private,
+            ca_bundle_path=ca_bundle_path,
+        )
     try:
         response = client.post(token_url, data=payload)
         status_code = response.status_code
@@ -205,7 +215,9 @@ def resolve_custom_endpoint_credentials(
     *,
     default_api_key_header: str = "",
     default_api_key_prefix: str = "",
-    verify: Any = True,
+    allow_private: bool = False,
+    allow_insecure: bool = False,
+    ca_bundle_path: str = "",
 ) -> Tuple[str, Dict[str, str]]:
     """Resolve one Custom endpoint's credentials.
 
@@ -224,7 +236,12 @@ def resolve_custom_endpoint_credentials(
         return token, {}
 
     if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS:
-        return fetch_oauth2_client_credentials_token(auth, verify=verify), {}
+        return fetch_oauth2_client_credentials_token(
+            auth,
+            allow_private=allow_private,
+            allow_insecure=allow_insecure,
+            ca_bundle_path=ca_bundle_path,
+        ), {}
 
     if auth_type == AUTH_TYPE_API_KEY:
         api_key = str(auth.get("api_key") or "").strip()

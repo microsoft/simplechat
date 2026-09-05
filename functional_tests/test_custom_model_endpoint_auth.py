@@ -22,7 +22,9 @@ These tests ensure that:
 """
 
 import os
+import socket
 import sys
+from unittest.mock import patch
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(
@@ -35,7 +37,6 @@ sys.path.append(
 
 from test_support.versioning import assert_app_version_at_least
 
-import functions_model_endpoint_auth as endpoint_auth
 from functions_model_endpoint_auth import (
     build_api_key_headers,
     clear_oauth2_token_cache,
@@ -66,7 +67,7 @@ class _FakeResponse:
 
 
 class _FakeTokenClient:
-    """Stand-in for httpx.Client that records token requests."""
+    """Stand-in for the pinned HTTP client that records token requests."""
 
     instances = []
 
@@ -82,6 +83,21 @@ class _FakeTokenClient:
 
     def close(self):
         pass
+
+
+# The token endpoint is now revalidated at request time, which resolves the
+# hostname. These tests use documentation hostnames that do not resolve, so DNS is
+# stubbed to a public address; the policy checks themselves still run for real.
+PUBLIC_ADDRESS_INFO = [
+    (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 443))
+]
+
+
+def _patch_public_dns():
+    return patch(
+        "functions_model_endpoint_validation.socket.getaddrinfo",
+        return_value=PUBLIC_ADDRESS_INFO,
+    )
 
 
 def test_api_key_header_is_configurable():
@@ -187,29 +203,31 @@ def test_oauth2_tokens_are_fetched_and_cached():
             "scope": "inference.read",
         }
 
-        token = fetch_oauth2_client_credentials_token(
-            auth, http_client_factory=_FakeTokenClient
-        )
-        assert token == "issued-token"
-        assert len(_FakeTokenClient.instances) == 1
+        with _patch_public_dns():
+            token = fetch_oauth2_client_credentials_token(
+                auth, http_client_factory=_FakeTokenClient
+            )
+            assert token == "issued-token"
+            assert len(_FakeTokenClient.instances) == 1
 
-        request_url, payload = _FakeTokenClient.instances[0].requests[0]
-        assert request_url == auth["token_url"]
-        assert payload["grant_type"] == "client_credentials"
-        assert payload["scope"] == "inference.read"
+            request_url, payload = _FakeTokenClient.instances[0].requests[0]
+            assert request_url == auth["token_url"]
+            assert payload["grant_type"] == "client_credentials"
+            assert payload["scope"] == "inference.read"
 
-        # A second call is served from the cache, so no new request is made.
-        cached_token = fetch_oauth2_client_credentials_token(
-            auth, http_client_factory=_FakeTokenClient
-        )
-        assert cached_token == "issued-token"
-        assert len(_FakeTokenClient.instances) == 1, "Token must be cached."
+            # A second call is served from the cache, so no new request is made.
+            cached_token = fetch_oauth2_client_credentials_token(
+                auth, http_client_factory=_FakeTokenClient
+            )
+            assert cached_token == "issued-token"
+            assert len(_FakeTokenClient.instances) == 1, "Token must be cached."
 
-        # Clearing the cache forces a new request.
-        clear_oauth2_token_cache()
-        fetch_oauth2_client_credentials_token(auth, http_client_factory=_FakeTokenClient)
-        assert len(_FakeTokenClient.instances) == 2
-
+            # Clearing the cache forces a new request.
+            clear_oauth2_token_cache()
+            fetch_oauth2_client_credentials_token(
+                auth, http_client_factory=_FakeTokenClient
+            )
+            assert len(_FakeTokenClient.instances) == 2
         clear_oauth2_token_cache()
         print("OAuth2 fetch, cache, and refresh passed")
         return True
@@ -241,9 +259,10 @@ def test_oauth2_failures_are_sanitized():
             "client_secret": "secret-1",
         }
         try:
-            fetch_oauth2_client_credentials_token(
-                auth, http_client_factory=FailingTokenClient
-            )
+            with _patch_public_dns():
+                fetch_oauth2_client_credentials_token(
+                    auth, http_client_factory=FailingTokenClient
+                )
         except RuntimeError as exc:
             assert "leak-me" not in str(exc)
             assert "invalid_client" not in str(exc)
@@ -253,6 +272,53 @@ def test_oauth2_failures_are_sanitized():
 
         clear_oauth2_token_cache()
         print("OAuth2 failures sanitized")
+        return True
+    except Exception as e:
+        print(f"Test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
+def test_token_endpoint_is_revalidated_at_request_time():
+    """A blocked token URL must be refused when the token is fetched, not only when saved.
+
+    Validating only at save time leaves the request itself unguarded: settings can
+    be written by another path, restored from backup, or changed after validation.
+    CodeQL flagged this as a server-side request forgery, correctly.
+    """
+    print("Testing request-time token endpoint validation...")
+    try:
+        clear_oauth2_token_cache()
+
+        for blocked_url in (
+            "https://169.254.169.254/token",
+            "https://127.0.0.1/token",
+            "https://metadata.google.internal/token",
+            "http://auth.example.com/token",
+        ):
+            auth = {
+                "type": "oauth2_client_credentials",
+                "token_url": blocked_url,
+                "client_id": "client-1",
+                "client_secret": "secret-1",
+            }
+            _FakeTokenClient.instances = []
+            try:
+                fetch_oauth2_client_credentials_token(
+                    auth, http_client_factory=_FakeTokenClient
+                )
+            except Exception:
+                # The request must be refused before any client is constructed.
+                assert not _FakeTokenClient.instances, (
+                    f"{blocked_url} reached the network before being refused."
+                )
+                continue
+            raise AssertionError(f"{blocked_url} must be refused at request time.")
+
+        clear_oauth2_token_cache()
+        print("Token endpoint revalidated at request time")
         return True
     except Exception as e:
         print(f"Test failed: {e}")
@@ -364,15 +430,14 @@ def test_mtls_certificates_are_referenced_by_path():
 
         # The module must not offer any way to supply key material inline, so a
         # private key cannot end up written to the configuration database.
-        source = open(
-            os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "application",
-                "single_app",
-                "functions_model_endpoint_auth.py",
-            ),
-            encoding="utf-8",
-        ).read()
+        auth_module_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "application",
+            "single_app",
+            "functions_model_endpoint_auth.py",
+        )
+        with open(auth_module_path, encoding="utf-8") as source_file:
+            source = source_file.read()
         assert "client_key_pem" not in source
         assert "private_key" not in source
 
@@ -407,6 +472,7 @@ if __name__ == "__main__":
         test_bearer_and_api_key_credentials_resolve,
         test_oauth2_tokens_are_fetched_and_cached,
         test_oauth2_failures_are_sanitized,
+        test_token_endpoint_is_revalidated_at_request_time,
         test_oauth2_token_endpoint_is_policy_checked,
         test_incomplete_and_unsupported_auth_is_rejected,
         test_mtls_certificates_are_referenced_by_path,

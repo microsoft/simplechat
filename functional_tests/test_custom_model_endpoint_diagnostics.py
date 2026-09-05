@@ -37,11 +37,10 @@ sys.path.append(APP_DIR)
 from test_support.versioning import assert_app_version_at_least
 
 import functions_model_endpoint_diagnostics as diagnostics
-from functions_model_endpoint_diagnostics import (
-    build_sanitized_model_endpoint_error,
-    log_custom_model_endpoint_failure,
-    redact_model_endpoint_secrets,
-)
+
+build_sanitized_model_endpoint_error = diagnostics.build_sanitized_model_endpoint_error
+log_custom_model_endpoint_failure = diagnostics.log_custom_model_endpoint_failure
+redact_model_endpoint_secrets = diagnostics.redact_model_endpoint_secrets
 
 
 SECRET_SAMPLES = [
@@ -192,9 +191,10 @@ def test_no_failure_path_discards_its_cause():
     """No Custom endpoint failure path may raise a bare sanitized error any more."""
     print("Testing that no failure path discards its cause...")
     try:
-        source = open(
+        with open(
             os.path.join(APP_DIR, "model_endpoint_clients.py"), encoding="utf-8"
-        ).read()
+        ) as source_file:
+            source = source_file.read()
 
         discarded = re.findall(
             r'raise RuntimeError\(\s*\n?\s*"Custom[^"]*"\s*\n?\s*\) from None',

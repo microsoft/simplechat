@@ -69,6 +69,7 @@ MODEL_IDENTIFIER_DEPLOYMENT_NAME = "deployment_name"
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
 
 AUTH_TYPE_API_KEY = "api_key"
+AUTH_TYPE_KEY = "key"
 AUTH_TYPE_BEARER = "bearer"
 AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
 
@@ -79,6 +80,19 @@ DEFAULT_CUSTOM_AUTH_TYPES = (
     AUTH_TYPE_BEARER,
     AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
 )
+
+
+def normalize_custom_endpoint_auth_type(auth_type: Any) -> str:
+    """Return a supported Custom endpoint auth type, or "" when unsupported.
+
+    This lives with the registry rather than with the authentication code so that
+    validation can classify an auth type without importing the module that
+    performs authentication.
+    """
+    normalized = str(auth_type or "").strip().lower()
+    if normalized == AUTH_TYPE_KEY:
+        return AUTH_TYPE_API_KEY
+    return normalized if normalized in DEFAULT_CUSTOM_AUTH_TYPES else ""
 
 
 class ModelEndpointProvider:

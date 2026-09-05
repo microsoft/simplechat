@@ -68,13 +68,17 @@ Behaviour worth knowing:
 - **Tokens are cached** per token URL, client ID, and scope, and refreshed 60
   seconds before expiry so a token cannot lapse part-way through a request. A
   response without `expires_in` is treated as one hour.
-- **The token endpoint is policy checked.** It is a different host from the
-  inference endpoint, so it is validated against the same outbound rules. A token
-  URL pointing at a cloud metadata address is refused, exactly as an inference
-  endpoint would be. Without this, the token URL would be an unchecked outbound
-  request target.
-- **The token endpoint is fetched with an ordinary client**, not the no-redirect
-  pinned transport used for inference, because token endpoints commonly redirect.
+- **The token endpoint is policy checked, at request time as well as at save
+  time.** It is a different host from the inference endpoint, so it is validated
+  against the same outbound rules, and revalidated when the token is actually
+  fetched rather than trusted from configuration. Settings can be written by
+  another path, restored from backup, or changed after validation, so a
+  save-time-only check would leave the request unguarded.
+- **The request runs on the same pinned transport as inference**, so its
+  addresses are validated at connection time and redirects are refused. That is
+  safe for this grant: redirects belong to the browser-based authorization-code
+  flow, whereas a client-credentials token endpoint answers a server-to-server
+  POST with a JSON body.
 - **Failures are sanitized.** A token endpoint's error body frequently echoes the
   client ID or secret, so the browser sees a generic message with a correlation
   id while the real response is recorded server-side with credentials redacted.
@@ -117,6 +121,8 @@ continuing without one.
   explicit header and which ride on the SDK's own credential argument;
 - OAuth2 tokens being fetched once, served from cache on the second call, and
   refetched after the cache is cleared, with the request payload asserted;
+- a blocked token URL being refused when the token is fetched, not only when the
+  endpoint is saved, and refused before any HTTP client is constructed;
 - a failing token endpoint leaking neither its error body nor the client details,
   while still offering a correlation id;
 - a token endpoint pointing at a cloud metadata address being refused;

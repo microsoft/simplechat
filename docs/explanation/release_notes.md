@@ -2,6 +2,21 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.018)**
+
+#### Bug Fixes
+
+*   **OAuth2 Token Endpoints Are Now Validated When The Token Is Fetched**
+    *   A Custom endpoint's OAuth2 token URL was checked when the endpoint was saved, but not when the token was actually requested. Validating only at save time leaves the request itself unguarded, since settings can be written by another path, restored from backup, or changed after validation. Code scanning correctly identified this as a server-side request forgery.
+    *   The token URL is now revalidated at request time against the same outbound policy as the inference endpoint, and the request runs on the same pinned transport, so its addresses are validated at connection time and redirects are refused.
+    *   Refusing redirects is safe for this grant: redirects belong to the browser-based authorization-code flow, whereas a client-credentials token endpoint answers a server-to-server POST with a JSON body. The previous code allowed them based on an incorrect assumption.
+    *   (Ref: `functions_model_endpoint_auth.py`, [#1437](https://github.com/microsoft/simplechat/pull/1437))
+
+*   **Endpoint URL Version Matching No Longer Backtracks**
+    *   The pattern recognising a version path segment allowed its optional suffix to begin with a digit, making it ambiguous with the preceding digits and quadratic on a long run of them. A 8,000-character segment took roughly 0.19 seconds to reject; it now takes 0.0003 seconds.
+    *   The suffix must now begin with a letter, which removes the ambiguity while matching exactly the same version segments.
+    *   (Ref: `model_endpoint_clients.py`, [#1437](https://github.com/microsoft/simplechat/pull/1437))
+
 ### **(v0.261.017)**
 
 #### New Features

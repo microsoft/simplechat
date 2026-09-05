@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.018 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.017 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.016 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.015 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -31,7 +32,7 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.009 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.007 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.006 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.005 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.005 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.004 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.003 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.002 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
@@ -83,6 +84,21 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.018)**
+
+#### Bug Fixes
+
+*   **OAuth2 Token Endpoints Are Now Validated When The Token Is Fetched**
+    *   A Custom endpoint's OAuth2 token URL was checked when the endpoint was saved, but not when the token was actually requested. Validating only at save time leaves the request itself unguarded, since settings can be written by another path, restored from backup, or changed after validation. Code scanning correctly identified this as a server-side request forgery.
+    *   The token URL is now revalidated at request time against the same outbound policy as the inference endpoint, and the request runs on the same pinned transport, so its addresses are validated at connection time and redirects are refused.
+    *   Refusing redirects is safe for this grant: redirects belong to the browser-based authorization-code flow, whereas a client-credentials token endpoint answers a server-to-server POST with a JSON body. The previous code allowed them based on an incorrect assumption.
+    *   (Ref: `functions_model_endpoint_auth.py`, [#1437](https://github.com/microsoft/simplechat/pull/1437))
+
+*   **Endpoint URL Version Matching No Longer Backtracks**
+    *   The pattern recognising a version path segment allowed its optional suffix to begin with a digit, making it ambiguous with the preceding digits and quadratic on a long run of them. A 8,000-character segment took roughly 0.19 seconds to reject; it now takes 0.0003 seconds.
+    *   The suffix must now begin with a letter, which removes the ambiguity while matching exactly the same version segments.
+    *   (Ref: `model_endpoint_clients.py`, [#1437](https://github.com/microsoft/simplechat/pull/1437))
 
 ### **(v0.261.017)**
 
@@ -208,12 +224,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   Markdown document processing now retries the known transient `OrderedDict mutated during iteration` parser failure before marking a document failed.
     *   The retry is limited to this specific Markdown failure signature, so unrelated parsing, validation, or service errors still fail normally with their original error.
     *   (Ref: Markdown upload processing, `functions_documents.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
-
-### **(v0.261.005)**
-
-#### User Interface Enhancements
-
-*   **Workspace Upload Progress Now Separates Request Status From Document Processing Status**
-    *   The temporary upload summary no longer labels unconfirmed browser upload requests as final document failures. This avoids misleading summaries such as `Uploaded 77/204, Failed: 127` when the document list later shows that most documents were queued and processed successfully.
-    *   Personal, group, and public workspace uploads now use `Queued` for confirmed upload requests and direct users to the refreshed document list for final processing status.
-    *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
