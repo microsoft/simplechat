@@ -21,7 +21,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
-import { AlertTriangle, ChevronRight, CircleDashed, CircleCheck, CircleSlash } from 'lucide-react';
+import {
+    AlertTriangle,
+    ChevronRight,
+    CircleDashed,
+    CircleCheck,
+    CircleSlash,
+    type LucideIcon,
+} from 'lucide-react';
 import {
     asBoolean,
     groupFields,
@@ -74,6 +81,14 @@ const DECLARED_STATUS_MAP: Record<'off' | 'unconfigured' | 'on', SectionStatus> 
     on: 'ready',
 };
 
+export interface SettingsSectionAppearance {
+    Icon: LucideIcon;
+    fields?: Readonly<Partial<Record<string, {
+        emphasis?: 'primary' | 'dependent';
+        Icon?: LucideIcon;
+    }>>>;
+}
+
 export interface SettingsSectionProps {
     sectionId: string;
     label: string;
@@ -96,6 +111,8 @@ export interface SettingsSectionProps {
     statusRule?: AdminSectionStatusRule;
     /** Force every group open, used while a search is filtering the page. */
     forceExpanded?: boolean;
+    /** Opt-in visual hierarchy; does not change the schema's behavior. */
+    appearance?: SettingsSectionAppearance;
     children?: React.ReactNode;
 }
 
@@ -153,11 +170,13 @@ function FieldGroup({
     startOpen,
     forceExpanded,
     renderField,
+    distinct = false,
 }: {
     group: RenderedFieldGroup;
     startOpen: boolean;
     forceExpanded?: boolean;
     renderField: (field: AdminField) => React.ReactNode;
+    distinct?: boolean;
 }) {
     const [open, setOpen] = useState(startOpen);
 
@@ -170,29 +189,51 @@ function FieldGroup({
     }, [forceExpanded]);
 
     if (!group.id) {
-        return <div className="divide-y divide-edge">{group.fields.map(renderField)}</div>;
+        return (
+            <div className={clsx('divide-y', distinct ? 'divide-edge-strong' : 'divide-edge')}>
+                {group.fields.map(renderField)}
+            </div>
+        );
     }
 
     return (
-        <div className="mt-2 rounded-lg border border-edge">
+        <div
+            className={clsx(
+                'border',
+                distinct
+                    ? 'mt-3 rounded-xl border-edge-strong bg-surface-solid'
+                    : 'mt-2 rounded-lg border-edge',
+            )}
+        >
             <button
                 type="button"
                 aria-expanded={open}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-surface-2"
+                className={clsx(
+                    'flex w-full items-center gap-2 px-3 py-2 text-left',
+                    distinct
+                        ? 'min-h-11 rounded-xl hover:bg-surface-sunken'
+                        : 'hover:bg-surface-2',
+                    distinct && open && 'rounded-b-none bg-surface-sunken',
+                )}
                 onClick={() => setOpen((previous) => !previous)}
             >
                 <ChevronRight
                     size={14}
                     className={clsx(
-                        'shrink-0 text-text-3 transition-transform',
+                        'shrink-0 transition-transform',
+                        distinct ? 'text-text-2' : 'text-text-3',
                         open && 'rotate-90',
                     )}
                 />
-                <span className="text-xs font-medium text-text-2">
+                <span
+                    className={distinct
+                        ? 'min-w-0 text-sm font-semibold text-text-1'
+                        : 'text-xs font-medium text-text-2'}
+                >
                     {group.label ?? group.id}
                 </span>
                 {!open ? (
-                    <span className="ml-auto text-xs text-text-3">
+                    <span className={clsx('ml-auto text-xs text-text-3', distinct && 'shrink-0')}>
                         {group.fields.length}{' '}
                         {group.fields.length === 1 ? 'setting' : 'settings'}
                     </span>
@@ -200,11 +241,18 @@ function FieldGroup({
             </button>
 
             {open ? (
-                <div className="border-t border-edge px-3 pb-1">
+                <div
+                    className={clsx(
+                        'border-t px-3 pb-1',
+                        distinct ? 'border-edge-strong' : 'border-edge',
+                    )}
+                >
                     {group.help ? (
                         <p className="pt-2 text-xs leading-relaxed text-text-3">{group.help}</p>
                     ) : null}
-                    <div className="divide-y divide-edge">{group.fields.map(renderField)}</div>
+                    <div className={clsx('divide-y', distinct ? 'divide-edge-strong' : 'divide-edge')}>
+                        {group.fields.map(renderField)}
+                    </div>
                 </div>
             ) : null}
         </div>
@@ -223,6 +271,7 @@ export function SettingsSection({
     renderField,
     renderCapability,
     forceExpanded,
+    appearance,
     children,
 }: SettingsSectionProps) {
     const capability = useMemo(() => findCapabilityField(fields), [fields]);
@@ -257,15 +306,111 @@ export function SettingsSection({
 
     const presentation = status === 'none' ? null : STATUS_PRESENTATION[status];
 
+    const decorateField = (
+        field: AdminField,
+        renderer: SettingsSectionProps['renderField'],
+    ) => {
+        const fieldAppearance = appearance?.fields?.[field.key ?? ''];
+        const control = renderer(field);
+        if (!fieldAppearance || control == null) {
+            return control;
+        }
+        return (
+            <div
+                key={field.key}
+                data-setting-emphasis={fieldAppearance.emphasis}
+                className={clsx(
+                    'flex min-w-0 items-start gap-2.5',
+                    fieldAppearance.emphasis === 'primary' &&
+                        'mb-3 rounded-xl border border-accent/40 bg-accent-soft px-3 py-1',
+                    fieldAppearance.emphasis === 'dependent' &&
+                        'ms-3 border-s-2 border-edge-strong ps-3',
+                )}
+            >
+                {fieldAppearance.Icon ? (
+                    <span
+                        aria-hidden="true"
+                        className="mt-3 shrink-0 rounded-lg bg-surface-sunken p-1.5 text-text-2"
+                    >
+                        <fieldAppearance.Icon size={16} />
+                    </span>
+                ) : null}
+                <div className="min-w-0 flex-1">{control}</div>
+            </div>
+        );
+    };
+
+    const body = (
+        <>
+            {requirements.map((requirement) => (
+                <RequirementNotice
+                    key={requirement.key}
+                    requirement={requirement}
+                    satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
+                />
+            ))}
+
+            {capability ? (
+                <div className="mb-1 border-b border-edge pb-2">
+                    {decorateField(capability, renderCapability)}
+                </div>
+            ) : null}
+
+            {groups.map((group) => (
+                <FieldGroup
+                    key={group.id || '__ungrouped'}
+                    group={group}
+                    startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
+                    forceExpanded={forceExpanded}
+                    renderField={(field) => decorateField(field, renderField)}
+                    distinct={Boolean(appearance)}
+                />
+            ))}
+
+            {children}
+        </>
+    );
+
     return (
-        <GlassPanel id={sectionId} edge className="p-4">
-            <div className="mb-2 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <h2 className="text-sm font-semibold text-text-1">{label}</h2>
-                    <p className="text-xs text-text-3">
-                        {groupLabel}
-                        {tabLabel ? ` · ${tabLabel}` : ''}
-                    </p>
+        <GlassPanel
+            id={sectionId}
+            edge
+            role={appearance ? 'region' : undefined}
+            aria-labelledby={appearance ? `${sectionId}-title` : undefined}
+            className={appearance ? 'admin-settings-distinct border-edge-strong' : 'p-4'}
+        >
+            <div
+                className={clsx(
+                    'flex items-start justify-between gap-3',
+                    appearance
+                        ? 'flex-wrap rounded-t-2xl border-b border-edge-strong bg-surface-2 p-4 sm:px-5'
+                        : 'mb-2',
+                )}
+            >
+                <div className={clsx('min-w-0', appearance && 'flex flex-1 flex-wrap items-start gap-3')}>
+                    {appearance ? (
+                        <span
+                            aria-hidden="true"
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-edge-strong bg-surface-solid text-text-2"
+                        >
+                            <appearance.Icon size={20} />
+                        </span>
+                    ) : null}
+                    <div className={clsx('min-w-0', appearance && 'flex-1 basis-40')}>
+                        <h2
+                            id={appearance ? `${sectionId}-title` : undefined}
+                            className={clsx(
+                                'font-semibold text-text-1',
+                                appearance ? 'text-lg leading-snug' : 'text-sm',
+                            )}
+                        >
+                            {label}
+                        </h2>
+                        <p className={clsx('text-xs text-text-3', appearance && 'mt-1')}>
+                            {groupLabel}
+                            {tabLabel ? ` · ${tabLabel}` : ''}
+                        </p>
+                    </div>
                 </div>
 
                 {presentation ? (
@@ -281,31 +426,7 @@ export function SettingsSection({
                 ) : null}
             </div>
 
-            {requirements.map((requirement) => (
-                <RequirementNotice
-                    key={requirement.key}
-                    requirement={requirement}
-                    satisfied={asBoolean(readSectionValue(settings, draft, requirement.key))}
-                />
-            ))}
-
-            {capability ? (
-                <div className="mb-1 border-b border-edge pb-2">
-                    {renderCapability(capability)}
-                </div>
-            ) : null}
-
-            {groups.map((group) => (
-                <FieldGroup
-                    key={group.id || '__ungrouped'}
-                    group={group}
-                    startOpen={shouldGroupStartOpen(group, status, capabilityOn)}
-                    forceExpanded={forceExpanded}
-                    renderField={renderField}
-                />
-            ))}
-
-            {children}
+            {appearance ? <div className="admin-section-body p-4 sm:p-5">{body}</div> : body}
         </GlassPanel>
     );
 }
