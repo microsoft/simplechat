@@ -2,6 +2,19 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.012)**
+
+#### New Features
+
+*   **Yamcs Actions Can Reach Servers Behind An Authenticating Proxy**
+    *   Ground segments commonly publish Yamcs through a reverse proxy, such as Apache, that challenges every request with HTTP Basic authentication against a directory before the request reaches Yamcs. Yamcs behind that proxy often has no authentication of its own. Until now a Yamcs action could not answer that challenge, so such a server was unreachable even when the Yamcs settings were correct.
+    *   A new **Reverse Proxy Authentication** option on the Yamcs action sends an HTTP Basic `Authorization` header on every request. It is off by default, so a Yamcs server reached directly, such as a local simulator, is unaffected.
+    *   The proxy credential can be typed on the action, with the password stored in Key Vault, or supplied by a reusable **username and password identity**. Where a directory issues temporary passwords, the identity is rotated once under **Workspace → Identities** and every action that references it picks up the new password without being edited.
+    *   The proxy credential has its own identity reference, separate from the Yamcs credential, so one action can use both.
+    *   Proxy authentication combines with the **No Authentication** and **API Key** Yamcs methods. It cannot combine with **Username and Password** or **Access Token**, because only one `Authorization` header can be sent and the Yamcs token request would itself be refused by the proxy. The conflict is reported when saving the action and when running **Test Yamcs Connection** rather than failing later at run time.
+    *   **Test Yamcs Connection** exercises the proxy credential and distinguishes a proxy rejection from a Yamcs rejection.
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `functions_workspace_identities.py`, `plugin_health_checker.py`, `route_backend_plugins.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `test_yamcs_basic_auth.py`, [Yamcs Action](features/YAMCS_ACTION.md), [#1435](https://github.com/microsoft/simplechat/issues/1435))
+
 ### **(v0.261.011)**
 
 #### Bug Fixes
