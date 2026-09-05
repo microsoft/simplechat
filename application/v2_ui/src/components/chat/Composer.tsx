@@ -43,13 +43,11 @@ import {
     contextFilterMode,
     contextScopes,
     contextTags,
-    hasContextItem,
     removeContextItem,
     type ContextItem,
-    type ContextOrigin,
 } from '../../lib/chatContext';
 import {
-    appendContextToken,
+    hasContextMention,
     insertContextToken,
     readContextQuery,
     reconcileContextItems,
@@ -809,12 +807,8 @@ export function Composer() {
     /**
      * Clear the draft once it has been sent.
      *
-     * The chips go with the text, because they are two views of one thing. The references are
-     * not lost: they are in the message that was just sent, both in its wording and in its
-     * stored `requested_document_ids`. Keeping them here instead would leave a row of chips
-     * whose tokens are no longer in the box -- which the next keystroke would reconcile away,
-     * so the references would appear to survive the send and then vanish one character into
-     * the following message.
+     * Context belongs to this turn, whether selected independently or mentioned inline.
+     * The request carries it before clearing, so an empty next draft inherits no selections.
      *
      * The attached prompt goes with them, for the same reason: it belongs to the turn that was
      * just sent, and leaving it attached would silently prepend it to the next message too.
@@ -963,7 +957,7 @@ export function Composer() {
         [contextItems],
     );
     const contextTokens = useMemo(
-        () => new Set(contextItems.map((item) => item.token)),
+        () => new Set(contextItems.filter(hasContextMention).map((item) => item.token)),
         [contextItems],
     );
 
@@ -992,33 +986,20 @@ export function Composer() {
         setContextIndex(0);
     };
 
-    /**
-     * Write new text and retire any reference it no longer names.
-     *
-     * Every path that changes the message goes through here, because the reconciliation is the
-     * thing that keeps a chip from outliving the token it belongs to -- and a chip that
-     * outlives its token still puts its document into the request.
-     */
+    /** Text edits retire inline mentions, not independent workspace or picker selections. */
     const applyText = (value: string) => {
         setText(value);
         setOptions((current) => {
             const kept = reconcileContextItems(value, current.contextItems);
             return kept.length === current.contextItems.length
+                && kept.every((item, index) => item === current.contextItems[index])
                 ? current
                 : { ...current, contextItems: kept };
         });
     };
 
-    const addContextCandidate = (candidate: ContextCandidate, origin: ContextOrigin = 'user') => {
-        if (hasContextItem(contextItems, candidate.key)) {
-            return;
-        }
-        // Built against the current row so the label collision check sees the tokens already
-        // in play. Nothing is mutated here; both updates below are plain state writes.
-        const item = candidateToContextItem(candidate, contextItems, origin);
-        // The token is appended rather than spliced at the caret: the picker has no caret
-        // position to speak of, and the reference still ends up in the sentence.
-        setText((value) => appendContextToken(value, item.token));
+    const addContextCandidate = (candidate: ContextCandidate) => {
+        const item = candidateToContextItem(candidate, contextItems);
         setOptions((current) => ({
             ...current,
             contextItems: addContextItem(current.contextItems, item),
@@ -1042,15 +1023,10 @@ export function Composer() {
             });
         };
 
-        if (hasContextItem(contextItems, candidate.key)) {
-            // Already referenced. The half-typed `#doc` is still cleared, so it does not stay
-            // behind looking like a reference that failed to resolve.
-            setText(`${text.slice(0, start)}${text.slice(end)}`);
-            focusAt(start);
-            return;
-        }
-
-        const item = candidateToContextItem(candidate, contextItems);
+        const existing = contextItems.find((item) => item.key === candidate.key);
+        const item: ContextItem = existing
+            ? { ...existing, attachment: 'mention' }
+            : candidateToContextItem(candidate, contextItems, 'user', 'mention');
         const next = insertContextToken(text, start, end, item.token);
         setText(next.text);
         setOptions((current) => ({
@@ -1061,7 +1037,7 @@ export function Composer() {
     };
 
     /**
-     * Take a reference off the row, and its text with it.
+     * Take a reference off the row, and any owned inline text with it.
      *
      * The token is only stripped when no *other* remaining chip still uses it. Two chips can
      * share one token when two documents share a title, and blanking the text while a second
@@ -1071,7 +1047,8 @@ export function Composer() {
      */
     const removeContextChip = (item: ContextItem) => {
         const remaining = removeContextItem(contextItems, item.key);
-        if (!remaining.some((entry) => entry.token === item.token)) {
+        if (hasContextMention(item)
+            && !remaining.some((entry) => hasContextMention(entry) && entry.token === item.token)) {
             setText((value) => removeContextToken(value, item.token));
         }
         setOptions((current) => ({
@@ -1083,8 +1060,10 @@ export function Composer() {
     const removeContextChips = (items: ContextItem[]) => {
         const dropped = new Set(items.map((item) => item.key));
         const remaining = contextItems.filter((entry) => !dropped.has(entry.key));
-        const stillReferenced = new Set(remaining.map((entry) => entry.token));
-        const strip = [...new Set(items.map((item) => item.token))].filter(
+        const stillReferenced = new Set(
+            remaining.filter(hasContextMention).map((entry) => entry.token),
+        );
+        const strip = [...new Set(items.filter(hasContextMention).map((item) => item.token))].filter(
             (token) => !stillReferenced.has(token),
         );
 
@@ -1116,8 +1095,8 @@ export function Composer() {
      * the same reason the prompt link above is: effects that rewrite the query string also run
      * on mount, and whichever ran first would decide whether the selection survived.
      *
-     * The ref guards against StrictMode running effects twice, which would otherwise seed the
-     * chips -- and append their tokens -- a second time.
+     * Mark it applied only after resolution, so effect cleanup or StrictMode cannot consume
+     * the handoff before its items arrive.
      */
     const [linkedHandoff] = useState(() => readContextHandoff(searchParams));
     const [linkedHandoffState] = useState(
@@ -1129,8 +1108,6 @@ export function Composer() {
         if (handoffApplied.current || !linkedHandoff || !canPost) {
             return;
         }
-        handoffApplied.current = true;
-
         const controller = new AbortController();
         void resolveContextHandoff(linkedHandoff, {
             groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
@@ -1139,40 +1116,38 @@ export function Composer() {
             signal: controller.signal,
         })
             .then((items) => {
-                if (controller.signal.aborted || items.length === 0) {
+                if (controller.signal.aborted) {
                     return;
                 }
+                handoffApplied.current = true;
                 setOptions((current) => ({
                     ...current,
-                    // Arriving with documents named is a request to search them, so the
-                    // toggle is not left off underneath a full chip row.
-                    documentSearch: true,
+                    documentSearch: items.length > 0 || current.documentSearch,
                     contextItems: items.reduce(
                         (carry, item) => addContextItem(carry, item),
                         current.contextItems,
                     ),
                 }));
-                setText((value) =>
-                    items.reduce((carry, item) => appendContextToken(carry, item.token), value),
+                // Clean up only after adoption; navigation can restart this effect.
+                setSearchParams(
+                    (current) => {
+                        const next = new URLSearchParams(current);
+                        for (const key of CONTEXT_HANDOFF_PARAMS) {
+                            next.delete(key);
+                        }
+                        return next;
+                    },
+                    { replace: true },
                 );
-                textareaRef.current?.focus();
+                if (items.length > 0) {
+                    textareaRef.current?.focus();
+                }
             })
             .catch(() => {
-                // The composer is still usable; the references simply have to be re-picked.
-            });
-
-        // Stripped so reloading or re-sharing the link does not silently re-apply a selection
-        // the user may since have cleared.
-        setSearchParams(
-            (current) => {
-                const next = new URLSearchParams(current);
-                for (const key of CONTEXT_HANDOFF_PARAMS) {
-                    next.delete(key);
+                if (!controller.signal.aborted) {
+                    toast.error('Could not load the selected context. Choose it again from Documents.');
                 }
-                return next;
-            },
-            { replace: true },
-        );
+            });
 
         return () => controller.abort();
     }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope]);

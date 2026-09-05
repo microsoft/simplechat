@@ -9,9 +9,9 @@
 // them on window.OrchHarness so a test can seed the stores, mount a component into a real DOM, and
 // drive it with genuine clicks. Nothing here is stubbed: the code under test is the code that ships.
 
-import { createElement, type ReactElement } from 'react';
+import { createElement, StrictMode, type ComponentProps, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 import * as orchestrationStore from '../../../application/v2_ui/src/stores/orchestrationStore';
 import * as chatStore from '../../../application/v2_ui/src/stores/chatStore';
@@ -26,6 +26,20 @@ import { OrchestrationPlanPanel } from '../../../application/v2_ui/src/component
 import { OrchestrationRunView } from '../../../application/v2_ui/src/components/chat/OrchestrationRunView';
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
+import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
+
+function ContextWorkflow() {
+    const location = useLocation();
+    return (
+        <>
+            <output aria-label="Current route">{location.pathname}{location.search}</output>
+            <Routes>
+                <Route path="/workspace" element={<DocumentExplorer />} />
+                <Route path="/chat" element={<Composer />} />
+            </Routes>
+        </>
+    );
+}
 
 type ComponentName =
     | 'OrchestrationPlanCard'
@@ -33,7 +47,8 @@ type ComponentName =
     | 'OrchestrationPlanPanel'
     | 'OrchestrationRunView'
     | 'OrchestrationMapView'
-    | 'Composer';
+    | 'Composer'
+    | 'ContextWorkflow';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const components: Record<ComponentName, (props: any) => ReactElement | null> = {
@@ -43,13 +58,24 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationRunView,
     OrchestrationMapView,
     Composer,
+    ContextWorkflow,
 };
 
 const roots = new Map<string, Root>();
 
+interface MountOptions {
+    initialEntries?: ComponentProps<typeof MemoryRouter>['initialEntries'];
+    strictMode?: boolean;
+}
+
 /** Mount a named component with plain-object props into the element with the given id. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function mount(containerId: string, name: ComponentName, props: Record<string, any> = {}): void {
+function mount(
+    containerId: string,
+    name: ComponentName,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    props: Record<string, any> = {},
+    options: MountOptions = {},
+): void {
     const container = document.getElementById(containerId);
     if (!container) {
         throw new Error(`harness mount: no element with id "${containerId}"`);
@@ -66,7 +92,12 @@ function mount(containerId: string, name: ComponentName, props: Record<string, a
     // Wrap every mount in a router: some components (notably the Composer's subtree) read the
     // location through react-router hooks, which throw outside a Router. A MemoryRouter supplies
     // that context without a browser history, and is harmless for components that never route.
-    root.render(createElement(MemoryRouter, null, createElement(Component, props)));
+    const tree = createElement(
+        MemoryRouter,
+        { initialEntries: options.initialEntries },
+        createElement(Component, props),
+    );
+    root.render(options.strictMode ? createElement(StrictMode, null, tree) : tree);
 }
 
 /** Unmount whatever is in the given container, if anything. */
