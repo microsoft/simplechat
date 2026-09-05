@@ -38,6 +38,8 @@ export type ContextKind = 'document' | 'tag' | 'scope';
  */
 export type ContextOrigin = 'user' | 'handoff' | 'planner';
 
+export type ContextAttachment = 'selection' | 'mention' | 'both';
+
 export type ContextScopeKind = 'personal' | 'group' | 'public';
 
 export interface ContextScopeRef {
@@ -55,8 +57,9 @@ export interface ContextItem {
     id: string;
     /** The full display name. May be longer than the token's label. */
     label: string;
-    /** The literal `#[…]` text this item owns in the message. */
+    /** Reserved token; only a mention attachment owns this text in the message. */
     token: string;
+    attachment: ContextAttachment;
     scope: ContextScopeRef;
     origin: ContextOrigin;
     meta?: {
@@ -127,6 +130,7 @@ export function documentContextItem(
     scope: ContextScopeRef,
     existing: readonly ContextItem[] = [],
     origin: ContextOrigin = 'user',
+    attachment: ContextAttachment = 'selection',
 ): ContextItem {
     const id = documentId(document);
     const { primary, secondary } = documentDisplayName(document);
@@ -140,6 +144,7 @@ export function documentContextItem(
             label: primary,
             scope,
             origin,
+            attachment,
             meta: {
                 fileName: secondary ?? (String(document.file_name ?? '').trim() || undefined),
                 classification: classification || undefined,
@@ -157,6 +162,7 @@ export function tagContextItem(
     scope: ContextScopeRef,
     existing: readonly ContextItem[] = [],
     origin: ContextOrigin = 'user',
+    attachment: ContextAttachment = 'selection',
 ): ContextItem {
     const tag = String(name ?? '').trim();
     return finish(
@@ -167,6 +173,7 @@ export function tagContextItem(
             label: tag,
             scope,
             origin,
+            attachment,
         },
         existing,
     );
@@ -183,6 +190,7 @@ export function scopeContextItem(
     scope: ContextScopeRef,
     existing: readonly ContextItem[] = [],
     origin: ContextOrigin = 'user',
+    attachment: ContextAttachment = 'selection',
 ): ContextItem {
     return finish(
         {
@@ -192,20 +200,35 @@ export function scopeContextItem(
             label: scope.name,
             scope,
             origin,
+            attachment,
         },
         existing,
     );
 }
 
-/** Add an item unless its key is already present. */
+/** Merge selection and mention ownership without duplicating an item's identity. */
 export function addContextItem(
     items: readonly ContextItem[],
     item: ContextItem,
 ): ContextItem[] {
-    if (items.some((entry) => entry.key === item.key)) {
-        return items.slice();
+    const existing = items.find((entry) => entry.key === item.key);
+    if (existing) {
+        const attachment = existing.attachment === item.attachment
+            ? existing.attachment
+            : 'both';
+        return items.map((entry) =>
+            entry === existing && entry.attachment !== attachment
+                ? { ...entry, attachment }
+                : entry,
+        );
     }
-    return [...items, item];
+
+    // A delayed handoff can reserve a token already used by another draft selection.
+    const added = item.attachment === 'selection'
+        && items.some((entry) => entry.token === item.token)
+        ? finish(item, items)
+        : item;
+    return [...items, added];
 }
 
 export function removeContextItem(

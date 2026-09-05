@@ -1,8 +1,9 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.089
+// Version: 0.261.094
 // Implemented in: 0.261.089
+// Independent context selection implemented in: 0.261.094
 //
 // These are the decisions that turn "the user picked a document" into fields the server acts
 // on, and each one fails as a wrong answer rather than an error:
@@ -38,7 +39,9 @@ import {
     removeContextItem,
     scopeContextItem,
     tagContextItem,
+    type ContextItem,
 } from '../application/v2_ui/src/lib/chatContext';
+import { reconcileContextItems } from '../application/v2_ui/src/lib/chatContextTokens';
 import { resolveDocumentScope } from '../application/v2_ui/src/lib/documentScope';
 
 const MARKETING = groupScope({ id: 'grp-1', name: 'Marketing' });
@@ -74,6 +77,49 @@ check('the same document is not added twice', () => {
     const item = doc('a', 'Contract');
     const items = addContextItem(addContextItem([], item), item);
     assert.equal(items.length, 1);
+});
+
+check('selection and mention merge without replacing identity, token, or metadata', () => {
+    const selected = documentContextItem(
+        { id: 'a', title: 'Contract', file_name: 'Contract.pdf' },
+        PERSONAL_SCOPE,
+        [],
+        'handoff',
+    );
+    const mentioned = documentContextItem(
+        { id: 'a', title: 'Contract' },
+        PERSONAL_SCOPE,
+        [selected],
+        'user',
+        'mention',
+    );
+    const merged = addContextItem([selected], mentioned);
+
+    assert.equal(merged.length, 1);
+    assert.deepEqual(merged[0], { ...selected, attachment: 'both' });
+    assert.equal(merged[0].meta, selected.meta);
+    assert.equal(selected.attachment, 'selection');
+    assert.deepEqual(contextDocumentIds(merged), ['a']);
+    assert.deepEqual(reconcileContextItems('Summarize this', merged), [selected]);
+});
+
+check('a later independent selection preserves an existing mention', () => {
+    const selected = doc('a', 'Contract');
+    const mentioned: ContextItem = { ...selected, attachment: 'mention' };
+    const merged = addContextItem([mentioned], selected);
+
+    assert.equal(merged[0].attachment, 'both');
+    assert.deepEqual(contextDocumentIds(reconcileContextItems('', merged)), ['a']);
+    assert.equal(addContextItem(merged, mentioned)[0], merged[0]);
+    assert.equal(addContextItem(merged, selected)[0], merged[0]);
+});
+
+check('a delayed selection cannot reserve another item\'s token', () => {
+    const first = doc('a', 'Contract');
+    const second = doc('b', 'Contract');
+    const merged = addContextItem([first], second);
+    assert.notEqual(merged[0].token, merged[1].token);
+    assert.deepEqual(contextDocumentIds(merged), ['a', 'b']);
 });
 
 check('the same tag in two workspaces is two chips but one filter', () => {
@@ -119,6 +165,26 @@ check('one kind alone sends no mode at all', () => {
     assert.equal(contextFilterMode([doc('a', 'A')]), undefined);
     assert.equal(contextFilterMode([tagContextItem('urgent', PERSONAL_SCOPE)]), undefined);
     assert.equal(contextFilterMode([]), undefined);
+});
+
+check('pill-only and inline attachments carry identical request context', () => {
+    const selected = [
+        doc('a', 'Contract', MARKETING),
+        tagContextItem('urgent', PERSONAL_SCOPE),
+        scopeContextItem(HANDBOOK),
+    ];
+    const mentioned: ContextItem[] = selected.map((item) => ({ ...item, attachment: 'mention' }));
+    const combined: ContextItem[] = selected.map((item) => ({ ...item, attachment: 'both' }));
+    const requestContext = (items: ContextItem[]) => ({
+        ids: contextDocumentIds(items),
+        tags: contextTags(items),
+        scopes: contextScopes(items),
+        filterMode: contextFilterMode(items),
+    });
+
+    assert.deepEqual(requestContext(mentioned), requestContext(selected));
+    assert.deepEqual(requestContext(combined), requestContext(selected));
+    assert.deepEqual(requestContext(reconcileContextItems('', combined)), requestContext(selected));
 });
 
 /* -------------------------------------------------------------------------- */

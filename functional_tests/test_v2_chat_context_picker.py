@@ -2,8 +2,9 @@
 # test_v2_chat_context_picker.py
 """
 Functional test for the V2 chat context picker.
-Version: 0.261.089
+Version: 0.261.094
 Implemented in: 0.261.089
+Independent context selection implemented in: 0.261.094
 
 The V2 composer shipped with a Documents button that was a plain on/off, and a
 ``selectedDocumentIds`` field that was declared, forwarded to both the chat
@@ -104,19 +105,16 @@ def test_the_composer_no_longer_carries_a_write_only_selection():
     assert "DocumentPickerPopover" in composer, (
         "The Documents button should open the picker rather than toggling."
     )
+    assert "appendContextToken" not in composer, (
+        "Workspace and picker selections must not append references to the message."
+    )
 
     print("  The composer drives the request from its chip row.")
     return True
 
 
 def test_sending_clears_the_chips_with_the_text():
-    """Chips and their `#[...]` text are two views of one thing and must clear together.
-
-    Left behind on send, the chips would sit over an empty box holding tokens that
-    are no longer in it -- and the next keystroke reconciles those away, so the
-    references appear to survive the send and then vanish one character into the
-    following message.
-    """
+    """Sending clears the turn's selections and mentions without changing the next draft."""
     print("\nTesting draft clearing...")
 
     composer = COMPOSER_TSX.read_text(encoding="utf-8")
@@ -182,12 +180,15 @@ def test_removing_a_chip_cannot_orphan_a_shared_reference():
 
     composer = COMPOSER_TSX.read_text(encoding="utf-8")
 
-    assert "remaining.some((entry) => entry.token === item.token)" in composer, (
+    assert "remaining.some((entry) => hasContextMention(entry) && entry.token === item.token)" in composer, (
         "Removing a chip strips its token unconditionally, which orphans any other "
         "chip sharing that token."
     )
     assert "stillReferenced" in composer, (
         "Bulk removal should also keep tokens that remaining chips still use."
+    )
+    assert "items.filter(hasContextMention)" in composer, (
+        "Removing selections must leave unbound matching text alone."
     )
 
     print("  A shared token survives until its last chip is removed.")

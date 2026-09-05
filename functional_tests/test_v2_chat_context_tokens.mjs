@@ -1,12 +1,12 @@
 // test_v2_chat_context_tokens.mjs
 //
 // Runtime test for the `#[…]` grammar behind the V2 chat context picker.
-// Version: 0.261.089
+// Version: 0.261.094
 // Implemented in: 0.261.089
+// Independent context selection implemented in: 0.261.094
 //
-// The composer holds each context reference twice: as a chip above the input and as literal
-// text inside it. Everything that can go wrong with that arrangement is a silent wrong answer
-// rather than a visible failure, which is why these are worth pinning:
+// Only explicit # mentions own message text. Independent context selections must survive
+// ordinary text edits, including removal of a later mention of the same item.
 //
 //   - A token that survives an edit it should not have survived leaves a chip that keeps
 //     putting a document into the request after the message stopped naming it.
@@ -22,8 +22,8 @@
 import assert from 'node:assert/strict';
 import {
     MAX_CONTEXT_LABEL_LENGTH,
-    appendContextToken,
     buildContextToken,
+    hasContextMention,
     insertContextToken,
     parseContextTokens,
     readContextQuery,
@@ -83,9 +83,10 @@ check('multi-word labels round-trip', () => {
 });
 
 check('an unclosed bracket does not swallow the next token', () => {
-    // Without the `[^\]\n]+` bound, `#[oops` would run on and consume `#[Real.pdf]`.
-    const found = parseContextTokens('#[oops\nand #[Real.pdf]');
-    assert.deepEqual(found.map((entry) => entry.label), ['Real.pdf']);
+    for (const separator of ['\n', ' ']) {
+        const found = parseContextTokens(`#[oops${separator}and #[Real.pdf]`);
+        assert.deepEqual(found.map((entry) => entry.label), ['Real.pdf']);
+    }
 });
 
 check('parsing does not depend on who parsed last', () => {
@@ -175,12 +176,6 @@ check('inserting before existing text keeps a single separator', () => {
     assert.equal(result.text, 'a #[X] b');
 });
 
-check('the hand-off appends onto an empty composer without a leading space', () => {
-    assert.equal(appendContextToken('', '#[A]'), '#[A] ');
-    assert.equal(appendContextToken('note', '#[A]'), 'note #[A] ');
-    assert.equal(appendContextToken('note ', '#[A]'), 'note #[A] ');
-});
-
 /* -------------------------------------------------------------------------- */
 /* Removal                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -215,8 +210,8 @@ check('a token at the very start is removed cleanly', () => {
 /* -------------------------------------------------------------------------- */
 
 const items = [
-    { key: 'document:a', token: '#[A.pdf]' },
-    { key: 'document:b', token: '#[B.pdf]' },
+    { key: 'document:a', token: '#[A.pdf]', attachment: 'mention' },
+    { key: 'document:b', token: '#[B.pdf]', attachment: 'mention' },
 ];
 
 check('editing a token out of the text retires its chip', () => {
@@ -247,6 +242,52 @@ check('chip order follows the row, not the sentence', () => {
 
 check('reconciling an empty row is a no-op', () => {
     assert.deepEqual(reconcileContextItems('#[A.pdf]', []), []);
+});
+
+check('independent selections survive empty text and ordinary draft edits', () => {
+    const selected = items.map((item) => ({ ...item, attachment: 'selection' }));
+    for (const text of ['', 'Summarize these documents', '#[A.pd', '#[Unbound]']) {
+        const kept = reconcileContextItems(text, selected);
+        assert.deepEqual(kept, selected);
+        assert.ok(kept.every((item, index) => item === selected[index]));
+    }
+});
+
+check('a matching literal token does not turn a selection into a mention', () => {
+    const selected = { ...items[0], attachment: 'selection' };
+    const kept = reconcileContextItems('#[A.pdf]', [selected]);
+    assert.deepEqual(kept, [selected]);
+    assert.equal(hasContextMention(kept[0]), false);
+});
+
+check('deleting a combined mention keeps the independent selection without mutating it', () => {
+    const combined = { ...items[0], attachment: 'both' };
+    const kept = reconcileContextItems('Summarize this', [combined]);
+    assert.deepEqual(kept, [{ ...combined, attachment: 'selection' }]);
+    assert.equal(combined.attachment, 'both');
+    assert.notEqual(kept[0], combined);
+    assert.equal(hasContextMention(kept[0]), false);
+});
+
+check('a complete mention keeps both attachment sources', () => {
+    const combined = { ...items[0], attachment: 'both' };
+    assert.equal(reconcileContextItems('Read #[A.pdf]', [combined])[0], combined);
+    assert.equal(hasContextMention(combined), true);
+});
+
+check('repeated mentions retain their pill until the last complete token is gone', () => {
+    assert.deepEqual(reconcileContextItems('#[A.pdf] then #[A.pdf]', [items[0]]), [items[0]]);
+    assert.deepEqual(reconcileContextItems('#[A.pd then #[A.pdf]', [items[0]]), [items[0]]);
+    assert.deepEqual(reconcileContextItems('#[A.pd then nothing', [items[0]]), []);
+});
+
+check('mixed attachment sources reconcile independently without reshuffling the row', () => {
+    const selected = { key: 'tag:urgent', token: '#[urgent]', attachment: 'selection' };
+    const combined = { ...items[1], attachment: 'both' };
+    assert.deepEqual(
+        reconcileContextItems('Read #[A.pdf]', [selected, items[0], combined]),
+        [selected, items[0], { ...combined, attachment: 'selection' }],
+    );
 });
 
 /* -------------------------------------------------------------------------- */
