@@ -1,23 +1,15 @@
 // chatContextTokens.ts
-// The `#[…]` grammar that keeps the composer's context chips and its message text in step.
+// The `#[…]` grammar for explicit inline context mentions.
 //
-// A context reference exists in two places at once: as a chip above the input, and as literal
-// text inside it. That is deliberate -- the reference stays in the message the user actually
-// sends, so "compare #[Q3 Contract.pdf] against #[Q2 Contract.pdf]" still reads as a sentence
-// after it has been sent, and still reads as one to the model. Only the message text survives
-// into every downstream view; per-message metadata keeps `requested_document_ids` but nothing
-// renders it in prose.
-//
-// Holding the same fact twice means they can disagree, so the rules below are written around a
-// single principle: THE TEXT IS AUTHORITATIVE FOR REMOVAL, THE CHIP LIST IS AUTHORITATIVE FOR
-// IDENTITY. A token that has been edited or deleted drops its chip (`reconcileContextItems`),
-// but a token typed by hand never creates one -- there is no id behind it, and inventing a
-// document from a string the user typed is exactly the kind of guess that produces a request
-// citing something they never chose.
+// Workspace and picker selections are independent of the message text. Only choosing through
+// `#` attaches a token to an item. Removing that token retires its mention attachment, not any
+// independent selection of the same item. Typed text never invents a context identity.
 //
 // Shaped after lib/promptSlash.ts and lib/mentions.ts, which do the equivalent job for `/` and
 // `@`. Nothing here touches the DOM: the caller reads `selectionStart` and writes the result
 // back, so every rule is testable without a textarea.
+
+import type { ContextAttachment } from './chatContext';
 
 /** Longest query the menu stays open for, past which this is prose rather than a search. */
 export const MAX_CONTEXT_QUERY_LENGTH = 60;
@@ -33,11 +25,11 @@ export const MAX_CONTEXT_LABEL_LENGTH = 80;
 /**
  * Matches one complete token.
  *
- * `[^\]\n]+` rather than `.+?` so a token can never span a line or swallow the next one: an
+ * Exclude both brackets and newlines so a token cannot swallow the next one: an
  * unclosed `#[` stays inert text instead of eating the rest of the paragraph the moment a
  * later token closes it.
  */
-const CONTEXT_TOKEN_PATTERN = /#\[([^\]\n]+)\]/g;
+const CONTEXT_TOKEN_PATTERN = /#\[([^[\]\n]+)\]/g;
 
 export interface ContextQuery {
     /** What has been typed after the `#`. */
@@ -200,19 +192,6 @@ export function insertContextToken(
 }
 
 /**
- * Append a token to the end of the text.
- *
- * Used by the picker popover and by the workspace hand-off, neither of which has a `#` query
- * to replace. The hand-off arrives with an empty composer, so the leading separator rule keeps
- * it from opening on a stray space.
- */
-export function appendContextToken(text: string, token: string): string {
-    const value = String(text ?? '');
-    const lead = value && !/\s$/.test(value) ? ' ' : '';
-    return `${value}${lead}${token} `;
-}
-
-/**
  * Remove every occurrence of a token.
  *
  * Removal has to tidy after itself: deleting the token from `compare #[A] with #[B]` by simple
@@ -251,17 +230,12 @@ export function removeContextToken(text: string, token: string): string {
     return result;
 }
 
-/**
- * Drop the items whose token is no longer in the text.
- *
- * This is what makes editing the sentence a supported way of removing a reference: backspacing
- * through `#[Q3 Contract.pdf]` retires the chip, rather than leaving a chip that still puts the
- * document in the request while the message no longer mentions it.
- *
- * Order follows the chip list, not the text, so removing one reference does not reshuffle the
- * row underneath the pointer.
- */
-export function reconcileContextItems<T extends { token: string }>(
+export function hasContextMention(item: { attachment: ContextAttachment }): boolean {
+    return item.attachment === 'mention' || item.attachment === 'both';
+}
+
+/** Retire missing inline mentions while retaining independent selections and row order. */
+export function reconcileContextItems<T extends { token: string; attachment: ContextAttachment }>(
     text: string,
     items: readonly T[],
 ): T[] {
@@ -270,5 +244,10 @@ export function reconcileContextItems<T extends { token: string }>(
     }
 
     const present = new Set(parseContextTokens(text).map((entry) => entry.token));
-    return items.filter((item) => present.has(item.token));
+    return items.flatMap((item) => {
+        if (!hasContextMention(item) || present.has(item.token)) {
+            return [item];
+        }
+        return item.attachment === 'both' ? [{ ...item, attachment: 'selection' }] : [];
+    });
 }
