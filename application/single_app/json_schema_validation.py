@@ -6,6 +6,12 @@ import re
 from functools import lru_cache
 from jsonschema import validate, ValidationError, Draft7Validator, Draft6Validator, RefResolver
 
+from functions_agent_delegation import (
+    AGENT_ACTION_VALIDATION_ERROR,
+    AGENT_DEFAULT_ENDPOINT,
+    AGENT_PLUGIN_TYPE,
+    validate_agent_action_manifest,
+)
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
@@ -13,6 +19,7 @@ from functions_snowflake_operations import SNOWFLAKE_DEFAULT_ENDPOINT, SNOWFLAKE
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
 PLUGIN_ENDPOINT_DEFAULTS = {
+    AGENT_PLUGIN_TYPE: AGENT_DEFAULT_ENDPOINT,
     'sql_schema': 'sql://sql_schema',
     'sql_query': 'sql://sql_query',
     'chart': CHART_DEFAULT_ENDPOINT,
@@ -167,6 +174,12 @@ def validate_plugin(plugin):
         return '; '.join([f"{plugin.get('name', '<Unknown>')}: {e.message}" for e in errors])
     
     # Additional business logic validation
+    if plugin_type == AGENT_PLUGIN_TYPE:
+        try:
+            validate_agent_action_manifest(plugin_copy)
+        except ValueError:
+            return AGENT_ACTION_VALIDATION_ERROR
+
     # For non-SQL plugins, endpoint must not be empty
     if plugin_type not in ['sql_schema', 'sql_query']:
         endpoint = plugin_copy.get('endpoint', '')

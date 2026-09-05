@@ -1,9 +1,8 @@
 // AgentsSection.tsx
 // Personal agents: list, create, edit and delete.
 //
-// The editor covers identity and instructions. Binding a model, attaching actions and
-// assigning knowledge are not here yet and are still done in the classic interface; the
-// section says so rather than offering controls that do nothing.
+// Identity, instructions and Call agent bindings are native. Model, knowledge and other
+// action types retain their existing classic editors.
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -30,6 +29,8 @@ import {
     updateAgent,
 } from '../../lib/workspaceApi';
 import type { WorkspaceAgent } from '../../lib/types';
+import { PERSONAL_DELEGATION_SCOPE } from '../../lib/agentDelegation';
+import { AgentDelegationManager } from '../../components/agents/AgentDelegationManager';
 
 interface DraftAgent {
     id: string | null;
@@ -167,6 +168,8 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
     const [draft, setDraft] = useState<DraftAgent | null>(null);
     const [saving, setSaving] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
+    const [delegationRevision, setDelegationRevision] = useState(0);
+    const [delegationDirty, setDelegationDirty] = useState(false);
 
     const visible = useMemo(() => {
         const needle = query.trim().toLowerCase();
@@ -211,6 +214,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
             }
             setDraft(null);
             await refresh();
+            setDelegationRevision((value) => value + 1);
         } catch (saveError) {
             setError(errorMessage(saveError, 'Could not save the agent.'));
         } finally {
@@ -224,6 +228,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
         setItems(items.filter((item) => item.id !== agent.id));
         try {
             await deleteAgent(agent.id);
+            setDelegationRevision((value) => value + 1);
         } catch (deleteError) {
             setItems(previous);
             setError(errorMessage(deleteError, 'Could not delete the agent.'));
@@ -236,13 +241,13 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
         <div className="space-y-4">
             <SectionIntro
                 title="Agents"
-                description="Assistants you configure once and reuse: an instruction set, and in time the knowledge and actions it is allowed to use. Agents you build here appear in the chat agent picker."
+                description="Assistants you configure once and reuse, with instructions and approved actions. Agents you build here appear in the chat agent picker."
                 actions={
                     <GlassButton
                         variant="primary"
                         size="sm"
                         onClick={() => setDraft({ ...EMPTY_DRAFT })}
-                        disabled={Boolean(draft)}
+                        disabled={Boolean(draft) || delegationDirty}
                     >
                         <Plus size={14} />
                         New agent
@@ -251,7 +256,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
             />
 
             <p className="text-xs text-text-3">
-                Binding a model, attaching{' '}
+                Create an agent here, then attach Call agent actions below. Create those{' '}
                 {actionsEnabled ? (
                     <Link to="/workspace/actions" className="text-accent hover:underline">
                         actions
@@ -259,7 +264,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
                 ) : (
                     'actions'
                 )}{' '}
-                and assigning knowledge are still done in the{' '}
+                in your Actions section. Model, knowledge and other connector bindings remain in the{' '}
                 <a href="/workspace" className="text-accent hover:underline">
                     classic workspace
                 </a>
@@ -315,6 +320,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
                                         <RowAction
                                             icon={<Pencil size={15} />}
                                             label={`Edit ${agent.display_name ?? agent.name ?? 'agent'}`}
+                                            disabled={delegationDirty}
                                             onClick={() =>
                                                 setDraft({
                                                     id: agent.id,
@@ -333,6 +339,7 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
                                             label={`Delete ${agent.display_name ?? agent.name ?? 'agent'}`}
                                             confirmLabel="Delete"
                                             busy={busyId === agent.id}
+                                            disabled={delegationDirty}
                                             onConfirm={() => void onDelete(agent)}
                                         />
                                     </>
@@ -342,6 +349,10 @@ export function AgentsSection({ actionsEnabled }: { actionsEnabled: boolean }) {
                     );
                 }}
             />
+            {actionsEnabled && !draft ? (
+                <AgentDelegationManager scope={PERSONAL_DELEGATION_SCOPE} mode="bindings"
+                    revision={delegationRevision} onDirtyChange={setDelegationDirty} />
+            ) : null}
         </div>
     );
 }

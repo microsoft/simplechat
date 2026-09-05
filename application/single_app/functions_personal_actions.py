@@ -23,6 +23,7 @@ from config import cosmos_personal_actions_container
 import logging
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
+from functions_agent_delegation import validate_agent_action_for_scope
 
 
 def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
@@ -140,6 +141,9 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
         dict: Saved action data with ID
     """
     try:
+        action_data = validate_agent_action_for_scope(
+            action_data, user_id=user_id, scope_type="personal", scope_id=user_id,
+        )
         # Check if an action with this name already exists
         existing_action = None
         if action_data.get('id'):

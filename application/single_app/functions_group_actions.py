@@ -24,6 +24,7 @@ from functions_workspace_identities import (
 )
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_agent_delegation import validate_agent_action_for_scope
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -101,6 +102,9 @@ def get_group_action(
 
 def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optional[str] = None) -> Dict[str, Any]:
     """Create or update a group action entry."""
+    action_data = validate_agent_action_for_scope(
+        action_data, user_id=user_id, scope_type="group", scope_id=group_id,
+    )
     payload = dict(action_data)
     action_id = payload.get("id") or str(uuid.uuid4())
 

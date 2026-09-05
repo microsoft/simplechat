@@ -119,6 +119,11 @@ EXPECTED_PUBLIC_PATHS = {
 SENSITIVE_ROUTE_POLICIES = {
     ("app.py", "session_heartbeat"): ("login_required",),
     ("app.py", "list_semantic_kernel_plugins"): ("login_required", "admin_required"),
+    ("route_backend_plugins.py", "get_agent_action_targets"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "initiate_delegated_foundry_auth"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "update_personal_agent_action_bindings"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "update_group_agent_action_bindings"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "update_global_agent_action_bindings"): ("login_required", "admin_required"),
 }
 
 

@@ -12,9 +12,11 @@ import os
 import re
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from agent_execution_context import AgentExecutionCancelled, DelegationBudget, capture_execution_identity
+from agent_delegation_runtime import delegation_citations, delegation_usage, prepare_agent_execution
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import (
@@ -360,7 +362,10 @@ def _raise_if_workflow_run_cancelled(workflow, run_id):
 
 def _execute_cancelable_workflow_step(workflow, run_id, operation):
     _raise_if_workflow_run_cancelled(workflow, run_id)
-    result = operation()
+    try:
+        result = operation()
+    except AgentExecutionCancelled as exc:
+        raise WorkflowRunCancelledError(WORKFLOW_RUN_CANCELLED_MESSAGE) from exc
     _raise_if_workflow_run_cancelled(workflow, run_id)
     return result
 
@@ -1812,6 +1817,8 @@ def _finalize_token_usage(aggregate):
     request_count = _coerce_token_count(aggregate.get('request_count'))
     if request_count:
         token_usage['request_count'] = request_count
+    if isinstance(aggregate.get('agent_breakdown'), list):
+        token_usage['agent_breakdown'] = aggregate['agent_breakdown']
     return token_usage
 
 
@@ -1831,6 +1838,8 @@ def _accumulate_token_usage_summary(aggregate, token_usage):
         request_count = 1
     if request_count:
         aggregate['request_count'] = int(aggregate.get('request_count', 0) or 0) + request_count
+    if isinstance(token_usage.get('agent_breakdown'), list):
+        aggregate.setdefault('agent_breakdown', []).extend(token_usage['agent_breakdown'])
 
 
 def _emit_mixed_source_token_telemetry(
@@ -2084,17 +2093,23 @@ def _build_agent_citations_from_plugin_invocations(plugin_invocations):
             'success': invocation.success,
             'error_message': make_json_serializable(sanitized_error),
             'user_id': invocation.user_id,
+            'delegation': getattr(invocation, 'provenance', None),
         })
 
     return detailed_citations
 
 
-def _build_agent_citations_from_invocations(user_id, conversation_id):
+def _build_agent_citations_from_invocations(user_id, conversation_id, execution=None):
     if not user_id or not conversation_id:
         return []
 
     plugin_logger = get_plugin_logger()
     plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
+    if execution is not None and hasattr(execution, 'budget'):
+        plugin_invocations = [
+            invocation for invocation in execution.budget.invocations()
+            if invocation.invocation_id not in execution.prior_tool_invocation_ids
+        ]
     return _build_agent_citations_from_plugin_invocations(plugin_invocations)
 
 
@@ -4590,6 +4605,37 @@ WORKFLOW_ALERT_PRIORITIES = {'low', 'medium', 'high'}
 # context variable so the SimpleChat plugin can hand them to the rule engine
 # without threading the run through every kernel invocation.
 _workflow_alert_signal_context = ContextVar('workflow_alert_signals', default=None)
+_workflow_delegation_budget = ContextVar('workflow_delegation_budget', default=None)
+_workflow_execution_identity = ContextVar('workflow_execution_identity', default=None)
+
+
+@contextmanager
+def _workflow_delegation_scope(identity=None):
+    token = _workflow_delegation_budget.set(DelegationBudget())
+    identity_token = _workflow_execution_identity.set(identity)
+    try:
+        yield
+    finally:
+        _workflow_execution_identity.reset(identity_token)
+        _workflow_delegation_budget.reset(token)
+
+
+@contextmanager
+def _workflow_agent_execution_context(workflow):
+    """Use the trusted run actor, independently of the workflow's storage owner."""
+    identity = _workflow_execution_identity.get()
+    if identity is None and has_request_context():
+        current_actor_id = str((session.get('user') or {}).get('oid') or '').strip()
+        if not current_actor_id:
+            raise PermissionError('An authenticated workflow execution identity is required.')
+        identity = capture_execution_identity(current_actor_id)
+    user_id = identity.user_id if identity is not None else str(workflow.get('user_id') or '').strip()
+    if not user_id:
+        raise PermissionError('An authorized workflow execution identity is required.')
+    selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
+    bridge = identity.bridge(selected_agent) if identity is not None and identity.bridge else nullcontext()
+    with bridge, _ensure_execution_context(user_id):
+        yield user_id
 
 
 @contextmanager
@@ -8129,7 +8175,7 @@ def _execute_document_analysis_workflow(
     token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':
-        with _ensure_execution_context(user_id):
+        with _workflow_agent_execution_context(workflow) as user_id:
             plugin_logger = get_plugin_logger()
             previous_force_enable_agents = getattr(g, 'force_enable_agents', None) if hasattr(g, 'force_enable_agents') else None
             previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
@@ -8176,6 +8222,13 @@ def _execute_document_analysis_workflow(
                 if loaded_agent is None:
                     loaded_agent = next(iter(agent_objs.values()))
 
+                loaded_agent = prepare_agent_execution(
+                    loaded_agent, selected_agent, user_id=user_id, settings=get_workflow_kernel_settings(settings),
+                    conversation_id=conversation_id,
+                    cancel_requested=cancel_requested or (lambda: _is_workflow_run_cancellation_requested(workflow, run_id)),
+                    budget=_workflow_delegation_budget.get(),
+                )
+
                 if thought_tracker and run_id and conversation_id:
                     callback_key = register_plugin_invocation_thought_callback(
                         plugin_logger,
@@ -8183,6 +8236,7 @@ def _execute_document_analysis_workflow(
                         user_id,
                         conversation_id,
                         actor_label='Workflow agent',
+                        root_id=loaded_agent.budget.root_id if hasattr(loaded_agent, 'budget') else None,
                     )
 
                 def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
@@ -8190,7 +8244,8 @@ def _execute_document_analysis_workflow(
                         prompt_text,
                         url_access_context=url_access_context,
                     )))
-                    _accumulate_token_usage(token_usage_aggregate, result)
+                    if not _accumulate_token_usage(token_usage_aggregate, result):
+                        _accumulate_token_usage_summary(token_usage_aggregate, getattr(loaded_agent, 'last_usage', None))
                     return str(result)
 
                 def record_native_token_usage(token_usage):
@@ -8249,7 +8304,7 @@ def _execute_document_analysis_workflow(
                         + list(document_analysis_artifact_payload.get('artifacts') or [])
                     ),
                 )
-                agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+                agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id, execution=loaded_agent)
                 if not agent_citations:
                     agent_citations = list(
                         analysis_result.get('agent_citations')
@@ -8257,6 +8312,10 @@ def _execute_document_analysis_workflow(
                     )
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
+                if hasattr(loaded_agent, 'budget'):
+                    agent_citations.extend(delegation_citations(loaded_agent.budget, loaded_agent.prior_invocation_ids))
+                    _accumulate_token_usage_summary(token_usage_aggregate, delegation_usage(loaded_agent.budget, loaded_agent.prior_invocation_ids))
+                    token_usage = _finalize_token_usage(token_usage_aggregate)
                 if analysis_result.get('mixed_source_manifest'):
                     _emit_mixed_source_token_telemetry(
                         settings,
@@ -8480,7 +8539,7 @@ def _execute_document_comparison_workflow(
     token_usage_aggregate = _create_token_usage_aggregate()
 
     if workflow.get('runner_type') == 'agent':
-        with _ensure_execution_context(user_id):
+        with _workflow_agent_execution_context(workflow) as user_id:
             plugin_logger = get_plugin_logger()
             previous_force_enable_agents = getattr(g, 'force_enable_agents', None) if hasattr(g, 'force_enable_agents') else None
             previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
@@ -8527,6 +8586,13 @@ def _execute_document_comparison_workflow(
                 if loaded_agent is None:
                     loaded_agent = next(iter(agent_objs.values()))
 
+                loaded_agent = prepare_agent_execution(
+                    loaded_agent, selected_agent, user_id=user_id, settings=get_workflow_kernel_settings(settings),
+                    conversation_id=conversation_id,
+                    cancel_requested=cancel_requested or (lambda: _is_workflow_run_cancellation_requested(workflow, run_id)),
+                    budget=_workflow_delegation_budget.get(),
+                )
+
                 if thought_tracker and run_id and conversation_id:
                     callback_key = register_plugin_invocation_thought_callback(
                         plugin_logger,
@@ -8534,6 +8600,7 @@ def _execute_document_comparison_workflow(
                         user_id,
                         conversation_id,
                         actor_label='Workflow agent',
+                        root_id=loaded_agent.budget.root_id if hasattr(loaded_agent, 'budget') else None,
                     )
 
                 def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
@@ -8541,7 +8608,8 @@ def _execute_document_comparison_workflow(
                         prompt_text,
                         url_access_context=url_access_context,
                     )))
-                    _accumulate_token_usage(token_usage_aggregate, result)
+                    if not _accumulate_token_usage(token_usage_aggregate, result):
+                        _accumulate_token_usage_summary(token_usage_aggregate, getattr(loaded_agent, 'last_usage', None))
                     return str(result)
 
                 def record_native_token_usage(token_usage):
@@ -8583,7 +8651,7 @@ def _execute_document_comparison_workflow(
                         cancel_requested=cancel_requested,
                         request_correlation_id=request_correlation_id,
                     )
-                agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+                agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id, execution=loaded_agent)
                 agent_citations = deduplicate_mixed_source_references(
                     list(agent_citations or [])
                     + list((tabular_action_payload or {}).get('agent_citations') or [])
@@ -8636,6 +8704,10 @@ def _execute_document_comparison_workflow(
                 )
                 alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
                 token_usage = _finalize_token_usage(token_usage_aggregate)
+                if hasattr(loaded_agent, 'budget'):
+                    agent_citations.extend(delegation_citations(loaded_agent.budget, loaded_agent.prior_invocation_ids))
+                    _accumulate_token_usage_summary(token_usage_aggregate, delegation_usage(loaded_agent.budget, loaded_agent.prior_invocation_ids))
+                    token_usage = _finalize_token_usage(token_usage_aggregate)
                 if comparison_result.get('mixed_source_manifest'):
                     _emit_mixed_source_token_telemetry(
                         settings,
@@ -8937,8 +9009,9 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
     selected_agent = workflow.get('selected_agent') if isinstance(workflow.get('selected_agent'), dict) else {}
     if not selected_agent:
         raise ValueError('No selected agent is configured for this workflow.')
+    delegation_budget = _workflow_delegation_budget.get() or DelegationBudget()
 
-    with _ensure_execution_context(user_id):
+    with _workflow_agent_execution_context(workflow) as user_id:
         plugin_logger = get_plugin_logger()
         previous_force_enable_agents = getattr(g, 'force_enable_agents', None) if hasattr(g, 'force_enable_agents') else None
         previous_request_agent_info = getattr(g, 'request_agent_info', None) if hasattr(g, 'request_agent_info') else None
@@ -8994,6 +9067,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 user_id,
                 conversation_id,
                 actor_label='Workflow agent',
+                root_id=delegation_budget.root_id if selected_agent.get('agent_type', 'local') == 'local' else None,
             )
 
         try:
@@ -9010,6 +9084,13 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 raise ValueError('The selected task agent is no longer available for workflow execution.')
             if loaded_agent is None:
                 loaded_agent = next(iter(agent_objs.values()))
+
+            loaded_agent = prepare_agent_execution(
+                loaded_agent, selected_agent, user_id=user_id, settings=get_workflow_kernel_settings(settings),
+                conversation_id=conversation_id,
+                cancel_requested=lambda: _is_workflow_run_cancellation_requested(workflow, run_id),
+                budget=delegation_budget,
+            )
 
             _resolve_workflow_conversation_context(
                 workflow,
@@ -9031,7 +9112,14 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 ))),
             )
             reply = str(result)
-            agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id)
+            agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id, execution=loaded_agent)
+            if hasattr(loaded_agent, 'budget'):
+                agent_citations.extend(delegation_citations(loaded_agent.budget, loaded_agent.prior_invocation_ids))
+            token_usage_aggregate = _create_token_usage_aggregate()
+            if not _accumulate_token_usage(token_usage_aggregate, result):
+                _accumulate_token_usage_summary(token_usage_aggregate, getattr(loaded_agent, 'last_usage', None))
+            if hasattr(loaded_agent, 'budget'):
+                _accumulate_token_usage_summary(token_usage_aggregate, delegation_usage(loaded_agent.budget, loaded_agent.prior_invocation_ids))
             alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
 
             if thought_tracker and run_id:
@@ -9055,6 +9143,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 'agent_name': getattr(loaded_agent, 'name', None) or requested_name,
                 'agent_display_name': getattr(loaded_agent, 'display_name', None) or selected_agent.get('display_name') or requested_name,
                 'agent_citations': agent_citations,
+                'token_usage': _finalize_token_usage(token_usage_aggregate),
                 'alert_targets': alert_targets,
             }
         finally:
@@ -9812,7 +9901,9 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
     resolved_run_id = str(run_id or create_workflow_run_id())
-    with workflow_alert_signal_scope(workflow, resolved_run_id):
+    execution_actor_id = str(actor_user_id or workflow.get('user_id') or '').strip()
+    identity = capture_execution_identity(execution_actor_id)
+    with workflow_alert_signal_scope(workflow, resolved_run_id), _workflow_delegation_scope(identity):
         return _run_personal_workflow_impl(
             workflow,
             trigger_source=trigger_source,
@@ -10086,7 +10177,7 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
                 'cancellation_requested_by': '',
             },
         }
-    except WorkflowRunCancelledError:
+    except (WorkflowRunCancelledError, AgentExecutionCancelled):
         return _finalize_cancelled_workflow_run(
             workflow,
             run_record,

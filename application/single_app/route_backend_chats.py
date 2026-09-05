@@ -1,4 +1,6 @@
 # route_backend_chats.py
+from agent_execution_context import AgentExecutionCancelled, DelegationBudget
+from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
 from semantic_kernel import Kernel
 from semantic_kernel.agents.runtime import InProcessRuntime
 from semantic_kernel.contents.chat_history import ChatHistory
@@ -576,9 +578,6 @@ def _safe_metadata_int(value):
 def _merge_chat_token_usage(*token_summaries):
     """Merge observed token summaries without estimating missing provider usage."""
     merged = {
-        'prompt_tokens': 0,
-        'completion_tokens': 0,
-        'total_tokens': 0,
         'request_count': 0,
     }
     has_usage = False
@@ -587,11 +586,13 @@ def _merge_chat_token_usage(*token_summaries):
             continue
         summary_has_usage = False
         for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+            if token_summary.get(key) is None:
+                continue
             try:
                 value = max(0, int(token_summary.get(key) or 0))
             except (TypeError, ValueError):
                 value = 0
-            merged[key] += value
+            merged[key] = merged.get(key, 0) + value
             summary_has_usage = summary_has_usage or bool(value)
         try:
             request_count = max(0, int(token_summary.get('request_count') or 0))
@@ -600,8 +601,35 @@ def _merge_chat_token_usage(*token_summaries):
         if not request_count and summary_has_usage:
             request_count = 1
         merged['request_count'] += request_count
+        if isinstance(token_summary.get('agent_breakdown'), list):
+            merged.setdefault('agent_breakdown', []).extend(token_summary['agent_breakdown'])
         has_usage = has_usage or summary_has_usage or bool(request_count)
     return merged if has_usage else None
+
+
+def _drain_agent_delegation_results(agent, token_usage, agent_citations):
+    """Publish completed child artifacts once, including when the root is stopped."""
+    if not isinstance(agent, AgentExecution):
+        return token_usage
+    drained = agent.drain_completed_delegations()
+    agent_citations.extend(drained['citations'])
+    if drained['usage'] is not None:
+        return _merge_chat_token_usage(token_usage, drained['usage'])
+    return token_usage
+
+
+def _agent_authentication_required_payload(error):
+    auth_response = getattr(error, 'auth_response', {}) or {}
+    payload = {
+        'error': 'The called agent requires sign-in or consent for Foundry.',
+        'auth_required': True,
+        'scopes': auth_response.get('scopes') or [],
+    }
+    consent_url = auth_response.get('consent_url') or auth_response.get('auth_url')
+    if consent_url:
+        payload['consent_url'] = consent_url
+        payload['auth_url'] = consent_url
+    return payload
 
 
 def _normalize_capability_action(document_action_type):
@@ -14288,6 +14316,9 @@ def classify_agent_stream_retry_mode(stream_error):
 
 def apply_agent_stream_retry_mode(agent, retry_mode):
     """Temporarily adjust agent tool settings for a retry attempt."""
+    configure_retry = getattr(agent, 'configure_stream_retry', None)
+    if callable(configure_retry):
+        return configure_retry(retry_mode, apply_agent_stream_retry_mode, restore_agent_stream_retry_state)
     retry_state = {
         'function_choice_behavior': None,
         'execution_settings': [],
@@ -14324,6 +14355,9 @@ def apply_agent_stream_retry_mode(agent, retry_mode):
 def restore_agent_stream_retry_state(agent, retry_state):
     """Restore any temporary agent retry settings after the stream attempt finishes."""
     if agent is None or not retry_state:
+        return
+    if retry_state.get('agent_execution_retry'):
+        agent.restore_stream_retry(retry_state)
         return
 
     agent.function_choice_behavior = retry_state.get('function_choice_behavior')
@@ -19264,6 +19298,12 @@ def register_route_backend_chats(bp):
                         )
                         if 'on_error' in step and step['on_error']:
                             step['on_error'](e)
+                        if isinstance(e, FoundryAgentUserAuthenticationRequired):
+                            raise
+                        if delegation_budget.attempts:
+                            # A failed parent might already have delegated a
+                            # write. Do not replay its task through fallback.
+                            return ("The agent could not complete this turn. Delegated actions were not retried.", gpt_model, "agent", None)
                         continue
                 # If all fail, return default error
                 return ("Sorry, I encountered an error.", gpt_model, None, None)
@@ -19343,6 +19383,7 @@ def register_route_backend_chats(bp):
             scope_type='group' if chat_type == 'group' else 'user'
             enable_multi_agent_orchestration = False
             fallback_steps = []
+            delegation_budget = DelegationBudget()
             selected_agent = None
             user_settings = get_user_settings(user_id).get('settings', {})
             per_user_semantic_kernel = settings.get('per_user_semantic_kernel', False)
@@ -19535,6 +19576,11 @@ def register_route_backend_chats(bp):
                     })
 
                 if selected_agent:
+                    selected_agent = prepare_agent_execution(
+                        selected_agent, request_agent_info,
+                        user_id=user_id, settings=settings, conversation_id=conversation_id,
+                        budget=delegation_budget, prevent_replay=True,
+                    )
                     agent_deployment_name = getattr(selected_agent, 'deployment_name', None) or gpt_model
                     thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
                     thought_tracker.add_thought('generation', f"Sending to '{agent_deployment_name}'")
@@ -19546,7 +19592,8 @@ def register_route_backend_chats(bp):
                         thought_tracker,
                         user_id,
                         conversation_id,
-                        actor_label='Agent'
+                        actor_label='Agent',
+                        root_id=delegation_budget.root_id if isinstance(selected_agent, AgentExecution) else None,
                     )
 
                     agent_invoke_start_time = time.time()
@@ -19576,6 +19623,8 @@ def register_route_backend_chats(bp):
                         # Extract detailed plugin invocations for enhanced agent citations
                         # (Thoughts already written to Cosmos in real-time by callback)
                         plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+                        if isinstance(selected_agent, AgentExecution):
+                            plugin_invocations = delegation_budget.invocations()
 
                         # Convert plugin invocations to citation format with detailed information
                         detailed_citations = []
@@ -19604,7 +19653,8 @@ def register_route_backend_chats(bp):
                                 'timestamp': timestamp_str,
                                 'success': inv.success,
                                 'error_message': make_json_serializable(inv.error_message),
-                                'user_id': inv.user_id
+                                'user_id': inv.user_id,
+                                'delegation': getattr(inv, 'provenance', None),
                             }
                             detailed_citations.append(citation)
 
@@ -19628,6 +19678,7 @@ def register_route_backend_chats(bp):
 
                         # Store detailed citations globally to be accessed by the calling function
                         agent_citations_list.extend(detailed_citations)
+                        agent_citations_list.extend(delegation_citations(delegation_budget))
 
                         if not reload_messages_required:
                             for citation in detailed_citations:
@@ -20095,7 +20146,8 @@ def register_route_backend_chats(bp):
 
             token_usage_data = _merge_chat_token_usage(
                 mixed_source_native_token_usage,
-                token_usage_data,
+                (selected_agent.last_usage or token_usage_data) if isinstance(selected_agent, AgentExecution) else token_usage_data,
+                delegation_usage(delegation_budget),
             )
             if mixed_source_manifest:
                 emit_mixed_source_telemetry(
@@ -20459,6 +20511,8 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except FoundryAgentUserAuthenticationRequired as auth_error:
+            return jsonify(_agent_authentication_required_payload(auth_error)), 403
         except Exception as e:
             error_traceback = traceback.format_exc()
             debug_print(f"[CHAT_API_ERROR] Unhandled exception in chat_api: {str(e)}")
@@ -23431,14 +23485,27 @@ def register_route_backend_chats(bp):
                 # Stream the response
                 accumulated_content = ""
                 token_usage_data = None  # Will be populated from final stream chunk
+                cancelled_stream_response = None
                 # assistant_message_id was generated earlier for thought tracking
                 final_model_used = gpt_model  # Default to gpt_model, will be overridden if agent is used
                 if suppress_streamed_file_payload and streamed_file_status_content:
                     yield f"data: {json.dumps({'content': streamed_file_status_content})}\n\n"
 
                 def finalize_cancelled_stream_response():
+                    nonlocal token_usage_data, cancelled_stream_response
+                    if cancelled_stream_response is not None:
+                        return cancelled_stream_response
+                    if token_usage_data is None and isinstance(selected_agent, AgentExecution):
+                        token_usage_data = selected_agent.last_usage
+                    token_usage_data = _drain_agent_delegation_results(
+                        selected_agent, token_usage_data, agent_citations_list,
+                    )
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
                     partial_content = accumulated_content.strip()
+                    completed_delegation = isinstance(selected_agent, AgentExecution) and selected_agent.completed_delegation_count > 0
+                    partial_hybrid_citations = hybrid_citations_list
+                    partial_web_citations = web_search_citations_list
+                    partial_agent_citations = agent_citations_list
                     message_persisted = False
                     partial_citation_tracking = {}
                     cancel_metadata = {
@@ -23453,40 +23520,48 @@ def register_route_backend_chats(bp):
                             conversation_id,
                             generated_analysis_artifacts_list + generated_tabular_outputs_list,
                         )
-                        return _build_stream_cancel_event(
-                            conversation_id,
-                            user_message_id=user_message_id,
-                            reason=cancel_reason,
-                            message_persisted=False,
-                            extra_payload={
-                                'augmented': bool(system_messages_for_augmentation),
-                                'metadata': cancel_metadata,
-                                'thoughts_enabled': thought_tracker.enabled,
-                            },
-                        )
+                        if not completed_delegation:
+                            return _build_stream_cancel_event(
+                                conversation_id,
+                                user_message_id=user_message_id,
+                                reason=cancel_reason,
+                                message_persisted=False,
+                                extra_payload={
+                                    'augmented': bool(system_messages_for_augmentation),
+                                    'metadata': cancel_metadata,
+                                    'thoughts_enabled': thought_tracker.enabled,
+                                },
+                            )
+                        # Rolled-back root evidence must not be republished. Keep
+                        # only completed delegated results and their observed cost.
+                        partial_content = ''
+                        partial_hybrid_citations = []
+                        partial_web_citations = []
+                        partial_agent_citations = delegation_citations(selected_agent.budget, selected_agent.prior_invocation_ids)
 
-                    if partial_content:
+                    if partial_content or completed_delegation:
                         assistant_timestamp = datetime.utcnow().isoformat()
-                        apply_agent_document_citations(
-                            hybrid_citations_list,
-                            agent_citations_list,
-                            sort_key=_build_hybrid_citation_sort_key,
-                            conversation_id=conversation_id,
-                            plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
-                        )
+                        if not mixed_source_manifest:
+                            apply_agent_document_citations(
+                                partial_hybrid_citations,
+                                partial_agent_citations,
+                                sort_key=_build_hybrid_citation_sort_key,
+                                conversation_id=conversation_id,
+                                plugin_invocations=selected_agent.budget.invocations() if isinstance(selected_agent, AgentExecution) else _get_current_message_plugin_invocations(user_id, conversation_id),
+                            )
                         partial_citation_tracking = build_cited_source_subsets(
                             partial_content,
-                            hybrid_citations=hybrid_citations_list,
-                            web_search_citations=web_search_citations_list,
+                            hybrid_citations=partial_hybrid_citations,
+                            web_search_citations=partial_web_citations,
                         )
                         prepared_agent_citations = persist_agent_citation_artifacts(
                             conversation_id=conversation_id,
                             assistant_message_id=assistant_message_id,
-                            agent_citations=agent_citations_list,
+                            agent_citations=partial_agent_citations,
                             created_timestamp=assistant_timestamp,
                             user_info=user_info_for_assistant,
                         )
-                        generated_analysis_metadata = _build_generated_analysis_metadata(
+                        generated_analysis_metadata = {} if mixed_source_manifest else _build_generated_analysis_metadata(
                             generated_analysis_artifacts=generated_analysis_artifacts_list,
                             generated_tabular_outputs=generated_tabular_outputs_list,
                         )
@@ -23497,8 +23572,8 @@ def register_route_backend_chats(bp):
                             'content': partial_content,
                             'timestamp': assistant_timestamp,
                             'augmented': bool(system_messages_for_augmentation),
-                            'hybrid_citations': hybrid_citations_list,
-                            'web_search_citations': web_search_citations_list,
+                            'hybrid_citations': partial_hybrid_citations,
+                            'web_search_citations': partial_web_citations,
                             **partial_citation_tracking,
                             'hybridsearch_query': search_query if hybrid_search_enabled and search_results else None,
                             'agent_citations': prepared_agent_citations,
@@ -23510,6 +23585,7 @@ def register_route_backend_chats(bp):
                             'agent_tags': agent_tags_used if use_agent_streaming else [],
                             'metadata': {
                                 **cancel_metadata,
+                                'token_usage': token_usage_data,
                                 'reasoning_effort': reasoning_effort,
                                 'model_selection': {
                                     'selected_model': final_model_used if use_agent_streaming else gpt_model,
@@ -23535,10 +23611,28 @@ def register_route_backend_chats(bp):
                             },
                         })
                         cosmos_messages_container.upsert_item(assistant_doc)
+                        if token_usage_data and token_usage_data.get('total_tokens') is not None:
+                            try:
+                                log_token_usage(
+                                    user_id=user_id, token_type='chat',
+                                    total_tokens=token_usage_data['total_tokens'],
+                                    model=final_model_used if use_agent_streaming else gpt_model,
+                                    workspace_type='public' if effective_active_public_workspace_id else 'group' if effective_active_group_id else 'personal',
+                                    prompt_tokens=token_usage_data.get('prompt_tokens'),
+                                    completion_tokens=token_usage_data.get('completion_tokens'),
+                                    conversation_id=conversation_id, message_id=assistant_message_id,
+                                    group_id=effective_active_group_id,
+                                    public_workspace_id=effective_active_public_workspace_id,
+                                    additional_context={'cancelled': True, 'agent_name': agent_name_used if use_agent_streaming else None},
+                                )
+                            except Exception as usage_error:
+                                log_event('[STREAMING] Could not record cancelled agent usage.',
+                                          extra={'error_type': type(usage_error).__name__}, level=logging.WARNING)
                         conversation_item['last_updated'] = datetime.utcnow().isoformat()
                         initialize_conversation_used_document_tracking(conversation_item)
                         try:
-                            collect_stream_response_conversation_metadata()
+                            if not mixed_source_manifest:
+                                collect_stream_response_conversation_metadata()
                         except Exception as metadata_error:
                             log_event(
                                 '[STREAMING] Failed to collect canceled response metadata',
@@ -23570,7 +23664,7 @@ def register_route_backend_chats(bp):
                         level=logging.INFO,
                     )
 
-                    return _build_stream_cancel_event(
+                    cancelled_stream_response = _build_stream_cancel_event(
                         conversation_id,
                         user_message_id=user_message_id,
                         message_id=assistant_message_id if message_persisted else None,
@@ -23579,20 +23673,21 @@ def register_route_backend_chats(bp):
                         message_persisted=message_persisted,
                         extra_payload={
                             'augmented': bool(system_messages_for_augmentation),
-                            'hybrid_citations': hybrid_citations_list,
-                            'web_search_citations': web_search_citations_list,
+                            'hybrid_citations': partial_hybrid_citations,
+                            'web_search_citations': partial_web_citations,
                             **partial_citation_tracking,
-                            'agent_citations': agent_citations_list,
+                            'agent_citations': partial_agent_citations,
                             'model_deployment_name': final_model_used if use_agent_streaming else gpt_model,
                             'model_icon': gpt_model_icon,
                             'agent_display_name': agent_display_name_used if use_agent_streaming else None,
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'agent_icon': agent_icon_used if use_agent_streaming else None,
                             'agent_tags': agent_tags_used if use_agent_streaming else [],
-                            'metadata': cancel_metadata,
+                            'metadata': {**cancel_metadata, 'token_usage': token_usage_data},
                             'thoughts_enabled': thought_tracker.enabled,
                         },
                     )
+                    return cancelled_stream_response
 
                 if stream_cancel_requested():
                     yield finalize_cancelled_stream_response()
@@ -23615,6 +23710,13 @@ def register_route_backend_chats(bp):
 
                 try:
                     if use_agent_streaming and selected_agent:
+                        delegation_budget = DelegationBudget()
+                        selected_agent = prepare_agent_execution(
+                            selected_agent, request_agent_info,
+                            user_id=user_id, settings=settings, conversation_id=conversation_id,
+                            cancel_requested=stream_cancel_requested, budget=delegation_budget,
+                            prevent_replay=True,
+                        )
                         # Stream from agent using invoke_stream
                         yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
                         yield emit_thought('generation', f"Sending to '{actual_model_used}'")
@@ -23629,12 +23731,15 @@ def register_route_backend_chats(bp):
                             conversation_id,
                             actor_label='Agent',
                             live_thought_callback=publish_live_plugin_thought,
+                            root_id=delegation_budget.root_id if isinstance(selected_agent, AgentExecution) else None,
                         )
                         debug_print(
                             f"[STREAMING][Plugin Callback] Registering callback for key={callback_key}"
                         )
 
                         def finalize_cancelled_agent_stream_response():
+                            if agent_stream is not None and hasattr(agent_stream, 'aclose'):
+                                loop.run_until_complete(agent_stream.aclose())
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
                                 f"[STREAMING][Plugin Callback] Deregistered callback after stream cancellation for key={callback_key}"
@@ -23666,6 +23771,7 @@ def register_route_backend_chats(bp):
 
                         agent_retry_plan = None
                         retry_state = None
+                        agent_stream = None
 
                         try:
                             for attempt_number in range(2):
@@ -23755,7 +23861,7 @@ def register_route_backend_chats(bp):
                                 except Exception as stream_error:
                                     if agent_retry_plan is None:
                                         candidate_retry_plan = classify_agent_stream_retry_mode(stream_error)
-                                        if candidate_retry_plan and not accumulated_content and attempt_number == 0:
+                                        if candidate_retry_plan and not accumulated_content and attempt_number == 0 and not delegation_budget.attempts:
                                             agent_retry_plan = candidate_retry_plan
                                             retry_state = apply_agent_stream_retry_mode(
                                                 selected_agent,
@@ -23771,6 +23877,9 @@ def register_route_backend_chats(bp):
                                             continue
                                     raise
                         except Exception as stream_error:
+                            if isinstance(stream_error, AgentExecutionCancelled):
+                                yield finalize_cancelled_agent_stream_response()
+                                return
                             plugin_logger_cb.deregister_callbacks(callback_key)
                             debug_print(
                                 f"[STREAMING][Plugin Callback] Deregistered callback after streaming error for key={callback_key}"
@@ -23783,18 +23892,12 @@ def register_route_backend_chats(bp):
                             traceback.print_exc()
                             error_payload = {'error': 'Agent streaming failed. Please try again.'}
                             if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
-                                auth_response = getattr(stream_error, 'auth_response', {}) or {}
-                                error_payload = {
-                                    'error': str(stream_error),
-                                    'auth_required': True,
-                                    'scopes': auth_response.get('scopes') or [],
-                                }
-                                if auth_response.get('consent_url') or auth_response.get('auth_url'):
-                                    error_payload['consent_url'] = auth_response.get('consent_url') or auth_response.get('auth_url')
-                                    error_payload['auth_url'] = auth_response.get('auth_url') or auth_response.get('consent_url')
+                                error_payload = _agent_authentication_required_payload(stream_error)
                             yield f"data: {json.dumps(error_payload)}\n\n"
                             return
                         finally:
+                            if agent_stream is not None and hasattr(agent_stream, 'aclose'):
+                                loop.run_until_complete(agent_stream.aclose())
                             restore_agent_stream_retry_state(selected_agent, retry_state)
 
                         actual_model_used = (
@@ -23868,6 +23971,8 @@ def register_route_backend_chats(bp):
                         debug_print(f"[AGENT_STREAMING] Total plugin invocations logged: {len(all_invocations)}")
 
                         plugin_invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+                        if isinstance(selected_agent, AgentExecution):
+                            plugin_invocations = delegation_budget.invocations()
                         debug_print(f"[AGENT_STREAMING] Found {len(plugin_invocations)} plugin invocations for user {user_id}, conversation {conversation_id}")
 
                         # If no invocations found, check if plugins were called at all
@@ -23902,7 +24007,8 @@ def register_route_backend_chats(bp):
                                 'timestamp': timestamp_str,
                                 'success': inv.success,
                                 'error_message': make_json_serializable(inv.error_message),
-                                'user_id': inv.user_id
+                                'user_id': inv.user_id,
+                                'delegation': getattr(inv, 'provenance', None),
                             }
                             agent_citations_list.append(citation)
 
@@ -24075,7 +24181,10 @@ def register_route_backend_chats(bp):
 
                     token_usage_data = _merge_chat_token_usage(
                         mixed_source_native_token_usage,
-                        token_usage_data,
+                        (selected_agent.last_usage or token_usage_data) if isinstance(selected_agent, AgentExecution) else token_usage_data,
+                    )
+                    token_usage_data = _drain_agent_delegation_results(
+                        selected_agent, token_usage_data, agent_citations_list,
                     )
                     if mixed_source_manifest:
                         emit_mixed_source_telemetry(
@@ -24317,8 +24426,6 @@ def register_route_backend_chats(bp):
                     # Log chat token usage to activity_logs for easy reporting
                     if token_usage_data and token_usage_data.get('total_tokens'):
                         try:
-                            from functions_activity_logging import log_token_usage
-
                             # Determine workspace type based on active group/public workspace
                             workspace_type = 'personal'
                             if effective_active_public_workspace_id:

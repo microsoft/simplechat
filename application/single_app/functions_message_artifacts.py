@@ -101,6 +101,10 @@ def build_agent_citation_tool_label(
     parsed_arguments = _parse_json_if_possible(function_arguments)
     parsed_result = _parse_json_if_possible(function_result)
 
+    if normalized_plugin_name == 'AgentPlugin' and normalized_function_name == 'call_agent':
+        provenance = _get_mapping_value(parsed_result, 'provenance') or {}
+        return _format_tool_label('Call agent', _get_mapping_value(provenance, 'target_label'), fallback_label='Call agent')
+
     if normalized_plugin_name == 'AzureMapsOpenLayersPlugin' and normalized_function_name == 'create_map_visualization':
         title = _first_non_empty(
             _get_mapping_value(parsed_arguments, 'title'),

@@ -14,6 +14,8 @@ the Appearance group never exercised.
 
 **Implemented in version:** 0.261.074
 
+**Updated for version:** 0.261.093 (`application/single_app/config.py`).
+
 **Dependencies:** `admin_settings_fields.py`, `admin_settings_nav.py`,
 `route_backend_v2.py`, `application/v2_ui`.
 
@@ -235,8 +237,11 @@ Enable Agents  (enable_semantic_kernel, default off)
 
 ## Known limitations
 
-- Global agent and global action authoring stays in the classic interface until
-  phases 4 and 5, so the Global Actions section currently declares no fields.
+- General global agent and connector authoring remains in the classic interface.
+  From version **0.261.093**, focused V2 controls can create/edit **Call agent**
+  actions and attach them to existing global agents. These are resource updates
+  through the agent/action APIs, not fields in the settings draft. See
+  [Agent delegation actions](AGENT_DELEGATION_ACTION.md).
 - `functions_document_actions` reaches `config.py` and a live Cosmos client, so
   its normalizer is imported lazily and cannot be exercised in a test process.
   The tests read its bounds from source and pin the delegation instead.

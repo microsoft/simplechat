@@ -35,6 +35,7 @@ Version: 0.261.087
 """
 
 import logging
+from agent_execution_context import DelegationBudget
 import time
 from datetime import datetime, timezone
 
@@ -181,6 +182,8 @@ class RunContext:
         user_email=None,
         agent_catalog=None,
         user_enable_agents=True,
+        agent_execution_identity=None,
+        delegation_budget=None,
     ):
         self.run_id = run_id
         self.plan_id = plan_id
@@ -236,6 +239,8 @@ class RunContext:
         # their own settings; carried so the agent adapter re-checks it without touching user
         # state it cannot reach from the worker thread.
         self.user_enable_agents = bool(user_enable_agents)
+        self.agent_execution_identity = agent_execution_identity
+        self.delegation_budget = delegation_budget if delegation_budget is not None else DelegationBudget()
 
         # Accumulators.
         self.evidence = []

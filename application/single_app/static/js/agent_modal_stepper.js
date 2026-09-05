@@ -6,6 +6,9 @@ import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 import { AgentInstructionMentions, buildActionToken, buildKnowledgeToken } from "./agent_instruction_mentions.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
+// Call agent actions attach by reference only; the runtime remains the authoritative
+// cycle guard even though the classic Actions step also warns about direct self-calls.
+const AGENT_DELEGATION_ACTION_TYPE = 'agent';
 const ASSIGNED_KNOWLEDGE_KEY = 'assigned_knowledge';
 // Ordered step keys for the agent modal. The index in this array is the step
 // number rendered in the DOM (`#agent-step-1` ... `#agent-step-7`) and the
@@ -254,7 +257,11 @@ export class AgentModalStepper {
     this.assignedKnowledgeCatalog = { sources: [], documents: [], tags: [] };
     this.assignedKnowledgeCatalogLoaded = false;
     this.pendingAssignedKnowledge = this.cloneAssignedKnowledge(EMPTY_ASSIGNED_KNOWLEDGE);
-    
+    // Call agent actions: cache of authorized targets per scope, used only to show a
+    // friendly label and to block attaching an action that would call this same agent.
+    this.agentDelegationTargetCache = {};
+    this.agentDelegationTargetCacheLoading = {};
+
     this.bindEvents();
 
     if (this.templateSubmitButton) {
@@ -3099,6 +3106,129 @@ export class AgentModalStepper {
     }
   }
 
+  // --- Call agent attachment helpers ----------------------------------------------
+  // These only affect the classic Actions step display; the runtime is the
+  // authoritative guard against cycles and unauthorized targets.
+
+  getAgentEditorScopeType() {
+    if (this.isAdmin) {
+      return 'global';
+    }
+    if (this.workspaceScope === 'group') {
+      return 'group';
+    }
+    return 'personal';
+  }
+
+  isSelfDelegationAction(action) {
+    if (!this.isEditMode || !this.originalAgent) {
+      return false;
+    }
+    const targetAgent = action?.additionalFields?.target_agent || action?.additional_fields?.target_agent;
+    if (!targetAgent || !targetAgent.id) {
+      return false;
+    }
+    const editedId = String(this.originalAgent.id || this.originalAgent.name || '').trim();
+    if (!editedId || String(targetAgent.id) !== editedId) {
+      return false;
+    }
+    const editedScopeType = this.getAgentEditorScopeType();
+    if (String(targetAgent.scope_type || '') !== editedScopeType) {
+      return false;
+    }
+    if (editedScopeType === 'group') {
+      const editedGroupId = this.originalAgent.group_id || this.originalAgent.scope_id;
+      if (editedGroupId && targetAgent.scope_id && String(editedGroupId) !== String(targetAgent.scope_id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  getAgentDelegationTargetLabel(action) {
+    const targetAgent = action?.additionalFields?.target_agent || action?.additional_fields?.target_agent;
+    if (!targetAgent || !targetAgent.id) {
+      return 'Target: not configured';
+    }
+
+    const cachedTargets = this.agentDelegationTargetCache[targetAgent.scope_type];
+    if (!cachedTargets) {
+      return 'Target: resolving...';
+    }
+
+    const match = cachedTargets.find(target => (
+      target.id === targetAgent.id && target.scope_type === targetAgent.scope_type
+    ));
+    if (match) {
+      return `Target: ${match.display_name || match.name || match.id}`;
+    }
+    return `Target: unavailable (ID: ${targetAgent.id})`;
+  }
+
+  async fetchAgentDelegationTargets(scopeType) {
+    if (this.agentDelegationTargetCache[scopeType]) {
+      return this.agentDelegationTargetCache[scopeType];
+    }
+    if (this.agentDelegationTargetCacheLoading[scopeType]) {
+      return this.agentDelegationTargetCacheLoading[scopeType];
+    }
+
+    const params = new URLSearchParams({ scope: scopeType });
+    const request = fetch(`/api/plugins/agent-targets?${params.toString()}`)
+      .then(response => response.json().catch(() => ({})).then(payload => ({ response, payload })))
+      .then(({ response, payload }) => {
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Unable to load available agents.');
+        }
+        const targets = Array.isArray(payload.targets) ? payload.targets : [];
+        this.agentDelegationTargetCache[scopeType] = targets;
+        return targets;
+      })
+      .catch(error => {
+        console.error('Error loading Call agent targets:', error);
+        return [];
+      })
+      .finally(() => {
+        delete this.agentDelegationTargetCacheLoading[scopeType];
+      });
+
+    this.agentDelegationTargetCacheLoading[scopeType] = request;
+    return request;
+  }
+
+  async enrichAgentDelegationLabels(actions) {
+    const agentActions = (actions || []).filter(action => (
+      String(action.type || '').toLowerCase() === AGENT_DELEGATION_ACTION_TYPE
+    ));
+    if (!agentActions.length) {
+      return;
+    }
+
+    const scopeTypes = new Set();
+    agentActions.forEach(action => {
+      const targetAgent = action?.additionalFields?.target_agent || action?.additional_fields?.target_agent;
+      if (targetAgent?.scope_type) {
+        scopeTypes.add(targetAgent.scope_type);
+      }
+    });
+
+    await Promise.all(Array.from(scopeTypes).map(scopeType => this.fetchAgentDelegationTargets(scopeType)));
+
+    document.querySelectorAll('.agent-delegation-target-label').forEach(labelEl => {
+      const targetId = labelEl.getAttribute('data-target-id');
+      if (!targetId) {
+        return;
+      }
+      const action = agentActions.find(candidate => {
+        const targetAgent = candidate?.additionalFields?.target_agent || candidate?.additional_fields?.target_agent;
+        return targetAgent && String(targetAgent.id) === String(targetId);
+      });
+      if (action) {
+        labelEl.textContent = this.getAgentDelegationTargetLabel(action);
+      }
+    });
+  }
+
   async loadAvailableActions() {
     const container = document.getElementById('agent-actions-container');
     const noActionsMsg = document.getElementById('agent-no-actions-message');
@@ -3158,6 +3288,9 @@ export class AgentModalStepper {
       
       // Initialize search and filter functionality
       this.initializeActionSearch(actions);
+
+      // Resolve friendly target labels for any Call agent actions shown above.
+      this.enrichAgentDelegationLabels(filteredActions);
       
       // Pre-select actions if editing an existing agent
       if (this.actionsToSelect && Array.isArray(this.actionsToSelect)) {
@@ -3396,14 +3529,21 @@ export class AgentModalStepper {
     const col = document.createElement('div');
     col.className = 'col-md-6 col-lg-4';
     
+    const isAgentDelegationAction = String(action.type || '').toLowerCase() === AGENT_DELEGATION_ACTION_TYPE;
+    const isSelfDelegation = isAgentDelegationAction && this.isSelfDelegationAction(action);
+
     const card = document.createElement('div');
     card.className = 'card h-100 action-card';
-    card.style.cursor = 'pointer';
+    card.style.cursor = isSelfDelegation ? 'not-allowed' : 'pointer';
     card.setAttribute('data-action-id', action.id || action.name);
     card.setAttribute('data-action-type', action.type || 'custom');
     card.setAttribute('data-action-name', action.name || action.display_name || '');
     card.setAttribute('data-action-description', action.description || '');
     card.setAttribute('data-action-is-global', action.is_global ? 'true' : 'false');
+    if (isSelfDelegation) {
+      card.classList.add('opacity-75');
+      card.setAttribute('aria-disabled', 'true');
+    }
     
     const cardBody = document.createElement('div');
     cardBody.className = 'card-body d-flex flex-column';
@@ -3483,6 +3623,26 @@ export class AgentModalStepper {
     }
     
     descriptionContainer.appendChild(description);
+
+    let targetLabelEl = null;
+    if (isAgentDelegationAction) {
+      const targetAgent = action?.additionalFields?.target_agent || action?.additional_fields?.target_agent || null;
+      targetLabelEl = document.createElement('div');
+      targetLabelEl.className = 'small text-muted mt-1 agent-delegation-target-label';
+      if (targetAgent && targetAgent.id) {
+        targetLabelEl.setAttribute('data-target-id', targetAgent.id);
+        targetLabelEl.setAttribute('data-target-scope-type', targetAgent.scope_type || '');
+      }
+      targetLabelEl.textContent = this.getAgentDelegationTargetLabel(action);
+      descriptionContainer.appendChild(targetLabelEl);
+
+      if (isSelfDelegation) {
+        const selfWarning = document.createElement('div');
+        selfWarning.className = 'badge bg-warning text-dark mt-2';
+        selfWarning.textContent = 'Would call this same agent; cannot attach';
+        descriptionContainer.appendChild(selfWarning);
+      }
+    }
     
     const checkIcon = document.createElement('div');
     checkIcon.className = 'action-check-icon d-none';
@@ -3498,6 +3658,10 @@ export class AgentModalStepper {
     
     // Add click handler
     card.addEventListener('click', () => {
+      if (isSelfDelegation) {
+        showToast('This action calls the agent you are currently editing. Attaching it here would create a direct self-call, which is always blocked.', 'warning');
+        return;
+      }
       this.toggleActionSelection(card);
     });
     

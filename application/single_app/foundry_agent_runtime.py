@@ -15,6 +15,7 @@ from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
+import aiohttp
 from azure.core.credentials import AccessToken
 from azure.identity import (
     AzureAuthorityHosts,
@@ -423,6 +424,7 @@ async def execute_foundry_agent(
         api_version=api_version,
     )
     resolved_max_completion_tokens = _normalize_max_completion_tokens(max_completion_tokens)
+    delegation_thread = None
 
     try:
         definition = await client.agents.get_agent(agent_id)
@@ -432,6 +434,13 @@ async def execute_foundry_agent(
             "messages": message_history,
             "metadata": {k: str(v) for k, v in metadata.items() if v is not None},
         }
+        if metadata.get("delegation_invocation_id"):
+            # Retain the ephemeral thread before the first provider response so
+            # cancellation can clean it up even when invoke never yields.
+            from semantic_kernel.agents import AzureAIAgentThread
+
+            delegation_thread = AzureAIAgentThread(client=client)
+            invoke_kwargs["thread"] = delegation_thread
         if resolved_max_completion_tokens is not None:
             invoke_kwargs["max_completion_tokens"] = resolved_max_completion_tokens
 
@@ -490,9 +499,16 @@ async def execute_foundry_agent(
         )
     finally:
         try:
-            await client.close()
+            if delegation_thread is not None:
+                try:
+                    await asyncio.wait_for(delegation_thread.delete(), timeout=5)
+                except Exception as exc:
+                    log_event("[AGENT_DELEGATION] Foundry thread cleanup failed.", extra={"error_type": type(exc).__name__})
         finally:
-            await credential.close()
+            try:
+                await client.close()
+            finally:
+                await credential.close()
 
 
 async def execute_new_foundry_agent(
@@ -543,26 +559,34 @@ async def execute_new_foundry_agent(
     )
     if file_input_metadata:
         payload.setdefault("metadata", {})["attached_file_count"] = str(len(file_input_metadata))
-    headers = await _build_foundry_rest_headers(
-        foundry_settings,
-        global_settings,
-        credential,
-    )
-
     try:
-        response = await asyncio.to_thread(
-            requests.post,
-            url,
-            params={"api-version": responses_api_version},
-            headers=headers,
-            json=payload,
-            timeout=90,
+        headers = await _build_foundry_rest_headers(
+            foundry_settings,
+            global_settings,
+            credential,
         )
-        response_payload = _parse_json_response(response)
-        if response.status_code >= 400:
-            raise FoundryAgentInvocationError(
-                _build_http_error_message("new Foundry response", response, response_payload)
+        if metadata.get("delegation_invocation_id"):
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as client:
+                async with client.post(
+                    url, params={"api-version": responses_api_version}, headers=headers, json=payload,
+                ) as response:
+                    if response.status >= 400:
+                        raise FoundryAgentInvocationError("The delegated Foundry request failed.")
+                    response_payload = await response.json(content_type=None)
+        else:
+            response = await asyncio.to_thread(
+                requests.post,
+                url,
+                params={"api-version": responses_api_version},
+                headers=headers,
+                json=payload,
+                timeout=90,
             )
+            response_payload = _parse_json_response(response)
+            if response.status_code >= 400:
+                raise FoundryAgentInvocationError(
+                    _build_http_error_message("new Foundry response", response, response_payload)
+                )
 
         result = _build_new_foundry_invocation_result(
             response_payload=response_payload,
@@ -731,6 +755,12 @@ async def execute_foundry_workflow_agent(
 ) -> FoundryAgentInvocationResult:
     """Invoke a Foundry workflow by consuming its streaming response."""
 
+    if metadata.get("delegation_invocation_id"):
+        return await _execute_delegated_foundry_workflow(
+            workflow_settings, global_settings, message_history, metadata,
+            workflow_name=workflow_name, max_completion_tokens=max_completion_tokens,
+        )
+
     resolved_workflow_name = _resolve_foundry_workflow_name(
         workflow_settings,
         workflow_name,
@@ -764,6 +794,94 @@ async def execute_foundry_workflow_agent(
         citations=citations if isinstance(citations, list) else [],
         metadata=final_metadata,
     )
+
+
+async def _execute_delegated_foundry_workflow(
+    workflow_settings, global_settings, message_history, metadata, *,
+    workflow_name=None, max_completion_tokens=None,
+):
+    """Cancellable Responses I/O without a blocking requests stream or task replay."""
+    name = _resolve_foundry_workflow_name(workflow_settings, workflow_name)
+    endpoint = _resolve_endpoint(workflow_settings, global_settings)
+    api_version = _normalize_foundry_workflow_rest_protocol(
+        workflow_settings.get("responses_api_version") or workflow_settings.get("api_version")
+        or global_settings.get("azure_ai_foundry_api_version")
+    )
+    candidate = _build_foundry_workflow_endpoint_candidates(
+        endpoint, workflow_settings, responses_api_version=api_version,
+    )[0]
+    max_chars = _normalize_max_context_chars(workflow_settings.get("max_context_chars"))
+    if max_chars and sum(len(str(message.content or "")) for message in message_history) > max_chars:
+        raise FoundryAgentInvocationError("The delegated task exceeds the configured workflow input limit.")
+    payload = _build_foundry_workflow_request_payload(
+        message_history, metadata, workflow_settings=workflow_settings, workflow_name=name,
+        stream=True, max_output_tokens=_normalize_max_completion_tokens(max_completion_tokens),
+        max_context_chars=None, include_document_context=True, file_inputs=[],
+    )
+    credential = _build_async_credential(workflow_settings, global_settings)
+    conversation_id = None
+    state = NewFoundryStreamState()
+    try:
+        headers = await _build_foundry_rest_headers(workflow_settings, global_settings, credential)
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as client:
+            conversation_params = _build_foundry_workflow_conversation_params(api_version)
+            try:
+                async with client.post(candidate["conversations_url"], params=conversation_params, headers=headers, json={}) as response:
+                    if response.status >= 400:
+                        raise FoundryAgentInvocationError("The delegated workflow could not create its conversation.")
+                    conversation = await response.json(content_type=None)
+                    conversation_id = conversation.get("id")
+                    if not conversation_id:
+                        raise FoundryAgentInvocationError("The delegated workflow returned no conversation.")
+                payload["conversation"] = conversation_id
+                async with client.post(
+                    candidate["responses_url"], params=_build_foundry_workflow_request_params(api_version),
+                    headers=headers, json=payload,
+                ) as response:
+                    if response.status >= 400:
+                        raise FoundryAgentInvocationError("The delegated workflow request failed.")
+                    if "text/event-stream" not in response.headers.get("Content-Type", "").lower():
+                        return _build_foundry_workflow_invocation_result(
+                            response_payload=await response.json(content_type=None), workflow_name=name,
+                        )
+                    event_name, data_lines = "", []
+                    async for raw_line in response.content:
+                        line = raw_line.decode("utf-8").rstrip("\r\n")
+                        if line.startswith("event:"):
+                            event_name = line[6:].strip()
+                        elif line.startswith("data:"):
+                            data_lines.append(line[5:].lstrip())
+                        elif not line and data_lines:
+                            data = "\n".join(data_lines)
+                            data_lines = []
+                            if data == "[DONE]":
+                                break
+                            event = _parse_sse_json_payload(event_name, data)
+                            event_type = str(event.get("type") or event_name or "")
+                            if event_type in {"error", "response.error", "response.failed"}:
+                                raise FoundryAgentInvocationError("The delegated workflow failed.")
+                            delta = _extract_new_foundry_stream_delta(event)
+                            if delta:
+                                state.text_parts.append(delta)
+                            _update_new_foundry_stream_state(state=state, event_payload=event, application_name=name)
+                            _record_foundry_workflow_event(state, event_type, event)
+                            event_name = ""
+                return FoundryAgentInvocationResult(
+                    message=_extract_new_foundry_stream_text(state), model=state.model or name,
+                    citations=state.citations, metadata=state.metadata,
+                )
+            finally:
+                if conversation_id:
+                    try:
+                        async with client.delete(
+                            f'{candidate["conversations_url"].rstrip("/")}/{quote(conversation_id, safe="")}',
+                            params=conversation_params, headers=headers, timeout=aiohttp.ClientTimeout(total=5),
+                        ):
+                            pass
+                    except Exception as exc:
+                        log_event("[AGENT_DELEGATION] Foundry conversation cleanup failed.", extra={"error_type": type(exc).__name__})
+    finally:
+        await credential.close()
 
 
 async def execute_foundry_workflow_agent_stream(

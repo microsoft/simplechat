@@ -93,6 +93,7 @@ ACTION_TYPE_ALIASES = {
 ACTION_TYPE_LABELS = {
     "sql": "SQL",
     "simplechat": "SimpleChat",
+    "agent": "Call agent",
     "openapi": "OpenAPI",
     "mcp": "MCP",
     "msgraph": "Microsoft Graph",

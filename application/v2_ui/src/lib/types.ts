@@ -900,6 +900,10 @@ export interface ChatStreamEvent {
     content?: string;
     done?: boolean;
     error?: string;
+    auth_required?: boolean;
+    /** Same-origin handoff that reauthorizes the target and starts Foundry consent. */
+    auth_url?: string;
+    consent_url?: string;
     partial_content?: string;
     cancelled?: boolean;
     canceled?: boolean;

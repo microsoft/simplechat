@@ -17,6 +17,7 @@ import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
+import { GroupAgentDelegationPage } from './pages/GroupAgentDelegationPage';
 
 function BootScreen() {
     return (
@@ -186,14 +187,7 @@ export function App() {
                 />
                 <Route
                     path="/groups"
-                    element={
-                        <PlaceholderPage
-                            title="Group workspaces"
-                            description="Group workspace management has not been rebuilt in the V2 interface yet."
-                            classicHref="/group_workspaces"
-                            classicLabel="Open group workspaces"
-                        />
-                    }
+                    element={<GroupAgentDelegationPage />}
                 />
                 <Route
                     path="/public"

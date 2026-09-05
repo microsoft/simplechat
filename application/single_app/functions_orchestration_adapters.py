@@ -1204,7 +1204,7 @@ def _record_agent_token_usage(context, kernel):
         )
 
 
-def _agent_citations(plugin_logger, user_id, conversation_id, seen_before):
+def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_id=None, scoped_invocations=None):
     """The tool calls this invocation made, shaped exactly like the chat route's agent citations.
 
     The plugin logger accumulates every tool call for a conversation, so we snapshot which
@@ -1217,7 +1217,7 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before):
     if plugin_logger is None:
         return []
     try:
-        invocations = plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
+        invocations = scoped_invocations if scoped_invocations is not None else plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} Could not read agent tool invocations: {exc}',
@@ -1246,6 +1246,8 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before):
     for inv in invocations or ():
         if id(inv) in seen_before:
             continue  # A tool call from before this step, not ours to cite.
+        if root_id and (getattr(inv, 'provenance', None) or {}).get('root_id') != root_id:
+            continue
         timestamp = getattr(inv, 'timestamp', None)
         if hasattr(timestamp, 'isoformat'):
             timestamp_str = timestamp.isoformat()
@@ -1273,6 +1275,7 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before):
             'success': getattr(inv, 'success', None),
             'error_message': _serialize(getattr(inv, 'error_message', None)),
             'user_id': getattr(inv, 'user_id', None),
+            'delegation': getattr(inv, 'provenance', None),
         })
     return citations
 
@@ -1326,6 +1329,64 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before invoking the agent.')
 
+    execution_identity = _ctx(context, 'agent_execution_identity', None)
+    if execution_identity is not None:
+        # Runtime owns the isolated compatibility bridge. Adapters never inspect
+        # Flask state, and all steps share the run's root delegation budget.
+        import asyncio
+        from agent_execution_context import AgentExecutionCancelled, DelegationBudget
+        from agent_delegation_runtime import delegation_citations, invoke_scoped_agent
+        from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
+
+        budget = _ctx(context, 'delegation_budget', None)
+        if budget is None:
+            budget = DelegationBudget()
+        prior_ids = {record['invocation_id'] for record in budget.snapshot()}
+        plugin_logger = get_plugin_logger()
+        conversation_id = _ctx(context, 'conversation_id', None)
+        seen_before = {id(inv) for inv in budget.invocations()}
+        try:
+            result = asyncio.run(invoke_scoped_agent(
+                agent_cfg, task, identity=execution_identity, budget=budget,
+                cancel_requested=cancel_requested,
+            ))
+        except AgentExecutionCancelled:
+            return _cancelled_result('Agent execution was cancelled.')
+        except Exception as exc:
+            log_event('[AGENT_DELEGATION] Orchestration agent execution failed.',
+                      extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id')})
+            safe_error = (
+                'The called agent requires sign-in or consent for Foundry.'
+                if type(exc).__name__ == 'FoundryAgentUserAuthenticationRequired'
+                else 'The selected agent could not complete the task.'
+            )
+            return _failed_result('The agent invocation failed.', safe_error)
+        new_records = [record for record in budget.snapshot() if record['invocation_id'] not in prior_ids]
+        usage = _ctx(context, 'token_usage', None)
+        if isinstance(usage, dict):
+            for observed in [result.get('usage')] + [record.get('usage') for record in new_records]:
+                for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                    if isinstance((observed or {}).get(key), int):
+                        usage[key] = usage.get(key, 0) + observed[key]
+            usage.setdefault('agent_breakdown', []).extend(
+                {'agent': record.get('target'), 'model': record.get('model'), 'usage': record['usage']}
+                for record in new_records if record.get('usage')
+            )
+        citations = list(result.get('citations') or []) + [
+            citation for citation in delegation_citations(budget)
+            if citation['delegation']['invocation_id'] not in prior_ids
+        ]
+        citations.extend(_agent_citations(
+            plugin_logger, user_id, conversation_id, seen_before,
+            root_id=budget.root_id, scoped_invocations=budget.invocations(),
+        ))
+        return build_step_result(
+            status=STEP_STATUS_COMPLETED,
+            summary=_first_line(result['response']),
+            notes=[f'Agent "{agent_cfg.get("display_name") or agent_name}" replied:\n{result["response"]}'],
+            citations=citations,
+        )
+
     # Build a kernel holding exactly this one agent. We deliberately avoid
     # initialize_semantic_kernel: in per-user mode it writes the kernel onto Flask g (absent in
     # this thread) and returns nothing, and it loads the entire agent catalog when we need only
@@ -1344,6 +1405,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             None,
             redis_client=None,
             mode_label='global',
+            execution_user_id=user_id,
         )
         selected_agent = (agent_objs or {}).get(_text(agent_cfg.get('name'))) if kernel else None
     except Exception as exc:
