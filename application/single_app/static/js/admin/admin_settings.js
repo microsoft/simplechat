@@ -1206,6 +1206,17 @@ function formatRedisMetric(value, unit) {
     return `${numericValue.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}`;
 }
 
+function formatRedisServiceType(value) {
+    const normalizedValue = String(value || '').trim();
+    if (normalizedValue === 'azure_managed_redis') {
+        return 'Azure Managed Redis';
+    }
+    if (normalizedValue === 'azure_cache_for_redis') {
+        return 'Azure Cache for Redis';
+    }
+    return 'Not available';
+}
+
 function formatRedisPercent(value) {
     if (value === null || value === undefined || value === '') {
         return 'Not available';
@@ -2362,6 +2373,13 @@ function renderRedisMonitoringStatus(statusPayload) {
         runtime.session_using_redis ? 'success' : 'secondary'
     );
 
+    setElementText('redis-monitoring-service-type', formatRedisServiceType(configuration.service_type));
+    setElementText(
+        'redis-monitoring-service-port',
+        configuration.port
+            ? `Port ${configuration.port} (${configuration.service_type_source === 'setting' ? 'set by admin' : 'detected'})`
+            : 'Port: Not available'
+    );
     setElementText('redis-monitoring-ping-latency', formatRedisMetric(health.ping_latency_ms, 'ms'));
     setElementText('redis-monitoring-memory-usage', formatRedisMemoryUsage(memory));
     setElementText(
@@ -8172,7 +8190,9 @@ function setupTestButtons() {
                 test_type: 'redis',
                 endpoint: document.getElementById('redis_url').value,
                 key: document.getElementById('redis_key').value,
-                auth_type: document.getElementById('redis_auth_type').value
+                auth_type: document.getElementById('redis_auth_type').value,
+                service_type: document.getElementById('redis_service_type')?.value || 'auto',
+                port: document.getElementById('redis_port')?.value || ''
             };
 
             try {
@@ -8612,6 +8632,8 @@ function setupLatestFeaturesMirrors() {
     const mirroredRedisAuthType = document.getElementById('latest_features_redis_auth_type');
     const canonicalRedisKey = document.getElementById('redis_key');
     const mirroredRedisKey = document.getElementById('latest_features_redis_key');
+    const canonicalRedisServiceType = document.getElementById('redis_service_type');
+    const mirroredRedisServiceType = document.getElementById('latest_features_redis_service_type');
 
     if (canonicalEnhancedCitations && mirroredEnhancedCitations) {
         mirroredEnhancedCitations.checked = canonicalEnhancedCitations.checked;
@@ -8688,6 +8710,7 @@ function setupLatestFeaturesMirrors() {
 
     syncMirroredField(canonicalRedisUrl, mirroredRedisUrl);
     syncMirroredField(canonicalRedisKey, mirroredRedisKey);
+    syncMirroredField(canonicalRedisServiceType, mirroredRedisServiceType, 'change');
 }
 
 function syncMirroredField(canonicalField, mirroredField, eventName = 'input') {

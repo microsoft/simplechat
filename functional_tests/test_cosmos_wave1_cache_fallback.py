@@ -114,7 +114,15 @@ def _install_fake_modules(container):
 def _load_cache_module(container):
     _install_fake_modules(container)
     sys.modules.pop("app_settings_cache", None)
+    sys.modules.pop("functions_redis_client", None)
     return importlib.import_module("app_settings_cache")
+
+
+def _set_redis_client_class(redis_class):
+    """Redis clients are built in functions_redis_client, so patch it there."""
+    redis_client_module = importlib.import_module("functions_redis_client")
+    redis_client_module.Redis = redis_class
+    return redis_client_module
 
 
 def test_redis_runtime_failure_falls_back_to_cosmos_settings():
@@ -130,7 +138,7 @@ def test_redis_runtime_failure_falls_back_to_cosmos_settings():
         "version": 7,
     }
     cache_module = _load_cache_module(container)
-    cache_module.Redis = FailingRedis
+    _set_redis_client_class(FailingRedis)
 
     cache_module.configure_app_cache({
         "enable_redis_cache": True,
@@ -149,7 +157,7 @@ def test_redis_write_failure_persists_user_ui_cache_to_cosmos():
     """A Redis write failure should persist lightweight UI cache data in Cosmos."""
     container = FakeCosmosContainer()
     cache_module = _load_cache_module(container)
-    cache_module.Redis = FailingRedis
+    _set_redis_client_class(FailingRedis)
 
     cache_module.configure_app_cache({
         "enable_redis_cache": True,
@@ -173,7 +181,7 @@ def test_redis_initialization_failure_assigns_fallback_functions():
         "feature_flag": "fallback-configured",
     }
     cache_module = _load_cache_module(container)
-    cache_module.Redis = RaisingRedis
+    _set_redis_client_class(RaisingRedis)
 
     cache_module.configure_app_cache({
         "enable_redis_cache": True,

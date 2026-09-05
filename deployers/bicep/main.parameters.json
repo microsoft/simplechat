@@ -107,6 +107,18 @@
     "deployRedisCache": {
       "value": "${DEPLOY_REDIS_CACHE}"
     },
+    "redisCacheKind": {
+      "value": "${REDIS_CACHE_KIND}"
+    },
+    "redisManagedSkuName": {
+      "value": "${REDIS_MANAGED_SKU_NAME}"
+    },
+    "redisHighAvailability": {
+      "value": "${REDIS_HIGH_AVAILABILITY}"
+    },
+    "redisClusteringPolicy": {
+      "value": "${REDIS_CLUSTERING_POLICY}"
+    },
     "deploySpeechService": {
       "value": "${DEPLOY_SPEECH_SERVICE}"
     },

@@ -28,7 +28,8 @@ The following variables will be used within this document:
 - *\<environment\>* - This will be used as part of the object names as well as with the AZD environments.  **Example:** *dev/qa/prod*.
 - *\<cloudEnvironment\>* - Options will be *AzureCloud | AzureUSGovernment | custom*
 - *\<openAIDeploymentType\>* - Azure OpenAI deployment type for default model deployments.  **Options:** *Standard | DatazoneStandard | GlobalStandard* for Azure Commercial. Use *Standard* for Azure Government.
-- *\<redisAuthenticationType\>* - Azure Cache for Redis authentication type. Defaults to the app authentication type, but can be set to *key* when Redis managed identity authentication is unavailable in the target cloud.
+- *\<redisAuthenticationType\>* - Redis authentication type. Defaults to the app authentication type, but can be set to *key* when Redis managed identity authentication is unavailable in the target cloud.
+- *\<redisCacheKind\>* - Which Redis offering to provision. Defaults to *managed* (Azure Managed Redis). Set to *classic* (Azure Cache for Redis) for Azure Government and Azure operated by 21Vianet, where Azure Managed Redis is unavailable.
 - *\<imageName\>* - Should be presented in the form *imageName:label* **Default:** *simplechat:latest*
 
 ---
@@ -283,6 +284,7 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 - Enter a value for the 'configureApplicationPermissions' infrastructure parameter: \<true | false\>*
 - Enter a value for the 'deployContentSafety' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'deployRedisCache' infrastructure parameter: *\<true | false\>*
+- Enter a value for the 'redisCacheKind' infrastructure parameter: *\<managed | classic\>*; use *classic* for Azure Government and 21Vianet deployments, where Azure Managed Redis is unavailable.
 - Enter a value for the 'deploySpeechService' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'deployVideoIndexerService' infrastructure parameter: *\<true | false\>*
 - Enter a value for the 'enableDiagLogging' infrastructure parameter: *\<true | false\>*
@@ -454,7 +456,7 @@ az resource update --name <appName>-<environment>-app --resource-group <appName>
 | Content Safety | ✅ | ⚠️ Limited | Not all regions |
 | Speech Service | ✅ | ⚠️ Limited | Feature restrictions |
 | Video Indexer | ✅ | ✅ Limited | Azure Government uses the `2024-01-01` ARM API profile; newer OpenAI integration and private endpoint properties remain commercial/custom-cloud only |
-| Redis Cache | ✅ | ✅ | Standard tier |
+| Redis Cache | ✅ | ✅ | Commercial deploys Azure Managed Redis (`Balanced_B0`); Azure Government has no Azure Managed Redis, so set `redisCacheKind` to `classic` for Azure Cache for Redis Standard |
 
 ### Endpoint Differences
 

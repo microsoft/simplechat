@@ -65,6 +65,39 @@ def run_azure_cli_command(command_args, description):
     return value
 
 
+def ensure_azure_cli_extension(extension_name):
+    """Install or upgrade an Azure CLI extension, tolerating an already-current install.
+
+    Unlike run_azure_cli_command this does not raise, because a missing extension should be
+    reported by the command that needs it rather than aborting the whole postprovision hook.
+    """
+    azure_cli_executable = get_azure_cli_executable()
+    result = subprocess.run(
+        [
+            azure_cli_executable,
+            "extension",
+            "add",
+            "--name",
+            extension_name,
+            "--upgrade",
+            "--only-show-errors",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        print(
+            f"Warning: could not install Azure CLI extension '{extension_name}': "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return False
+
+    print(f"Azure CLI extension '{extension_name}' is available")
+    return True
+
+
 def get_endpoint_hostname(endpoint):
     """Extract a normalized hostname from a service endpoint."""
     parsed_endpoint = urlparse(endpoint or "")
@@ -171,13 +204,39 @@ def get_search_service_key(resource_name, resource_group, subscription_id):
     )
 
 
-def get_redis_cache_key(resource_name, resource_group, subscription_id):
+def get_redis_cache_key(resource_name, resource_group, subscription_id, cache_kind="managed"):
+    if cache_kind == "classic":
+        return run_azure_cli_command(
+            [
+                "redis",
+                "list-keys",
+                "--name",
+                resource_name,
+                "--resource-group",
+                resource_group,
+                "--subscription",
+                subscription_id,
+                "--query",
+                "primaryKey",
+                "-o",
+                "tsv",
+            ],
+            "Redis cache primary key",
+        )
+
+    # az redisenterprise ships in a separate CLI extension rather than the core command set.
+    ensure_azure_cli_extension("redisenterprise")
+
+    # Azure Managed Redis keys live on the database, which is always named "default".
     return run_azure_cli_command(
         [
-            "redis",
+            "redisenterprise",
+            "database",
             "list-keys",
-            "--name",
+            "--cluster-name",
             resource_name,
+            "--database-name",
+            "default",
             "--resource-group",
             resource_group,
             "--subscription",
@@ -187,7 +246,7 @@ def get_redis_cache_key(resource_name, resource_group, subscription_id):
             "-o",
             "tsv",
         ],
-        "Redis cache primary key",
+        "Azure Managed Redis primary key",
     )
 
 
@@ -225,6 +284,7 @@ def get_core_service_keys(
     document_intelligence_endpoint,
     redis_cache_host_name,
     speech_service_endpoint,
+    redis_cache_kind="managed",
 ):
     openai_resource_name = extract_resource_name_from_endpoint(openai_endpoint)
     search_resource_name = extract_resource_name_from_endpoint(search_service_endpoint)
@@ -283,6 +343,7 @@ def get_core_service_keys(
             redis_resource_name,
             resource_group,
             subscription_id,
+            cache_kind=redis_cache_kind,
         )
 
     return keys
@@ -333,6 +394,19 @@ var_contentSafetyEndpoint = os.getenv("var_contentSafetyEndpoint")
 var_searchServiceEndpoint = os.getenv("var_searchServiceEndpoint")
 var_documentIntelligenceServiceEndpoint = os.getenv("var_documentIntelligenceServiceEndpoint")
 var_redisCacheHostName = os.getenv("var_redisCacheHostName")
+var_redisCacheKind = os.getenv("var_redisCacheKind") or ""
+var_redisCachePort = os.getenv("var_redisCachePort") or ""
+
+if not var_redisCacheKind and var_redisCacheHostName:
+    # Fall back to the host name suffix when the deployment did not report a cache kind,
+    # so a stale environment cannot mislabel an Azure Cache for Redis instance. Match the
+    # full suffix rather than a substring so a lookalike host name cannot be misread.
+    _redis_host_name = var_redisCacheHostName.strip().rstrip(".").lower()
+    var_redisCacheKind = (
+        "managed"
+        if _redis_host_name.endswith((".redis.azure.net", ".redisenterprise.cache.azure.net"))
+        else "classic"
+    )
 var_videoIndexerName = os.getenv("var_videoIndexerName")
 var_videoIndexerLocation = os.getenv("var_deploymentLocation")
 var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
@@ -352,6 +426,7 @@ core_service_keys = get_core_service_keys(
     document_intelligence_endpoint=var_documentIntelligenceServiceEndpoint,
     redis_cache_host_name=var_redisCacheHostName,
     speech_service_endpoint=var_speechServiceEndpoint,
+    redis_cache_kind=var_redisCacheKind,
 )
 openai_key = core_service_keys.get("azure_openai_key")
 
@@ -451,6 +526,12 @@ if var_authenticationType == "key" and "content_safety_key" in core_service_keys
 # Redis Cache Configuration
 if var_redisCacheHostName and var_redisCacheHostName.strip():
     item["enable_redis_cache"] = True
+    # Only assert a service when a cache was actually deployed. Writing a definitive value
+    # here otherwise would override host name detection for an existing cache.
+    item["redis_service_type"] = (
+        "azure_cache_for_redis" if var_redisCacheKind == "classic" else "azure_managed_redis"
+    )
+    item["redis_port"] = var_redisCachePort
 item["redis_url"] = var_redisCacheHostName
 item["redis_auth_type"] = var_redisAuthenticationType
 if var_redisAuthenticationType == "key" and "redis_key" in core_service_keys:
