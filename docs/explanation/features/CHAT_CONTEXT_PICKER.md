@@ -4,6 +4,7 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
+**Updated in version:** 0.261.094 (`application/single_app/config.py`)
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal documents,
 `enable_group_workspaces` and `enable_public_workspaces` to reach those scopes.
@@ -25,21 +26,32 @@ naming something, all feeding one visible list:
 
 ## What a reference looks like
 
-A chosen reference appears in two places at once, and this is deliberate.
+Every chosen reference becomes a **chip above the message box**, grouped by
+workspace, with a remove button. References chosen from the **Documents** menu
+or a workspace **Chat** action stay in that row without changing your message.
+You can select a contract, for example, and simply type "Summarize the renewal
+terms" without its name being added to the sentence.
 
-It becomes a **chip above the message box**, grouped by workspace, each with an
-`×` to remove it. And it stays **inside the message text** as `#[Q3 Contract.pdf]`,
-rendered as a highlighted chip rather than raw brackets. Keeping it in the text
-means the sentence still reads as a sentence — "compare `#[Q3 Contract.pdf]`
-against `#[Q2 Contract.pdf]`" — and the reference survives into the sent message
-rather than existing only as invisible request metadata.
+Only choosing a suggestion through **`#`** inserts an inline reference such as
+`#[Q3 Contract.pdf]`, highlighted inside the message box. This is useful when the
+wording matters: "compare `#[Q3 Contract.pdf]` against `#[Q2 Contract.pdf]`".
+The inline text remains part of the sent message.
 
-The two stay in step:
+Selection and inline mentions have separate lifetimes:
 
-- Removing a chip removes its `#[…]` text.
-- Editing or deleting the `#[…]` text retires its chip.
-- Typing `#[Something]` by hand does **not** create a chip. There is no document
-  behind it, and adopting one would ground the message in something nobody chose.
+- Typing or editing your message does not remove independently selected chips.
+- Deleting an inline mention removes its chip if the mention was its only source.
+  If you also selected that item through a menu or workspace, its chip stays.
+- Using `#` for an already selected item adds its inline reference without adding
+  a second chip.
+- Removing or deselecting a chip also removes any inline mentions associated
+  with it. A chip that was never mentioned inline does not change your text.
+- Typing `#[Something]` by hand does **not** create a chip or turn an independent
+  selection into an inline mention. The name alone does not establish a reference.
+
+These rules apply to documents, tags, and whole-workspace references. Context
+selections clear with the draft when you send; they are carried in that turn's
+request rather than left attached to the next message.
 
 ### Condensing
 
@@ -75,14 +87,17 @@ Clicking **Documents** opens a panel upward over the composer containing:
 - Checkbox lists grouped by workspace.
 
 Ticking specific documents moves the request from relevance search to an explicit
-selection. The button shows a count once anything is chosen.
+selection. The button shows a count once anything is chosen. The selection
+appears in the chip row only, leaving an empty or already-written message unchanged.
 
 ## Handing off from the workspace
 
 Selecting documents in **My workspace → Documents** and pressing **Chat** now
 opens the V2 composer with those documents already referenced. Tags have a chat
 action of their own, which carries the tag as a filter rather than as the list of
-documents that happened to carry it when you clicked.
+documents that happened to carry it when you clicked. Both handoffs add chips
+without inserting text, even if you start writing before the selection finishes
+loading.
 
 The link uses the same query vocabulary as the classic interface
 (`search_documents`, `doc_scope`, `document_ids`, `tags`), so a link built by
@@ -108,8 +123,9 @@ chip beside an unrelated tag chip would match nothing at all.
 select. This is the server's existing behaviour (`build_tags_filter`) and is
 unchanged here.
 
-Naming a document also switches document search on. A chip added while the toggle
-happened to be off would otherwise be collected, sent, and ignored.
+Any selected context makes the request use document search, including a tag or
+workspace selected without individual documents. The message does not need an
+inline `#` reference for those IDs, filters, and scopes to reach the server.
 
 ## Orchestration
 
@@ -143,8 +159,8 @@ See [Chat Orchestration](CHAT_ORCHESTRATION.md) for the planner side.
 
 | File | Purpose |
 | --- | --- |
-| `lib/chatContext.ts` | The context item model and the derived request fields |
-| `lib/chatContextTokens.ts` | The `#[…]` grammar, and chip/text reconciliation |
+| `lib/chatContext.ts` | The context item model, independent selection/mention attachments, and derived request fields |
+| `lib/chatContextTokens.ts` | The `#[…]` grammar and reconciliation of inline mentions without losing independent selections |
 | `lib/contextMentions.ts` | Cross-scope search for documents, tags and workspaces |
 | `lib/chatContextHandoff.ts` | Reading and building the workspace hand-off |
 | `lib/documentTitles.ts` | Cached id-to-title resolution for plan steps |
@@ -160,6 +176,10 @@ See [Chat Orchestration](CHAT_ORCHESTRATION.md) for the planner side.
 | `functional_tests/test_v2_chat_context_tokens.mjs` | Token grammar: parsing, insertion, removal, reconciliation, collisions |
 | `functional_tests/test_v2_chat_context_request.ts` | Chip-to-request mapping, filter mode, scope resolution |
 | `functional_tests/test_v2_chat_context_picker.py` | Hand-off destination, composer wiring, chat metadata parity; bundles and runs the TypeScript checks |
+| `ui_tests/test_v2_chat_context_selection.py` | Real workspace, picker, inline mention, removal, and send workflows |
+
+See [V2 Context Selection Pills Fix](../fixes/V2_CONTEXT_SELECTION_PILLS_FIX.md)
+for the behavior change introduced in 0.261.094.
 
 ## Known limitations
 

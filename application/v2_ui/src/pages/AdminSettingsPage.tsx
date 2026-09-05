@@ -59,6 +59,7 @@ import { GLOBAL_DELEGATION_SCOPE } from '../lib/agentDelegation';
 import { SaveBar } from '../components/admin/SaveBar';
 import { SecretField } from '../components/admin/SecretField';
 import { SettingsSection } from '../components/admin/SettingsSection';
+import { agentSectionAppearances } from '../components/admin/agentSectionAppearance';
 import { SettingField } from '../components/admin/fields';
 import {
     ClassificationBannerPreview,
@@ -1110,6 +1111,7 @@ export function AdminSettingsPage() {
                                     statusRule={sectionStatus[section.sectionId]}
                                     renderField={renderField}
                                     renderCapability={renderField}
+                                    appearance={agentSectionAppearances[section.sectionId]}
                                     // While a search is filtering, a match inside a
                                     // collapsed group has to be shown or the card would
                                     // appear empty.

@@ -1,8 +1,9 @@
 // test_v2_admin_section_logic.ts
 //
 // Runtime test for the Admin Settings section shell's presentation decisions.
-// Version: 0.261.084
+// Version: 0.261.093
 // Implemented in: 0.261.084
+// Agents-only visual hierarchy coverage added in: 0.261.093
 //
 // The V2 admin surface used to render a section as a flat run of controls in declaration
 // order. That is fine for Appearance. It is not fine for Knowledge, where Document
@@ -20,6 +21,13 @@
 // adminSections and adminFields.
 
 import assert from 'node:assert/strict';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import {
+    SettingsSection,
+    type SettingsSectionProps,
+} from '../application/v2_ui/src/components/admin/SettingsSection';
+import { agentSectionAppearances } from '../application/v2_ui/src/components/admin/agentSectionAppearance';
 import {
     collectRequirements,
     deriveSectionStatus,
@@ -328,6 +336,102 @@ check('dependency evaluation agrees with the server rules', () => {
     };
     assert.equal(evaluateDependency(allOf, read), false);
     assert.equal(evaluateDependency({ key: 'missing', equals: false }, read), true);
+});
+
+check('distinct presentation is limited to the four Agents sections', () => {
+    assert.deepEqual(Object.keys(agentSectionAppearances), [
+        'agents-config',
+        'agent-toggles-card',
+        'agents-page-customization-card',
+        'agent-template-approvals-section',
+    ]);
+    for (const id of ['core-plugin-toggles', 'inbound-mcp-configuration', 'unknown-section']) {
+        assert.equal(agentSectionAppearances[id], undefined);
+    }
+});
+
+function renderSection(
+    appearance: SettingsSectionProps['appearance'],
+    fields: AdminField[],
+    settings: Record<string, unknown>,
+    calls: string[],
+) {
+    return renderToStaticMarkup(createElement(SettingsSection, {
+        sectionId: 'agents-config',
+        label: 'Agent Runtime',
+        groupLabel: 'Agents & Actions',
+        tabLabel: 'Agents',
+        fields,
+        settings,
+        draft: {},
+        appearance,
+        renderField: (field) => {
+            calls.push(`field:${field.key}`);
+            return createElement('span', { key: field.key }, field.label);
+        },
+        renderCapability: (field) => {
+            calls.push(`capability:${field.key}`);
+            return createElement('span', { key: field.key }, field.label);
+        },
+    }));
+}
+
+check('presentation keeps rendering order, capability callbacks, and visibility intact', () => {
+    const fields: AdminField[] = [
+        capability('enable_semantic_kernel'),
+        { key: 'per_user_semantic_kernel', type: 'switch', label: 'Workspace Mode' },
+        {
+            key: 'merge_global_semantic_kernel_with_workspace',
+            type: 'switch',
+            label: 'Include global agents',
+            depends_on: { key: 'per_user_semantic_kernel', equals: true },
+        },
+    ];
+    const values = { enable_semantic_kernel: true, per_user_semantic_kernel: false };
+    const plainCalls: string[] = [];
+    const distinctCalls: string[] = [];
+    const plain = renderSection(undefined, fields, values, plainCalls);
+    const distinct = renderSection(
+        agentSectionAppearances['agents-config'], fields, values, distinctCalls,
+    );
+
+    assert.deepEqual(distinctCalls, plainCalls);
+    assert.deepEqual(distinctCalls, [
+        'capability:enable_semantic_kernel',
+        'field:per_user_semantic_kernel',
+    ]);
+    assert.doesNotMatch(plain, /admin-settings-distinct|role="region"/);
+    assert.match(distinct, /role="region" aria-labelledby="agents-config-title"/);
+    assert.match(distinct, /data-setting-emphasis="primary"/);
+    assert.match(distinct, /data-setting-emphasis="dependent"/);
+    assert.equal(distinct.includes('Configured'), plain.includes('Configured'));
+    assert.doesNotMatch(distinct, /Include global agents/);
+});
+
+check('runtime emphasis does not turn an ordinary switch into a capability status', () => {
+    const fields = [{ key: 'enable_semantic_kernel', type: 'switch', label: 'Enable Agents' }];
+    const calls: string[] = [];
+    const markup = renderSection(
+        agentSectionAppearances['agents-config'], fields, { enable_semantic_kernel: true }, calls,
+    );
+    assert.deepEqual(calls, ['field:enable_semantic_kernel']);
+    assert.match(markup, /data-setting-emphasis="primary"/);
+    assert.doesNotMatch(markup, /Configured|Needs configuration/);
+});
+
+check('distinct subsection presentation preserves collapsed defaults and counts', () => {
+    const fields = [
+        { key: 'agents_page_title', type: 'text', label: 'Hero Title', group: 'Hero' },
+        { key: 'agents_page_subtitle', type: 'text', label: 'Hero Subtitle', group: 'Hero' },
+    ];
+    const calls: string[] = [];
+    const markup = renderSection(
+        agentSectionAppearances['agents-page-customization-card'], fields, {}, calls,
+    );
+    assert.match(markup, /aria-expanded="false"/);
+    assert.match(markup, /2 settings/);
+    assert.doesNotMatch(markup, /Hero Title|Hero Subtitle/);
+    assert.deepEqual(calls, []);
 });
 
 let passed = 0;

@@ -2354,9 +2354,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // `window.activeChatTabType` is read in two places and assigned in none — so
             // 'user' is what it actually sends, and matching that is the real parity.
             chat_type: 'user',
-            // Naming a document is itself a request to search: a chip the user added while
+            // Choosing context is itself a request to search: a chip the user added while
             // the toggle happened to be off would otherwise be collected, sent, and ignored.
-            hybrid_search: options.documentSearch || contextDocuments.length > 0,
+            hybrid_search: options.documentSearch || contextItems.length > 0,
             web_search_enabled: options.webSearch,
             image_generation: options.imageGeneration,
             selected_document_ids: contextDocuments,

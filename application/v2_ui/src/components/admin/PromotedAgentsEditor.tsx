@@ -94,14 +94,14 @@ export function PromotedAgentsEditor({
 
     return (
         <div className="py-3">
-            <div className="mb-1.5 flex items-baseline justify-between gap-3">
+            <div className="admin-field-heading mb-1.5 flex items-baseline justify-between gap-3">
                 <span className="text-sm font-medium text-text-1">{field.label}</span>
                 <span className="text-xs text-text-3">
                     {promoted.length} promoted
                 </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="admin-promoted-agents-picker flex items-center gap-2">
                 <select
                     aria-label="Agent to promote"
                     className={clsx(controlClass, 'min-w-0 flex-1 appearance-none pr-8')}
@@ -143,7 +143,7 @@ export function PromotedAgentsEditor({
                     {promoted.map((agent, index) => (
                         <li
                             key={agent.catalog_key}
-                            className="flex items-center gap-2 rounded-lg border border-edge bg-surface-1 p-2"
+                            className="admin-promoted-agent-row flex items-center gap-2 rounded-lg border border-edge bg-surface-1 p-2"
                         >
                             <div className="min-w-0 flex-1">
                                 <p className="truncate text-sm text-text-1">

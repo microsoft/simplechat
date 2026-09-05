@@ -31,6 +31,7 @@ import {
     publicScope,
     scopeContextItem,
     tagContextItem,
+    type ContextAttachment,
     type ContextItem,
     type ContextKind,
     type ContextOrigin,
@@ -72,14 +73,15 @@ export function candidateToContextItem(
     candidate: ContextCandidate,
     existing: readonly ContextItem[],
     origin: ContextOrigin = 'user',
+    attachment: ContextAttachment = 'selection',
 ): ContextItem {
     if (candidate.kind === 'document' && candidate.document) {
-        return documentContextItem(candidate.document, candidate.scope, existing, origin);
+        return documentContextItem(candidate.document, candidate.scope, existing, origin, attachment);
     }
     if (candidate.kind === 'tag') {
-        return tagContextItem(candidate.label, candidate.scope, existing, origin);
+        return tagContextItem(candidate.label, candidate.scope, existing, origin, attachment);
     }
-    return scopeContextItem(candidate.scope, existing, origin);
+    return scopeContextItem(candidate.scope, existing, origin, attachment);
 }
 
 function documentCandidate(

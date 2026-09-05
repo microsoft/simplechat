@@ -14,7 +14,7 @@ the Appearance group never exercised.
 
 **Implemented in version:** 0.261.074
 
-**Updated for version:** 0.261.093 (`application/single_app/config.py`).
+**Current documentation version:** 0.261.095 (`application/single_app/config.py`).
 
 **Dependencies:** `admin_settings_fields.py`, `admin_settings_nav.py`,
 `route_backend_v2.py`, `application/v2_ui`.
@@ -41,6 +41,18 @@ Everything else in the group — `per_user_semantic_kernel`, the six `allow_*` a
 booleans.
 
 ## Technical specifications
+
+### Visual hierarchy
+
+In version **0.261.093**, the four Agents sections gained neutral header bands,
+distinct icons, larger titles, and clearer field and disclosure boundaries.
+Runtime emphasis and personal/group cues are presentation-only; they do not
+change the schema, defaults, section status, or save behavior. Other admin
+sections retain their existing appearance.
+
+See [V2 Admin Agents Visual Hierarchy](V2_ADMIN_AGENTS_VISUAL_HIERARCHY.md) for
+the scoped implementation and browser coverage. The release version remains
+tracked in `application/single_app/config.py`.
 
 ### Navigation
 
