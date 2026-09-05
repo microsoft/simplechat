@@ -20,6 +20,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.021 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.020 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.019 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.018 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -31,7 +32,7 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.012 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.011 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.010 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.009 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.009 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.007 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.006 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
 | v0.261.005 | [Release notes 0.261 series]({{ '/explanation/release-notes/v0.261/' | relative_url }}) |
@@ -87,7 +88,7 @@ This page includes the latest release notes inline. Older release sections are s
 
 ## Latest release notes
 
-### **(v0.261.020)**
+### **(v0.261.021)**
 
 #### Bug Fixes
 
@@ -102,7 +103,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   The suffix must now begin with a letter, which removes the ambiguity while matching exactly the same version segments.
     *   (Ref: `model_endpoint_clients.py`, [#1437](https://github.com/microsoft/simplechat/pull/1437))
 
-### **(v0.261.019)**
+### **(v0.261.020)**
 
 #### New Features
 
@@ -114,7 +115,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   **Added mTLS client certificates.** Certificates are referenced by file path so a private key is mounted into the deployment and never written to the configuration database.
     *   (Ref: `functions_model_endpoint_auth.py`, `functions_model_endpoint_providers.py`, `functions_model_endpoint_validation.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.018)**
+### **(v0.261.019)**
 
 #### New Features
 
@@ -126,7 +127,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   Saving an endpoint no longer requires the host name to resolve from the application tier, so configuration can be seeded or restored from backup ahead of connectivity. Policy violations are still refused at save time, and the connection-time check is unchanged.
     *   (Ref: `functions_model_endpoint_validation.py`, `model_endpoint_clients.py`, `allow_insecure_custom_model_endpoints`, `custom_model_endpoint_ca_bundle_path`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.017)**
+### **(v0.261.018)**
 
 #### Bug Fixes
 
@@ -137,7 +138,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   **Streaming responses can report token usage again.** `stream_options` was stripped from every OpenAI-compatible request, which suppressed usage reporting for all of them. It is now dropped only for surfaces that reject it.
     *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_providers.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.016)**
+### **(v0.261.017)**
 
 #### Bug Fixes
 
@@ -148,7 +149,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   **Test Connection now reports the URL that was actually called.** URL normalization rewrites the configured endpoint, and that rewrite was previously invisible, so a misdirected request looked identical to a correct one.
     *   (Ref: `model_endpoint_clients.py`, `route_backend_models.py`, `_multiendpoint_modal.html`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.015)**
+### **(v0.261.016)**
 
 #### Bug Fixes
 
@@ -160,7 +161,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   The resolved request URL is included deliberately: URL normalization can rewrite what the administrator typed, and that rewrite was previously invisible.
     *   (Ref: `functions_model_endpoint_diagnostics.py`, `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.014)**
+### **(v0.261.015)**
 
 #### New Features
 
@@ -172,7 +173,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   The three existing API types are unchanged, and an unregistered API type is still refused.
     *   (Ref: `functions_model_endpoint_providers.py`, `functions_model_endpoint_types.py`, `model_endpoint_clients.py`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, `_multiendpoint_modal.html`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.013)**
+### **(v0.261.014)**
 
 #### New Features
 
@@ -183,7 +184,7 @@ This page includes the latest release notes inline. Older release sections are s
     *   The catalog is now validated against a published JSON schema, so a malformed or incomplete model record fails a test rather than silently degrading capability answers at runtime.
     *   (Ref: `functions_model_capabilities.py`, `model_capabilities.json`, `model_capabilities.schema.json`, `MODEL_CAPABILITY_CATALOG.md`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
-### **(v0.261.012)**
+### **(v0.261.013)**
 
 #### New Features
 
@@ -192,6 +193,19 @@ This page includes the latest release notes inline. Older release sections are s
     *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
     *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
     *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
+
+### **(v0.261.012)**
+
+#### New Features
+
+*   **Yamcs Actions Can Reach Servers Behind An Authenticating Proxy**
+    *   Ground segments commonly publish Yamcs through a reverse proxy, such as Apache, that challenges every request with HTTP Basic authentication against a directory before the request reaches Yamcs. Yamcs behind that proxy often has no authentication of its own. Until now a Yamcs action could not answer that challenge, so such a server was unreachable even when the Yamcs settings were correct.
+    *   A new **Reverse Proxy Authentication** option on the Yamcs action sends an HTTP Basic `Authorization` header on every request. It is off by default, so a Yamcs server reached directly, such as a local simulator, is unaffected.
+    *   The proxy credential can be typed on the action, with the password stored in Key Vault, or supplied by a reusable **username and password identity**. Where a directory issues temporary passwords, the identity is rotated once under **Workspace → Identities** and every action that references it picks up the new password without being edited.
+    *   The proxy credential has its own identity reference, separate from the Yamcs credential, so one action can use both.
+    *   Proxy authentication combines with the **No Authentication** and **API Key** Yamcs methods. It cannot combine with **Username and Password** or **Access Token**, because only one `Authorization` header can be sent and the Yamcs token request would itself be refused by the proxy. The conflict is reported when saving the action and when running **Test Yamcs Connection** rather than failing later at run time.
+    *   **Test Yamcs Connection** exercises the proxy credential and distinguishes a proxy rejection from a Yamcs rejection.
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `functions_workspace_identities.py`, `plugin_health_checker.py`, `route_backend_plugins.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `test_yamcs_basic_auth.py`, [Yamcs Action](features/YAMCS_ACTION.md), [#1435](https://github.com/microsoft/simplechat/issues/1435))
 
 ### **(v0.261.011)**
 
@@ -239,19 +253,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   The admin Redis connection test acquired its managed identity token from the legacy cache infrastructure endpoint while the running application used the `https://redis.azure.com/.default` scope, so a passing test did not prove the application could connect.
     *   The test now builds its client through the same factory as the application, including service and port resolution.
     *   (Ref: `route_backend_settings.py`)
-
-### **(v0.261.009)**
-
-#### Bug Fixes
-
-*   **Shared Workspace File Approvals Are Visible To Approvers Again**
-    *   Fixed document access index candidate selection for workspace scope projections so pending-approval records are considered alongside already granted records.
-    *   Shared files staged for approval are intentionally not granted yet, so filtering only on `access_granted = true` could hide those files from approval experiences even though they were eligible for review.
-    *   The projection query now includes `approval_status = not_approved` rows while still requiring current-version projection records.
-    *   (Ref: `functions_document_access_index.py`, [Workspace Shared File Approval Visibility Fix](fixes/WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md))
-
-*   **Distroless Runtime Copy No Longer Fails On `/usr/lib64` Overlay Conflicts**
-    *   Fixed Docker BuildKit failures where `COPY --from=builder /odbc-runtime/ /` or `COPY --from=builder /playwright-runtime/ /` could abort with `cannot copy to non-directory ... /usr/lib64` when the distroless base exposes `/usr/lib64` as a non-directory entry.
-    *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
-    *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
-    *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))

@@ -19,7 +19,7 @@ silent, hard-to-diagnose failure.
 
 The provider registry makes an API type a single declarative record.
 
-**Implemented in version: 0.261.014**
+**Implemented in version: 0.261.015**
 
 ## Dependencies
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the catalog-backed model capability resolver.
-Version: 0.261.013
-Implemented in: 0.261.013
+Version: 0.261.014
+Implemented in: 0.261.014
 
 Model capability answers used to be guessed from the model's name, so a model the
 catalog did not know about -- an on-premises or customer-supplied model reached
@@ -230,7 +230,7 @@ def test_version_bumped():
     """The capability resolver ships at or after its implementation version."""
     print("Testing config version...")
     try:
-        assert_app_version_at_least("0.261.013")
+        assert_app_version_at_least("0.261.014")
         print("Config version check passed")
         return True
     except Exception as e:

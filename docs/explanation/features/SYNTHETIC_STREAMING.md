@@ -13,7 +13,7 @@ surface at all.
 Those responses still have to reach the browser through the stream. Synthetic
 streaming is how a completed answer is delivered as a stream.
 
-**Implemented in version: 0.261.017**
+**Implemented in version: 0.261.018**
 
 ## The problem it solves
 

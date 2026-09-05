@@ -11,7 +11,7 @@ API. It is off by default, because pointing an application at arbitrary internal
 addresses is exactly the shape of a server-side request forgery, so each relaxation
 is a deliberate administrator decision.
 
-**Implemented in version: 0.261.018**
+**Implemented in version: 0.261.019**
 
 ## What was blocking on-premises use
 

@@ -1,6 +1,7 @@
 # functions_yamcs_operations.py
 """Shared defaults and normalization helpers for Yamcs mission control action plugins."""
 
+import base64
 import re
 from typing import Any, Dict, Optional
 
@@ -22,6 +23,28 @@ YAMCS_SUPPORTED_AUTH_METHODS = {
 }
 YAMCS_SUPPORTED_AUTH_TYPES = {"NoAuth", "key", "identity", "username_password"}
 
+# Some ground segments front Yamcs with a reverse proxy (commonly Apache) that enforces
+# HTTP Basic authentication before the request ever reaches Yamcs. That challenge is a
+# separate layer from the Yamcs auth method, so it is configured independently.
+YAMCS_BASIC_AUTH_ENABLED_FIELD = "enable_basic_auth"
+YAMCS_BASIC_AUTH_USERNAME_FIELD = "basic_auth_username"
+YAMCS_BASIC_AUTH_PASSWORD_FIELD = "basic_auth_password"
+YAMCS_BASIC_AUTH_IDENTITY_FIELD = "basic_auth_identity_id"
+YAMCS_BASIC_AUTH_IDENTITY_AUTH_TYPE_FIELD = "basic_auth_identity_auth_type"
+
+# Proxy Basic auth occupies the Authorization header. Yamcs username/password and bearer
+# token auth also send Authorization, so those cannot be combined. API key auth travels in
+# the separate x-api-key header and unauthenticated Yamcs sends nothing, so both are safe.
+YAMCS_BASIC_AUTH_COMPATIBLE_AUTH_METHODS = {
+    YAMCS_AUTH_METHOD_NONE,
+    YAMCS_AUTH_METHOD_API_KEY,
+}
+YAMCS_BASIC_AUTH_CONFLICT_MESSAGE = (
+    "Yamcs HTTP Basic authentication cannot be combined with username/password or bearer "
+    "token authentication because both send the HTTP Authorization header. Use 'No "
+    "Authentication' or 'API Key' for the Yamcs authentication method."
+)
+
 # Yamcs archive SQL is a full engine that also supports DDL/DML. Only these leading
 # keywords are accepted, and only when archive SQL is explicitly enabled.
 YAMCS_ALLOWED_READ_STATEMENTS = {
@@ -32,10 +55,12 @@ YAMCS_ALLOWED_READ_STATEMENTS = {
 }
 
 # Secrets always live in auth.key, but the constant keeps redaction plumbing symmetric
-# with the other connector action types.
+# with the other connector action types. The proxy Basic auth password is stored in
+# additionalFields, so listing it here routes it through the same Key Vault handling.
 YAMCS_SENSITIVE_ADDITIONAL_FIELDS = {
     "api_key",
     "access_token",
+    "basic_auth_password",
     "password",
     "token",
 }
@@ -141,6 +166,7 @@ def normalize_yamcs_additional_fields(
     # with the other connector action types and is always forced on.
     fields["read_only"] = True
     fields["enable_archive_sql"] = _as_bool(fields.get("enable_archive_sql"), default=False)
+    fields.update(normalize_yamcs_basic_auth_fields(fields))
     fields["max_rows"] = _as_int(
         fields.get("max_rows"),
         YAMCS_DEFAULT_MAX_ROWS,
@@ -160,3 +186,39 @@ def normalize_yamcs_additional_fields(
         YAMCS_MAX_BYTE_LIMIT,
     )
     return fields
+
+
+def normalize_yamcs_basic_auth_fields(
+    additional_fields: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Normalize the reverse-proxy HTTP Basic authentication fields.
+
+    Stored values are preserved when the toggle is off so turning it back on does not
+    orphan the Key Vault secret that backs the password.
+    """
+    fields = additional_fields if isinstance(additional_fields, dict) else {}
+    return {
+        YAMCS_BASIC_AUTH_ENABLED_FIELD: _as_bool(
+            fields.get(YAMCS_BASIC_AUTH_ENABLED_FIELD), default=False
+        ),
+        YAMCS_BASIC_AUTH_USERNAME_FIELD: str(
+            fields.get(YAMCS_BASIC_AUTH_USERNAME_FIELD) or ""
+        ).strip(),
+        YAMCS_BASIC_AUTH_PASSWORD_FIELD: str(fields.get(YAMCS_BASIC_AUTH_PASSWORD_FIELD) or ""),
+        YAMCS_BASIC_AUTH_IDENTITY_FIELD: str(
+            fields.get(YAMCS_BASIC_AUTH_IDENTITY_FIELD) or ""
+        ).strip(),
+    }
+
+
+def yamcs_basic_auth_conflicts_with_auth_method(auth_method: Any) -> bool:
+    """Return True when proxy Basic auth cannot coexist with the Yamcs auth method."""
+    normalized_method = str(auth_method or "").strip().lower()
+    return normalized_method not in YAMCS_BASIC_AUTH_COMPATIBLE_AUTH_METHODS
+
+
+def build_yamcs_basic_auth_header(username: Any, password: Any) -> str:
+    """Build an HTTP Basic ``Authorization`` header value for the Yamcs reverse proxy."""
+    credential = f"{str(username or '')}:{str(password or '')}"
+    encoded = base64.b64encode(credential.encode("utf-8")).decode("ascii")
+    return f"Basic {encoded}"

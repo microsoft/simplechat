@@ -113,10 +113,13 @@ from functions_yamcs_operations import (
     YAMCS_AUTH_METHOD_BEARER_TOKEN,
     YAMCS_AUTH_METHOD_NONE,
     YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+    YAMCS_BASIC_AUTH_CONFLICT_MESSAGE,
     YAMCS_DEFAULT_PROCESSOR,
     YAMCS_PLUGIN_TYPE,
+    build_yamcs_basic_auth_header,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
+    yamcs_basic_auth_conflicts_with_auth_method,
 )
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
@@ -791,7 +794,7 @@ def _hydrate_sql_test_identity(data, existing_plugin, user_id):
 
 
 ACTION_CONNECTION_TEST_AUTH_SECRET_FIELDS = ('key', 'identity', 'tenantId')
-ACTION_CONNECTION_TEST_ADDITIONAL_SECRET_FIELDS = ('private_key_passphrase',)
+ACTION_CONNECTION_TEST_ADDITIONAL_SECRET_FIELDS = ('private_key_passphrase', 'basic_auth_password')
 # Secret reference sources must match how keyvault_plugin_get_helper stored each field.
 ACTION_AUTH_SECRET_SOURCES = {"action"}
 ACTION_ADDITIONAL_SECRET_SOURCES = {"action-addset"}
@@ -2611,6 +2614,12 @@ def test_yamcs_connection():
     auth_method = (data.get('auth_method') or YAMCS_AUTH_METHOD_USERNAME_PASSWORD).strip().lower()
     username = (data.get('username') or '').strip()
     auth_key = (data.get('auth_key') or '').strip()
+    enable_basic_auth = data.get('enable_basic_auth', False)
+    if isinstance(enable_basic_auth, str):
+        enable_basic_auth = enable_basic_auth.strip().lower() in {'1', 'true', 'yes', 'on'}
+    enable_basic_auth = bool(enable_basic_auth)
+    basic_auth_username = (data.get('basic_auth_username') or '').strip()
+    basic_auth_password = data.get('basic_auth_password') or ''
     tls_verify = data.get('tls_verify', True)
     if isinstance(tls_verify, str):
         tls_verify = tls_verify.strip().lower() in {'1', 'true', 'yes', 'on'}
@@ -2630,6 +2639,8 @@ def test_yamcs_connection():
             'success': False,
             'error': "Yamcs auth_method must be 'username_password', 'api_key', 'bearer_token', or 'none'."
         }), 400
+    if enable_basic_auth and yamcs_basic_auth_conflicts_with_auth_method(auth_method):
+        return jsonify({'success': False, 'error': YAMCS_BASIC_AUTH_CONFLICT_MESSAGE}), 400
 
     try:
         existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
@@ -2676,6 +2687,43 @@ def test_yamcs_connection():
         if not username:
             return jsonify({'success': False, 'error': 'A Yamcs username is required for username/password authentication.'}), 400
 
+    if enable_basic_auth:
+        existing_additional_fields = {}
+        if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict):
+            existing_additional_fields = existing_plugin['additionalFields']
+
+        if not basic_auth_username:
+            basic_auth_username = str(existing_additional_fields.get('basic_auth_username') or '').strip()
+        if basic_auth_password in ('', ui_trigger_word):
+            basic_auth_password = existing_additional_fields.get('basic_auth_password') or ''
+        if basic_auth_password == ui_trigger_word:
+            return jsonify({
+                'success': False,
+                'error': 'Stored Yamcs HTTP Basic authentication password could not be resolved for testing. Re-enter the password.'
+            }), 400
+
+        try:
+            plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+            basic_auth_password = _resolve_secret_value_for_action_test(
+                basic_auth_password,
+                'additionalFields.basic_auth_password',
+                'Yamcs',
+                plugin_scope_value,
+                plugin_scope,
+                ACTION_ADDITIONAL_SECRET_SOURCES,
+            )
+        except ValueError as exc:
+            logging.warning("Failed to resolve Yamcs basic auth password for action test: %s", exc)
+            return jsonify({
+                'success': False,
+                'error': 'Invalid Yamcs authentication configuration.'
+            }), 400
+
+        if not basic_auth_username:
+            return jsonify({'success': False, 'error': 'A username is required for Yamcs HTTP Basic authentication.'}), 400
+        if not basic_auth_password:
+            return jsonify({'success': False, 'error': 'A password is required for Yamcs HTTP Basic authentication.'}), 400
+
     client = None
     try:
         try:
@@ -2688,6 +2736,15 @@ def test_yamcs_connection():
 
         if auth_method == YAMCS_AUTH_METHOD_NONE:
             credentials = None
+            if enable_basic_auth:
+                try:
+                    from yamcs.client import BasicAuthCredentials
+                except ImportError:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Yamcs HTTP Basic authentication requires yamcs-client 1.8.8 or newer on the server.'
+                    }), 400
+                credentials = BasicAuthCredentials(basic_auth_username, basic_auth_password)
         elif auth_method == YAMCS_AUTH_METHOD_API_KEY:
             credentials = APIKeyCredentials(auth_key)
         elif auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
@@ -2710,6 +2767,13 @@ def test_yamcs_connection():
                 return original_request(*args, **kwargs)
 
             session.request = request_with_timeout
+
+            # API key auth travels in x-api-key, so the Authorization header stays free for
+            # a reverse proxy. Unauthenticated Yamcs uses BasicAuthCredentials instead.
+            if enable_basic_auth and auth_method == YAMCS_AUTH_METHOD_API_KEY:
+                session.headers.update({
+                    'Authorization': build_yamcs_basic_auth_header(basic_auth_username, basic_auth_password)
+                })
 
         server_info = client.get_server_info()
         instance_names = [str(getattr(item, 'name', '')) for item in client.list_instances()]
@@ -2751,7 +2815,13 @@ def test_yamcs_connection():
         status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
         raw_message = str(exc)
         if status_code in (401, 403) or 'unauthorized' in raw_message.lower() or 'forbidden' in raw_message.lower():
-            error_msg = 'Yamcs authentication failed. Verify the selected authentication method and credentials.'
+            if enable_basic_auth:
+                error_msg = (
+                    'Authentication failed. Verify the HTTP Basic authentication username and password '
+                    'the reverse proxy expects, and the Yamcs credentials if the server also requires them.'
+                )
+            else:
+                error_msg = 'Yamcs authentication failed. Verify the selected authentication method and credentials.'
             status = 403
         elif status_code == 404:
             error_msg = 'The Yamcs server responded, but the requested resource was not found. Verify the server URL.'
@@ -2767,6 +2837,7 @@ def test_yamcs_connection():
                 'server_url': server_url,
                 'instance': instance,
                 'auth_method': auth_method,
+                'basic_auth_enabled': enable_basic_auth,
                 'status_code': status_code,
             },
             level=logging.WARNING,

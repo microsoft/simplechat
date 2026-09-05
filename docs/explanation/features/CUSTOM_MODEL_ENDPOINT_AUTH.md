@@ -11,7 +11,7 @@ That left three common cases unreachable: a gateway that reads the key from a
 different header, a corporate gateway that issues short-lived OAuth2 tokens, and
 an appliance that requires a client certificate.
 
-**Implemented in version: 0.261.019**
+**Implemented in version: 0.261.020**
 
 ## Schemes
 

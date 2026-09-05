@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Custom model endpoint failure diagnostics.
-Version: 0.261.015
-Implemented in: 0.261.015
+Version: 0.261.016
+Implemented in: 0.261.016
 
 Custom endpoint errors are sanitized before reaching the browser, because an
 upstream error body can echo back a URL, a header, or an API key. The original
@@ -224,7 +224,7 @@ def test_version_bumped():
     """Diagnostics ship at or after their implementation version."""
     print("Testing config version...")
     try:
-        assert_app_version_at_least("0.261.015")
+        assert_app_version_at_least("0.261.016")
         print("Config version check passed")
         return True
     except Exception as e:
