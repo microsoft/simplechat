@@ -8,7 +8,7 @@ audience: user
 
 ## What this does
 
-An action is a governed tool definition that lets an agent call an API, database, built-in utility, file source, or MCP server. This guide creates an action in a workspace and leaves it ready to attach to an agent.
+An action is a governed tool definition that lets an agent call an API, database, built-in utility, file source, MCP server, or an explicitly selected agent. This guide creates an action in a workspace and leaves it ready to attach to an agent.
 
 {% include media.html type="video"
                       title="Create an action walkthrough"
@@ -46,6 +46,10 @@ Use an action when a model needs to do more than write an answer, such as query 
                       capture="Capture the create an action task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 7. Use **Test Connection** when available, then save the action.
+
+For **Call agent**, select an existing target instead of entering connection
+details. Saving does not run the target. See [Call another agent]({{ '/guides/call-another-agent/' | relative_url }})
+for workspace boundaries, context sharing, and nested-call limits.
 
 ## Verify it worked
 

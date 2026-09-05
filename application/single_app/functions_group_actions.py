@@ -35,6 +35,7 @@ from functions_legacy_action_management import (
     validate_scoped_mcp_action,
 )
 from functions_settings import get_settings
+from functions_agent_delegation import validate_agent_action_for_scope
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -131,6 +132,9 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
     payload = normalize_m365_action_payload(action_data)
     payload = prepare_scoped_action(payload, "group", group_id)
     user_id = user_id or get_current_user_id()
+    payload = validate_agent_action_for_scope(
+        payload, user_id=user_id, scope_type="group", scope_id=group_id,
+    )
     action_id = payload.get("id") or str(uuid.uuid4())
     if not isinstance(action_id, str):
         raise ValueError("Action ID must be a string.")

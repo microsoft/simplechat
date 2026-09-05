@@ -14,6 +14,8 @@ import inspect
 import re
 import threading
 import uuid
+import asyncio
+from agent_execution_context import current_agent_execution
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
@@ -170,6 +172,7 @@ class PluginInvocationStart:
     timestamp: str
     conversation_id: Optional[str] = None
     invocation_id: Optional[str] = None
+    provenance: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -198,6 +201,7 @@ class PluginInvocation:
     conversation_id: Optional[str] = None
     invocation_id: Optional[str] = None
     error_message: Optional[str] = None
+    provenance: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -352,6 +356,9 @@ class PluginInvocationLogger:
         
     def log_invocation(self, invocation: PluginInvocation):
         """Log a plugin invocation to Application Insights and local history."""
+        frame = current_agent_execution()
+        if frame is not None:
+            frame.budget.record_tool_invocation(invocation)
         # Add to local history
         self.invocations.append(invocation)
 
@@ -639,6 +646,9 @@ class PluginInvocationLogger:
         key = f"{invocation_start.user_id}:{invocation_start.conversation_id}"
         with self._callback_lock:
             callbacks = list(self._start_callbacks.get(key, []))
+            root_id = (getattr(invocation_start, 'provenance', None) or {}).get('root_id')
+            if root_id:
+                callbacks.extend(self._start_callbacks.get(f'{key}:{root_id}', []))
         for cb in callbacks:
             try:
                 cb(invocation_start)
@@ -650,6 +660,9 @@ class PluginInvocationLogger:
         key = f"{invocation.user_id}:{invocation.conversation_id}"
         with self._callback_lock:
             callbacks = list(self._callbacks.get(key, []))
+            root_id = (getattr(invocation, 'provenance', None) or {}).get('root_id')
+            if root_id:
+                callbacks.extend(self._callbacks.get(f'{key}:{root_id}', []))
         for cb in callbacks:
             try:
                 cb(invocation)
@@ -668,6 +681,9 @@ def get_plugin_logger() -> PluginInvocationLogger:
 
 def _resolve_invocation_context(conversation_id: Optional[str] = None):
     """Resolve user and conversation context for plugin invocation logging."""
+    frame = current_agent_execution()
+    if frame is not None:
+        return frame.identity.user_id, frame.identity.conversation_id
     try:
         user_id = get_current_user_id()
     except Exception:
@@ -689,6 +705,7 @@ def log_plugin_invocation_started(
     parameters: Dict[str, Any],
     conversation_id: Optional[str] = None,
     invocation_id: Optional[str] = None,
+    provenance: Optional[Dict[str, Any]] = None,
 ):
     """Convenience function to log the start of a plugin invocation."""
     user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
@@ -701,6 +718,7 @@ def log_plugin_invocation_started(
         conversation_id=resolved_conversation_id,
         timestamp=datetime.utcnow().isoformat(),
         invocation_id=invocation_id or str(uuid.uuid4()),
+        provenance=provenance or _execution_provenance(),
     )
 
     _plugin_logger.log_invocation_start(invocation_start)
@@ -711,7 +729,8 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
                          start_time: float, end_time: float, 
                          success: bool = True, error_message: Optional[str] = None,
                          conversation_id: Optional[str] = None,
-                         invocation_id: Optional[str] = None):
+                         invocation_id: Optional[str] = None,
+                         provenance: Optional[Dict[str, Any]] = None):
     """Convenience function to log a plugin invocation."""
     user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
     
@@ -728,10 +747,22 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
         invocation_id=invocation_id or str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat(),
         success=success,
-        error_message=error_message
+        error_message=error_message,
+        provenance=provenance or _execution_provenance(),
     )
     
     _plugin_logger.log_invocation(invocation)
+
+
+def _execution_provenance():
+    frame = current_agent_execution()
+    if frame is None:
+        return None
+    return {
+        "root_id": frame.budget.root_id,
+        "parent_invocation_id": frame.invocation_id,
+        "depth": frame.depth,
+    }
 
 
 def plugin_function_logger(plugin_name: str):
@@ -875,7 +906,7 @@ def plugin_function_logger(plugin_name: str):
 
                     return result
 
-                except Exception as e:
+                except (Exception, asyncio.CancelledError) as e:
                     end_time = time.time()
                     duration_ms = (end_time - start_time) * 1000
                     _log_failure(function_name, e, duration_ms)
@@ -888,7 +919,7 @@ def plugin_function_logger(plugin_name: str):
                         start_time=start_time,
                         end_time=end_time,
                         success=False,
-                        error_message=str(e),
+                        error_message="Agent execution was cancelled." if isinstance(e, asyncio.CancelledError) else str(e),
                         invocation_id=invocation_id,
                     )
 
@@ -939,7 +970,7 @@ def plugin_function_logger(plugin_name: str):
                                     invocation_id=invocation_id,
                                 )
                                 return awaited_value
-                            except Exception as await_error:
+                            except (Exception, asyncio.CancelledError) as await_error:
                                 end_time = time.time()
                                 duration_ms = (end_time - start_time) * 1000
                                 _log_failure(function_name, await_error, duration_ms)
@@ -951,7 +982,7 @@ def plugin_function_logger(plugin_name: str):
                                     start_time=start_time,
                                     end_time=end_time,
                                     success=False,
-                                    error_message=str(await_error),
+                                    error_message="Agent execution was cancelled." if isinstance(await_error, asyncio.CancelledError) else str(await_error),
                                     invocation_id=invocation_id,
                                 )
                                 raise

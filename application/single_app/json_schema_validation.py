@@ -14,6 +14,12 @@ from functions_action_manifest import (
     resolve_action_type,
 )
 from functions_mcp_operations import normalize_mcp_transport, validate_mcp_endpoint_for_transport
+from functions_agent_delegation import (
+    AGENT_ACTION_VALIDATION_ERROR,
+    AGENT_DEFAULT_ENDPOINT,
+    AGENT_PLUGIN_TYPE,
+    validate_agent_action_manifest,
+)
 from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_blob_endpoint_from_connection_string
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
@@ -26,6 +32,7 @@ from functions_m365_operations import (
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
 PLUGIN_ENDPOINT_DEFAULTS = {
+    AGENT_PLUGIN_TYPE: AGENT_DEFAULT_ENDPOINT,
     'sql_schema': 'sql://sql_schema',
     'sql_query': 'sql://sql_query',
     'chart': CHART_DEFAULT_ENDPOINT,
@@ -331,6 +338,12 @@ def validate_plugin(plugin):
         return auth_error
     
     # Additional business logic validation
+    if plugin_type == AGENT_PLUGIN_TYPE:
+        try:
+            validate_agent_action_manifest(plugin_copy)
+        except ValueError:
+            return AGENT_ACTION_VALIDATION_ERROR
+
     # For non-SQL plugins, endpoint must not be empty
     if plugin_type not in ['sql_schema', 'sql_query', 'msgraph', *M365_PLUGIN_TYPES]:
         endpoint = plugin_copy.get('endpoint', '')

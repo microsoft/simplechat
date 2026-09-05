@@ -2,6 +2,55 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.093)**
+
+#### New Features
+
+*   **Agents Can Call Explicitly Selected Specialists**
+    *   Create a **Call agent** action, choose a local or Foundry-backed target, and attach it to a local agent. The caller supplies a task and relevant context, receives the specialist's result, and continues its own answer without automatically sharing the whole conversation.
+    *   Targets retain their own instructions, model configuration, authorized knowledge, and tools. Calls stay in the same workspace or use permitted global agents, with access checked again when each call runs.
+    *   Nested delegation is bounded by **3 levels, 10 delegated attempts per root turn, and 120 seconds per call**. Self-calls and loops are blocked; cancellation preserves completed child citations and observed usage.
+    *   Delegation works in ordinary and streaming chat, agent workflows, and V2 orchestration. Foundry-backed agents are callable targets; their own tools remain configured in Foundry.
+    *   (Ref: `functions_agent_delegation.py`, `agent_delegation_runtime.py`, `semantic_kernel_plugins/agent_plugin.py`, [Agent Delegation Actions](features/AGENT_DELEGATION_ACTION.md))
+
+#### User Interface Enhancements
+
+*   **Configure Agent Calls In Classic And V2**
+    *   Both interfaces provide scoped target selection and action attachment for personal, group, and global agents. V2 adds focused controls rather than requiring a trip to classic for Call agent configuration.
+    *   V2 supports confirmed deletion of owned Call agent actions, preserves unrelated bindings and configuration, and reports conflicting edits instead of overwriting them. Selecting a group for configuration does not switch the active workspace.
+    *   (Ref: `plugin_modal_stepper.js`, `agent_modal_stepper.js`, `components/agents/AgentDelegationManager.tsx`, `pages/GroupAgentDelegationPage.tsx`, [Call Another Agent](../guides/call-another-agent.md))
+
+#### Bug Fixes
+
+*   **Group Workflow Agents Use The Run Actor's Permissions**
+    *   A manually started group workflow now authorizes agent calls as the authenticated member running it, rather than inheriting the workflow creator's access. Scheduled runs without an interactive actor retain the workflow owner's execution identity.
+    *   (Ref: `functions_workflow_runner.py` workflow execution identity capture and agent execution contexts)
+
+### **(v0.261.092)**
+
+#### New Features
+
+*   **A Saved Prompt Is Now Attached To Your Message, Not Pasted Into It**
+    *   Picking a prompt in the V2 interface used to paste its text into the message box, where it stopped being a prompt: nothing marked where the standing instructions ended and your own question began, taking it back off meant finding and deleting the right paragraphs, and fixing a variable meant editing prose in the middle of what you were writing.
+    *   **The prompt now sits in a card above the message box**, collapsed to its name, its workspace, and how many variables still need a value. The box below stays yours to type in.
+    *   **Expand it** to fill in variables and read the prompt exactly as it will be sent. **Edit** adjusts the wording for this one message and marks the card *Edited*, with a **Reset** that restores the saved text — the saved prompt is never touched, so a one-off tweak does not change it for everyone else. **Remove** takes it off without disturbing anything you have typed.
+    *   **The prompt is sent first and your message follows it**, which is the order the two are actually written in. A prompt that needs no further input can be sent on its own, so Send now works with an attached prompt and an empty box.
+    *   **Variables are resolved when you send, not when you pick.** `{{composer}}` — "what you have already typed" — used to resolve to nothing, because picking the prompt is the first thing you do. It now means the message you wrote underneath the card. A prompt that positions your text this way is not also sent it a second time.
+    *   **Sent messages show the prompt as a collapsed row** above your own words, expanding to the full text, so a reply can be understood by someone who did not pick the prompt. Copying and exporting still yield the whole message, and older messages render exactly as they did.
+    *   The separate fill-in dialog is gone, folded into the card. Its safety rules came with it: auto-filled values stay badged and clearable, values from the conversation are still only ever offered as chips you click, and nothing is pre-filled at all in a shared conversation.
+    *   (Ref: `components/chat/AttachedPromptCard.tsx`, `lib/usePromptVariableValues.ts`, `lib/promptRequest.ts`, `lib/messagePrompt.ts`, [Prompt Composer Card](features/PROMPT_COMPOSER_CARD.md))
+
+*   **Orchestration Plans Now Read The Prompt You Chose**
+    *   The planner was told a selected prompt's *name* and nothing else. "Quarterly review" says nothing about whether the work involves reading documents, searching the web, or comparing two things, which is exactly what a plan has to decide. It is now given the prompt's wording, capped so a long saved prompt cannot crowd out the rest of the planner's context.
+    *   A selected prompt also now counts as you having pointed at something, alongside a chosen document or agent, so a request carrying one is no longer triaged as a remark to answer off the cuff.
+    *   (Ref: `functions_orchestration_context.py` `_selected_prompt`, `functions_orchestration_planner.py` `triage_request`, `functions_orchestration_schema.py` `build_plan_inputs`)
+
+#### Bug Fixes
+
+*   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
+    *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
+    *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+
 ### **(v0.261.091)**
 
 #### New Features
