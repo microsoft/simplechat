@@ -91,6 +91,7 @@ from functions_orchestration_schema import (
     validate_elicitation_response,
 )
 from functions_settings import get_settings, get_user_settings
+from functions_prompt_metadata import build_prompt_selection_metadata
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -698,7 +699,14 @@ def register_route_backend_orchestration(bp):
 
                 # The question is recorded once a plan exists for it, so a conversation
                 # never shows a user message whose work was never planned.
-                user_message_id = _save_message(resolved_conversation_id, 'user', message)
+                prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message)
+                user_message_id = _save_message(
+                    resolved_conversation_id, 'user', message,
+                    metadata={
+                        'orchestration_turn_id': turn_id,
+                        'prompt_selection': prompt_selection,
+                    } if prompt_selection else None,
+                )
 
                 plan['revision'] = revision
                 try:

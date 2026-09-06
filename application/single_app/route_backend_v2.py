@@ -19,10 +19,12 @@ Two blueprints are registered from here:
     strips the very fields an administrator needs to manage.
 """
 
+import json
 import logging
 import uuid
 
 from flask import current_app, jsonify, request, session
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from admin_app_roles import get_app_role_requirements
 from admin_settings_fields import (
@@ -88,6 +90,11 @@ from functions_image_edit import resolve_image_edit_capability
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_user_visible_public_workspace_ids_from_settings,
+)
+from functions_prompt_variables import (
+    MAX_REQUEST_BYTES as PROMPT_FILL_MAX_REQUEST_BYTES,
+    PromptKnowledgeFillError,
+    fill_prompt_variables,
 )
 from functions_settings import (
     ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
@@ -500,6 +507,47 @@ def _build_notices(public_settings, user_settings_dict):
 
 
 def register_route_backend_v2(bp):
+    @bp.route("/api/v2/prompts/fill-variables", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_fill_prompt_variables():
+        """Fill explicitly requested custom fields from authorized selected knowledge."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401
+        if request.content_length and request.content_length > PROMPT_FILL_MAX_REQUEST_BYTES:
+            return jsonify({"error": "The knowledge-fill request is too large."}), 413
+        if not request.is_json:
+            return jsonify({"error": "The request must be a JSON object."}), 400
+        try:
+            raw_body = (
+                request.get_data(cache=True)
+                if request.content_length is not None
+                else request.stream.read(PROMPT_FILL_MAX_REQUEST_BYTES + 1)
+            )
+            if len(raw_body) > PROMPT_FILL_MAX_REQUEST_BYTES:
+                return jsonify({"error": "The knowledge-fill request is too large."}), 413
+            try:
+                payload = json.loads(raw_body)
+            except (ValueError, UnicodeError, RecursionError):
+                return jsonify({"error": "The request must be a JSON object."}), 400
+            return jsonify(fill_prompt_variables(payload, user_id, get_settings()))
+        except RequestEntityTooLarge:
+            return jsonify({"error": "The knowledge-fill request is too large."}), 413
+        except BadRequest:
+            return jsonify({"error": "The request must be a JSON object."}), 400
+        except PromptKnowledgeFillError as exc:
+            return jsonify({"error": exc.public_message}), exc.status_code
+        except Exception as exc:
+            log_event(
+                "[PROMPT_KNOWLEDGE_FILL] Unable to complete knowledge fill.",
+                extra={"exception_type": type(exc).__name__},
+                level=logging.WARNING,
+                debug_only=True,
+            )
+            return jsonify({"error": "Unable to fill variables from knowledge. Please try again."}), 500
+
     @bp.route("/api/v2/bootstrap", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required

@@ -126,6 +126,8 @@ import {
     type AttachedPrompt,
 } from '../../lib/promptRequest';
 import { usePromptVariableValues } from '../../lib/usePromptVariableValues';
+import { usePromptKnowledgeFill } from '../../lib/usePromptKnowledgeFill';
+import type { PromptKnowledgeRequest } from '../../lib/promptKnowledge';
 import {
     EMPTY_PROMPT_DRAFT,
     PromptEditorDialog,
@@ -250,7 +252,11 @@ export function Composer() {
     const suggestions = useMentionSuggestions(shared && canPost ? (mention?.query ?? null) : null);
 
     /** Set while a prompt is waiting on its large-run confirmation. */
-    const [largeRun, setLargeRun] = useState<TabularRunEstimate | null>(null);
+    const [largeRun, setLargeRun] = useState<{
+        estimate: TabularRunEstimate;
+        outgoing: { message: string; promptInfo: Json | null };
+        draftKey: string;
+    } | null>(null);
 
     /** The `/` token under the caret, when one is being typed. */
     const [slash, setSlash] = useState<SlashQuery | null>(null);
@@ -271,6 +277,15 @@ export function Composer() {
      * reader's own text right up to the moment the two are combined.
      */
     const [attachedPrompt, setAttachedPrompt] = useState<AttachedPrompt | null>(null);
+    const [promptInstance, setPromptInstance] = useState(0);
+    const [searchAllKnowledge, setSearchAllKnowledge] = useState(false);
+    const [showPromptWarning, setShowPromptWarning] = useState(false);
+    const [promptReviewRequest, setPromptReviewRequest] = useState(0);
+    useEffect(() => {
+        setSearchAllKnowledge(false);
+        setShowPromptWarning(false);
+        setPromptReviewRequest(0);
+    }, [activeConversationId, shared]);
     /** A prompt being saved from what is currently written, if any. */
     const [savingDraft, setSavingDraft] = useState<PromptDraft | null>(null);
     const [savingPrompt, setSavingPrompt] = useState(false);
@@ -759,6 +774,7 @@ export function Composer() {
                 attached: attachedPrompt,
                 promptText,
                 userText: outgoing.userText,
+                composerText: typed,
                 values: promptVariables.values,
             }),
         };
@@ -770,7 +786,13 @@ export function Composer() {
      * The confirmation is raised before anything is sent and before the composer is cleared,
      * so declining leaves the typed prompt exactly where it was to be edited.
      */
-    const submit = () => {
+    const outgoingDraftKey = () =>
+        JSON.stringify([
+            activeConversationId, text, attachedPrompt, promptVariables.values,
+            promptContext(), options, orchestrating,
+        ]);
+
+    const submit = (allowUnfilled = false) => {
         if (streaming || !canPost) {
             return;
         }
@@ -779,11 +801,18 @@ export function Composer() {
         if (!text.trim() && !attachedPrompt) {
             return;
         }
+        if (attachedPrompt && !allowUnfilled && promptVariables.getUnfilled(promptContext()).length > 0) {
+            setShowPromptWarning(true);
+            setPromptReviewRequest((current) => current + 1);
+            return;
+        }
 
         const outgoing = buildOutgoing();
         if (!outgoing.message) {
             return;
         }
+        promptKnowledge.cancel();
+        setShowPromptWarning(false);
 
         // Orchestration takes a different road entirely: the server plans the work rather than
         // running a chat stream, so the large-run confirmation — a manual-flow concern about a
@@ -797,7 +826,7 @@ export function Composer() {
         // whether the request came from the card or from the box.
         const estimate = estimateLargeTabularRun(outgoing.message, tabularRunSettings);
         if (estimate.shouldConfirm) {
-            setLargeRun(estimate);
+            setLargeRun({ estimate, outgoing, draftKey: outgoingDraftKey() });
             return;
         }
 
@@ -818,6 +847,10 @@ export function Composer() {
         setMention(null);
         setContextQuery(null);
         setAttachedPrompt(null);
+        setSearchAllKnowledge(false);
+        setShowPromptWarning(false);
+        setPromptReviewRequest(0);
+        promptKnowledge.cancel();
         setOptions((current) => {
             const next = current.contextItems.length === 0 ? current : { ...current, contextItems: [] };
             return next.promptId === undefined ? next : { ...next, promptId: undefined };
@@ -1246,6 +1279,7 @@ export function Composer() {
             lastAssistantMessage: assistant ? messageToPlainText(assistant) : '',
             lastUserMessage: user ? messageToPlainText(user) : '',
             composerText: text,
+            selectedDocuments: contextDocumentDescriptors(options.contextItems).map((document) => document.label),
         };
     };
 
@@ -1276,6 +1310,42 @@ export function Composer() {
         content: attachedPrompt ? attachedPromptContent(attachedPrompt) : '',
         context: promptContext(),
         shared,
+        instanceKey: String(promptInstance),
+    });
+
+    const knowledgeScopes = contextScopes(options.contextItems);
+    const knowledgeKinds = [...new Set(options.contextItems.map((item) => item.scope.kind))];
+    const knowledgeRequest: PromptKnowledgeRequest = {
+        prompt_content: attachedPrompt ? attachedPromptContent(attachedPrompt) : '',
+        composer_text: text,
+        conversation_id: activeConversationId ?? undefined,
+        conversation_kind: shared ? 'collaborative' : 'personal',
+        selected_document_ids: searchAllKnowledge ? [] : contextDocumentIds(options.contextItems),
+        tags: searchAllKnowledge ? [] : contextTags(options.contextItems),
+        doc_scope: searchAllKnowledge || knowledgeKinds.length > 1 ? 'all' : knowledgeKinds[0] ?? 'personal',
+        active_group_ids: searchAllKnowledge ? [] : knowledgeScopes.groupIds,
+        active_public_workspace_ids: searchAllKnowledge ? [] : knowledgeScopes.publicWorkspaceIds,
+        document_filter_mode: contextFilterMode(options.contextItems) ?? 'intersection',
+        search_all: searchAllKnowledge,
+        scope_selected: !searchAllKnowledge && options.contextItems.some((item) => item.kind === 'scope'),
+        context_items: searchAllKnowledge ? [] : options.contextItems.map((item) => ({
+            kind: item.kind,
+            id: item.id,
+            scope: { kind: item.scope.kind, id: item.scope.id },
+        })),
+        agent_info: buildSelectionFields({
+            agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+            agentSelection: options.agentSelection,
+        }).agent_info,
+    };
+    const knowledgeEnabled = canPost && Boolean(attachedPrompt)
+        && (searchAllKnowledge || options.contextItems.length > 0);
+    const promptKnowledge = usePromptKnowledgeFill({
+        request: knowledgeRequest,
+        variableState: promptVariables,
+        enabled: knowledgeEnabled,
+        draftKey: JSON.stringify([attachedPrompt?.id, promptInstance, options.contextItems]),
     });
 
     /**
@@ -1296,6 +1366,11 @@ export function Composer() {
         if (range) {
             insertIntoComposer('', range);
         }
+        promptKnowledge.cancel();
+        setPromptInstance((current) => current + 1);
+        setSearchAllKnowledge(false);
+        setShowPromptWarning(false);
+        setPromptReviewRequest(0);
         setAttachedPrompt({
             id: String(prompt.id ?? ''),
             name: String(prompt.name ?? 'Prompt'),
@@ -1479,6 +1554,12 @@ export function Composer() {
         const prompt = bootstrap?.catalogs?.prompts?.find((item) => item.id === promptId);
         if (prompt) {
             attachPrompt(prompt as PromptOption);
+        } else if (promptId === undefined) {
+            promptKnowledge.cancel();
+            setAttachedPrompt(null);
+            setSearchAllKnowledge(false);
+            setShowPromptWarning(false);
+            setPromptReviewRequest(0);
         }
     };
 
@@ -1510,10 +1591,17 @@ export function Composer() {
         <div className="shrink-0 px-4 pb-4">
             {largeRun && (
                 <LargeRunDialog
-                    estimate={largeRun}
+                    estimate={largeRun.estimate}
                     onContinue={() => {
                         setLargeRun(null);
-                        dispatch(buildOutgoing());
+                        if (streaming || !canPost) {
+                            return;
+                        }
+                        if (outgoingDraftKey() !== largeRun.draftKey) {
+                            submit();
+                            return;
+                        }
+                        dispatch(largeRun.outgoing);
                     }}
                     onCancel={() => setLargeRun(null)}
                 />
@@ -1606,6 +1694,7 @@ export function Composer() {
 
                     {attachedPrompt ? (
                         <AttachedPromptCard
+                            key={promptInstance}
                             name={attachedPrompt.name}
                             scopeLabel={attachedPrompt.scopeName}
                             content={attachedPromptContent(attachedPrompt)}
@@ -1615,18 +1704,55 @@ export function Composer() {
                             // how a value gets in: offered, never applied.
                             sources={promptFillSources()}
                             disabled={!canPost}
-                            onContentChange={(value) =>
+                            reviewRequest={promptReviewRequest}
+                            knowledge={promptKnowledge}
+                            knowledgeEnabled={knowledgeEnabled}
+                            knowledgeControls={
+                                <div className="space-y-1 rounded-lg bg-surface-sunken px-2.5 py-2 text-xs text-text-3">
+                                    <p className="break-words">
+                                        {searchAllKnowledge
+                                            ? 'AI fill searches all knowledge you can access.'
+                                            : options.contextItems.length > 0
+                                              ? `AI fill searches: ${options.contextItems.map((item) => item.label).join(', ')}`
+                                              : 'Choose documents, tags or a workspace to find values in knowledge.'}
+                                    </p>
+                                    <button type="button" disabled={!canPost}
+                                        onClick={() => setPickerOpen(true)}
+                                        className="rounded py-1 text-accent disabled:opacity-50">
+                                        Choose knowledge
+                                    </button>
+                                    <label className="flex items-start gap-2">
+                                        <input type="checkbox" checked={searchAllKnowledge}
+                                            disabled={!canPost}
+                                            onChange={(event) => {
+                                                promptKnowledge.cancel();
+                                                setSearchAllKnowledge(event.target.checked);
+                                            }}
+                                            className="mt-0.5 accent-accent" />
+                                        Search all accessible knowledge for AI fill
+                                    </label>
+                                    {searchAllKnowledge && <p>Only widens AI fill, not your message's document selection.</p>}
+                                    {shared && <p>Filled values will be visible to participants when you send.</p>}
+                                </div>
+                            }
+                            onContentChange={(value) => {
+                                promptKnowledge.cancel();
                                 setAttachedPrompt((current) =>
                                     current ? { ...current, editedContent: value } : current,
-                                )
-                            }
-                            onResetContent={() =>
+                                );
+                            }}
+                            onResetContent={() => {
+                                promptKnowledge.cancel();
                                 setAttachedPrompt((current) =>
                                     current ? { ...current, editedContent: null } : current,
-                                )
-                            }
+                                );
+                            }}
                             onRemove={() => {
+                                promptKnowledge.cancel();
                                 setAttachedPrompt(null);
+                                setSearchAllKnowledge(false);
+                                setShowPromptWarning(false);
+                                setPromptReviewRequest(0);
                                 setOptions((current) =>
                                     current.promptId === undefined
                                         ? current
@@ -1636,6 +1762,29 @@ export function Composer() {
                             }}
                         />
                     ) : null}
+
+                    {attachedPrompt && showPromptWarning && promptVariables.unfilled.length > 0 && (
+                        <div role="alert" className="mb-2 rounded-xl border border-warn/40 bg-surface-1 px-3 py-2 text-xs text-text-2">
+                            <p className="font-medium">Some prompt variables are still unanswered.</p>
+                            <p className="mt-1 break-words">
+                                {promptVariables.unfilled.map((variable) => `{{${variable.name}}}`).join(', ')}
+                                {' '}will be sent as literal placeholders if you send anyway.
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-3">
+                                <button type="button" onClick={() => setPromptReviewRequest((current) => current + 1)}
+                                    className="text-accent">Review fields</button>
+                                <button type="button" disabled={!knowledgeEnabled || promptKnowledge.pendingKeys.length > 0
+                                    || !promptVariables.unfilled.some((variable) => !variable.builtIn)}
+                                    onClick={() => void promptKnowledge.fill()} className="text-accent disabled:opacity-50">
+                                    Fill missing fields
+                                </button>
+                                <button type="button" disabled={!canPost || streaming}
+                                    onClick={() => submit(true)} className="font-medium text-text-1 disabled:opacity-50">
+                                    Send anyway
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* The backdrop is positioned against this wrapper rather than the whole
                         composer, so it lines up with the textarea and not with the toolbar
@@ -1800,6 +1949,7 @@ export function Composer() {
                                         clearable
                                         icon={<FileText size={15} />}
                                         onChange={onPickPrompt}
+                                        hint={<>Tip: type <strong>/</strong> in your message to choose a prompt.</>}
                                     />
                                 )}
 
@@ -1966,7 +2116,7 @@ export function Composer() {
                             ) : (
                                 <button
                                     type="button"
-                                    onClick={submit}
+                                    onClick={() => submit()}
                                     disabled={(!text.trim() && !attachedPrompt) || !canPost}
                                     aria-label={
                                         shared && !streaming
