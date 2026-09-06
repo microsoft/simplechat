@@ -37,9 +37,14 @@ import math
 from datetime import datetime, timezone
 
 from functions_appinsights import log_event
+from functions_action_catalog import build_action_planner_projection
 from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_message_masking import remove_masked_content
-from functions_orchestration_registry import build_agent_planner_projection
+from functions_orchestration_registry import (
+    CAPABILITY_ACTION_INVOKE,
+    build_agent_planner_projection,
+    resolve_available_capability_ids,
+)
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -370,6 +375,27 @@ def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
 # --------------------------------------------------------------------------------------
 # Run ledger
 # --------------------------------------------------------------------------------------
+
+def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None):
+    """Discover action metadata only when this request can use direct actions."""
+    settings = settings or {}
+    seeds = seeds or {}
+    if (seeds.get('agent') or {}).get('name'):
+        return []
+    available = resolve_available_capability_ids(
+        settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        candidate_ids=(CAPABILITY_ACTION_INVOKE,),
+    )
+    if CAPABILITY_ACTION_INVOKE not in available:
+        return []
+
+    # Storage imports initialize Azure clients; keep disabled orchestration lightweight.
+    from functions_action_catalog import build_accessible_action_catalog
+
+    return build_accessible_action_catalog(
+        user_id, settings=settings, user_groups=user_groups,
+    )
+
 
 def _compact_run_entry(entry):
     """Reduce a ledger entry to one line, for when the ledger is over budget."""
@@ -777,6 +803,7 @@ def build_planner_context(
     signals=None,
     capabilities=None,
     agents=None,
+    actions=None,
     original_message=None,
     request_resolution=None,
 ):
@@ -799,6 +826,7 @@ def build_planner_context(
         'request_resolution': request_resolution or {},
         'capabilities': capabilities or [],
         'agents': build_agent_planner_projection(agents),
+        'actions': build_action_planner_projection(actions),
         'candidate_documents': [
             {key: value for key, value in candidate.items() if key != 'score'}
             for candidate in (candidates or ())

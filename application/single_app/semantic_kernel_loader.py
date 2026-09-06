@@ -8,6 +8,7 @@ Loader for Semantic Kernel plugins/actions from app settings.
 import logging
 import builtins
 import os
+from copy import deepcopy
 from agent_execution_context import execution_user_id as get_execution_user_id
 from openai import AsyncOpenAI
 from azure.core.exceptions import AzureError
@@ -1510,6 +1511,18 @@ def _preflight_m365_plugin_manifests(plugin_manifests):
             "m365_preflight_unavailable",
             "Microsoft 365 authorization could not be verified. No source access has been allowed.",
         ) from exc
+
+
+def prepare_action_plugin_manifest(manifest, settings):
+    """Prepare one already-authorized action without loading agents or core plugins."""
+    if manifest.get('type') == 'agent':
+        raise PermissionError('Call agent actions require agent delegation.')
+    prepared = _apply_agent_plugin_runtime_overlays(
+        [deepcopy(manifest)], group_id=manifest.get('group_id'),
+    )[0]
+    if settings.get('enable_key_vault_secret_storage') and settings.get('key_vault_name'):
+        prepared = resolve_key_vault_secrets_in_plugins(prepared, settings)
+    return hydrate_workspace_identity_in_plugin(prepared)
 
 
 def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):

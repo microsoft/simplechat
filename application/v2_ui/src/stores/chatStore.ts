@@ -2632,6 +2632,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             hybrid_citations: event.hybrid_citations as ChatMessage['hybrid_citations'],
             web_search_citations:
                 event.web_search_citations as ChatMessage['web_search_citations'],
+            agent_citations: event.agent_citations as ChatMessage['agent_citations'],
             metadata: event.metadata,
             thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
         };

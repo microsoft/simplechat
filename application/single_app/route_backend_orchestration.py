@@ -54,6 +54,7 @@ from functions_orchestration_context import (
     conversation_user_urls,
     history_message_limit,
     normalize_history_message,
+    resolve_action_catalog,
     resolve_agent_catalog,
     resolve_candidate_documents,
     resolve_seeds,
@@ -220,6 +221,12 @@ def _build_invoke_prompt(settings, token_usage=None):
         return response.choices[0].message.content or ''
 
     return invoke_prompt
+
+
+def _combined_token_usage(prompt_usage, step_usage):
+    usage = dict(step_usage or {})
+    usage.update(_sum_token_usage(prompt_usage, step_usage))
+    return usage
 
 
 def _authorized_document_ids(candidates, seeds):
@@ -570,7 +577,7 @@ def _request_identity(user_id=None, seeded_agent=None):
 
 
 def _capability_request_context(
-    user_id, identity, user_message, agent_catalog, *, allowed_user_urls=None
+    user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None
 ):
     """Describe this caller, so the capability request gates can answer for them.
 
@@ -594,34 +601,33 @@ def _capability_request_context(
         'user_email': identity.get('user_email'),
         'user_enable_agents': identity.get('user_enable_agents', True),
         'agent_catalog': list(agent_catalog or ()),
+        'action_catalog': list(action_catalog or ()),
     }
 
 
 def _partition_citations(citations):
-    """Split a run's citations into the document and web buckets chat already uses.
+    """Split citations into the document, web, and tool fields chat already renders.
 
-    An assistant message carries these in two separate fields, and the difference is not
-    cosmetic: ``hybrid_citations`` is what the conversation's used-document tracking reads
-    to work out which documents an answer actually drew on, and a web citation has no
-    document to track. Folding both into one field would either lose the web sources or
-    put entries with no ``document_id`` in front of ``build_used_documents``, which skips
-    them silently -- a bug that looks like nothing happening.
+    ``hybrid_citations`` also feeds used-document tracking. Native calls belong in
+    ``agent_citations`` so their arguments and results reach the tool renderer instead
+    of becoming web-source entries without a URL.
     """
     document_citations = []
     web_citations = []
+    tool_citations = []
     for citation in citations or ():
         if not isinstance(citation, dict):
             continue
         if _text(citation.get('document_id')):
             document_citations.append(citation)
+        elif citation.get('tool_name') or citation.get('function_name'):
+            tool_citations.append(citation)
         elif _text(citation.get('url')) or citation.get('source_type') == 'web':
             web_citations.append(citation)
         else:
-            # Neither a document nor a page: an agent tool call, for instance. Carried as
-            # a web-style citation so it is still visible on the message rather than
-            # discarded, but kept out of document tracking where it has no place.
+            # Preserve older non-document source records without treating them as documents.
             web_citations.append(citation)
-    return document_citations, web_citations
+    return document_citations, web_citations, tool_citations
 
 
 def _record_cited_documents(conversation_id, user_id, document_citations):
@@ -854,6 +860,10 @@ def register_route_backend_orchestration(bp):
         # _request_identity: a generator runs after the view returns, when the session is
         # already gone.
         identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
+        action_catalog = resolve_action_catalog(
+            user_id, seeds=seeds, settings=settings,
+            user_groups=seeds.get('active_group_ids') or None,
+        )
 
         def generate():
             try:
@@ -963,6 +973,7 @@ def register_route_backend_orchestration(bp):
                 context = build_planner_context(
                     effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
                     signals=signals, original_message=message, request_resolution=resolution,
+                    actions=action_catalog,
                 )
                 if answered_record:
                     context['answered_now'] = answered_record
@@ -1002,7 +1013,7 @@ def register_route_backend_orchestration(bp):
                     context = build_planner_context(
                         effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
                         signals=signals, agents=agent_catalog, original_message=message,
-                        request_resolution=resolution,
+                        request_resolution=resolution, actions=action_catalog,
                     )
                     if answered_record:
                         context['answered_now'] = answered_record
@@ -1022,6 +1033,7 @@ def register_route_backend_orchestration(bp):
                         # message that has none, or an agent this user does not have.
                         request_context=_capability_request_context(
                             user_id, identity, message, agent_catalog,
+                            action_catalog,
                             allowed_user_urls=allowed_user_urls,
                         ),
                     )
@@ -1187,6 +1199,19 @@ def register_route_backend_orchestration(bp):
             user_id, seeds=seeds, settings=settings,
             user_groups=seeds.get('active_group_ids') or None,
         )
+        action_catalog = resolve_action_catalog(
+            user_id, seeds=seeds, settings=settings,
+            user_groups=seeds.get('active_group_ids') or None,
+        )
+        selected_model = seeds.get('model') or {}
+        action_model_context = {
+            'model_id': selected_model.get('model_id'),
+            'endpoint_id': selected_model.get('model_endpoint_id'),
+            'provider': selected_model.get('model_provider'),
+            'model_deployment': selected_model.get('model_deployment'),
+            'user_id': user_id,
+            'active_group_ids': seeds.get('active_group_ids') or [],
+        }
 
         def generate():
             approved_at = _now_iso()
@@ -1286,6 +1311,9 @@ def register_route_backend_orchestration(bp):
                 user_enable_agents=identity.get('user_enable_agents', True),
                 active_group_id=(seeds.get('active_group_ids') or [None])[0],
                 agent_catalog=agent_catalog,
+                action_catalog=action_catalog,
+                gpt_model=selected_model.get('model_deployment'),
+                model_context=action_model_context,
                 agent_execution_identity=agent_execution_identity,
             )
 
@@ -1356,7 +1384,7 @@ def register_route_backend_orchestration(bp):
                 return
 
             result = outcome['result']
-            run_token_usage.update(_sum_token_usage(run_token_usage, result.get('token_usage')))
+            combined_usage = _combined_token_usage(run_token_usage, result.get('token_usage'))
             answer = _text(result.get('message'))
             if result.get('status') == PLAN_STATUS_CANCELLED:
                 yield build_cancelled_event(conversation_id, run_id, answer)
@@ -1366,7 +1394,7 @@ def register_route_backend_orchestration(bp):
             summary['status'] = result.get('status')
 
             # Everything the run gathered, split the way an assistant message carries it.
-            document_citations, web_citations = _partition_citations(result.get('citations'))
+            document_citations, web_citations, tool_citations = _partition_citations(result.get('citations'))
 
             # The answer is an ordinary assistant message. Written before the terminal
             # frame so that a client which reloads the moment it arrives finds the answer
@@ -1379,12 +1407,14 @@ def register_route_backend_orchestration(bp):
                         'turn_id': record.get('turn_id'),
                         'plan_summary': summary,
                     },
-                    'token_usage': run_token_usage or result.get('token_usage') or {},
+                    'token_usage': combined_usage,
                 },
                 extra={
                     'hybrid_citations': document_citations,
                     'web_search_citations': web_citations,
-                    'augmented': bool(document_citations or web_citations),
+                    'agent_citations': tool_citations,
+                    'generated_artifacts': result.get('artifacts') or [],
+                    'augmented': bool(document_citations or web_citations or tool_citations),
                 },
             ) if answer else None
 
@@ -1399,7 +1429,7 @@ def register_route_backend_orchestration(bp):
             try:
                 update_orchestration_run(run_id, user_id, {
                     'assistant_message_id': message_id,
-                    'token_usage': run_token_usage,
+                    'token_usage': combined_usage,
                 }, conversation_id=conversation_id)
             except Exception:
                 # The answer is already saved and streamed; failing to cross-reference it
@@ -1413,6 +1443,7 @@ def register_route_backend_orchestration(bp):
                 full_content=answer,
                 citations=document_citations,
                 web_citations=web_citations,
+                agent_citations=tool_citations,
                 artifacts=result.get('artifacts'),
                 plan_summary=summary,
                 status=result.get('status') or PLAN_STATUS_COMPLETED,

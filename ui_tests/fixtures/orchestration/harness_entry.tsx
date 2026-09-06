@@ -26,6 +26,7 @@ import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/
 import { OrchestrationPlanPanel } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanPanel';
 import { OrchestrationRunView } from '../../../application/v2_ui/src/components/chat/OrchestrationRunView';
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
+import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
@@ -58,6 +59,7 @@ type ComponentName =
     | 'OrchestrationPlanPanel'
     | 'OrchestrationRunView'
     | 'OrchestrationMapView'
+    | 'MessageList'
     | 'Composer'
     | 'PromptExperience'
     | 'ContextWorkflow';
@@ -69,6 +71,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationPlanPanel,
     OrchestrationRunView,
     OrchestrationMapView,
+    MessageList,
     Composer,
     PromptExperience,
     ContextWorkflow,

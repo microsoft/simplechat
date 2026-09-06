@@ -4,6 +4,26 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.096)**
 
+#### New Features
+
+*   **Orchestration Can Use Existing Actions Directly**
+    *   Administrators can enable the default-off **Enable Action Access** setting to let knowledge-collection plans choose an accessible personal, group or global action without loading a configured agent and its unrelated actions.
+    *   Each step can make a bounded sequence of calls to its selected action's functions, preserving existing scope settings, governance, function restrictions and action behavior. **Call agent** remains under **Ask an agent**; no output-phase workflow or new read/write policy is introduced.
+    *   The plan shows the selected action's name and scope. Tool results appear under **Sources > Tool calls**, separately from web references.
+    *   (Ref: `functions_action_catalog.py`, `functions_orchestration_actions.py`, `functions_orchestration_registry.py`, `OrchestrationRunView.tsx`, [Chat Orchestration Action Access](features/CHAT_ORCHESTRATION_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Orchestration Preserves Agent Choices And Tool Reporting**
+    *   Available agents now reach plan validation, and retries after an unrenderable clarification retain the caller's capability gates.
+    *   Tool citations use the existing tool-results channel instead of being treated as web sources. Saved usage includes both the answer model and action or agent steps rather than dropping one contribution.
+    *   (Ref: `functions_orchestration_planner.py`, `route_backend_orchestration.py`, `functions_orchestration_events.py`, `chatStore.ts`)
+
+*   **Workspace Edits Preserve Existing Configuration**
+    *   Per-record saves retain unedited nested settings, action references, and credentials. Stored secrets stay masked, explicit clearing is distinguished from keeping a value, and conflicting edits are reported rather than silently overwriting another session.
+    *   **Use in chat** refreshes the authorized agent catalogue before starting a new conversation with the chosen agent. Failed refreshes or unavailable agents do not retarget an existing conversation or substitute a manual model.
+    *   (Ref: `functions_workspace_authoring.py`, `workspaceAuthoring.ts`, `workspaceAuthoringApi.ts`, `workspaceEditorDrafts.ts`, `workspaceAgentLaunch.ts`)
+
 #### User Interface Enhancements
 
 *   **Full-Page Agent And Action Editors In My Workspace**
@@ -12,13 +32,6 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Create an action from an unfinished agent and return to the retained draft. Saving the action does not save the agent prematurely; leaving an unfinished editor asks before discarding changes.
     *   Provided resources remain read-only, and existing authorized actions can be attached independently of permission to create new actions. Group and administrator management retain their existing interfaces.
     *   (Ref: `AgentEditorPage.tsx`, `ActionEditorPage.tsx`, `WorkspaceEditorFrame.tsx`, [V2 Workspace Agent And Action Authoring](features/V2_WORKSPACE_AGENTS_ACTIONS.md))
-
-#### Bug Fixes
-
-*   **Workspace Edits Preserve Existing Configuration**
-    *   Per-record saves retain unedited nested settings, action references, and credentials. Stored secrets stay masked, explicit clearing is distinguished from keeping a value, and conflicting edits are reported rather than silently overwriting another session.
-    *   **Use in chat** refreshes the authorized agent catalogue before starting a new conversation with the chosen agent. Failed refreshes or unavailable agents do not retarget an existing conversation or substitute a manual model.
-    *   (Ref: `functions_workspace_authoring.py`, `workspaceAuthoring.ts`, `workspaceAuthoringApi.ts`, `workspaceEditorDrafts.ts`, `workspaceAgentLaunch.ts`)
 
 ### **(v0.261.095)**
 
