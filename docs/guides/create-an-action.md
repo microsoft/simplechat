@@ -4,6 +4,7 @@ title: "Create an action"
 description: "Create a reusable tool that an agent can call when chat alone is not enough."
 section: "Guides"
 audience: user
+version: "0.261.096"
 ---
 
 ## What this does
@@ -25,7 +26,15 @@ Use an action when a model needs to do more than write an answer, such as query 
 - Workspace actions require `per_user_semantic_kernel` when actions are personal or group scoped.
 - Have the OpenAPI file, endpoint, credential, reusable identity, or MCP server details required by the action type.
 
-## Steps
+## Personal actions in V2
+
+In V2, **My Workspace > Actions > New action** opens the native type chooser and
+full-page editor. Ordinary connectors and Call agent use this same workflow.
+See [Build agents and actions in My Workspace]({{ '/guides/workspace-agents-and-actions/' | relative_url }})
+for the native experience, implemented in **0.261.096** in
+`application/single_app/config.py`.
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or the target **Group Workspace**.
 2. Choose **Your Actions** or the **Actions** tab.

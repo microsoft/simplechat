@@ -4,7 +4,7 @@
 
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import { App } from './App';
 import './styles/theme.css';
 
@@ -14,10 +14,13 @@ if (!container) {
     throw new Error('Root container #root was not found in the document.');
 }
 
+const router = createBrowserRouter(
+    [{ path: '*', element: <App /> }],
+    { basename: '/v2' },
+);
+
 createRoot(container).render(
     <StrictMode>
-        <BrowserRouter basename="/v2">
-            <App />
-        </BrowserRouter>
+        <RouterProvider router={router} />
     </StrictMode>,
 );
