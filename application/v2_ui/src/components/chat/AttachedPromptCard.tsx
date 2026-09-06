@@ -14,7 +14,7 @@
 // text, or edit the wording for this one turn -- an edit that never touches the saved prompt,
 // which is why it is badged and reversible rather than silent.
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { clsx } from 'clsx';
 import { ChevronDown, Lightbulb, Pencil, RotateCcw, X } from 'lucide-react';
 import type { BuiltInPromptVariable } from '../../lib/promptVariables';
@@ -27,6 +27,7 @@ import {
 export type { PromptFillSource };
 
 export function AttachedPromptCard({
+    id,
     name,
     scopeLabel,
     content,
@@ -38,6 +39,7 @@ export function AttachedPromptCard({
     onResetContent,
     onRemove,
 }: {
+    id?: string;
     name: string;
     scopeLabel?: string;
     /** The wording this turn will use: the edited text when there is one, else the saved text. */
@@ -50,6 +52,8 @@ export function AttachedPromptCard({
     onResetContent: () => void;
     onRemove: () => void;
 }) {
+    const instanceId = useId();
+    const idPrefix = id ?? `attached-prompt-${instanceId}`;
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState(false);
 
@@ -120,6 +124,7 @@ export function AttachedPromptCard({
                 <button
                     type="button"
                     onClick={onRemove}
+                    disabled={disabled}
                     aria-label={`Remove ${name}`}
                     title="Remove prompt"
                     className="shrink-0 rounded-md p-1 text-text-3 hover:bg-surface-3 hover:text-text-1"
@@ -140,7 +145,8 @@ export function AttachedPromptCard({
                             history={history[variable.key] ?? []}
                             sources={sources}
                             onChange={(value) => setValue(variable.key, value)}
-                            idPrefix="attached-prompt-var"
+                            idPrefix={`${idPrefix}-var`}
+                            disabled={disabled}
                         />
                     ))}
 
@@ -148,7 +154,7 @@ export function AttachedPromptCard({
                         <div>
                             <div className="mb-1 flex items-center gap-2">
                                 <label
-                                    htmlFor="attached-prompt-content"
+                                    htmlFor={`${idPrefix}-content`}
                                     className="text-[11px] font-semibold tracking-wide text-text-3 uppercase"
                                 >
                                     Prompt text
@@ -160,6 +166,7 @@ export function AttachedPromptCard({
                                     <button
                                         type="button"
                                         onClick={onResetContent}
+                                        disabled={disabled}
                                         className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1"
                                     >
                                         <RotateCcw size={10} />
@@ -168,7 +175,7 @@ export function AttachedPromptCard({
                                 ) : null}
                             </div>
                             <textarea
-                                id="attached-prompt-content"
+                                id={`${idPrefix}-content`}
                                 rows={6}
                                 value={content}
                                 disabled={disabled}

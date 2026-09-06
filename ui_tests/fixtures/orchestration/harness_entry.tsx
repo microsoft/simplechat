@@ -122,6 +122,7 @@ function reset(): void {
     orchestrationStore.useOrchestrationStore.setState({
         plans: {},
         elicitations: {},
+        elicitationDrafts: {},
         edits: {},
         stepRuntime: {},
         inFlight: {},

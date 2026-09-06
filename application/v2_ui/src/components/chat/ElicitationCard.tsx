@@ -1,106 +1,30 @@
 // ElicitationCard.tsx
-// The planner's question, inline in the thread, asked one page at a time.
-//
-// When the planner cannot plan without more from the user, it returns an elicitation instead of a
-// plan: a flat JSON-Schema object of primitives that MCP guarantees any client can render without a
-// general Schema implementation (see the contract note on `ElicitationFieldSchema`). We render it
-// as a short interview rather than one dense form, because `ui_hints.pages` groups the fields for
-// exactly that reading — a question at a time is far less daunting than a wall of inputs.
-//
-// The answer is MCP-shaped verbatim: `{action, content}`. Only an `accept` carries content; a
-// `decline` or `cancel` sends `{}`, because forwarding answers past the user's refusal would be a
-// way to smuggle them in. That rule is the whole reason decline and cancel are separate buttons
-// from Finish rather than a single dismiss.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef } from 'react';
 import { HelpCircle, X } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
+import { ComposerEditor } from './ComposerEditor';
 import {
     selectElicitation,
+    selectElicitationDraft,
     useOrchestrationStore,
 } from '../../stores/orchestrationStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useChatStore } from '../../stores/chatStore';
 import { answerElicitation } from '../../lib/orchestrationController';
-import type {
-    ElicitationAction,
-    ElicitationFieldSchema,
-    ElicitationRequestedSchema,
-} from '../../lib/orchestration';
-
-type FieldValues = Record<string, unknown>;
-
-/**
- * How a field is drawn, decided once from its schema.
- *
- * The contract permits only these shapes: a top-level `enum` is a single choice, an `array` whose
- * `items` carry an `enum` is a multiple choice, and everything else is one primitive input. A
- * non-enum array has no natural single control, so it is a line-per-value textarea coerced back to
- * an array on submit.
- */
-type FieldKind = 'radio' | 'checkboxes' | 'boolean' | 'number' | 'arrayText' | 'text';
-
-function fieldKind(field: ElicitationFieldSchema): FieldKind {
-    if (Array.isArray(field.enum)) {
-        return 'radio';
-    }
-    if (field.type === 'array') {
-        return field.items && Array.isArray(field.items.enum) ? 'checkboxes' : 'arrayText';
-    }
-    if (field.type === 'boolean') {
-        return 'boolean';
-    }
-    if (field.type === 'number' || field.type === 'integer') {
-        return 'number';
-    }
-    return 'text';
-}
-
-/** A field's label, preferring its schema title and falling back to a humanised key. */
-function fieldLabel(name: string, field: ElicitationFieldSchema): string {
-    if (field.title) {
-        return field.title;
-    }
-    return name
-        .replace(/[_-]+/g, ' ')
-        .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-/** Split a textarea's lines into a trimmed array, coercing numeric item types. */
-function parseArrayText(raw: string, itemType: string | undefined): unknown[] {
-    return raw
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0)
-        .map((line) => {
-            if (itemType === 'number' || itemType === 'integer') {
-                const parsed = Number(line);
-                return Number.isFinite(parsed) ? parsed : line;
-            }
-            return line;
-        });
-}
-
-/** Seed the form from each field's `default`, storing editable inputs as strings. */
-function initialValues(schema: ElicitationRequestedSchema): FieldValues {
-    const values: FieldValues = {};
-    for (const [name, field] of Object.entries(schema.properties)) {
-        if (field.default === undefined) {
-            continue;
-        }
-        const kind = fieldKind(field);
-        if (kind === 'number') {
-            values[name] = String(field.default);
-        } else if (kind === 'arrayText') {
-            values[name] = Array.isArray(field.default)
-                ? field.default.join('\n')
-                : String(field.default);
-        } else if (kind === 'text') {
-            values[name] = String(field.default);
-        } else {
-            values[name] = field.default;
-        }
-    }
-    return values;
-}
+import {
+    buildElicitationAnswer,
+    elicitationFieldKind,
+    elicitationFieldLabel,
+    elicitationFieldReferences,
+    elicitationPages,
+    isFileReference,
+    type ElicitationDraft,
+} from '../../lib/elicitationAnswers';
+import { messageToPlainText } from '../../lib/messageText';
+import type { ComposerDraft } from '../../lib/composerDraft';
+import type { Elicitation, ElicitationAction } from '../../lib/orchestration';
+import type { PromptResolutionContext } from '../../lib/promptVariables';
 
 export function ElicitationCard({
     conversationId,
@@ -110,404 +34,298 @@ export function ElicitationCard({
     turnId: string;
 }) {
     const elicitation = useOrchestrationStore((state) =>
-        selectElicitation(state, conversationId, turnId),
-    );
+        selectElicitation(state, conversationId, turnId));
+    const draft = useOrchestrationStore((state) =>
+        selectElicitationDraft(state, conversationId, turnId));
+    const bootstrap = useBootstrapStore((state) => state.data);
+    const messages = useChatStore((state) => state.messages);
+    const conversations = useChatStore((state) => state.conversations);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const instanceId = useId().replace(/:/g, '');
+    const pageRef = useRef<HTMLDivElement>(null);
 
-    // Keyed on the elicitation id so a re-plan that asks a fresh question resets the form rather
-    // than carrying the previous answers into it. The first render seeds through the lazy
-    // initialiser below; only a genuinely new id re-seeds, which is the documented React pattern
-    // for adjusting state to a changed input without an effect and its stale first frame.
-    const elicitationId = elicitation?.elicitation_id ?? '';
-    const [values, setValues] = useState<FieldValues>(() =>
-        elicitation ? initialValues(elicitation.requested_schema) : {},
-    );
-    const [pageIndex, setPageIndex] = useState(0);
-    const [submitted, setSubmitted] = useState(false);
-    const pageRef = useRef<HTMLDivElement | null>(null);
-    const seededFor = useRef(elicitationId);
+    const promptContext: PromptResolutionContext = useMemo(() => {
+        const ownMessages = activeConversationId === conversationId ? messages : [];
+        const lastUser = [...ownMessages].reverse().find((message) => message.role === 'user');
+        const lastAssistant = [...ownMessages].reverse().find((message) => message.role === 'assistant');
+        return {
+            userName: String(bootstrap?.user?.display_name ?? ''),
+            conversationTitle: conversations.find((conversation) => conversation.id === conversationId)?.title ?? '',
+            lastUserMessage: lastUser ? messageToPlainText(lastUser) : '',
+            lastAssistantMessage: lastAssistant ? messageToPlainText(lastAssistant) : '',
+        };
+    }, [activeConversationId, conversationId, messages, conversations, bootstrap?.user?.display_name]);
+    const pages = useMemo(() => elicitation ? elicitationPages(elicitation) : [], [elicitation]);
+    const answer = useMemo(() => elicitation && draft
+        ? buildElicitationAnswer(elicitation, draft, promptContext)
+        : null, [elicitation, draft, promptContext]);
+    const pageIndex = Math.min(draft?.pageIndex ?? 0, Math.max(0, pages.length - 1));
 
-    if (elicitation && seededFor.current !== elicitationId) {
-        seededFor.current = elicitationId;
-        setValues(initialValues(elicitation.requested_schema));
-        setPageIndex(0);
-        setSubmitted(false);
-    }
-
-    const schema = elicitation?.requested_schema;
-    const pages = useMemo<string[][]>(() => {
-        if (!elicitation || !schema) {
-            return [];
-        }
-        const declared = elicitation.ui_hints.pages;
-        if (declared.length > 0) {
-            return declared;
-        }
-        // No paging hint: fall back to the ask order, or the property order, as a single page.
-        const order =
-            elicitation.ui_hints.order.length > 0
-                ? elicitation.ui_hints.order
-                : Object.keys(schema.properties);
-        return [order];
-    }, [elicitation, schema]);
-
-    // Move focus to the page's first input whenever the page changes, so the interview is operable
-    // from the keyboard without hunting for where the next answer goes.
     useEffect(() => {
-        const first = pageRef.current?.querySelector<HTMLElement>(
-            'input, textarea, [role="radio"]',
-        );
-        first?.focus();
-    }, [pageIndex, elicitationId]);
+        pageRef.current?.querySelector<HTMLElement>(
+            'textarea:not([disabled]), input:not([type="file"]):not([disabled])',
+        )?.focus();
+    }, [pageIndex, elicitation?.elicitation_id, elicitation?.revision]);
 
-    const requiredAnswered = useMemo(() => {
-        if (!schema) {
-            return false;
-        }
-        return schema.required.every((name) => {
-            const field = schema.properties[name];
-            if (!field) {
-                return true;
-            }
-            return isAnswered(field, values[name]);
-        });
-    }, [schema, values]);
-
-    if (!elicitation || !schema) {
+    if (!elicitation || !draft || !answer) {
         return null;
     }
-
-    const pageFields = pages[pageIndex] ?? [];
-    const isLastPage = pageIndex >= pages.length - 1;
-
-    const setValue = (name: string, value: unknown) => {
-        setValues((previous) => ({ ...previous, [name]: value }));
-    };
-
-    const buildContent = (): Record<string, unknown> => {
-        const content: Record<string, unknown> = {};
-        for (const [name, field] of Object.entries(schema.properties)) {
-            const value = values[name];
-            const kind = fieldKind(field);
-            if (kind === 'number') {
-                if (typeof value === 'string' && value.trim() !== '') {
-                    const parsed = Number(value);
-                    if (Number.isFinite(parsed)) {
-                        content[name] = parsed;
-                    }
-                } else if (typeof value === 'number') {
-                    content[name] = value;
-                }
-            } else if (kind === 'arrayText') {
-                if (typeof value === 'string' && value.trim() !== '') {
-                    content[name] = parseArrayText(value, field.items?.type);
-                }
-            } else if (kind === 'checkboxes') {
-                if (Array.isArray(value) && value.length > 0) {
-                    content[name] = value;
-                }
-            } else if (kind === 'boolean') {
-                if (typeof value === 'boolean') {
-                    content[name] = value;
-                }
-            } else if (value !== undefined && value !== null && String(value).trim() !== '') {
-                content[name] = value;
-            }
-        }
-        return content;
-    };
-
+    const isLastPage = pageIndex === pages.length - 1;
+    const canFinish = Object.keys(answer.errors).length === 0 && !answer.pendingUploads;
+    const updateDraft = (update: (current: ElicitationDraft) => ElicitationDraft) =>
+        useOrchestrationStore.getState().updateElicitationDraft(
+            conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0, update,
+        );
+    const changePage = (index: number) =>
+        updateDraft((current) => ({ ...current, pageIndex: index }));
     const send = (action: ElicitationAction) => {
-        if (submitted) {
+        if (draft.submitting || (action === 'accept' && !canFinish)) {
             return;
         }
-        setSubmitted(true);
-        // Only an accept carries content; a decline or cancel sends nothing, per the contract.
-        const content = action === 'accept' ? buildContent() : {};
-        void answerElicitation({ conversationId, turnId, response: { action, content } });
+        void answerElicitation({
+            conversationId,
+            turnId,
+            elicitationId: elicitation.elicitation_id,
+            elicitationRevision: elicitation.revision ?? 0,
+            response: action === 'accept' ? answer.response : { action, content: {} },
+            context: action === 'accept' ? answer.context : undefined,
+        });
     };
-
     const advance = () => {
-        if (isLastPage) {
-            if (requiredAnswered) {
-                send('accept');
-            }
+        if (draft.submitting) {
             return;
         }
-        setPageIndex((index) => Math.min(index + 1, pages.length - 1));
+        if (isLastPage) {
+            send('accept');
+        } else {
+            changePage(pageIndex + 1);
+        }
     };
 
     return (
-        <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken p-3">
+        <section
+            aria-label="Follow-up questions"
+            className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken p-3"
+        >
             <div className="flex items-start gap-2">
-                <HelpCircle size={16} className="mt-0.5 shrink-0 text-accent" />
+                <HelpCircle size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden="true" />
                 <p className="min-w-0 flex-1 text-sm text-text-1">{elicitation.message}</p>
-                <span className="shrink-0 text-xs text-text-3" aria-hidden="true">
+                <span className="shrink-0 text-xs text-text-3" aria-label={`Question page ${pageIndex + 1} of ${pages.length}`}>
                     {pageIndex + 1}/{pages.length}
                 </span>
             </div>
-
             <form
                 className="mt-3"
+                aria-busy={draft.submitting}
                 onSubmit={(event) => {
                     event.preventDefault();
                     advance();
                 }}
             >
                 <div ref={pageRef} className="space-y-4">
-                    {pageFields.map((name) => {
-                        const field = schema.properties[name];
-                        if (!field) {
-                            return null;
-                        }
-                        return (
-                            <Field
-                                key={name}
-                                name={name}
-                                field={field}
-                                required={schema.required.includes(name)}
-                                value={values[name]}
-                                onChange={(next) => setValue(name, next)}
-                                disabled={submitted}
-                            />
-                        );
-                    })}
+                    {(pages[pageIndex] ?? []).map((name) => (
+                        <QuestionField
+                            key={`${elicitation.elicitation_id}:${elicitation.revision ?? 0}:${name}`}
+                            name={name}
+                            id={`elicitation-${instanceId}-${encodeURIComponent(elicitation.elicitation_id)}-${elicitation.revision ?? 0}-${encodeURIComponent(name)}`}
+                            elicitation={elicitation}
+                            draft={draft}
+                            conversationId={conversationId}
+                            promptContext={promptContext}
+                            error={answer.errors[name]}
+                            onValue={(value) => updateDraft((current) => ({
+                                ...current,
+                                values: { ...current.values, [name]: value },
+                                error: null,
+                            }))}
+                            onEditor={(update) => updateDraft((current) => ({
+                                ...current,
+                                editors: {
+                                    ...current.editors,
+                                    [name]: typeof update === 'function' ? update(current.editors[name]) : update,
+                                },
+                                error: null,
+                            }))}
+                            onSubmit={advance}
+                        />
+                    ))}
                 </div>
-
-                <div className="mt-4 flex items-center gap-2">
-                    <div className="flex items-center gap-1.5">
-                        <GlassButton
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => send('cancel')}
-                            disabled={submitted}
-                            aria-label="Cancel and abandon this request"
-                        >
-                            <X size={14} />
-                            Cancel
-                        </GlassButton>
-                        <GlassButton
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => send('decline')}
-                            disabled={submitted}
-                            aria-label="Decline to answer"
-                        >
-                            Decline
-                        </GlassButton>
-                    </div>
+                {draft.error ? (
+                    <p role="alert" className="mt-3 rounded-xl border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger">
+                        {draft.error}
+                    </p>
+                ) : null}
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <GlassButton
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => send('cancel')}
+                        disabled={draft.submitting}
+                        aria-label="Cancel and abandon this request"
+                    >
+                        <X size={14} aria-hidden="true" />
+                        Cancel
+                    </GlassButton>
+                    <GlassButton
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => send('decline')}
+                        disabled={draft.submitting}
+                        aria-label="Decline to answer"
+                    >
+                        Decline
+                    </GlassButton>
                     <div className="ml-auto flex items-center gap-2">
                         {pageIndex > 0 ? (
-                            <GlassButton
-                                type="button"
-                                size="sm"
-                                variant="subtle"
-                                onClick={() => setPageIndex((index) => Math.max(index - 1, 0))}
-                                disabled={submitted}
-                            >
+                            <GlassButton type="button" size="sm" variant="subtle"
+                                onClick={() => changePage(pageIndex - 1)} disabled={draft.submitting}>
                                 Back
                             </GlassButton>
                         ) : null}
-                        <GlassButton
-                            type="submit"
-                            size="sm"
-                            variant="primary"
-                            disabled={submitted || (isLastPage && !requiredAnswered)}
-                        >
-                            {isLastPage ? 'Finish' : 'Next'}
+                        <GlassButton type="submit" size="sm" variant="primary"
+                            disabled={draft.submitting || (isLastPage && !canFinish)}>
+                            {draft.submitting ? 'Submitting...' : isLastPage ? 'Finish' : 'Next'}
                         </GlassButton>
                     </div>
                 </div>
-
-                {isLastPage && !requiredAnswered ? (
-                    <p className="mt-2 text-right text-xs text-text-3">
-                        Answer the required fields to finish.
-                    </p>
+                {isLastPage && !canFinish ? (
+                    <div className="mt-2 text-right text-xs text-text-3" aria-live="polite">
+                        <p>{answer.pendingUploads
+                            ? 'Wait for the attached files to finish processing.'
+                            : 'Answer the required fields to finish.'}</p>
+                        {Object.keys(answer.errors).filter((name) => !pages[pageIndex]?.includes(name)).map((name) => (
+                            <button key={name} type="button" className="ml-3 text-accent underline"
+                                onClick={() => changePage(pages.findIndex((page) => page.includes(name)))}>
+                                Review {elicitationFieldLabel(name, elicitation.requested_schema.properties[name])}
+                            </button>
+                        ))}
+                    </div>
                 ) : null}
             </form>
-        </div>
+        </section>
     );
 }
 
-/** Whether a field carries a usable answer, used both for required gating and content assembly. */
-function isAnswered(field: ElicitationFieldSchema, value: unknown): boolean {
-    switch (fieldKind(field)) {
-        case 'radio':
-            return value !== undefined && value !== null;
-        case 'checkboxes':
-            return Array.isArray(value) && value.length > 0;
-        case 'boolean':
-            return typeof value === 'boolean';
-        case 'number':
-            if (typeof value === 'number') {
-                return Number.isFinite(value);
-            }
-            return typeof value === 'string' && value.trim() !== '' && Number.isFinite(Number(value));
-        case 'arrayText':
-            if (Array.isArray(value)) {
-                return value.length > 0;
-            }
-            return typeof value === 'string' && value.trim() !== '';
-        default:
-            return value !== undefined && value !== null && String(value).trim() !== '';
-    }
-}
-
-/** One field of the schema, drawn as the control its kind calls for. */
-function Field({
-    name,
-    field,
-    required,
-    value,
-    onChange,
-    disabled,
+function QuestionField({
+    name, id, elicitation, draft, conversationId, promptContext, error,
+    onValue, onEditor, onSubmit,
 }: {
     name: string;
-    field: ElicitationFieldSchema;
-    required: boolean;
-    value: unknown;
-    onChange: (next: unknown) => void;
-    disabled: boolean;
+    id: string;
+    elicitation: Elicitation;
+    draft: ElicitationDraft;
+    conversationId: string;
+    promptContext: PromptResolutionContext;
+    error?: string;
+    onValue: (value: unknown) => void;
+    onEditor: React.Dispatch<React.SetStateAction<ComposerDraft>>;
+    onSubmit: () => void;
 }) {
-    const kind = fieldKind(field);
-    const label = fieldLabel(name, field);
-    const fieldId = `elicitation-${name}`;
-    const describedById = field.description ? `${fieldId}-description` : undefined;
-
-    // A single label node, reused verbatim in a <label>, a <legend> and a text label so the
-    // required marker and wording never drift between control kinds.
-    const labelText = (
-        <span className="text-sm font-medium text-text-1">
-            {label}
-            {required ? (
-                <span className="text-danger" aria-hidden="true">
-                    {' '}
-                    *
-                </span>
-            ) : null}
-        </span>
-    );
-
-    const description = field.description ? (
-        <p id={describedById} className="mt-0.5 text-xs text-text-3">
-            {field.description}
-        </p>
-    ) : null;
-
-    if (kind === 'radio') {
-        const options = field.enum ?? [];
-        return (
-            <fieldset className="space-y-1.5" aria-required={required}>
-                <legend>{labelText}</legend>
-                {description}
-                <div className="space-y-1">
-                    {options.map((option, index) => (
-                        <label
-                            key={index}
-                            className="flex items-center gap-2 text-sm text-text-2"
-                        >
-                            <input
-                                type="radio"
-                                name={name}
-                                className="accent-accent"
-                                checked={value === option}
-                                disabled={disabled}
-                                onChange={() => onChange(option)}
-                            />
-                            <span>{String(option)}</span>
-                        </label>
-                    ))}
-                </div>
-            </fieldset>
-        );
-    }
-
-    if (kind === 'checkboxes') {
-        const options = field.items?.enum ?? [];
-        const selected = Array.isArray(value) ? value : [];
-        return (
-            <fieldset className="space-y-1.5" aria-required={required}>
-                <legend>{labelText}</legend>
-                {description}
-                <div className="space-y-1">
-                    {options.map((option, index) => (
-                        <label
-                            key={index}
-                            className="flex items-center gap-2 text-sm text-text-2"
-                        >
-                            <input
-                                type="checkbox"
-                                className="accent-accent"
-                                checked={selected.some((item) => item === option)}
-                                disabled={disabled}
-                                onChange={(event) => {
-                                    const next = event.target.checked
-                                        ? [...selected, option]
-                                        : selected.filter((item) => item !== option);
-                                    onChange(next);
-                                }}
-                            />
-                            <span>{String(option)}</span>
-                        </label>
-                    ))}
-                </div>
-            </fieldset>
-        );
-    }
-
-    if (kind === 'boolean') {
-        return (
-            <div>
-                <label className="flex items-center gap-2">
-                    <input
-                        id={fieldId}
-                        type="checkbox"
-                        className="accent-accent"
-                        checked={value === true}
-                        disabled={disabled}
-                        aria-describedby={describedById}
-                        onChange={(event) => onChange(event.target.checked)}
-                    />
-                    {labelText}
-                </label>
-                {description}
-            </div>
-        );
-    }
-
-    if (kind === 'arrayText') {
-        return (
-            <div>
-                <label htmlFor={fieldId}>{labelText}</label>
-                {description}
-                <textarea
-                    id={fieldId}
-                    className="mt-1 w-full rounded-xl border border-edge bg-surface-2 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent-ring"
-                    rows={3}
-                    value={typeof value === 'string' ? value : ''}
-                    disabled={disabled}
-                    placeholder="One value per line"
-                    aria-describedby={describedById}
-                    onChange={(event) => onChange(event.target.value)}
-                />
-            </div>
-        );
-    }
+    const field = elicitation.requested_schema.properties[name];
+    const kind = elicitationFieldKind(elicitation, name);
+    const label = elicitationFieldLabel(name, field);
+    const required = elicitation.requested_schema.required.includes(name);
+    const value = draft.values[name];
+    const selected = Array.isArray(value) ? value : value === undefined ? [] : [value];
+    const files = kind === 'files';
+    const options = files
+        ? (elicitation.ui_hints.fields?.[name]?.candidates ?? []).filter(isFileReference)
+            .map((candidate) => ({
+                value: candidate.id,
+                label: candidate.label || candidate.id,
+                detail: candidate.scope.name || candidate.scope.kind,
+            }))
+        : (kind === 'radio' ? field.enum ?? [] : kind === 'checkboxes' ? field.items?.enum ?? [] : [])
+            .filter((option) => ['string', 'number', 'boolean'].includes(typeof option))
+            .map((option) => ({ value: option, label: String(option), detail: '' }));
+    const multiple = kind === 'checkboxes' || (files && field.type === 'array');
+    const primaryEditor = kind === 'text' || (kind === 'arrayText' && field.items?.type === 'string');
+    const nativeArray = kind === 'arrayText' && !primaryEditor;
+    const inputClass = 'mt-1 w-full rounded-xl border border-edge bg-surface-2 px-3 py-2 text-sm text-text-1 focus:outline-none focus:ring-2 focus:ring-accent-ring';
+    const describedBy = [field.description ? `${id}-description` : '', error ? `${id}-error` : '']
+        .filter(Boolean).join(' ') || undefined;
 
     return (
-        <div>
-            <label htmlFor={fieldId}>{labelText}</label>
-            {description}
-            <input
-                id={fieldId}
-                type={kind === 'number' ? 'number' : 'text'}
-                className="mt-1 w-full rounded-xl border border-edge bg-surface-2 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent-ring"
-                value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
-                disabled={disabled}
-                aria-describedby={describedById}
-                onChange={(event) => onChange(event.target.value)}
+        <fieldset className="min-w-0 space-y-2" aria-required={required} aria-describedby={describedBy}>
+            <legend className="text-sm font-medium text-text-1">
+                {label}{required ? <span className="text-danger" aria-hidden="true"> *</span> : null}
+            </legend>
+            {field.description ? <p id={`${id}-description`} className="text-xs text-text-3">{field.description}</p> : null}
+            {options.length > 0 ? (
+                <div className="space-y-1.5">
+                    {options.map((option, index) => (
+                        <label key={index} className="flex items-start gap-2 text-sm text-text-2">
+                            <input
+                                type={multiple ? 'checkbox' : 'radio'}
+                                name={`${id}-choice`}
+                                className="mt-1 accent-accent"
+                                checked={selected.includes(option.value)}
+                                disabled={draft.submitting}
+                                onChange={(event) => onValue(multiple
+                                    ? event.target.checked
+                                        ? [...selected, option.value]
+                                        : selected.filter((item) => item !== option.value)
+                                    : option.value)}
+                            />
+                            <span className="min-w-0 break-words">
+                                {option.label}
+                                {option.detail ? <span className="ml-2 text-xs text-text-3"> {option.detail}</span> : null}
+                            </span>
+                        </label>
+                    ))}
+                    {files && selected.length > 0 ? (
+                        <button type="button" className="text-xs text-accent underline" disabled={draft.submitting}
+                            onClick={() => onValue(multiple ? [] : undefined)}>
+                            Clear suggested selections
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
+            {kind === 'boolean' ? (
+                <label className="flex items-center gap-2 text-sm text-text-2">
+                    <input id={`${id}-value`} type="checkbox" checked={value === true}
+                        disabled={draft.submitting} aria-required={required}
+                        onChange={(event) => onValue(event.target.checked)} />
+                    {label}
+                </label>
+            ) : kind === 'number' ? (
+                <input id={`${id}-value`} type="number" aria-label={label}
+                    aria-required={required} aria-describedby={describedBy}
+                    step={field.type === 'integer' ? 1 : 'any'} className={inputClass}
+                    value={typeof value === 'string' || typeof value === 'number' ? value : ''}
+                    disabled={draft.submitting} onChange={(event) => onValue(event.target.value)} />
+            ) : nativeArray ? (
+                <textarea id={`${id}-value`} rows={3} aria-label={label}
+                    aria-required={required} aria-describedby={describedBy}
+                    className={inputClass} placeholder="One value per line"
+                    value={typeof value === 'string' ? value : ''} disabled={draft.submitting}
+                    onChange={(event) => onValue(event.target.value)} />
+            ) : null}
+            <ComposerEditor
+                id={`${id}-editor`}
+                label={primaryEditor ? label : `Additional details for ${label} (optional)`}
+                draft={draft.editors[name]}
+                onChange={onEditor}
+                conversationId={conversationId}
+                disabled={draft.submitting}
+                rows={kind === 'arrayText' ? 3 : 2}
+                multipleFiles={!files || field.type === 'array'}
+                placeholder={kind === 'arrayText' && primaryEditor
+                    ? 'One value per line, # references, or / prompts'
+                    : files
+                        ? 'Reference a file with #, upload one, or add details'
+                        : 'Write an answer, # reference a file, or / use a prompt'}
+                promptContext={{
+                    ...promptContext,
+                    composerText: draft.editors[name].text,
+                    selectedDocuments: elicitationFieldReferences(elicitation, name, draft)
+                        .filter(isFileReference).map((reference) => reference.label || reference.id),
+                }}
+                onSubmit={onSubmit}
             />
-        </div>
+            {error ? <p id={`${id}-error`} className="text-xs text-text-3">{error}</p> : null}
+        </fieldset>
     );
 }

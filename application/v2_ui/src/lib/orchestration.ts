@@ -23,6 +23,7 @@
 
 import { apiUrl, CREDENTIALS_MODE } from './apiClient';
 import { readSsePost } from './sse';
+import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
@@ -272,6 +273,10 @@ export interface ElicitationRequestedSchema {
 export interface ElicitationUiHints {
     order: string[];
     pages: string[][];
+    fields?: Record<string, {
+        input: 'files';
+        candidates: ComposerReference[];
+    }>;
 }
 
 /** What the planner returns instead of a plan when it cannot plan without more information. */
@@ -299,6 +304,15 @@ export interface ElicitationResponse {
     content: Record<string, unknown>;
 }
 
+/** Answer-local context, kept outside the primitive MCP response. */
+export interface ElicitationFieldContext {
+    text?: string;
+    prompt_info?: Json;
+    references?: ComposerReference[];
+}
+
+export type ElicitationContext = Record<string, ElicitationFieldContext>;
+
 /* -------------------------------------------------------------------------- */
 /* Request bodies                                                              */
 /* -------------------------------------------------------------------------- */
@@ -321,6 +335,10 @@ export interface OrchestrationPlanRequest {
     conversation_id?: string | null;
     turn_id?: string;
     elicitation_response?: ElicitationResponse;
+    elicitation_id?: string;
+    elicitation_revision?: number;
+    elicitation_submission_id?: string;
+    elicitation_context?: ElicitationContext;
     revision?: number;
     approval_mode?: ApprovalMode;
     [key: string]: unknown;
@@ -358,6 +376,8 @@ export interface PlanStreamEvent {
     elicitation?: Elicitation;
     done?: boolean;
     error?: string;
+    details?: unknown;
+    field_errors?: unknown;
     [key: string]: unknown;
 }
 
@@ -438,6 +458,19 @@ export interface RunStreamResult {
 export const ORCHESTRATION_PLAN_PATH = '/api/v2/orchestration/plan';
 export const ORCHESTRATION_RUN_PATH = '/api/v2/orchestration/run';
 
+function errorDetails(payload: { details?: unknown; field_errors?: unknown }): string {
+    const details = payload.field_errors ?? payload.details;
+    if (Array.isArray(details)) {
+        return details.filter((value): value is string => typeof value === 'string').join(' ');
+    }
+    if (details && typeof details === 'object') {
+        return Object.values(details)
+            .filter((value): value is string => typeof value === 'string')
+            .join(' ');
+    }
+    return '';
+}
+
 /**
  * Open a POST SSE stream and hand back the response, or report why it could not open.
  *
@@ -475,9 +508,13 @@ async function openOrchestrationStream(
     if (!response.ok || !response.body) {
         let message = `Request failed with status ${response.status}`;
         try {
-            const payload = (await response.json()) as { error?: string };
+            const payload = (await response.json()) as {
+                error?: string;
+                details?: unknown;
+                field_errors?: unknown;
+            };
             if (payload?.error) {
-                message = payload.error;
+                message = [payload.error, errorDetails(payload)].filter(Boolean).join(' ');
             }
         } catch {
             /* Non-JSON error body; keep the status-based message. */
@@ -528,7 +565,7 @@ export async function planOrchestration(
     const onEvent = (event: PlanStreamEvent): boolean => {
         if (typeof event.error === 'string' && event.error) {
             result.errored = true;
-            handlers.onError?.(event.error);
+            handlers.onError?.([event.error, errorDetails(event)].filter(Boolean).join(' '));
             return true;
         }
 

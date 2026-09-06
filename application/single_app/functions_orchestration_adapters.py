@@ -44,12 +44,13 @@ otherwise make this module unimportable without Azure and config -- and ``perfor
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.087
+Version: 0.261.096
 """
 
 import logging
 
 from functions_appinsights import log_event
+from functions_orchestration_context import build_elicitation_user_request
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
     EVIDENCE_ENGINE_DOCUMENT_ANALYSIS,
@@ -139,6 +140,79 @@ def _coerce_int(value, default=0):
 def _arguments(step):
     arguments = (step or {}).get('arguments')
     return arguments if isinstance(arguments, dict) else {}
+
+
+def _user_request(context):
+    return _text(_ctx(context, 'user_request', None) or _ctx(context, 'user_message', ''))
+
+
+def _step_user_request(text, context):
+    return build_elicitation_user_request(
+        _text(text) or _text(_ctx(context, 'user_message', '')),
+        _ctx(context, 'answered_questions', None),
+    )
+
+
+def _public_workspace_ids(context):
+    return _ctx(context, 'active_public_workspace_ids', None) or _ctx(context, 'active_public_workspace_id', None)
+
+
+def _document_scope(context, arguments):
+    standing_scope = _ctx(context, 'doc_scope', 'all')
+    if _ctx(context, 'elicitation_references', None) and standing_scope in ('personal', 'group', 'public'):
+        return standing_scope
+    return _text(arguments.get('doc_scope')) or standing_scope
+
+
+def _workspace_search_scopes(context, arguments, requested_ids, workspace_ids):
+    default_scope = {
+        'document_ids': workspace_ids or None,
+        'doc_scope': _document_scope(context, arguments),
+        'active_group_ids': _ctx(context, 'active_group_ids', None) or None,
+        'active_public_workspace_id': _public_workspace_ids(context),
+    }
+    if not requested_ids:
+        return [default_scope]
+
+    # Explicit IDs do not erase selected whole workspaces. Chat IDs additionally need a
+    # separate query for additive tags, since no chat document exists in the index.
+    # An intersection must not become a tag-only union query.
+    union = _ctx(context, 'document_filter_mode', 'intersection') == 'union'
+    scopes = {}
+    for reference in _ctx(context, 'elicitation_references', []) or []:
+        if reference.get('kind') != 'scope' and not (
+            reference.get('kind') == 'tag' and union and not workspace_ids
+        ):
+            continue
+        scope = reference.get('scope') or {}
+        kind = scope.get('kind')
+        if kind not in ('personal', 'group', 'public'):
+            continue
+        selected = scopes.setdefault(kind, {
+            'document_ids': None,
+            'doc_scope': kind,
+            'active_group_ids': [],
+            'active_public_workspace_id': [],
+        })
+        if kind == 'group' and scope.get('id') not in selected['active_group_ids']:
+            selected['active_group_ids'].append(scope['id'])
+        elif kind == 'public' and scope.get('id') not in selected['active_public_workspace_id']:
+            selected['active_public_workspace_id'].append(scope['id'])
+    searches = ([default_scope] if workspace_ids else []) + list(scopes.values())
+    if union and _ctx(context, 'tags', None) and not workspace_ids:
+        original = _ctx(context, 'original_seeds', {}) or {}
+        if original.get('tags'):
+            original_scope = {
+                'document_ids': None,
+                'doc_scope': original.get('doc_scope') or default_scope['doc_scope'],
+                'active_group_ids': original.get('active_group_ids') or [],
+                'active_public_workspace_id': original.get('active_public_workspace_ids') or [],
+            }
+            if original_scope not in searches:
+                searches.append(original_scope)
+        elif not searches:
+            searches.append(default_scope)
+    return searches
 
 
 def _selection_mode(context):
@@ -235,7 +309,7 @@ def resolve_context_source_manifest(
         selection_mode=selection,
         conversation_id=_ctx(context, 'conversation_id', None),
         active_group_ids=_ctx(context, 'active_group_ids', None),
-        active_public_workspace_ids=_ctx(context, 'active_public_workspace_id', None),
+        active_public_workspace_ids=_public_workspace_ids(context),
         doc_scope=_ctx(context, 'doc_scope', 'all'),
         cancel_requested=cancel_requested,
         request_correlation_id=_ctx(context, 'request_correlation_id', None),
@@ -307,7 +381,7 @@ def _citations_from_search_results(results):
 
 def run_document_search(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
-    query = _text(arguments.get('query')) or _text(_ctx(context, 'user_message', ''))
+    query = _step_user_request(arguments.get('query'), context)
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before searching documents.')
     if not query:
@@ -317,28 +391,71 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
     try:
         from functions_search import hybrid_search
 
-        requested_ids = _string_list(arguments.get('document_ids'))
-        results = hybrid_search(
-            query,
-            user_id,
-            document_ids=requested_ids or None,
-            top_n=_coerce_int(arguments.get('top_n'), 12),
-            doc_scope=_text(arguments.get('doc_scope')) or _ctx(context, 'doc_scope', 'all'),
-            active_group_ids=_ctx(context, 'active_group_ids', None) or None,
-            active_public_workspace_id=_ctx(context, 'active_public_workspace_id', None),
-            # The tags the user picked, applied to every search in the run. A step is free
-            # to choose its own query, but not to widen the shelf the user narrowed to.
-            tags_filter=_ctx(context, 'tags', None) or None,
-            document_filter_mode=_ctx(context, 'document_filter_mode', 'intersection'),
+        requested_ids = _string_list(
+            arguments.get('document_ids') or _ctx(context, 'selected_document_ids', None)
         )
+        chat_ids = {
+            item['id'] for item in _ctx(context, 'elicitation_references', []) or []
+            if item.get('kind') == 'chat_attachment'
+        }
+        workspace_ids = [document_id for document_id in requested_ids if document_id not in chat_ids]
+        results = []
+        seen_results = set()
+        for scope in _workspace_search_scopes(context, arguments, requested_ids, workspace_ids):
+            workspace_results = hybrid_search(
+                query,
+                user_id,
+                document_ids=scope['document_ids'],
+                top_n=_coerce_int(arguments.get('top_n'), 12),
+                doc_scope=scope['doc_scope'],
+                active_group_ids=scope['active_group_ids'] or None,
+                active_public_workspace_id=scope['active_public_workspace_id'] or None,
+                # Tags and their filter mode apply equally to a supplemental workspace
+                # query and the ordinary workspace document search.
+                tags_filter=_ctx(context, 'tags', None) or None,
+                document_filter_mode=_ctx(context, 'document_filter_mode', 'intersection'),
+            ) or []
+            for hit in workspace_results:
+                if not isinstance(hit, dict):
+                    raise ValueError('The search returned an invalid source record.')
+                key = tuple(_text(hit.get(field)) for field in (
+                    'document_id', 'id', 'chunk_id', 'page_number', 'chunk_sequence', 'chunk_text',
+                ))
+                if key not in seen_results:
+                    results.append(hit)
+                    seen_results.add(key)
+        selected_chat_ids = [document_id for document_id in requested_ids if document_id in chat_ids]
+        if selected_chat_ids:
+            # Chat attachments have no search-index document. Reuse the authorized
+            # chunk reader rather than silently searching a workspace for their IDs.
+            from functions_search_service import get_document_chunks_payload
+
+            for document_id in selected_chat_ids:
+                if _is_cancelled(cancel_requested):
+                    return _cancelled_result('Cancelled while reading conversation attachments.')
+                payload = get_document_chunks_payload(
+                    document_id, user_id, conversation_id=_ctx(context, 'conversation_id', None),
+                    window_unit='chunks', window_size=min(max(_coerce_int(arguments.get('top_n'), 12), 1), 50),
+                    window_number=1,
+                )
+                for chunk in payload.get('chunks') or []:
+                    results.append({
+                        **chunk,
+                        'document_id': document_id,
+                        'file_name': (payload.get('document') or {}).get('file_name'),
+                        'conversation_id': _ctx(context, 'conversation_id', None),
+                    })
     except Exception as exc:
         log_event(
-            f'{_LOG_PREFIX} document_search failed: {exc}',
-            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            f'{_LOG_PREFIX} document_search failed.',
+            extra={
+                'user_id': user_id, 'step_id': (step or {}).get('step_id'),
+                'exception_type': type(exc).__name__,
+            },
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Document search failed.', str(exc))
+        return _failed_result('Document search failed.', 'The selected sources could not be searched. Please retry.')
 
     results = list(results or [])
     document_ids = []
@@ -438,10 +555,9 @@ def _resolve_step_document_ids(step, context, *, settings=None, capability_id=No
     explicit = _string_list(arguments.get('document_ids'))
 
     reference = _text(arguments.get('documents_from_step'))
-    if not reference:
-        return explicit
-
-    found = (_ctx(context, 'step_documents', None) or {}).get(reference) or []
+    if not reference and not explicit:
+        explicit = _string_list(_ctx(context, 'selected_document_ids', None))
+    found = ((_ctx(context, 'step_documents', None) or {}).get(reference) or []) if reference else []
     merged = list(explicit)
     for document_id in found:
         if document_id not in merged:
@@ -477,11 +593,10 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
     document_ids = _resolve_step_document_ids(
         step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_ANALYZE,
     )
-    analysis_prompt = (
+    analysis_prompt = _step_user_request(
         _text(arguments.get('analysis_prompt'))
         or _text(arguments.get('prompt'))
-        or _text(arguments.get('question'))
-        or _text(_ctx(context, 'user_message', ''))
+        or _text(arguments.get('question')), context,
     )
     if not document_ids:
         # Either the plan named none, or it deferred to a step that found none. The second
@@ -511,9 +626,9 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
             analysis_prompt,
             document_ids,
             invoke_prompt,
-            doc_scope=_text(arguments.get('doc_scope')) or _ctx(context, 'doc_scope', 'all'),
+            doc_scope=_document_scope(context, arguments),
             active_group_ids=_ctx(context, 'active_group_ids', None),
-            active_public_workspace_id=_ctx(context, 'active_public_workspace_id', None),
+            active_public_workspace_id=_public_workspace_ids(context),
             conversation_id=_ctx(context, 'conversation_id', None),
             cancel_requested=cancel_requested,
             request_correlation_id=_ctx(context, 'request_correlation_id', None),
@@ -559,11 +674,10 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
         _string_list(arguments.get('right_document_ids'))
         or _string_list(arguments.get('target_document_ids'))
     )
-    comparison_prompt = (
+    comparison_prompt = _step_user_request(
         _text(arguments.get('comparison_prompt'))
         or _text(arguments.get('prompt'))
-        or _text(arguments.get('question'))
-        or _text(_ctx(context, 'user_message', ''))
+        or _text(arguments.get('question')), context,
     )
     if not left_document_id or not right_document_ids:
         return _failed_result(
@@ -579,9 +693,9 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
         'type': DOCUMENT_ACTION_TYPE_COMPARISON,
         'left_document_id': left_document_id,
         'right_document_ids': right_document_ids,
-        'doc_scope': _text(arguments.get('doc_scope')) or _ctx(context, 'doc_scope', 'all'),
+        'doc_scope': _document_scope(context, arguments),
         'active_group_ids': _ctx(context, 'active_group_ids', None),
-        'active_public_workspace_id': _ctx(context, 'active_public_workspace_id', None),
+        'active_public_workspace_id': _public_workspace_ids(context),
     }
 
     _emit(emit, _progress(step, CAPABILITY_DOCUMENT_COMPARE, 'Comparing documents'))
@@ -659,12 +773,13 @@ def _tabular_evidence_status(execution_state, reply, artifacts):
 
 def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
-    document_ids = _string_list(arguments.get('document_ids'))
-    question = (
+    document_ids = _resolve_step_document_ids(
+        step, context, settings=settings, capability_id=CAPABILITY_TABULAR_ANALYZE,
+    )
+    question = _step_user_request(
         _text(arguments.get('question'))
         or _text(arguments.get('analysis_prompt'))
-        or _text(arguments.get('prompt'))
-        or _text(_ctx(context, 'user_message', ''))
+        or _text(arguments.get('prompt')), context,
     )
     if not document_ids:
         return _failed_result('No tabular documents were provided.', 'tabular_analyze requires document_ids.')
@@ -759,7 +874,7 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
 
 def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
-    query = _text(arguments.get('query')) or _text(_ctx(context, 'user_message', ''))
+    query = _step_user_request(arguments.get('query'), context)
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before web search.')
     if not query:
@@ -783,7 +898,7 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
             settings=settings,
             conversation_id=_ctx(context, 'conversation_id', None),
             user_id=user_id,
-            user_message=_text(_ctx(context, 'user_message', '')),
+            user_message=_user_request(context),
             user_message_id=_ctx(context, 'user_message_id', None),
             chat_type=_text(_ctx(context, 'chat_type', 'personal')) or 'personal',
             document_scope=_ctx(context, 'doc_scope', 'all'),
@@ -950,7 +1065,7 @@ def _resolve_source_review_planner(settings):
 
 def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
-    user_message = _text(_ctx(context, 'user_message', ''))
+    user_message = _user_request(context)
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before reading the linked pages.')
 
@@ -1027,7 +1142,7 @@ def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
 
 def run_deep_research(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
-    user_message = _text(_ctx(context, 'user_message', ''))
+    user_message = _user_request(context)
     query = _text(arguments.get('query')) or user_message
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before deep research.')
@@ -1283,7 +1398,7 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
 def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
     agent_name = _text(arguments.get('agent_name'))
-    task = _text(arguments.get('task')) or _text(_ctx(context, 'user_message', ''))
+    task = _step_user_request(arguments.get('task'), context)
     if not agent_name:
         return _failed_result('No agent was named.', 'agent_invoke requires an agent_name.')
     if _is_cancelled(cancel_requested):
@@ -1510,7 +1625,7 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
 
     _emit(emit, _progress(step, CAPABILITY_RESPOND, 'Writing the answer'))
 
-    user_message = _text(_ctx(context, 'user_message', ''))
+    user_message = _user_request(context)
     instruction = _text(arguments.get('instruction') or arguments.get('prompt'))
     evidence = [envelope for envelope in (_ctx(context, 'evidence', []) or []) if isinstance(envelope, dict)]
     notes = list(_ctx(context, 'notes', []) or [])

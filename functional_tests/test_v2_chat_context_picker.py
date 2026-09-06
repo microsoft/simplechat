@@ -2,9 +2,10 @@
 # test_v2_chat_context_picker.py
 """
 Functional test for the V2 chat context picker.
-Version: 0.261.094
+Version: 0.261.096
 Implemented in: 0.261.089
 Independent context selection implemented in: 0.261.094
+Shared editor implemented in: 0.261.096
 
 The V2 composer shipped with a Documents button that was a plain on/off, and a
 ``selectedDocumentIds`` field that was declared, forwarded to both the chat
@@ -42,6 +43,7 @@ V2_DIR = REPO_ROOT / "application" / "v2_ui"
 CHATS_ROUTE_PY = APP_ROOT / "route_backend_chats.py"
 CONVERSATIONS_ROUTE_PY = APP_ROOT / "route_backend_conversations.py"
 COMPOSER_TSX = V2_DIR / "src" / "components" / "chat" / "Composer.tsx"
+EDITOR_TSX = V2_DIR / "src" / "components" / "chat" / "ComposerEditor.tsx"
 EXPLORER_TSX = V2_DIR / "src" / "components" / "documents" / "DocumentExplorer.tsx"
 TAGS_TSX = V2_DIR / "src" / "pages" / "workspace" / "TagsSection.tsx"
 RUN_VIEW_TSX = V2_DIR / "src" / "components" / "chat" / "OrchestrationRunView.tsx"
@@ -91,6 +93,7 @@ def test_the_composer_no_longer_carries_a_write_only_selection():
     print("\nTesting the composer's context state...")
 
     composer = COMPOSER_TSX.read_text(encoding="utf-8")
+    editor = EDITOR_TSX.read_text(encoding="utf-8")
 
     assert "selectedDocumentIds" not in composer, (
         "The composer still references selectedDocumentIds, which nothing ever "
@@ -99,13 +102,16 @@ def test_the_composer_no_longer_carries_a_write_only_selection():
     assert "contextItems" in composer, (
         "The composer should hold its context references in contextItems."
     )
-    assert "readContextQuery" in composer, (
-        "The composer should offer the `#` menu."
+    assert "<ComposerEditor" in composer and "draft={draft}" in composer and "onChange={setDraft}" in composer, (
+        "The main composer must use the controlled shared editor rather than duplicate its editing logic."
     )
-    assert "DocumentPickerPopover" in composer, (
+    assert "readContextQuery" in editor and "<ContextMenu" in editor, (
+        "The shared editor should offer the `#` menu."
+    )
+    assert "DocumentPickerPopover" in editor and "onPickerOpenChange={setPickerOpen}" in composer, (
         "The Documents button should open the picker rather than toggling."
     )
-    assert "appendContextToken" not in composer, (
+    assert "appendContextToken" not in composer + editor, (
         "Workspace and picker selections must not append references to the message."
     )
 
@@ -129,12 +135,12 @@ def test_sending_clears_the_chips_with_the_text():
     assert composer.count("clearDraft();") >= 2, (
         "Both the plain and the orchestrated send should clear the draft."
     )
-    assert composer.count("setText('')") == 1, (
-        "The composer empties its text in more than one place, so a send path can "
-        "clear the box while leaving the chip row behind."
+    assert composer.count("setDraft(createComposerDraft())") == 1, (
+        "Sending must reset the entire controlled draft in one place, including context, prompts and uploads."
     )
-    assert "setContextQuery(null)" in composer, (
-        "Clearing the draft should also close any open `#` query."
+    editor = EDITOR_TSX.read_text(encoding="utf-8")
+    assert "if (!draft.text || disabled)" in editor and "setContextQuery(null)" in editor, (
+        "Clearing the controlled draft should also close the shared editor's open `#` query."
     )
 
     print("  Both send paths clear the chips with the text.")
@@ -178,7 +184,7 @@ def test_removing_a_chip_cannot_orphan_a_shared_reference():
     """
     print("\nTesting chip removal with shared tokens...")
 
-    composer = COMPOSER_TSX.read_text(encoding="utf-8")
+    composer = EDITOR_TSX.read_text(encoding="utf-8")
 
     assert "remaining.some((entry) => hasContextMention(entry) && entry.token === item.token)" in composer, (
         "Removing a chip strips its token unconditionally, which orphans any other "

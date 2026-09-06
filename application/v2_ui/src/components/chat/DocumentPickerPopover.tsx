@@ -32,15 +32,17 @@ export function DocumentPickerPopover({
     onToggle,
     onClear,
     onClose,
+    placement = 'up',
 }: {
     scope: ContextSearchScope;
     /** The original Documents boolean: search everything by relevance. */
     searchAll: boolean;
     selectedKeys: ReadonlySet<string>;
-    onToggleSearchAll: () => void;
+    onToggleSearchAll?: () => void;
     onToggle: (candidate: ContextCandidate) => void;
     onClear: () => void;
     onClose: () => void;
+    placement?: 'up' | 'down';
 }) {
     const [query, setQuery] = useState('');
     const [candidates, setCandidates] = useState<ContextCandidate[]>([]);
@@ -123,7 +125,10 @@ export function DocumentPickerPopover({
     return (
         <div
             ref={holder}
-            className="glass-modal absolute bottom-full left-2 z-50 mb-2 flex max-h-[26rem] w-96 flex-col rounded-xl p-1.5"
+            className={clsx(
+                'glass-modal absolute left-2 z-50 flex max-h-[26rem] w-96 max-w-[calc(100vw-3rem)] flex-col rounded-xl p-1.5',
+                placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+            )}
         >
             <div className="relative shrink-0 px-0.5 pb-1.5">
                 <Search
@@ -136,6 +141,12 @@ export function DocumentPickerPopover({
                     type="search"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }
+                    }}
                     placeholder="Search documents, tags and workspaces…"
                     aria-label="Search documents"
                     className={clsx(
@@ -146,7 +157,7 @@ export function DocumentPickerPopover({
                 />
             </div>
 
-            <button
+            {onToggleSearchAll && <button
                 type="button"
                 onClick={onToggleSearchAll}
                 className={clsx(
@@ -168,7 +179,7 @@ export function DocumentPickerPopover({
                         Finds whatever is most relevant, rather than a fixed list
                     </span>
                 </span>
-            </button>
+            </button>}
 
             <div className="my-1 h-px shrink-0 bg-edge-strong" aria-hidden="true" />
 

@@ -2,6 +2,56 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.096)**
+
+#### New Features
+
+*   **Composer-Aware Inline Answers**
+    *   V2 orchestration follow-up questions now support `#` file, tag, and workspace references, `/` saved prompts, and uploads through a compact version of the main composer's editor.
+    *   Single- and multiple-choice selections can include an optional explanation, prompt, or additional sources. File suggestions are not an exhaustive list: a different referenced or uploaded file can answer the question on its own.
+    *   This applies to supported chat file types generally, not only tabular files. Existing upload and workspace permissions still apply.
+    *   (Ref: `ComposerEditor.tsx`, `ElicitationCard.tsx`, `composerDraft.ts`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md))
+
+#### User Interface Enhancements
+
+*   **Upload Progress And Independent Answer Drafts**
+    *   Inline uploads show processing state and retry/remove controls. Finish waits for selected files to be ready rather than continuing without them.
+    *   Paging and navigation within the current browser session preserve each answer's text, references, prompt edits, and variable values. Failed submissions keep the draft available for correction or retry.
+    *   The main composer remains separate, and inline questions do not duplicate its model, agent, web, or voice toolbar.
+    *   (Ref: `chatUploads.ts`, `orchestrationStore.ts`, `AttachedPromptCard.tsx`, [Upload Documents In Chat](../guides/upload-documents-in-chat.md))
+
+#### Bug Fixes
+
+*   **Follow-Up Answers Reach The Resumed Task**
+    *   Fixed a client/server mismatch that could ignore inline answers. Replies are now matched to the stored question and checked against its owner, turn, and revision.
+    *   Accepted explanations, filled prompts, and real source references reach both replanning and execution, while original selections and document filters remain intact.
+    *   Retries cannot apply the same answer twice, and declining or cancelling sends no draft answer context.
+    *   (Ref: `orchestrationController.ts`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_runs.py`, `route_backend_orchestration.py`)
+
+### **(v0.261.095)**
+
+#### New Features
+
+*   **Agents Can Call Explicitly Selected Specialists**
+    *   Create a **Call agent** action, choose a local or Foundry-backed target, and attach it to a local agent. The caller supplies a task and relevant context, receives the specialist's result, and continues its own answer without automatically sharing the whole conversation.
+    *   Targets retain their own instructions, model configuration, authorized knowledge, and tools. Calls stay in the same workspace or use permitted global agents, with access checked again when each call runs.
+    *   Nested delegation is bounded by **3 levels, 10 delegated attempts per root turn, and 120 seconds per call**. Self-calls and loops are blocked; cancellation preserves completed child citations and observed usage.
+    *   Delegation works in ordinary and streaming chat, agent workflows, and V2 orchestration. Foundry-backed agents are callable targets; their own tools remain configured in Foundry.
+    *   (Ref: `functions_agent_delegation.py`, `agent_delegation_runtime.py`, `semantic_kernel_plugins/agent_plugin.py`, [Agent Delegation Actions](features/AGENT_DELEGATION_ACTION.md))
+
+#### User Interface Enhancements
+
+*   **Configure Agent Calls In Classic And V2**
+    *   Both interfaces provide scoped target selection and action attachment for personal, group, and global agents. V2 adds focused controls rather than requiring a trip to classic for Call agent configuration.
+    *   V2 supports confirmed deletion of owned Call agent actions, preserves unrelated bindings and configuration, and reports conflicting edits instead of overwriting them. Selecting a group for configuration does not switch the active workspace.
+    *   (Ref: `plugin_modal_stepper.js`, `agent_modal_stepper.js`, `components/agents/AgentDelegationManager.tsx`, `pages/GroupAgentDelegationPage.tsx`, [Call Another Agent](../guides/call-another-agent.md))
+
+#### Bug Fixes
+
+*   **Group Workflow Agents Use The Run Actor's Permissions**
+    *   A manually started group workflow now authorizes agent calls as the authenticated member running it, rather than inheriting the workflow creator's access. Scheduled runs without an interactive actor retain the workflow owner's execution identity.
+    *   (Ref: `functions_workflow_runner.py` workflow execution identity capture and agent execution contexts)
+
 ### **(v0.261.093)**
 
 #### New Features

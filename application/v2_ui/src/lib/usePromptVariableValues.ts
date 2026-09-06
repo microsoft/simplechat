@@ -70,11 +70,15 @@ export function usePromptVariableValues({
     context,
     /** Suppresses pre-filling from memory. True for a collaborative conversation. */
     shared = false,
+    values: controlledValues,
+    onValuesChange,
 }: {
     promptId: string;
     content: string;
     context: PromptResolutionContext;
     shared?: boolean;
+    values?: Record<string, string>;
+    onValuesChange?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }): PromptVariableValues {
     const variables = useMemo(() => parsePromptVariables(content), [content]);
 
@@ -95,7 +99,9 @@ export function usePromptVariableValues({
         [promptId, shared],
     );
 
-    const [values, setValues] = useState<Record<string, string>>({});
+    const [localValues, setLocalValues] = useState<Record<string, string>>({});
+    const values = controlledValues ?? localValues;
+    const setValues = onValuesChange ?? setLocalValues;
     const [prefilled, setPrefilled] = useState<Set<string>>(() => new Set());
 
     // Seeding runs once per variable, not once per render, and again only for a placeholder
@@ -121,9 +127,11 @@ export function usePromptVariableValues({
         }
 
         setValues((current) => {
-            const next = restart ? {} : { ...current };
+            // A controlled draft may be returning from another page of an answer. Keep its
+            // supplied (including deliberately cleared) values rather than seeding over it.
+            const next = restart && controlledValues === undefined ? {} : { ...current };
             for (const variable of fresh) {
-                if (variable.builtIn) {
+                if (variable.builtIn || (controlledValues !== undefined && variable.key in next)) {
                     continue;
                 }
                 next[variable.key] = history[variable.key]?.[0] ?? variable.defaultValue;
