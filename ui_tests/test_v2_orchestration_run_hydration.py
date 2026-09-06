@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for hydrating a conversation's stored orchestration runs into the V2 plan drawer.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 Orchestration runs have always been written to Cosmos and read back by the planner, but nothing in
 the browser ever asked for them. The drawer's Map view built its rows purely from what this page
@@ -34,7 +34,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.096"
+IMPLEMENTED_IN = "0.261.099"
 
 _PAGE = None
 
