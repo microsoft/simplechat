@@ -114,6 +114,7 @@ from functions_simplechat_operations import (
     resolve_generated_file_approval_for_user,
 )
 from functions_settings import get_settings
+from functions_prompt_metadata import build_prompt_selection_metadata
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -2297,12 +2298,14 @@ def register_route_backend_collaboration(bp):
                 conversation_doc,
                 data.get('mentioned_participants'),
             )
+            prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message_content)
             message_doc, updated_conversation_doc = persist_collaboration_message(
                 conversation_doc,
                 current_user,
                 message_content,
                 reply_to_message_id=reply_to_message_id,
                 mentioned_participants=mentioned_participants,
+                extra_metadata={'prompt_selection': prompt_selection} if prompt_selection else None,
             )
             create_collaboration_message_notifications(updated_conversation_doc, message_doc)
             serialized_message = serialize_collaboration_message(message_doc)
@@ -2369,6 +2372,9 @@ def register_route_backend_collaboration(bp):
             extra_metadata = {}
             if invocation_target:
                 extra_metadata['ai_invocation_target'] = invocation_target
+            prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message_content)
+            if prompt_selection:
+                extra_metadata['prompt_selection'] = prompt_selection
 
             user_message_doc, updated_conversation_doc = persist_collaboration_message(
                 conversation_doc,

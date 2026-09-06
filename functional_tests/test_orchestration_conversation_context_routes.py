@@ -1,8 +1,9 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.096
+Version: 0.261.097
 Implemented in: 0.261.096
+Prompt attachment integration: 0.261.097
 
 Uses Flask, the real planner/executor/adapters/run store, an in-memory Cosmos boundary,
 and deterministic model completions. Authentication is a signed-in test user; actual
@@ -262,6 +263,37 @@ class ConversationRouteTests(unittest.TestCase):
         return self.client.post('/api/v2/orchestration/run', json={
             'run_id': plan['run_id'], 'conversation_id': 'conv1',
         }, buffered=True)
+
+    def test_prompt_snapshot_and_fingerprint_survive_replanning_without_duplicate_messages(self):
+        prompt_text = "Use the winery context."
+        content = f"{prompt_text}\n\n{LATEST}"
+        prompt_info = {
+            "id": "winery-prompt", "name": "Winery hours",
+            "content": prompt_text, "template_content": prompt_text,
+            "original_content": prompt_text, "composer_text": LATEST,
+            "composer_embedded": False, "user_text": LATEST,
+        }
+        first = self.planned(message=content, prompt_info=prompt_info)
+        first_run = self.runs.read_item(first["run_id"], "conv1")
+        stored = self.messages.read_item(first_run["user_message_id"], "conv1")
+        expected = self.route.build_prompt_selection_metadata(prompt_info, content)
+        self.assertEqual(stored["metadata"]["prompt_selection"], expected)
+        self.assertEqual(stored["metadata"]["orchestration"], {"turn_id": "turn1"})
+        self.assertEqual(stored["metadata"]["orchestration_turn_id"], "turn1")
+        self.assertEqual(
+            first_run["user_message_fingerprint"],
+            self.modules.context.normalize_history_message(stored)["fingerprint"],
+        )
+
+        second = self.planned(message=content)
+        second_run = self.runs.read_item(second["run_id"], "conv1")
+        self.assertEqual(second_run["user_message_id"], first_run["user_message_id"])
+        self.assertEqual(second_run["user_message_fingerprint"], first_run["user_message_fingerprint"])
+        self.assertEqual(self.messages.read_item(first_run["user_message_id"], "conv1"), stored)
+        self.assertEqual(
+            len([row for row in self.messages.items.values() if row.get("content") == content]),
+            1,
+        )
 
     def test_multiturn_plan_and_run_share_context_in_every_approval_mode(self):
         for mode in ('auto', 'timed', 'manual'):

@@ -4,6 +4,7 @@ Saved prompts in the V2 interface, rebuilt as a two-pane workbench with a dedica
 `{{variable}}` placeholders, and the ability to create a prompt from a conversation.
 
 **Implemented in version:** 0.261.053
+**Enhanced in version:** 0.261.096 (`application/single_app/config.py`)
 **Applies to:** the V2 React interface (`application/v2_ui`), My Workspace → Prompts, and the
 chat composer.
 **Dependencies:** `enable_user_workspace`. Group and public prompt routes were extended at the
@@ -44,7 +45,8 @@ it claims the page rather than sitting inside the centred prose container.
 | `components/prompts/PromptList.tsx` | Rows: name, description, favourite, date, variable count |
 | `components/prompts/PromptDetailsPane.tsx` | Rendered markdown, variables, and the row's actions |
 | `components/prompts/PromptEditorDialog.tsx` | Writing, with source and preview side by side |
-| `components/prompts/PromptVariablesDialog.tsx` | Filling placeholders in before insertion |
+| `components/chat/AttachedPromptCard.tsx` | Filling and editing an attached prompt without replacing the user's message |
+| `components/prompts/PromptVariablePicker.tsx` | Shared variable discovery and custom field insertion |
 | `components/prompts/promptPresentation.tsx` | The variable pill, chip and favourite star |
 | `components/chat/PromptSlashMenu.tsx` | The composer's `/` search |
 
@@ -74,9 +76,8 @@ rather than a field; names must match `[A-Za-z0-9_][A-Za-z0-9_ -]{0,39}`, so
 hyphens fold to underscores in the lookup key, so `{{customer name}}` and `{{customer-name}}`
 are one field rather than two asking the same question.
 
-A variable with no value and no default is left visible as `{{customer}}` rather than blanked,
-because the braces in the middle of a paragraph are what make the omission noticed before the
-message is sent.
+A variable with no value and no default is left visible as `{{customer}}` rather than blanked.
+The composer warns before sending and offers an explicit **Send anyway** choice.
 
 Eight names are resolved by the application itself: `{{today}}`, `{{now}}`, `{{me}}`,
 `{{conversation_title}}`, `{{selected_documents}}`, `{{last_response}}`, `{{last_message}}` and
@@ -93,28 +94,43 @@ the tests are not time-dependent.
 3. **Conversation sources** are offered per field as chips: the last reply, your last message,
    and what you have already typed.
 
-An AI "suggest values" tier was considered and deliberately left out.
+## Enhanced in version: **0.261.096**
+
+**Insert variable** now opens the same picker in the saved-prompt editor and the
+composer's turn-local editor. It explains built-ins, creates custom fields with
+optional defaults, and inserts them at the current selection.
+
+The attached card exposes variables before sending. **Find in knowledge** and
+**Fill missing fields** retrieve grounded values on request, using selected
+documents/tags unless the user explicitly widens the lookup. Values are applied
+with **AI-filled**, **Sources**, and **Undo**; unanswered or conflicting findings
+remain visible. The prompt library editor itself does not run a knowledge lookup
+because it has no selected chat context.
+
+See [Prompt composer card]({{ '/explanation/features/PROMPT_COMPOSER_CARD/' | relative_url }})
+for the send warning, scope, privacy, and snapshot behavior.
 
 ## Safety properties
 
 These are the reasons the design is shaped the way it is, and each is pinned by a test.
 
-**A wrong pre-fill is worse than a blank one.** An empty field stops you; a plausible wrong
-value gets sent. Anything filled in for you is visually distinct and clearable in one click, and
-if any variable was auto-filled the dialog always appears rather than inserting silently.
+**A wrong pre-fill is worse than a blank one.** Fields remain visible in the card,
+origins are identified, and AI fills offer supporting excerpts and Undo. Missing
+values warn rather than silently disappearing or permanently blocking Send.
 
 **Prompt injection is contained.** Nothing pulls from message content automatically. The last
 assistant reply can be quoting an uploaded document, and document text becoming part of your
 next instruction is how prompt injection gets a foothold — so tier 3 stays a chip you click, per
 field.
 
-**Shared conversations do not leak.** Auto-fill is suppressed entirely when the conversation is
-collaborative. A value remembered from a private chat would otherwise become visible to every
-participant the moment the message is sent; it is offered as a chip instead.
+**Private memory is not reused in shared conversations.** Defaults, current-chat built-ins,
+and explicitly requested AI fills remain available. Sending a filled prompt shares
+its values with the conversation's participants.
 
-**Variable values never reach the server.** People paste customer names, case numbers and API
-keys into these. `lib/promptVariableMemory.ts` uses `localStorage` only, references no API
-client and claims no user-settings key. It skips persisting anything matching an obvious secret
+**The remembered-values cache stays local.** `lib/promptVariableMemory.ts` uses
+`localStorage`, references no API client, and claims no user-settings key. Current
+values still travel with a sent prompt, and AI lookup sends relevant prompt/draft
+context to the configured service. The local cache skips obvious secret
 shape (bearer tokens, `sk-`/`ghp_`/`xox` keys, JWTs, PEM blocks, `api_key:` assignments), caps
 values at 2,000 characters, and offers "Forget saved values" per prompt.
 
@@ -123,9 +139,9 @@ Keys are `(promptId, variable)`, never the bare variable name.
 
 ## Chat integration
 
-**Insertion, not replacement.** `insertPromptText` splices at the caret or over the selection,
-adding a blank line before a multi-line prompt and a space before a single-line one, and neither
-when the neighbouring text already provides whitespace.
+**Attachment, not replacement.** Selecting a prompt keeps it in a separate card.
+The message box remains the user's own text. The `/query` token is removed when
+used for selection, without pasting the full template into that box.
 
 **`/` search.** Typing a slash that opens a word offers matching prompts, favourites first. A
 slash mid-word does not trigger — `and/or` and `https://` are left alone — a slash followed by a
@@ -198,7 +214,8 @@ run.
 - **Personal workspace only.** `/groups` and `/public` are still placeholder pages in V2. Their
   backend routes accept the new fields so the three cannot drift, but there is no V2 surface for
   them yet.
-- **No AI-suggested values.** Deliberately deferred; see the safety notes above.
+- **AI filling is scoped to the attached prompt.** It fills custom variables from
+  accessible knowledge on request, not from arbitrary tools or public web search.
 - **Remembered values do not follow you between browsers.** That is the point of keeping them
   out of the server.
 - **The classic prompt interface is unchanged.** It keeps working and will not damage the new

@@ -18,7 +18,7 @@ response outlives the request context, so touching ``request`` from inside the g
 raises rather than returning the value it would have had -- a failure that only appears
 once streaming is actually exercised.
 
-Version: 0.261.085
+Version: 0.261.097
 """
 
 import logging
@@ -111,6 +111,7 @@ from functions_orchestration_schema import (
     validate_elicitation_response,
 )
 from functions_settings import get_settings, get_user_settings
+from functions_prompt_metadata import build_prompt_selection_metadata
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -687,7 +688,7 @@ def _save_message(conversation_id, role, content, metadata=None, extra=None, mes
     return message_id
 
 
-def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None):
+def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None):
     """A stable ID makes retries and revised plans reuse their original user message."""
     _authorize_context_conversation(conversation_id, user_id)
     message_id = (previous or {}).get('user_message_id') or (
@@ -708,9 +709,13 @@ def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None
         ):
             raise ConversationContextError('This turn changed. Submit a new request.')
         return message_id, normalized['fingerprint']
+    metadata = {'orchestration': {'turn_id': turn_id}}
+    if prompt_selection:
+        metadata['orchestration_turn_id'] = turn_id
+        metadata['prompt_selection'] = prompt_selection
     saved = _save_message(
         conversation_id, 'user', message,
-        metadata={'orchestration': {'turn_id': turn_id}},
+        metadata=metadata,
         message_id=message_id,
     )
     if not saved:
@@ -1033,8 +1038,10 @@ def register_route_backend_orchestration(bp):
 
                 # The question is recorded once a plan exists for it, so a conversation
                 # never shows a user message whose work was never planned.
+                prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message)
                 user_message_id, user_message_fingerprint = _save_turn_message(
-                    resolved_conversation_id, user_id, turn_id, message, previous=previous
+                    resolved_conversation_id, user_id, turn_id, message, previous=previous,
+                    prompt_selection=prompt_selection,
                 )
 
                 plan['revision'] = current_revision

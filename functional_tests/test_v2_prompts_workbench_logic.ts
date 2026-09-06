@@ -1,7 +1,7 @@
 // test_v2_prompts_workbench_logic.ts
 //
 // Runtime test for the V2 prompts workbench rules.
-// Version: 0.261.053
+// Version: 0.261.096
 // Implemented in: 0.261.053
 //
 // The companion test, test_v2_prompts_workbench.py, asserts that the pieces are wired
@@ -29,7 +29,7 @@
 //     reason reaching for a prompt lost whatever had already been written.
 //
 // Run by test_v2_prompts_workbench.py, which bundles this with the esbuild Vite already brings
-// in and executes it under node, skipping it when the front-end toolchain is absent.
+// in and executes it under node, requiring the existing front-end toolchain.
 
 import assert from 'node:assert/strict';
 import {
@@ -47,8 +47,15 @@ import {
     MAX_REMEMBERED_PROMPTS,
     MAX_REMEMBERED_VALUES,
     MAX_REMEMBERED_VARIABLES,
+    PROMPT_VARIABLE_STORAGE_KEY,
+    forgetAllPromptValues,
+    forgetPromptValues,
+    hasRememberedPromptValues,
     looksLikeSecret,
     pruneMemory,
+    recallPromptValues,
+    rememberPromptValues,
+    suggestedPromptValues,
 } from '../application/v2_ui/src/lib/promptVariableMemory';
 import {
     MAX_SLASH_QUERY_LENGTH,
@@ -306,6 +313,71 @@ check('memory is capped per prompt and per variable count', () => {
 check('pruning drops empty entries entirely', () => {
     const pruned = pruneMemory({ prompt: { a: [], b: [''] }, other: {} });
     assert.deepEqual(Object.keys(pruned), [], 'a prompt with nothing left should not be stored');
+});
+
+check('prototype-like prompt ids and variable keys survive the entire local memory lifecycle', () => {
+    const storage = new Map<string, string>();
+    const originalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => storage.set(key, String(value)),
+            removeItem: (key: string) => storage.delete(key),
+        },
+    });
+
+    try {
+        const promptIds = ['constructor', '__proto__', 'toString'];
+        const variableKeys = ['constructor', '__proto__', 'customer'];
+        for (const promptId of promptIds) {
+            assert.deepEqual(recallPromptValues(promptId), {});
+            assert.deepEqual(suggestedPromptValues(promptId), {});
+            assert.equal(hasRememberedPromptValues(promptId), false);
+            // fromEntries creates an own "__proto__" property rather than object-literal syntax.
+            const first = Object.fromEntries(variableKeys.map((key) => [key, `${promptId}:${key}:first`]));
+            const second = Object.fromEntries(variableKeys.map((key) => [key, `${promptId}:${key}:second`]));
+            rememberPromptValues(promptId, first);
+            rememberPromptValues(promptId, second);
+            rememberPromptValues(promptId, second);
+
+            const recalled = recallPromptValues(promptId);
+            const suggested = suggestedPromptValues(promptId);
+            assert.equal(hasRememberedPromptValues(promptId), true);
+            assert.deepEqual(Object.keys(recalled).sort(), [...variableKeys].sort());
+            for (const key of variableKeys) {
+                assert.ok(Object.hasOwn(recalled, key));
+                assert.ok(Object.hasOwn(suggested, key));
+                assert.deepEqual(recalled[key], [second[key], first[key]]);
+                assert.equal(suggested[key], second[key]);
+            }
+            const persisted = JSON.parse(storage.get(PROMPT_VARIABLE_STORAGE_KEY) ?? '{}');
+            const pruned = pruneMemory(persisted);
+            assert.ok(Object.hasOwn(persisted, promptId));
+            assert.ok(Object.hasOwn(pruned, promptId));
+            assert.deepEqual(pruned[promptId], recalled);
+            assert.deepEqual(JSON.parse(JSON.stringify(pruned))[promptId], recalled);
+        }
+
+        for (const [index, promptId] of promptIds.entries()) {
+            forgetPromptValues(promptId);
+            assert.deepEqual(recallPromptValues(promptId), {});
+            assert.deepEqual(suggestedPromptValues(promptId), {});
+            assert.equal(hasRememberedPromptValues(promptId), false);
+            for (const remaining of promptIds.slice(index + 1)) {
+                assert.equal(hasRememberedPromptValues(remaining), true);
+            }
+        }
+        rememberPromptValues('__proto__', Object.fromEntries([['__proto__', 'last value']]));
+        forgetAllPromptValues();
+        assert.equal(storage.has(PROMPT_VARIABLE_STORAGE_KEY), false);
+    } finally {
+        if (originalStorage) {
+            Object.defineProperty(globalThis, 'localStorage', originalStorage);
+        } else {
+            Reflect.deleteProperty(globalThis, 'localStorage');
+        }
+    }
 });
 
 /* -------------------------------- slash search --------------------------------- */
