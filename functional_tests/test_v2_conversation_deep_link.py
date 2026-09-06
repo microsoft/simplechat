@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
+# test_v2_conversation_deep_link.py
 """
 Functional test for conversation deep linking in the V2 interface.
 
-Version: 0.261.043
+Version: 0.261.096
 Implemented in: 0.261.032
 Kind resolution moved to a single endpoint in: 0.261.043
+Workspace agent launch coordination added in: 0.261.096
 
 The classic interface has supported linking straight to a conversation since v0.237.001:
 chat-onload.js reads ?conversationId= (or the older ?conversation_id=) on load, and
@@ -123,8 +125,8 @@ def test_incoming_link_is_captured_before_any_effect_runs():
     # Consumed once. Without the guard, returning to the chat page would re-open the
     # conversation and discard a running stream.
     assert "linkHandled" in hook_body, "The link must be consumed exactly once"
-    assert "if (!linkHandled) {" in hook_body, (
-        "The write must wait for the read, or the parameter is cleared before it is used"
+    assert "if (!linkHandled || !agentLaunchHandled) {" in hook_body, (
+        "The write must wait for both conversation and agent launch reads"
     )
     assert "useChatStore.getState().activeConversationId" in hook_body, (
         "The already-open conversation must not be re-opened"

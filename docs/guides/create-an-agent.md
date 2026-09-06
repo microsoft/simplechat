@@ -4,6 +4,7 @@ title: "Create an agent"
 description: "Build a reusable assistant with a clear role, model, knowledge, and instructions."
 section: "Guides"
 audience: user
+version: "0.261.096"
 ---
 
 ## What this does
@@ -25,7 +26,15 @@ Create an agent when a task benefits from consistent behavior, such as policy re
 - At least one GPT model endpoint must be configured; see [AI Models]({{ '/admin/ai-models/' | relative_url }}).
 - Upload and process workspace documents first if the agent should use assigned knowledge.
 
-## Steps
+## Personal agents in V2
+
+In V2, **My Workspace > Agents > New agent** opens a full-page editor. Use its
+sections to configure the model, approved actions, knowledge, and instructions
+without following a modal wizard. See [Build agents and actions in My Workspace]({{ '/guides/workspace-agents-and-actions/' | relative_url }})
+for the native workflow, implemented in **0.261.096** in
+`application/single_app/config.py`.
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or the target **Group Workspace**.
 2. Choose **Your Agents** or the **Agents** tab.

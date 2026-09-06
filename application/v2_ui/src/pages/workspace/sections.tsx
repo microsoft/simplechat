@@ -26,6 +26,8 @@ import type { WorkspaceSectionGroup } from '../../lib/types';
 import type { WorkspaceSectionDescriptor } from '../../lib/workspaceSections';
 import { ActionsSection } from './ActionsSection';
 import { AgentsSection } from './AgentsSection';
+import { ActionEditorPage } from './ActionEditorPage';
+import { AgentEditorPage } from './AgentEditorPage';
 import { DocumentsSection } from './DocumentsSection';
 import { EndpointsSection } from './EndpointsSection';
 import { FileSourcesSection } from './FileSourcesSection';
@@ -35,6 +37,8 @@ import { TagsSection } from './TagsSection';
 import { WorkflowsSection } from './WorkflowsSection';
 
 export interface WorkspaceSectionContext {
+    resourceId?: string;
+    ownerId?: string;
     /** Whether another section is available, for cross-links that should not dead-end. */
     isEnabled: (sectionId: string) => boolean;
 }
@@ -101,7 +105,10 @@ export const WORKSPACE_SECTIONS: WorkspaceSectionDefinition[] = [
         group: 'automation',
         icon: Sparkles,
         blurb: 'Assistants you configure once: instructions, knowledge and actions.',
-        render: (context) => <AgentsSection actionsEnabled={context.isEnabled('actions')} />,
+        layout: 'full',
+        render: (context) => context.resourceId
+            ? <AgentEditorPage key={`${context.ownerId}:${context.resourceId}`} />
+            : <AgentsSection actionsEnabled={context.isEnabled('actions')} />,
     },
     {
         id: 'actions',
@@ -109,7 +116,10 @@ export const WORKSPACE_SECTIONS: WorkspaceSectionDefinition[] = [
         group: 'automation',
         icon: Plug,
         blurb: 'Tools an agent may call, such as an API, a database or an MCP server.',
-        render: (context) => <ActionsSection agentsEnabled={context.isEnabled('agents')} />,
+        layout: 'full',
+        render: (context) => context.resourceId
+            ? <ActionEditorPage key={`${context.ownerId}:${context.resourceId}`} />
+            : <ActionsSection agentsEnabled={context.isEnabled('agents')} />,
     },
     {
         id: 'workflows',

@@ -176,7 +176,7 @@ function ToolToggle({
     );
 }
 
-export function Composer() {
+export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
     const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
     // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
     // suggested when saving what is written as a prompt.
@@ -298,6 +298,7 @@ export function Composer() {
         deepResearch: false,
         urlAccess: false,
         contextItems: [],
+        agentSelection: initialAgentSelection,
     });
 
     /**
@@ -321,12 +322,12 @@ export function Composer() {
     const orchestrationAvailable = Boolean(
         features.enable_chat_orchestration && orchestrationConfig?.enabled,
     );
-    const [orchestrationOn, setOrchestrationOn] = useState(orchestrationAvailable);
+    const [orchestrationOn, setOrchestrationOn] = useState(orchestrationAvailable && !initialAgentSelection);
     // Whether the user has expressed an opinion. The bootstrap resolves after the first
     // render, so the deployment's answer has to be adopted when it lands -- but adopting it
     // unconditionally would switch orchestration back on every time the payload refreshed,
     // overriding somebody who had just turned it off.
-    const orchestrationChosen = useRef(false);
+    const orchestrationChosen = useRef(Boolean(initialAgentSelection));
     useEffect(() => {
         if (!orchestrationChosen.current) {
             setOrchestrationOn(orchestrationAvailable);

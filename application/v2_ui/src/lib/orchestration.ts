@@ -321,6 +321,8 @@ export interface OrchestrationPlanRequest {
     conversation_id?: string | null;
     turn_id?: string;
     elicitation_response?: ElicitationResponse;
+    /** The matching question, captured before client state is cleared. History is server-owned. */
+    elicitation?: Elicitation;
     revision?: number;
     approval_mode?: ApprovalMode;
     [key: string]: unknown;

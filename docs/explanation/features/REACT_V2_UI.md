@@ -7,10 +7,11 @@ server-rendered SimpleChat UI. It exists to evaluate a different visual and inte
 direction — a glassmorphism design system, a single collapsible left rail with no top bar,
 and a search-first admin surface — without disturbing the interface people use today.
 
-It reuses the existing Flask JSON APIs unchanged. No existing route, template, or
-JavaScript module was modified to support it.
+It reuses the existing Flask domain APIs. Personal agent/action authoring adds an
+opt-in editor representation while leaving classic callers compatible.
 
 **Implemented in version:** 0.261.003
+**Personal agent/action authoring:** 0.261.096 (`application/single_app/config.py`)
 **Deployer version:** 1.0.26
 
 ### Dependencies
@@ -1031,8 +1032,25 @@ stats. With Stats rebuilt, the Profile entry has nothing left to lead to and is 
 tabs remain: those are the fallback for tabs V2 has not rebuilt, not profile navigation.
 ### Not rebuilt yet
 
-Agents, group workspaces and public workspaces appear in the rail and link through to their
-classic pages rather than dead-ending.
+The standalone agent catalogue and broader group/public workspace management are
+separate from personal authoring. Their existing fallback and focused delegation
+surfaces remain unchanged.
+
+## My Workspace agent and action editors
+
+Personal Agents and Actions have native full-page editors with section navigation,
+explicit saves, and protection against losing unfinished changes. The action
+collection and agent action picker include Call agent as a normal type, not a
+separate management section.
+
+Agent authoring includes model connections, assigned knowledge, instructions,
+capability-aware action selection, and the existing agent types/templates.
+Action configuration covers the currently offered connector types. Creating an
+action from an agent returns to the retained agent draft without saving that
+agent prematurely.
+
+See [V2 Workspace Agent and Action Authoring](V2_WORKSPACE_AGENTS_ACTIONS.md) and
+the [workspace guide](../../guides/workspace-agents-and-actions.md).
 
 ## Building
 
