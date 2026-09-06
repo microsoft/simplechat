@@ -27,6 +27,7 @@ import {
     type RunStreamEvent,
 } from './orchestration';
 import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable } from './orchestrationPlan';
+import type { Json } from './types';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
@@ -181,7 +182,13 @@ async function dispatchPlan(
 
     const pendingUserMessageId = useChatStore
         .getState()
-        .beginOrchestrationTurn(currentConversationId, context.message, addUserMessage, currentTurnId);
+        .beginOrchestrationTurn(
+            currentConversationId,
+            context.message,
+            addUserMessage,
+            currentTurnId,
+            context.seeds.prompt_info as Json | undefined,
+        );
     if (addUserMessage) {
         context.pendingUserMessageId = pendingUserMessageId;
         turnContexts.set(key, context);
