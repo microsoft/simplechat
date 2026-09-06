@@ -1,8 +1,9 @@
 // test_v2_prompt_composer_card_logic.ts
 //
 // Runtime test for the attached-prompt card's composition and recovery rules.
-// Version: 0.261.092
+// Version: 0.261.096
 // Implemented in: 0.261.092
+// Shared editor implemented in: 0.261.096
 //
 // The companion test, test_v2_prompt_composer_card.py, asserts that the pieces are wired
 // together. This file executes the behaviour, because these failure modes are all quiet ones
@@ -32,6 +33,12 @@ import {
     type AttachedPrompt,
 } from '../application/v2_ui/src/lib/promptRequest';
 import { readMessagePrompt } from '../application/v2_ui/src/lib/messagePrompt';
+import {
+    attachPromptToDraft,
+    buildComposerDraftSubmission,
+    composerDraftHasContent,
+    createComposerDraft,
+} from '../application/v2_ui/src/lib/composerDraft';
 
 const checks: [string, () => void][] = [];
 function check(name: string, fn: () => void) {
@@ -243,6 +250,63 @@ check('an unnamed prompt still gets a label rather than an empty one', () => {
     const found = readMessagePrompt(message);
     assert.ok(found);
     assert.equal(found!.name, 'Prompt');
+});
+
+check('independent editor drafts never share text, prompt values or selections', () => {
+    const main = createComposerDraft();
+    const answer = attachPromptToDraft(createComposerDraft(), {
+        id: 'shared-prompt', name: 'Answer prompt', content: 'For {{topic}}: {{composer}}',
+    });
+    answer.text = 'the inline answer';
+    answer.promptValues.topic = 'reliability';
+    assert.equal(main.text, '');
+    assert.equal(main.attachedPrompt, null);
+    assert.deepEqual(main.promptValues, {});
+    assert.notEqual(main.contextItems, answer.contextItems);
+    assert.notEqual(main.uploads, answer.uploads);
+    const sent = buildComposerDraftSubmission(answer, { composerText: 'the main message' });
+    assert.equal(sent.message, 'For reliability: the inline answer');
+    assert.equal(sent.promptInfo?.user_text, '');
+    assert.deepEqual(sent.promptInfo?.variables, { topic: 'reliability' });
+});
+
+check('each send resolves the current answer and rejects stored built-in overrides', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'p1', content: '{{today}} / {{topic}} / {{composer}}',
+    });
+    draft.promptValues = { today: 'stale date', composer: 'wrong draft', topic: 'latency', removed: 'unused' };
+    draft.text = 'first answer';
+    const context = { now: new Date(2026, 8, 5, 12), composerText: 'not this draft' };
+    assert.equal(buildComposerDraftSubmission(draft, context).message, '2026-09-05 / latency / first answer');
+    draft.text = 'revised answer';
+    const sent = buildComposerDraftSubmission(draft, context);
+    assert.equal(sent.message, '2026-09-05 / latency / revised answer');
+    assert.deepEqual(sent.promptInfo?.variables, { topic: 'latency' });
+});
+
+check('prompt-only controlled drafts remain sendable without typed text', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'p1', content: 'Summarize the selected sources.',
+    });
+    assert.equal(composerDraftHasContent(draft), true);
+    const sent = buildComposerDraftSubmission(draft, {});
+    assert.equal(sent.message, 'Summarize the selected sources.');
+    assert.equal(sent.promptInfo?.user_text, '');
+});
+
+check('a slash attachment removes only its query and keeps the saved prompt untouched', () => {
+    const saved = { id: 'p1', content: 'Explain {{topic}}.' };
+    const before = { ...createComposerDraft(), text: 'Keep /explain this paragraph.' };
+    const draft = attachPromptToDraft(before, saved, { start: 5, end: 13 });
+    assert.equal(draft.text, 'Keep  this paragraph.');
+    assert.equal(before.text, 'Keep /explain this paragraph.');
+    draft.attachedPrompt!.editedContent = 'Compare {{topic}} instead.';
+    draft.promptValues = { topic: 'source A and B' };
+    const sent = buildComposerDraftSubmission(draft, {});
+    assert.equal(sent.message, 'Compare source A and B instead.\n\nKeep  this paragraph.');
+    assert.equal(sent.promptInfo?.edited, true);
+    assert.equal(sent.promptInfo?.original_content, saved.content);
+    assert.equal(saved.content, 'Explain {{topic}}.');
 });
 
 /* ----------------------------------- runner ------------------------------------- */

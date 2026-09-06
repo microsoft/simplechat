@@ -1,8 +1,9 @@
-#!/usr/bin/env python3
+# test_v2_prompt_composer_card.py
 """
 Functional test for the attached-prompt card in the V2 composer.
-Version: 0.261.092
+Version: 0.261.096
 Implemented in: 0.261.092
+Controlled shared editor implemented in: 0.261.096
 
 Picking a saved prompt used to paste its text into the composer. Everything below exists
 because of what that cost:
@@ -35,6 +36,8 @@ sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 COMPOSER_TSX = V2_SRC / "components" / "chat" / "Composer.tsx"
+EDITOR_TSX = V2_SRC / "components" / "chat" / "ComposerEditor.tsx"
+COMPOSER_DRAFT_TS = V2_SRC / "lib" / "composerDraft.ts"
 CARD_TSX = V2_SRC / "components" / "chat" / "AttachedPromptCard.tsx"
 FIELD_TSX = V2_SRC / "components" / "prompts" / "PromptVariableField.tsx"
 MESSAGE_LIST_TSX = V2_SRC / "components" / "chat" / "MessageList.tsx"
@@ -74,11 +77,19 @@ def test_the_prompt_is_attached_rather_than_pasted():
     print("Testing attachment...")
 
     composer = _strip_comments(_read(COMPOSER_TSX))
-    assert "const [attachedPrompt, setAttachedPrompt]" in composer, (
-        "the composer must hold the prompt as state rather than as text in the box"
+    editor = _strip_comments(_read(EDITOR_TSX))
+    draft = _strip_comments(_read(COMPOSER_DRAFT_TS))
+    assert "const [draft, setDraft] = useState(createComposerDraft)" in composer, (
+        "the main composer must own its complete controlled draft"
+    )
+    assert "attachedPrompt: AttachedPrompt | null" in draft and "draft.attachedPrompt" in editor, (
+        "the shared editor must hold the prompt as part of its draft, never pasted text"
+    )
+    assert "<ComposerEditor" in composer and "draft={draft}" in composer and "onChange={setDraft}" in composer, (
+        "the main composer must mount the same controlled editor used for inline answers"
     )
     assert "attachPrompt(" in composer, "picking a prompt must attach it"
-    assert "insertIntoComposer(content" not in composer, (
+    assert "insertIntoComposer(content" not in composer + editor, (
         "prompt content must never be written into the message box"
     )
     assert CARD_TSX.exists(), "the attached prompt must have a card to render in"
@@ -89,6 +100,9 @@ def test_the_prompt_is_attached_rather_than_pasted():
     assert "useState(false)" in card, "the card must start collapsed"
     assert "aria-expanded={open}" in card, "the disclosure must announce its state"
     assert "onRemove" in card, "an attached prompt must be removable in one action"
+    assert "useId()" in card and 'idPrefix={`${idPrefix}-var`}' in card, (
+        "prompt variable and content ids must be instance-specific when cards coexist"
+    )
 
     print("  ok  the prompt is attached, not pasted")
     return True
@@ -104,7 +118,7 @@ def test_an_edit_applies_to_this_turn_only():
     )
     assert "attachedPromptIsEdited" in request, "an edit must be reportable as one"
 
-    composer = _strip_comments(_read(COMPOSER_TSX))
+    composer = _strip_comments(_read(EDITOR_TSX))
     assert "editedContent: null" in composer, (
         "resetting must restore the saved wording rather than a copy of it"
     )
@@ -146,8 +160,12 @@ def test_the_prompt_is_resolved_against_the_message_it_was_sent_with():
     print("Testing send-time resolution...")
 
     composer = _strip_comments(_read(COMPOSER_TSX))
-    assert "promptVariables.resolve(promptContext())" in composer, (
-        "the prompt must be resolved against the live composer context at send"
+    assert "buildComposerDraftSubmission(draft, promptContext())" in composer, (
+        "the shared submission builder must receive the live main-composer draft at send"
+    )
+    draft = _strip_comments(_read(COMPOSER_DRAFT_TS))
+    assert "resolveBuiltInPromptVariables({" in draft and "composerText: draft.text" in draft, (
+        "the submission builder must resolve built-ins from the owning editor's current text"
     )
     assert "estimateLargeTabularRun(outgoing.message" in composer, (
         "the large-run estimate must see the whole message, not just what was typed"
@@ -182,8 +200,11 @@ def test_both_send_paths_report_the_prompt():
     assert "seeds.prompt_info = promptInfo" in composer, (
         "orchestration seeds must carry the same resolved prompt"
     )
-    assert composer.count("buildPromptInfo(") >= 1, (
-        "both paths must build prompt_info through the one shared builder"
+    assert "buildComposerDraftSubmission(draft, promptContext())" in composer, (
+        "both paths must obtain prompt_info through the shared draft submission builder"
+    )
+    assert "buildPromptInfo({" in _strip_comments(_read(COMPOSER_DRAFT_TS)), (
+        "the draft builder must retain the existing prompt metadata contract"
     )
 
     types = _read(TYPES_TS)
@@ -282,7 +303,8 @@ def test_no_remote_asset_references():
     print("Testing for remote asset references...")
 
     offenders = []
-    for path in [CARD_TSX, FIELD_TSX, PROMPT_REQUEST_TS, MESSAGE_PROMPT_TS, VARIABLE_VALUES_TS]:
+    for path in [CARD_TSX, FIELD_TSX, EDITOR_TSX, COMPOSER_DRAFT_TS,
+                 PROMPT_REQUEST_TS, MESSAGE_PROMPT_TS, VARIABLE_VALUES_TS]:
         source = _strip_comments(_read(path))
         for match in re.finditer(r"https?://[^\s'\"`)]+", source):
             url = match.group(0)

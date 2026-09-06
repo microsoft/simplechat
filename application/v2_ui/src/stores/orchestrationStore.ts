@@ -22,6 +22,7 @@
 // re-plans. What is persisted is the minimum needed to recognise a run that is already running.
 
 import { create } from 'zustand';
+import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
 import {
     applyPlanEdits,
     disableStep as narrowDisableStep,
@@ -121,6 +122,7 @@ interface OrchestrationState {
     plans: Record<string, OrchestrationPlan>;
     /** A pending question per turn, when the planner asked instead of planning. */
     elicitations: Record<string, Elicitation>;
+    elicitationDrafts: Record<string, ElicitationDraft>;
     /** The user's narrowing edits per turn, before the run. */
     edits: Record<string, PlanEdits>;
     /** Per-step live status per turn: `scopeKey` then step id. */
@@ -160,6 +162,27 @@ interface OrchestrationState {
     setElicitation: (conversationId: string, turnId: string, elicitation: Elicitation) => void;
     /** Forget a turn's question, typically once it has been answered. */
     clearElicitation: (conversationId: string, turnId: string) => void;
+    updateElicitationDraft: (
+        conversationId: string,
+        turnId: string,
+        elicitationId: string,
+        revision: number,
+        update: (draft: ElicitationDraft) => ElicitationDraft,
+    ) => void;
+    beginElicitationSubmission: (
+        conversationId: string,
+        turnId: string,
+        elicitationId: string,
+        submissionId: string,
+        fingerprint: string,
+    ) => boolean;
+    failElicitationSubmission: (
+        conversationId: string,
+        turnId: string,
+        elicitationId: string,
+        revision: number,
+        message: string,
+    ) => void;
 
     disableStep: (conversationId: string, turnId: string, step: OrchestrationStep) => void;
     enableStep: (conversationId: string, turnId: string, stepId: string) => void;
@@ -231,6 +254,7 @@ interface OrchestrationState {
 export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     plans: {},
     elicitations: {},
+    elicitationDrafts: {},
     edits: {},
     stepRuntime: {},
     inFlight: {},
@@ -260,10 +284,12 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 previous.revision === plan.revision;
 
             const elicitations = { ...state.elicitations };
+            const elicitationDrafts = { ...state.elicitationDrafts };
             delete elicitations[key];
+            delete elicitationDrafts[key];
 
             if (sameIdentity) {
-                return { plans: { ...state.plans, [key]: plan }, elicitations };
+                return { plans: { ...state.plans, [key]: plan }, elicitations, elicitationDrafts };
             }
 
             const runtime: StepRuntimeMap = {};
@@ -274,6 +300,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             return {
                 plans: { ...state.plans, [key]: plan },
                 elicitations,
+                elicitationDrafts,
                 edits: { ...state.edits, [key]: emptyPlanEdits() },
                 stepRuntime: { ...state.stepRuntime, [key]: runtime },
             };
@@ -302,9 +329,19 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             // one clears the other.
             const plans = { ...state.plans };
             delete plans[key];
+            const previous = state.elicitations[key];
+            const sameQuestion = previous?.elicitation_id === elicitation.elicitation_id
+                && previous.revision === elicitation.revision;
+            const draft = sameQuestion ? state.elicitationDrafts[key] : undefined;
             return {
                 plans,
                 elicitations: { ...state.elicitations, [key]: elicitation },
+                elicitationDrafts: {
+                    ...state.elicitationDrafts,
+                    [key]: draft
+                        ? { ...draft, submitting: false, error: null }
+                        : createElicitationDraft(elicitation),
+                },
             };
         });
     },
@@ -312,12 +349,65 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     clearElicitation: (conversationId, turnId) => {
         const key = scopeKey(conversationId, turnId);
         set((state) => {
-            if (!(key in state.elicitations)) {
+            if (!(key in state.elicitations) && !(key in state.elicitationDrafts)) {
                 return {};
             }
             const elicitations = { ...state.elicitations };
+            const elicitationDrafts = { ...state.elicitationDrafts };
             delete elicitations[key];
-            return { elicitations };
+            delete elicitationDrafts[key];
+            return { elicitations, elicitationDrafts };
+        });
+    },
+
+    updateElicitationDraft: (conversationId, turnId, elicitationId, revision, update) => {
+        const key = scopeKey(conversationId, turnId);
+        set((state) => {
+            const draft = state.elicitationDrafts[key];
+            if (!draft || draft.elicitationId !== elicitationId || draft.revision !== revision) {
+                return {};
+            }
+            const next = update(draft);
+            return next === draft ? {} : {
+                elicitationDrafts: { ...state.elicitationDrafts, [key]: next },
+            };
+        });
+    },
+
+    beginElicitationSubmission: (conversationId, turnId, elicitationId, submissionId, fingerprint) => {
+        const key = scopeKey(conversationId, turnId);
+        const draft = get().elicitationDrafts[key];
+        if (!draft || draft.elicitationId !== elicitationId || draft.submitting) {
+            return false;
+        }
+        set((state) => ({
+            elicitationDrafts: {
+                ...state.elicitationDrafts,
+                [key]: {
+                    ...draft,
+                    submitting: true,
+                    error: null,
+                    submissionId,
+                    submissionFingerprint: fingerprint,
+                },
+            },
+        }));
+        return true;
+    },
+
+    failElicitationSubmission: (conversationId, turnId, elicitationId, revision, message) => {
+        const key = scopeKey(conversationId, turnId);
+        set((state) => {
+            const draft = state.elicitationDrafts[key];
+            if (!draft || draft.elicitationId !== elicitationId || draft.revision !== revision) {
+                return {};
+            }
+            return {
+                elicitationDrafts: {
+                    ...state.elicitationDrafts,
+                    [key]: { ...draft, submitting: false, error: message },
+                },
+            };
         });
     },
 
@@ -522,9 +612,21 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         if (get().activeTurns[conversationId] === turnId) {
             return;
         }
-        set((state) => ({
-            activeTurns: { ...state.activeTurns, [conversationId]: turnId },
-        }));
+        set((state) => {
+            const previous = state.activeTurns[conversationId];
+            const elicitations = { ...state.elicitations };
+            const elicitationDrafts = { ...state.elicitationDrafts };
+            if (previous && previous !== turnId) {
+                const oldKey = scopeKey(conversationId, previous);
+                delete elicitations[oldKey];
+                delete elicitationDrafts[oldKey];
+            }
+            return {
+                activeTurns: { ...state.activeTurns, [conversationId]: turnId },
+                elicitations,
+                elicitationDrafts,
+            };
+        });
     },
 
     clearActiveTurn: (conversationId) => {
@@ -546,11 +648,15 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         if (keepConversationId) {
             busy.add(keepConversationId);
         }
+        for (const key of Object.keys(get().elicitations)) {
+            busy.add(conversationOfScope(key));
+        }
 
         set((state) => {
             let removed = false;
             const plans: Record<string, OrchestrationPlan> = {};
             const elicitations: Record<string, Elicitation> = {};
+            const elicitationDrafts: Record<string, ElicitationDraft> = {};
             const edits: Record<string, PlanEdits> = {};
             const stepRuntime: Record<string, StepRuntimeMap> = {};
 
@@ -566,6 +672,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
             keep(state.plans, plans as Record<string, unknown>);
             keep(state.elicitations, elicitations as Record<string, unknown>);
+            keep(state.elicitationDrafts, elicitationDrafts as Record<string, unknown>);
             keep(state.edits, edits as Record<string, unknown>);
             keep(state.stepRuntime, stepRuntime as Record<string, unknown>);
 
@@ -582,7 +689,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             }
 
             return removed
-                ? { plans, elicitations, edits, stepRuntime, activeTurns }
+                ? { plans, elicitations, elicitationDrafts, edits, stepRuntime, activeTurns }
                 : {};
         });
     },
@@ -625,6 +732,14 @@ export function selectElicitation(
         return null;
     }
     return state.elicitations[scopeKey(conversationId, turnId)] ?? null;
+}
+
+export function selectElicitationDraft(
+    state: OrchestrationState,
+    conversationId: string,
+    turnId: string,
+): ElicitationDraft | null {
+    return state.elicitationDrafts[scopeKey(conversationId, turnId)] ?? null;
 }
 
 /** The user's edits for a turn. Stable empty object when there are none. */

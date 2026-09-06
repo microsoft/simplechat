@@ -27,7 +27,7 @@ tries several strategies before giving up, and a total failure degrades to a sin
 answering step rather than to an error -- a user who asked a question should get an
 answer even when the planning layer had a bad day.
 
-Version: 0.261.087
+Version: 0.261.096
 """
 
 import json
@@ -39,6 +39,7 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import cognitive_services_scope
 from functions_appinsights import log_event
+from functions_orchestration_context import resolve_elicitation_candidates
 from functions_orchestration_registry import (
     CAPABILITY_RESPOND,
     build_planner_capability_projection,
@@ -296,13 +297,27 @@ If you genuinely cannot plan without more information from the user, return this
     },
     "required": ["<field_name>"]
   },
-  "ui_hints": {"pages": [["<field_name>"]]}
+  "ui_hints": {"pages": [["<field_name>"]],
+               "fields": {"<file_field_only>": {"input": "files", "candidate_ids": ["<actual candidate id>"]}}}
 }
 
-The schema must be a FLAT object of simple fields. No nested objects. Offer enum choices
-whenever you can, so the user picks rather than types. Do not ask something the earlier
-runs show has already been answered. Only ask when you truly cannot proceed; a reasonable
-assumption stated in "assumptions" is better than a question."""
+The schema must be a FLAT object of simple fields. No nested objects.
+For genuine fixed choices, use a scalar enum for single choice or array items.enum for
+multiple choices. For ordinary explanations, use a string without enum.
+For ANY question asking the user to supply files, set ui_hints.fields[field].input to
+"files". Use type "string" for one file, or type "array" with items.type "string" for
+multiple files. NEVER put an enum on a file field. candidate_ids are optional,
+non-exhaustive suggestions drawn ONLY from actual candidate_documents IDs. Do not invent
+IDs or use filenames as IDs. The user can select or upload different authorized files
+instead, without picking any suggestion. Tags and workspaces can supplement a file answer
+but do not replace the required file.
+Any answer can also include supplemental text, file/tag/workspace references, and a
+saved prompt expanded for that answer only. Read "clarifications" and "user_request" as
+part of the user's request, without replacing the original "message" or user selections.
+Plan around accepted source identities and explanations, including on repeated questions.
+Do not repeat a question that clarifications or earlier runs already answered or declined.
+Only ask when you truly cannot proceed; a reasonable assumption stated in "assumptions"
+is better than a question."""
 
 
 def build_planner_messages(planner_context, replan_hint=None):
@@ -494,7 +509,19 @@ def plan_request(
 
     if kind == 'elicitation' and allow_elicitation:
         try:
-            elicitation = normalize_elicitation(parsed, run_id=None, revision=revision)
+            fields = (parsed.get('ui_hints') or {}).get('fields') or {}
+            candidates = []
+            if isinstance(fields, dict) and any(
+                isinstance(hint, dict) and hint.get('input') == 'files'
+                for hint in fields.values()
+            ):
+                candidates = resolve_elicitation_candidates(
+                    context.get('candidate_documents'), user_id, conversation_id,
+                    seeds=seeds, settings=settings,
+                )
+            elicitation = normalize_elicitation(
+                parsed, run_id=None, revision=revision, candidate_references=candidates,
+            )
             return 'elicitation', elicitation
         except PlanValidationError as exc:
             # A question we cannot render is worse than no question: the run would stall
@@ -518,6 +545,7 @@ def plan_request(
                 turn_id=turn_id,
                 seeds=seeds,
                 document_labels=document_labels,
+                request_context=request_context,
             )
 
     if kind == 'elicitation':

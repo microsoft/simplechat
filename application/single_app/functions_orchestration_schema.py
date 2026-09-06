@@ -31,12 +31,13 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.085
+Version: 0.261.096
 """
 
 import hashlib
 import json
 import logging
+import math
 import uuid
 
 from functions_appinsights import log_event
@@ -50,7 +51,7 @@ from functions_orchestration_registry import (
 )
 
 ORCHESTRATION_PLAN_CONTRACT_VERSION = 1
-ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 1
+ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
 
 # Document fields a step cannot simply lose. These are not in their capability's `required`
 # list, because a step may supply `documents_from_step` instead -- but once neither is
@@ -141,6 +142,7 @@ ELICITATION_ACTIONS = (
 ELICITATION_PRIMITIVE_TYPES = ('string', 'number', 'integer', 'boolean')
 ELICITATION_MAX_PROPERTIES = 12
 ELICITATION_MAX_ENUM_VALUES = 40
+ELICITATION_MAX_ARRAY_ITEMS = 100
 
 # Hard ceilings, independent of the administrator's own limits. These bound what the
 # validator will even consider, so a malformed plan cannot cost anything to reject.
@@ -1061,6 +1063,10 @@ def validate_elicitation_schema(requested_schema):
             if isinstance(enum_values, list) and enum_values:
                 item_rules['enum'] = enum_values[:ELICITATION_MAX_ENUM_VALUES]
             clean['items'] = item_rules
+            for bound in ('minItems', 'maxItems'):
+                value = rules.get(bound)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    clean[bound] = min(value, ELICITATION_MAX_ARRAY_ITEMS)
         else:
             enum_values = rules.get('enum')
             if isinstance(enum_values, list) and enum_values:
@@ -1086,8 +1092,8 @@ def validate_elicitation_schema(requested_schema):
     )
 
 
-def normalize_elicitation(elicitation, run_id, revision=0):
-    """Turn raw planner output into a question set the card can render."""
+def normalize_elicitation(elicitation, run_id, revision=0, candidate_references=None):
+    """Normalize questions; resource suggestions come only from resolved candidates."""
     elicitation = elicitation if isinstance(elicitation, dict) else {}
 
     schema, errors = validate_elicitation_schema(elicitation.get('requested_schema'))
@@ -1106,23 +1112,68 @@ def normalize_elicitation(elicitation, run_id, revision=0):
     # field per page reads as an interview rather than a form, which is the point of asking
     # in a card instead of in the thread.
     pages = []
-    for page in hints.get('pages') or ():
-        page_fields = [name for name in _string_list(page) if name in schema['properties']]
+    covered = set()
+    raw_pages = hints.get('pages') if isinstance(hints.get('pages'), list) else []
+    for page in raw_pages[:ELICITATION_MAX_PROPERTIES]:
+        page_fields = [
+            name for name in _string_list(page)
+            if name in schema['properties'] and name not in covered
+        ]
         if page_fields:
             pages.append(page_fields)
-    covered = {name for page in pages for name in page}
+            covered.update(page_fields)
     remainder = [name for name in order if name not in covered]
     pages.extend([[name] for name in remainder])
 
+    ui_hints = {'order': order, 'pages': pages}
+    references = {
+        reference['id']: reference
+        for reference in (candidate_references or ())
+        if isinstance(reference, dict)
+        and reference.get('kind') in ('document', 'chat_attachment')
+        and isinstance(reference.get('id'), str)
+        and isinstance(reference.get('scope'), dict)
+    }
+    fields = hints.get('fields') if isinstance(hints.get('fields'), dict) else {}
+    resource_fields = {}
+    for name, hint in fields.items():
+        if name not in schema['properties'] or not isinstance(hint, dict):
+            continue
+        if hint.get('input') != 'files':
+            continue
+        rules = schema['properties'][name]
+        value_rules = rules.get('items', {}) if rules['type'] == 'array' else rules
+        if value_rules.get('type') != 'string':
+            continue
+        # File suggestions are deliberately not an exhaustive enum. An authorized file
+        # selected elsewhere (including a new upload) is equally valid.
+        value_rules.pop('enum', None)
+        candidate_ids = hint.get('candidate_ids')
+        if candidate_ids is None:
+            candidate_ids = [
+                item.get('id') for item in hint.get('candidates') or ()
+                if isinstance(item, dict)
+            ] if 'candidates' in hint else list(references)
+        resource_fields[name] = {
+            'input': 'files',
+            'candidates': [
+                references[document_id]
+                for document_id in _string_list(candidate_ids, ELICITATION_MAX_ENUM_VALUES)
+                if document_id in references
+            ],
+        }
+    if resource_fields:
+        ui_hints['fields'] = resource_fields
+
     return {
-        'elicitation_id': elicitation.get('elicitation_id') or f"ask_{uuid.uuid4().hex}",
+        'elicitation_id': f"ask_{uuid.uuid4().hex}",
         'contract_version': ORCHESTRATION_ELICITATION_CONTRACT_VERSION,
         'run_id': run_id,
         'revision': int(revision or 0),
         'message': _text(elicitation.get('message'), PLAN_MAX_SUMMARY_LENGTH)
         or 'I need a little more information before I can plan this.',
         'requested_schema': schema,
-        'ui_hints': {'order': order, 'pages': pages},
+        'ui_hints': ui_hints,
     }
 
 
@@ -1148,7 +1199,12 @@ def validate_elicitation_response(elicitation, response):
     content = response.get('content') if isinstance(response.get('content'), dict) else {}
 
     cleaned = {}
-    errors = []
+    errors = [
+        f"'{name}' is not a question field."
+        for name in content if name not in properties
+    ]
+    if 'content' in response and not isinstance(response.get('content'), dict):
+        errors.append('Answer content must be an object.')
 
     for name, rules in properties.items():
         if name not in content or content[name] is None:
@@ -1158,20 +1214,33 @@ def validate_elicitation_response(elicitation, response):
             item_type = (rules.get('items') or {}).get('type', 'string')
             allowed = (rules.get('items') or {}).get('enum')
             values = raw if isinstance(raw, (list, tuple)) else [raw]
+            maximum = min(rules.get('maxItems', ELICITATION_MAX_ARRAY_ITEMS), ELICITATION_MAX_ARRAY_ITEMS)
+            if len(values) > maximum:
+                errors.append(f"'{name}' allows at most {maximum} values.")
+                continue
             coerced = []
             for item in values:
+                if not isinstance(item, (str, int, float, bool)):
+                    errors.append(f"'{name}' contains an invalid value.")
+                    continue
                 value = _coerce_scalar(item, item_type)
-                if value is None or value == '':
+                if value is None or value == '' or (isinstance(value, float) and not math.isfinite(value)):
+                    errors.append(f"'{name}' contains an invalid {item_type}.")
                     continue
                 if allowed and value not in allowed:
                     errors.append(f"'{name}' contains a value that was not offered.")
                     continue
                 coerced.append(value)
             cleaned[name] = coerced
+            if len(coerced) < rules.get('minItems', 0):
+                errors.append(f"'{name}' needs at least {rules['minItems']} values.")
             continue
 
+        if not isinstance(raw, (str, int, float, bool)):
+            errors.append(f"'{name}' must be a primitive value.")
+            continue
         value = _coerce_scalar(raw, rules.get('type', 'string'))
-        if value is None or value == '':
+        if value is None or value == '' or (isinstance(value, float) and not math.isfinite(value)):
             errors.append(f"'{name}' is not a valid {rules.get('type', 'string')}.")
             continue
         allowed = rules.get('enum')
@@ -1181,7 +1250,7 @@ def validate_elicitation_response(elicitation, response):
         cleaned[name] = value
 
     for name in required:
-        if name not in cleaned:
+        if name not in cleaned or cleaned[name] == []:
             errors.append(f"'{name}' is required.")
 
     if errors:

@@ -21,12 +21,16 @@ rather than trusting the key.
 Shaped and styled after ``functions_personal_workflows.py`` so the run/step CRUD reads the
 same as the workflow-run CRUD it sits beside.
 
-Version: 0.261.085
+Version: 0.261.096
 """
 
+import hashlib
 import logging
+import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 
+from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
 from config import (
@@ -42,6 +46,11 @@ from functions_orchestration_schema import (
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_RUNS]'
+RUN_RECORD_TYPE = 'orchestration_run'
+PENDING_ELICITATION_RECORD_TYPE = 'pending_elicitation'
+ELICITATION_CLAIM_SECONDS = 900
+ELICITATION_RETAINED_SUBMISSIONS = 12
+_RUN_FILTER = "(NOT IS_DEFINED(c.record_type) OR c.record_type = 'orchestration_run')"
 
 
 def _utc_now_iso():
@@ -61,6 +70,10 @@ def _coerce_int(value, default=0):
         return default
 
 
+def _is_run_record(document):
+    return isinstance(document, dict) and document.get('record_type') in (None, RUN_RECORD_TYPE)
+
+
 # --------------------------------------------------------------------------------------
 # Runs
 # --------------------------------------------------------------------------------------
@@ -71,6 +84,8 @@ def create_orchestration_run(
     conversation_id=None,
     turn_index=None,
     request_fingerprint=None,
+    initial_updates=None,
+    idempotent=False,
 ):
     """Persist a new run record for a validated plan.
 
@@ -103,6 +118,7 @@ def create_orchestration_run(
 
     record = {
         'id': run_id,
+        'record_type': RUN_RECORD_TYPE,
         'run_id': run_id,
         'conversation_id': conversation_id,
         'user_id': user_id,
@@ -126,13 +142,30 @@ def create_orchestration_run(
         'unresolved': [],
         'answered_questions': [],
     }
+    protected = {'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at'}
+    record.update({
+        key: value for key, value in (initial_updates or {}).items()
+        if key not in protected
+    })
 
     try:
-        cosmos_orchestration_runs_container.upsert_item(body=record)
+        if idempotent:
+            try:
+                cosmos_orchestration_runs_container.create_item(body=record)
+            except exceptions.CosmosResourceExistsError:
+                existing = get_orchestration_run(run_id, user_id, conversation_id)
+                if not existing or existing.get('turn_id') != record.get('turn_id'):
+                    raise ValueError('The saved plan could not be matched to this turn.')
+                return existing
+        else:
+            cosmos_orchestration_runs_container.upsert_item(body=record)
     except Exception as exc:
         log_event(
-            f'{_LOG_PREFIX} Failed to create run {run_id}: {exc}',
-            extra={'conversation_id': conversation_id, 'user_id': user_id, 'run_id': run_id},
+            f'{_LOG_PREFIX} Failed to create run.',
+            extra={
+                'conversation_id': conversation_id, 'user_id': user_id, 'run_id': run_id,
+                'exception_type': type(exc).__name__,
+            },
             level=logging.ERROR,
             exceptionTraceback=True,
         )
@@ -176,7 +209,7 @@ def get_orchestration_run(run_id, user_id, conversation_id=None):
         )
         return None
 
-    if not item:
+    if not _is_run_record(item):
         return None
 
     if str(item.get('user_id')) != str(user_id):
@@ -205,7 +238,7 @@ def update_orchestration_run(run_id, user_id, updates, conversation_id=None):
         return None
 
     updates = updates if isinstance(updates, dict) else {}
-    protected = {'id', 'run_id', 'conversation_id', 'user_id', 'created_at'}
+    protected = {'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at'}
     for key, value in updates.items():
         if key in protected:
             continue
@@ -250,7 +283,7 @@ def list_conversation_runs(conversation_id, user_id, limit=10):
 
     try:
         items = list(cosmos_orchestration_runs_container.query_items(
-            query='SELECT * FROM c WHERE c.user_id = @user_id ORDER BY c.turn_index DESC',
+            query=f'SELECT * FROM c WHERE c.user_id = @user_id AND {_RUN_FILTER} ORDER BY c.turn_index DESC',
             parameters=[{'name': '@user_id', 'value': user_id}],
             partition_key=conversation_id,
         ))
@@ -265,7 +298,7 @@ def list_conversation_runs(conversation_id, user_id, limit=10):
         )
         return []
 
-    trimmed = items[:limit]
+    trimmed = [item for item in items if _is_run_record(item)][:limit]
     trimmed.reverse()
     return [_strip_cosmos_metadata(item) for item in trimmed]
 
@@ -281,7 +314,7 @@ def next_turn_index(conversation_id, user_id):
 
     try:
         rows = list(cosmos_orchestration_runs_container.query_items(
-            query='SELECT VALUE MAX(c.turn_index) FROM c WHERE c.user_id = @user_id',
+            query=f'SELECT VALUE MAX(c.turn_index) FROM c WHERE c.user_id = @user_id AND {_RUN_FILTER}',
             parameters=[{'name': '@user_id', 'value': user_id}],
             partition_key=conversation_id,
         ))
@@ -300,6 +333,260 @@ def next_turn_index(conversation_id, user_id):
     if highest is None:
         return 0
     return _coerce_int(highest, -1) + 1
+
+
+# --------------------------------------------------------------------------------------
+# Pending questions (not runnable plans)
+# --------------------------------------------------------------------------------------
+
+class ElicitationStateError(ValueError):
+    """A recoverable, user-safe error at the authoritative question boundary."""
+
+    def __init__(self, message, code='elicitation_expired', status_code=409):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.status_code = status_code
+
+
+def _pending_id(user_id, turn_id):
+    identity = f'{user_id}\0{turn_id}'.encode('utf-8')
+    return f'elicitation_{hashlib.sha256(identity).hexdigest()}'
+
+
+def get_pending_elicitation(user_id, conversation_id, turn_id):
+    """Point-read one owner's turn. Keep the ETag private for conditional transitions."""
+    if not user_id or not conversation_id or not turn_id:
+        return None
+    try:
+        record = cosmos_orchestration_runs_container.read_item(
+            item=_pending_id(user_id, turn_id),
+            partition_key=conversation_id,
+        )
+    except exceptions.CosmosResourceNotFoundError:
+        return None
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Pending question could not be read.',
+            extra={'exception_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        raise ElicitationStateError(
+            'The question could not be loaded. Please retry.',
+            code='elicitation_unavailable', status_code=503,
+        ) from exc
+    if (
+        record.get('record_type') != PENDING_ELICITATION_RECORD_TYPE
+        or record.get('user_id') != user_id
+        or record.get('conversation_id') != conversation_id
+        or record.get('turn_id') != turn_id
+    ):
+        return None
+    return record
+
+
+def create_pending_elicitation(question, turn_context, user_id, conversation_id, turn_id):
+    """Persist an initial question exactly once; concurrent planning cannot replace it."""
+    record = {
+        'id': _pending_id(user_id, turn_id),
+        'record_type': PENDING_ELICITATION_RECORD_TYPE,
+        'user_id': user_id,
+        'conversation_id': conversation_id,
+        'turn_id': turn_id,
+        'question': deepcopy(question),
+        'turn_context': deepcopy(turn_context),
+        'status': 'pending',
+        'created_at': _utc_now_iso(),
+        'submissions': [],
+        'claim': None,
+        'prepared': None,
+    }
+    try:
+        return cosmos_orchestration_runs_container.create_item(body=record)
+    except exceptions.CosmosResourceExistsError:
+        existing = get_pending_elicitation(user_id, conversation_id, turn_id)
+        if existing:
+            return existing
+        raise ElicitationStateError('This question has expired. Please send the request again.')
+
+
+def _replace_pending(record, updates):
+    if not record.get('_etag'):
+        raise ElicitationStateError(
+            'The question could not be safely updated. Please retry.',
+            code='elicitation_unavailable', status_code=503,
+        )
+    replacement = deepcopy(_strip_cosmos_metadata(record))
+    replacement.update(updates)
+    replacement['updated_at'] = _utc_now_iso()
+    try:
+        return cosmos_orchestration_runs_container.replace_item(
+            item=record['id'],
+            body=replacement,
+            etag=record['_etag'],
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except exceptions.CosmosHttpResponseError as exc:
+        if getattr(exc, 'status_code', None) in (404, 409, 412):
+            raise ElicitationStateError(
+                'This question changed while you were answering. Please retry or use the latest question.',
+                code='elicitation_stale',
+            ) from exc
+        raise
+
+
+def claim_elicitation_submission(
+    user_id, conversation_id, turn_id, fingerprint, *,
+    elicitation_id=None, revision=None, submission_id=None,
+):
+    """Claim a reply with CAS, or return the retained result of an identical retry."""
+    record = get_pending_elicitation(user_id, conversation_id, turn_id)
+    if not record:
+        raise ElicitationStateError('This question has expired. Please send the request again.')
+
+    identity_supplied = any(value is not None for value in (elicitation_id, revision, submission_id))
+    if identity_supplied and (
+        not isinstance(elicitation_id, str) or not elicitation_id or len(elicitation_id) > 200
+        or not isinstance(revision, int) or isinstance(revision, bool) or revision < 0
+        or not isinstance(submission_id, str) or not submission_id or len(submission_id) > 200
+    ):
+        raise ElicitationStateError(
+            'The question identity is incomplete. Please use the latest question.',
+            code='elicitation_identity_invalid', status_code=400,
+        )
+
+    question = record['question']
+    if not identity_supplied:
+        # Legacy clients can answer this one owner's pending turn, but never supply a
+        # schema. A repeated legacy payload can also retrieve its last successful result.
+        for completed in reversed(record.get('submissions') or []):
+            if completed.get('legacy') and completed.get('fingerprint') == fingerprint:
+                return {'record': record, 'outcome': completed['outcome'], 'replayed': True}
+        elicitation_id = question['elicitation_id']
+        revision = question['revision']
+        submission_id = f'legacy_{fingerprint}'
+
+    for completed in record.get('submissions') or []:
+        if completed.get('submission_id') != submission_id:
+            continue
+        if (
+            completed.get('fingerprint') != fingerprint
+            or completed.get('elicitation_id') != elicitation_id
+            or completed.get('revision') != revision
+        ):
+            raise ElicitationStateError(
+                'That submission was already used for another answer.',
+                code='elicitation_submission_conflict',
+            )
+        return {'record': record, 'outcome': completed['outcome'], 'replayed': True}
+
+    if (
+        record.get('status') == 'completed'
+        or question.get('elicitation_id') != elicitation_id
+        or question.get('revision') != revision
+    ):
+        raise ElicitationStateError(
+            'This answer is for an older question. Please use the latest question.',
+            code='elicitation_stale',
+        )
+
+    prepared = record.get('prepared')
+    if prepared and (
+        prepared['submission']['submission_id'] != submission_id
+        or prepared['submission']['fingerprint'] != fingerprint
+    ):
+        raise ElicitationStateError(
+            'An answer is already being saved. Retry the previous submission.',
+            code='elicitation_submission_conflict',
+        )
+
+    previous_claim = record.get('claim') or {}
+    if previous_claim:
+        try:
+            elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(previous_claim['started_at'])).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            elapsed = 0
+        if elapsed < ELICITATION_CLAIM_SECONDS:
+            raise ElicitationStateError(
+                'This answer is still being processed. Please retry shortly.',
+                code='elicitation_in_progress',
+            )
+
+    claim = {
+        'token': uuid.uuid4().hex,
+        'submission_id': submission_id,
+        'elicitation_id': elicitation_id,
+        'revision': revision,
+        'fingerprint': fingerprint,
+        'legacy': not identity_supplied,
+        'started_at': _utc_now_iso(),
+    }
+    updated = _replace_pending(record, {'claim': claim, 'status': 'processing'})
+    return {'record': updated, 'claim': claim, 'outcome': (prepared or {}).get('outcome'), 'replayed': False}
+
+
+def _read_claimed_record(submission):
+    record = submission['record']
+    current = get_pending_elicitation(record['user_id'], record['conversation_id'], record['turn_id'])
+    if not current or (current.get('claim') or {}).get('token') != submission['claim']['token']:
+        raise ElicitationStateError(
+            'This answer was superseded. Please retry the latest submission.',
+            code='elicitation_stale',
+        )
+    return current
+
+
+def prepare_elicitation_outcome(submission, kind, document, turn_context):
+    """Durably choose IDs and output before any idempotent run/message writes."""
+    current = _read_claimed_record(submission)
+    outcome = {'kind': kind, 'document': deepcopy(document)}
+    updated = _replace_pending(current, {
+        'prepared': {
+            'submission': deepcopy(submission['claim']),
+            'outcome': outcome,
+            'turn_context': deepcopy(turn_context),
+        },
+    })
+    submission['record'] = updated
+    submission['outcome'] = outcome
+    return outcome
+
+
+def complete_elicitation_submission(submission):
+    current = _read_claimed_record(submission)
+    prepared = current.get('prepared')
+    if not prepared:
+        raise ElicitationStateError('The answer has not finished saving. Please retry.')
+    outcome = prepared['outcome']
+    completed = {**prepared['submission'], 'outcome': outcome}
+    updates = {
+        'submissions': ((current.get('submissions') or []) + [completed])[-ELICITATION_RETAINED_SUBMISSIONS:],
+        'turn_context': prepared['turn_context'],
+        'status': 'pending' if outcome['kind'] == 'elicitation' else 'completed',
+        'claim': None,
+        'prepared': None,
+    }
+    if outcome['kind'] == 'elicitation':
+        updates['question'] = outcome['document']
+    _replace_pending(current, updates)
+    return outcome
+
+
+def release_elicitation_submission(submission):
+    """Release only our own claim; a prepared outcome survives materialization failures."""
+    if not submission or submission.get('replayed'):
+        return
+    try:
+        current = _read_claimed_record(submission)
+        _replace_pending(current, {'claim': None, 'status': 'pending'})
+    except ElicitationStateError:
+        return
+    except Exception as exc:
+        log_event(
+            f'{_LOG_PREFIX} Pending submission could not be released.',
+            extra={'exception_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
 
 
 # --------------------------------------------------------------------------------------

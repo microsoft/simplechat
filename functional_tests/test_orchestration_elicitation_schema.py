@@ -1,8 +1,9 @@
+# test_orchestration_elicitation_schema.py
 #!/usr/bin/env python3
 """
 Functional test for the chat orchestration elicitation contract.
-Version: 0.261.085
-Implemented in: 0.261.085
+Version: 0.261.096
+Implemented in: 0.261.096
 
 When the orchestrator cannot plan without more information it asks in an inline card
 rather than in the chat thread. The card is driven by a JSON Schema, and that schema is
@@ -164,6 +165,14 @@ def test_response_validation():
                 question, {'action': 'accept', 'content': {'timeframe': 'Last year'}}
             )
             assert missing is None and errors
+            empty, errors = schema.validate_elicitation_response(
+                question, {'action': 'accept', 'content': {'documents': []}}
+            )
+            assert empty is None and errors, 'An empty required array is not an answer'
+            extra, errors = schema.validate_elicitation_response(
+                question, {'action': 'accept', 'content': {'documents': ['docA'], 'invented': 'value'}}
+            )
+            assert extra is None and errors, 'Unknown fields must not enter accepted context'
 
             # Declining carries no content; reading any would be a way to smuggle answers
             # past the user's refusal.
@@ -187,13 +196,67 @@ def test_response_validation():
         return False
 
 
+def test_file_hints_only_enrich_real_candidates():
+    with stubbed_app_imports():
+        import functions_orchestration_schema as schema
+
+        raw = _question()
+        raw['ui_hints']['fields'] = {
+            'documents': {
+                'input': 'files', 'candidate_ids': ['docA', 'invented-name.pdf'],
+                'candidates': [{'id': 'invented-name.pdf', 'label': 'Not an actual candidate'}],
+            },
+        }
+        candidate = {
+            'kind': 'document', 'id': 'docA', 'label': 'A real source',
+            'scope': {'kind': 'personal', 'id': None},
+        }
+        question = schema.normalize_elicitation(raw, None, candidate_references=[candidate])
+        assert question['contract_version'] == 2
+        assert 'enum' not in question['requested_schema']['properties']['documents']['items']
+        assert question['requested_schema']['properties']['timeframe']['enum'] == ['Last quarter', 'Last year']
+        assert question['ui_hints']['fields']['documents']['candidates'] == [candidate]
+        unverified = schema.normalize_elicitation(raw, None)
+        assert unverified['ui_hints']['fields']['documents']['candidates'] == []
+    return True
+
+
+def test_required_false_zero_and_primitive_arrays():
+    with stubbed_app_imports():
+        import functions_orchestration_schema as schema
+
+        question = schema.normalize_elicitation({
+            'requested_schema': {
+                'properties': {
+                    'approved': {'type': 'boolean'},
+                    'count': {'type': 'integer'},
+                    'numbers': {'type': 'array', 'items': {'type': 'number'}, 'minItems': 1, 'maxItems': 2},
+                    'flags': {'type': 'array', 'items': {'type': 'boolean', 'enum': [False, True]}},
+                },
+                'required': ['approved', 'count', 'numbers', 'flags'],
+            },
+        }, None)
+        valid = {'approved': False, 'count': 0, 'numbers': [0, 1.25], 'flags': [False]}
+        response, errors = schema.validate_elicitation_response(question, {'action': 'accept', 'content': valid})
+        assert not errors, errors
+        assert response['content'] == valid
+        for name, value in (('numbers', []), ('numbers', [0, 1, 2]), ('flags', []), ('numbers', [float('nan')]), ('flags', [{}])):
+            response, errors = schema.validate_elicitation_response(
+                question, {'action': 'accept', 'content': {**valid, name: value}},
+            )
+            assert response is None and errors, (name, value)
+    return True
+
+
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.085")
+    assert_app_version_at_least("0.261.096")
 
     tests = [
         test_enforces_the_mcp_restriction,
         test_paging_stays_outside_the_schema,
         test_response_validation,
+        test_file_hints_only_enrich_real_candidates,
+        test_required_false_zero_and_primitive_arrays,
     ]
     results = []
     for test in tests:

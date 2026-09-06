@@ -18,16 +18,20 @@ response outlives the request context, so touching ``request`` from inside the g
 raises rather than returning the value it would have had -- a failure that only appears
 once streaming is actually exercised.
 
-Version: 0.261.085
+Version: 0.261.096
 """
 
+import hashlib
+import json
 import logging
 import queue
 import threading
 import uuid
+from copy import deepcopy
 from agent_execution_context import capture_execution_identity
 from datetime import datetime, timezone
 
+from azure.cosmos import exceptions
 from flask import Response, jsonify, request, session
 
 from config import cosmos_conversations_container, cosmos_messages_container
@@ -41,12 +45,18 @@ from functions_authentication import (
     user_required,
 )
 from functions_orchestration_context import (
+    ELICITATION_CONTEXT_BYTE_LIMIT,
+    ElicitationContextError,
     build_conversation_signals,
+    build_elicitation_user_request,
     build_planner_context,
     build_run_ledger,
     collect_answered_questions,
+    merge_elicitation_context,
+    normalize_elicitation_answer,
     resolve_agent_catalog,
     resolve_candidate_documents,
+    resolve_elicitation_references,
     resolve_seeds,
 )
 from functions_orchestration_events import (
@@ -71,10 +81,16 @@ from functions_orchestration_planner import (
     triage_request,
 )
 from functions_orchestration_runs import (
+    ElicitationStateError,
+    claim_elicitation_submission,
+    complete_elicitation_submission,
     create_orchestration_run,
+    create_pending_elicitation,
     get_orchestration_run,
     list_conversation_runs,
     list_run_steps,
+    prepare_elicitation_outcome,
+    release_elicitation_submission,
     save_orchestration_step,
     update_orchestration_run,
 )
@@ -88,7 +104,6 @@ from functions_orchestration_schema import (
     apply_plan_edits,
     normalize_plan,
     summarize_plan,
-    validate_elicitation_response,
 )
 from functions_settings import get_settings, get_user_settings
 from swagger_wrapper import get_auth_security, swagger_route
@@ -308,11 +323,17 @@ def _ensure_conversation(conversation_id, user_id, title=''):
             # id cannot be used to probe for conversations that exist.
             return None, False
         return conversation_id, False
-    except Exception:
+    except exceptions.CosmosResourceNotFoundError:
         pass
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION] Conversation ownership could not be verified.',
+            extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        return None, False
 
     try:
-        cosmos_conversations_container.upsert_item({
+        cosmos_conversations_container.create_item({
             'id': conversation_id,
             'user_id': user_id,
             'last_updated': now,
@@ -481,14 +502,14 @@ def _record_cited_documents(conversation_id, user_id, document_citations):
                   level=logging.WARNING)
 
 
-def _save_message(conversation_id, role, content, metadata=None, extra=None):
+def _save_message(conversation_id, role, content, metadata=None, extra=None, message_id=None):
     """Write one message, returning its id.
 
     ``extra`` carries the citation fields an assistant message needs. They are top-level
     rather than nested in metadata because that is where every existing reader looks for
     them -- the renderer, the citation lookup and the used-document tracking alike.
     """
-    message_id = f"{role}_{uuid.uuid4().hex}"
+    message_id = message_id or f"{role}_{uuid.uuid4().hex}"
     document = {
         'id': message_id,
         'conversation_id': conversation_id,
@@ -505,11 +526,40 @@ def _save_message(conversation_id, role, content, metadata=None, extra=None):
         cosmos_messages_container.upsert_item(document)
     except Exception as exc:
         log_event(
-            f"[ORCHESTRATION] Could not save a {role} message: {exc}",
-            level=logging.ERROR, exceptionTraceback=True,
+            f'[ORCHESTRATION] Could not save a {role} message.',
+            extra={'exception_type': type(exc).__name__},
+            level=logging.ERROR,
         )
         return None
     return message_id
+
+
+def _elicitation_outcome_events(outcome):
+    if outcome['kind'] == 'elicitation':
+        yield build_elicitation_event(outcome['document'])
+    else:
+        yield build_planning_thought('Plan ready.', status='completed')
+        yield build_plan_event(outcome['document'])
+
+
+def _persist_planned_turn(plan, turn_context, user_id, conversation_id):
+    message_id = _save_message(
+        conversation_id, 'user', turn_context['user_message'],
+        message_id=turn_context['user_message_id'],
+    )
+    if not message_id:
+        raise RuntimeError('The user message could not be saved.')
+    create_orchestration_run(
+        plan, user_id, conversation_id=conversation_id, idempotent=True,
+        initial_updates={
+            'user_message': turn_context['user_message'],
+            'user_message_id': message_id,
+            'turn_id': turn_context['turn_id'],
+            'seeds': turn_context['seeds'],
+            'original_seeds': turn_context['original_seeds'],
+            'answered_questions': turn_context['answered_questions'],
+        },
+    )
 
 
 def _touch_conversation(conversation_id, user_id, title=None):
@@ -555,8 +605,11 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({'error': 'A plan request must be an object.'}), 400
         message = _text(data.get('message'))
-        if not message:
+        is_reply = 'elicitation_response' in data
+        if not message and not is_reply:
             return jsonify({'error': 'A message is required.'}), 400
 
         conversation_id = _text(data.get('conversation_id'))
@@ -574,29 +627,119 @@ def register_route_backend_orchestration(bp):
         seeds = resolve_seeds(data)
         recent_messages = data.get('recent_messages')
         replan_hint = _text(data.get('replan_hint'), 600)
-
-        # An answered question is folded into the message the planner sees, so the next plan
-        # is built with the answer in hand rather than being told a question was asked.
-        answered = None
         answered_record = []
-        elicitation_response = data.get('elicitation_response')
-        prior_elicitation = data.get('elicitation')
-        if isinstance(elicitation_response, dict) and isinstance(prior_elicitation, dict):
-            validated, errors = validate_elicitation_response(
-                prior_elicitation, elicitation_response
-            )
-            if errors:
-                return jsonify({'error': 'The answers were not valid.', 'details': errors}), 400
-            if validated['action'] == ELICITATION_ACTION_ACCEPT:
-                answered = validated['content']
-                answered_record = [{
-                    'elicitation_id': prior_elicitation.get('elicitation_id'),
-                    'question': _text(prior_elicitation.get('message'), 240),
-                    'answer': answered,
-                }]
-            # Declining is a decision rather than a failure: plan without the answer instead
-            # of asking again. Either way this is a new attempt at the same turn.
-            revision += 1
+        submission = None
+        allow_elicitation = True
+        turn_context = {
+            'user_message': message,
+            'user_message_id': f'user_{uuid.uuid4().hex}',
+            'turn_id': turn_id,
+            'seeds': seeds,
+            'original_seeds': deepcopy(seeds),
+            'answered_questions': [],
+            'recent_messages': recent_messages,
+            'approval_mode': approval_mode,
+            'replan_hint': replan_hint,
+        }
+        if is_reply:
+            try:
+                if not conversation_id or not data.get('turn_id'):
+                    raise ElicitationStateError('This question has expired. Please send the request again.')
+                # Do not create a missing conversation on the answer path, and never use a
+                # browser-supplied question/schema as the authority for validating a reply.
+                conversation = cosmos_conversations_container.read_item(
+                    item=conversation_id, partition_key=conversation_id,
+                )
+                if conversation.get('user_id') != user_id:
+                    raise ElicitationStateError('This question has expired. Please send the request again.')
+                response = data.get('elicitation_response')
+                if not isinstance(response, dict):
+                    raise ElicitationContextError('The question response must be an object.')
+                answer_context = data.get('elicitation_context')
+                if response.get('action') in ('decline', 'cancel'):
+                    response = {'action': response['action'], 'content': {}}
+                    answer_context = {}
+                try:
+                    fingerprint_data = json.dumps(
+                        {'response': response, 'context': answer_context or {}},
+                        sort_keys=True, ensure_ascii=False, allow_nan=False,
+                    ).encode('utf-8')
+                except (TypeError, ValueError) as exc:
+                    raise ElicitationContextError('The answer contains an invalid value.') from exc
+                if len(fingerprint_data) > ELICITATION_CONTEXT_BYTE_LIMIT:
+                    raise ElicitationContextError('The answer is too large. Shorten it and try again.')
+                submission = claim_elicitation_submission(
+                    user_id, conversation_id, turn_id,
+                    hashlib.sha256(fingerprint_data).hexdigest(),
+                    elicitation_id=data.get('elicitation_id'),
+                    revision=data.get('elicitation_revision'),
+                    submission_id=data.get('elicitation_submission_id'),
+                )
+                if submission.get('replayed'):
+                    return _sse(_elicitation_outcome_events(submission['outcome']))
+                pending = submission['record']
+                if submission.get('outcome'):
+                    turn_context = deepcopy(pending['prepared']['turn_context'])
+                else:
+                    turn_context = deepcopy(pending['turn_context'])
+                    question = pending['question']
+                    validated, normalized_context = normalize_elicitation_answer(
+                        question, response, answer_context,
+                        user_id, conversation_id, settings=settings,
+                    )
+                    turn_context['answered_questions'] = [
+                        *(turn_context.get('answered_questions') or []),
+                        {
+                            'elicitation_id': question['elicitation_id'],
+                            'revision': question['revision'],
+                            'question': question['message'],
+                            'action': validated['action'],
+                            'answer': validated['content'],
+                            'context': normalized_context,
+                        },
+                    ]
+                    if len(json.dumps(turn_context['answered_questions']).encode('utf-8')) > ELICITATION_CONTEXT_BYTE_LIMIT:
+                        raise ElicitationContextError('This turn has too much answer context. Start a new request with a shorter summary.')
+                    if validated['action'] == ELICITATION_ACTION_ACCEPT:
+                        turn_context['seeds'] = merge_elicitation_context(turn_context['seeds'], normalized_context)
+                    allow_elicitation = validated['action'] == ELICITATION_ACTION_ACCEPT
+                # These values come from the original turn, not the answer request. In
+                # particular a local answer prompt cannot replace the main prompt/model.
+                message = turn_context['user_message']
+                seeds = turn_context['seeds']
+                answered_record = turn_context['answered_questions']
+                recent_messages = turn_context.get('recent_messages')
+                approval_mode = turn_context.get('approval_mode', '')
+                if not settings.get('chat_orchestration_allow_user_approval_override', True):
+                    approval_mode = ''
+                replan_hint = turn_context.get('replan_hint', '')
+                revision = pending['question']['revision'] + 1
+                resolve_elicitation_references(
+                    seeds.get('elicitation_references') or [],
+                    user_id, conversation_id, settings=settings,
+                )
+            except ElicitationStateError as exc:
+                release_elicitation_submission(submission)
+                return jsonify({'error': exc.message, 'code': exc.code}), exc.status_code
+            except ElicitationContextError as exc:
+                release_elicitation_submission(submission)
+                payload = {'error': 'The answers were not valid.', 'details': [exc.message]}
+                if exc.field:
+                    payload['field_errors'] = {exc.field: exc.message}
+                return jsonify(payload), 400
+            except exceptions.CosmosResourceNotFoundError:
+                release_elicitation_submission(submission)
+                return jsonify({
+                    'error': 'This question has expired. Please send the request again.',
+                    'code': 'elicitation_expired',
+                }), 409
+            except Exception as exc:
+                release_elicitation_submission(submission)
+                log_event(
+                    '[ORCHESTRATION] Clarification could not be resumed.',
+                    extra={'exception_type': type(exc).__name__}, level=logging.ERROR,
+                )
+                return jsonify({'error': 'The answer could not be checked. Please retry.'}), 503
 
         # Captured on the request thread, before the streamed generator body runs. See
         # _request_identity: a generator runs after the view returns, when the session is
@@ -605,6 +748,13 @@ def register_route_backend_orchestration(bp):
 
         def generate():
             try:
+                if submission and submission.get('outcome'):
+                    outcome = submission['outcome']
+                    if outcome['kind'] == 'plan':
+                        _persist_planned_turn(outcome['document'], turn_context, user_id, conversation_id)
+                    complete_elicitation_submission(submission)
+                    yield from _elicitation_outcome_events(outcome)
+                    return
                 resolved_conversation_id, created = _ensure_conversation(
                     conversation_id, user_id, title=message
                 )
@@ -618,18 +768,18 @@ def register_route_backend_orchestration(bp):
                         resolved_conversation_id, _text(message, 80)
                     )
 
+                effective_request = build_elicitation_user_request(message, answered_record)
                 candidates, _probed = resolve_candidate_documents(
-                    message, user_id, seeds=seeds,
+                    effective_request, user_id, seeds=seeds,
                     conversation_id=resolved_conversation_id, settings=settings,
                 )
                 ledger = _load_ledger(resolved_conversation_id, user_id, settings)
-                signals = build_conversation_signals(recent_messages, message)
+                signals = build_conversation_signals(recent_messages, effective_request)
 
                 context = build_planner_context(
                     message, candidates=candidates, seeds=seeds, ledger=ledger, signals=signals,
+                    answered_questions=answered_record,
                 )
-                if answered:
-                    context['answered_now'] = answered
 
                 complexity = triage_request(message, context)
                 yield build_triage_thought(complexity)
@@ -666,9 +816,8 @@ def register_route_backend_orchestration(bp):
                     context = build_planner_context(
                         message, candidates=candidates, seeds=seeds, ledger=ledger,
                         signals=signals, agents=agent_catalog,
+                        answered_questions=answered_record,
                     )
-                    if answered:
-                        context['answered_now'] = answered
 
                     kind, plan = plan_request(
                         message, context, resolved_conversation_id, user_id,
@@ -677,68 +826,58 @@ def register_route_backend_orchestration(bp):
                         authorized_document_ids=authorized,
                         replan_hint=replan_hint or None,
                         revision=revision,
+                        allow_elicitation=allow_elicitation,
                         turn_id=turn_id, seeds=seeds, document_labels=labels,
                         # Narrows one resolution and thereby three things: what the planner
                         # is offered, what the validator will accept, and so what can reach
                         # an adapter. Without it a plan could propose reading links in a
                         # message that has none, or an agent this user does not have.
                         request_context=_capability_request_context(
-                            user_id, identity, message, agent_catalog,
+                            user_id, identity, effective_request, agent_catalog,
                         ),
                     )
 
                 if kind == 'elicitation':
-                    # `plan` holds an elicitation here. Nothing is persisted: a question is
-                    # not a run, and creating a record for one would put a run in the map
-                    # view that never did anything.
                     plan['turn_id'] = turn_id
                     plan['conversation_id'] = resolved_conversation_id
-                    yield build_elicitation_event(plan)
+                    plan['revision'] = revision
+                    if submission:
+                        outcome = prepare_elicitation_outcome(submission, kind, plan, turn_context)
+                        complete_elicitation_submission(submission)
+                    else:
+                        pending = create_pending_elicitation(
+                            plan, turn_context, user_id, resolved_conversation_id, turn_id,
+                        )
+                        outcome = (
+                            pending['submissions'][-1]['outcome']
+                            if pending.get('status') == 'completed'
+                            else {'kind': 'elicitation', 'document': pending['question']}
+                        )
+                    yield from _elicitation_outcome_events(outcome)
                     return
-
-                # The question is recorded once a plan exists for it, so a conversation
-                # never shows a user message whose work was never planned.
-                user_message_id = _save_message(resolved_conversation_id, 'user', message)
 
                 plan['revision'] = revision
-                try:
-                    create_orchestration_run(
-                        plan, user_id, conversation_id=resolved_conversation_id,
-                    )
-                    # Written straight after creation rather than through the create call,
-                    # because the run endpoint is a separate request that has none of this:
-                    # it needs the question that was asked and the selections that
-                    # constrained the plan in order to execute it faithfully.
-                    update_orchestration_run(run_id=plan['run_id'], user_id=user_id, updates={
-                        'user_message': message,
-                        'user_message_id': user_message_id,
-                        'turn_id': turn_id,
-                        'seeds': seeds,
-                        'answered_questions': answered_record,
-                    }, conversation_id=resolved_conversation_id)
-                except Exception as exc:
-                    # A plan that cannot be stored cannot be run, because the run endpoint
-                    # loads it by id. Better to say so now than to show a plan whose
-                    # Approve button would fail.
-                    log_event(
-                        f"[ORCHESTRATION] Could not persist a plan: {exc}",
-                        level=logging.ERROR, exceptionTraceback=True,
-                    )
-                    yield build_error_event('The plan could not be saved.',
-                                            resolved_conversation_id)
-                    return
-
-                yield build_planning_thought('Plan ready.', status='completed')
-                yield build_plan_event(plan)
+                outcome = {'kind': kind, 'document': plan}
+                if submission:
+                    outcome = prepare_elicitation_outcome(submission, kind, plan, turn_context)
+                _persist_planned_turn(plan, turn_context, user_id, resolved_conversation_id)
+                if submission:
+                    complete_elicitation_submission(submission)
+                yield from _elicitation_outcome_events(outcome)
 
             except Exception as exc:
                 log_event(
-                    f"[ORCHESTRATION] Planning failed: {exc}",
-                    level=logging.ERROR, exceptionTraceback=True,
+                    '[ORCHESTRATION] Planning failed.',
+                    extra={'exception_type': type(exc).__name__}, level=logging.ERROR,
                 )
-                yield build_error_event('The request could not be planned.', conversation_id)
+                yield build_error_event('The request could not be planned or saved. Please retry.', conversation_id)
+            finally:
+                release_elicitation_submission(submission)
 
-        return _sse(generate())
+        streamed = _sse(generate())
+        if submission:
+            streamed.call_on_close(lambda: release_elicitation_submission(submission))
+        return streamed
 
     @bp.route("/api/v2/orchestration/run", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -778,6 +917,18 @@ def register_route_backend_orchestration(bp):
 
         conversation_id = conversation_id or _text(record.get('conversation_id'))
 
+        seeds = record.get('seeds') if isinstance(record.get('seeds'), dict) else {}
+        try:
+            resolve_elicitation_references(
+                seeds.get('elicitation_references') or [],
+                user_id, conversation_id, settings=settings,
+            )
+        except ElicitationContextError as exc:
+            return jsonify({
+                'error': 'Some accepted answer context is no longer available.',
+                'details': [exc.message],
+            }), 409
+
         # One accumulator for the whole run, filled by every model call the closure makes.
         run_token_usage = {}
         try:
@@ -786,7 +937,6 @@ def register_route_backend_orchestration(bp):
             log_event(f"[ORCHESTRATION] No usable chat model: {exc}", level=logging.ERROR)
             return jsonify({'error': 'No chat model is configured.'}), 503
 
-        seeds = record.get('seeds') if isinstance(record.get('seeds'), dict) else {}
         user_message = _text(record.get('user_message')) or _text(
             (plan.get('intent') or {}).get('summary')
         )
@@ -881,13 +1031,17 @@ def register_route_backend_orchestration(bp):
                 turn_index=record.get('turn_index') or 0,
                 invoke_prompt=invoke_prompt,
                 user_message=user_message,
+                user_message_id=record.get('user_message_id'),
+                answered_questions=record.get('answered_questions') or [],
+                elicitation_references=seeds.get('elicitation_references') or [],
+                selected_document_ids=seeds.get('document_ids') or [],
+                original_seeds=record.get('original_seeds') or {},
                 doc_scope=seeds.get('doc_scope') or 'all',
                 tags=seeds.get('tags') or None,
                 document_filter_mode=seeds.get('document_filter_mode') or None,
                 active_group_ids=seeds.get('active_group_ids') or None,
-                active_public_workspace_id=(
-                    (seeds.get('active_public_workspace_ids') or [None])[0]
-                ),
+                active_public_workspace_id=(seeds.get('active_public_workspace_ids') or [None])[0],
+                active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
                 # Read on the request thread; see _request_identity.
                 user_roles=identity.get('user_roles'),
                 user_email=identity.get('user_email'),
@@ -948,6 +1102,12 @@ def register_route_backend_orchestration(bp):
 
             result = outcome['result']
             answer = _text(result.get('message'))
+            if (result.get('reauthorization') or {}).get('reason') == 'elicitation_context_unavailable':
+                yield build_error_event(
+                    'Accepted answer context is no longer available. Please update the answer or retry.',
+                    conversation_id,
+                )
+                return
             if result.get('status') == PLAN_STATUS_CANCELLED:
                 yield build_cancelled_event(conversation_id, run_id, answer)
                 return

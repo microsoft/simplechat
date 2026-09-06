@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
+# test_v2_prompts_workbench.py
 """
 Functional test for the V2 prompts workbench.
 
-Version: 0.261.053
+Version: 0.261.096
 Implemented in: 0.261.053
+Shared composer editor implemented in: 0.261.096
 
 The behavioural half of the front end lives in ``test_v2_prompts_workbench_logic.ts``, run from
 here. This file covers the parts that are only observable in the source, plus the new
@@ -79,6 +80,8 @@ ATTACHED_CARD_TSX = V2_SRC / "components" / "chat" / "AttachedPromptCard.tsx"
 PRESENTATION_TSX = V2_SRC / "components" / "prompts" / "promptPresentation.tsx"
 SLASH_MENU_TSX = V2_SRC / "components" / "chat" / "PromptSlashMenu.tsx"
 COMPOSER_TSX = V2_SRC / "components" / "chat" / "Composer.tsx"
+COMPOSER_EDITOR_TSX = V2_SRC / "components" / "chat" / "ComposerEditor.tsx"
+COMPOSER_DRAFT_TS = V2_SRC / "lib" / "composerDraft.ts"
 MESSAGE_ACTIONS_TSX = V2_SRC / "components" / "chat" / "MessageActions.tsx"
 BOOTSTRAP_STORE_TS = V2_SRC / "stores" / "bootstrapStore.ts"
 MODAL_TSX = V2_SRC / "components" / "ui" / "Modal.tsx"
@@ -384,6 +387,8 @@ def test_picking_a_prompt_does_not_replace_the_composer():
     print("Testing composer insertion...")
 
     composer = _read(COMPOSER_TSX)
+    editor = _read(COMPOSER_EDITOR_TSX)
+    draft = _read(COMPOSER_DRAFT_TS)
     assert "setText(String(prompt.content))" not in composer, (
         "picking a prompt must not replace the composer's contents"
     )
@@ -394,14 +399,17 @@ def test_picking_a_prompt_does_not_replace_the_composer():
     assert "insertIntoComposer(content" not in composer, (
         "prompt content must not be written into the message box"
     )
-    assert "insertPromptText(" in composer, (
+    assert "<ComposerEditor" in composer and "onChange={setDraft}" in composer, (
+        "the main composer must use the controlled shared editor"
+    )
+    assert "attachPromptToDraft(current, prompt, slash)" in editor and "insertPromptText(" in draft, (
         "the slash token the pick consumed must still be removed from the text"
     )
-    assert "AttachedPromptCard" in composer, (
+    assert "AttachedPromptCard" in editor, (
         "an attached prompt must be shown above the message box"
     )
-    assert "readSlashQuery(" in composer, "the `/` menu must be wired to the composer"
-    assert "PromptSlashMenu" in composer
+    assert "readSlashQuery(" in editor, "the `/` menu must be wired to the shared editor"
+    assert "PromptSlashMenu" in editor
     assert "saveWrittenTextAsPrompt" in composer, (
         "drafted composer text must be saveable as a prompt"
     )
@@ -418,7 +426,7 @@ def test_an_attached_prompt_is_resolved_when_the_message_is_sent():
     print("Testing send-time resolution...")
 
     composer = _read(COMPOSER_TSX)
-    assert "promptVariables.resolve(promptContext())" in composer, (
+    assert "buildComposerDraftSubmission(draft, promptContext())" in composer, (
         "the prompt must be resolved against the live composer context, not a snapshot "
         "taken when it was picked"
     )
@@ -452,8 +460,11 @@ def test_the_prompt_is_reported_on_both_send_paths():
     assert "seeds.prompt_info = promptInfo" in composer, (
         "orchestration seeds must carry the same resolved prompt"
     )
-    assert "buildPromptInfo(" in composer, (
+    assert "buildComposerDraftSubmission(draft, promptContext())" in composer, (
         "both paths must build prompt_info through the one shared builder"
+    )
+    assert "buildPromptInfo({" in _read(COMPOSER_DRAFT_TS), (
+        "the draft builder must preserve the existing prompt metadata contract"
     )
 
     print("  ok  both send paths report the prompt")
@@ -465,8 +476,8 @@ def test_nothing_is_prefilled_in_a_shared_conversation():
     print("Testing shared-conversation pre-fill...")
 
     composer = _read(COMPOSER_TSX)
-    assert "shared," in composer, (
-        "the variable values hook must be told whether this is a shared conversation"
+    assert "shared={shared}" in composer and "shared," in _read(COMPOSER_EDITOR_TSX), (
+        "the shared editor and its variable values hook must receive the conversation's privacy boundary"
     )
 
     values = _read(VARIABLE_VALUES_TS)
@@ -649,8 +660,14 @@ def test_the_prompt_handoff_has_a_single_url_writer():
     print("Testing prompt handoff URL ownership...")
 
     composer = _strip_comments(_read(COMPOSER_TSX))
-    assert "setSearchParams" not in composer, (
-        "the composer must not write the chat query string. ChatPage owns it, and "
+    prompt_handoff = re.search(
+        r"if \(promptLinkConsumed\.current.*?\}, \[bootstrap, promptCatalog, linkedPromptId\]\)",
+        composer,
+        re.DOTALL,
+    )
+    assert prompt_handoff, "the captured prompt handoff effect must remain present"
+    assert "setSearchParams" not in prompt_handoff.group(0), (
+        "the prompt handoff must not write the chat query string. ChatPage owns it, and "
         "setSearchParams replaces the whole query from the caller's render snapshot, so a "
         "parameter deleted here is restored by ChatPage's effect in the same commit -- leaving "
         "a URL that re-inserts the prompt on every reload"

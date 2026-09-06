@@ -4,6 +4,8 @@ Attaching a saved prompt to the message you are writing, rather than pasting it
 into the box.
 
 **Implemented in version:** 0.261.092
+**Inline answers implemented in version:** 0.261.096
+**Current feature version:** 0.261.096 (`application/single_app/config.py`)
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal prompts,
 `enable_group_workspaces` and `enable_public_workspaces` to reach those scopes.
@@ -148,6 +150,25 @@ has no length limit and the planner's budget does; a prompt long enough to be cu
 has said what kind of work it is well before that point.
 
 ## What the server records
+
+### Prompts in inline clarification answers
+
+An inline follow-up question accepts `/` saved prompts through the same attached card.
+Expand it to fill variables or edit its wording for that answer. `{{composer}}` means the
+text in that answer editor, not whatever is waiting in the main composer.
+
+Each answer has its own prompt and variable values, so moving between questions does not
+replace another answer or the original request's prompt. Selecting a suggested option and
+adding an attached prompt are compatible: the option remains the primary choice, and the
+filled prompt travels as supplemental answer context.
+
+On acceptance, `elicitation_context` carries the resolved text and prompt metadata for the
+appropriate field. It does not replace the original turn's `prompt_info`. Decline and
+Cancel send neither the prompt nor the draft answer. These boundaries are covered by
+`functional_tests/test_v2_elicitation_answers.py` and
+`ui_tests/test_v2_elicitation_composer.py`.
+
+### Prompts on ordinary messages
 
 `prompt_selection` on the user message keeps its original four fields and gains
 four more:

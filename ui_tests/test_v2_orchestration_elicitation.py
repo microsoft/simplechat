@@ -1,8 +1,9 @@
-#!/usr/bin/env python3
+# test_v2_orchestration_elicitation.py
 """
 UI test for the V2 chat orchestration elicitation card: paged schema form and the MCP answer shape.
-Version: 0.261.085
+Version: 0.261.096
 Implemented in: 0.261.085
+Rich answers implemented in: 0.261.096
 
 When the planner cannot plan without more from the user it returns an elicitation -- a flat
 JSON-Schema object of primitives -- instead of a plan. The card renders it as a short, paged
@@ -19,7 +20,7 @@ the REAL controller with a mocked plan stream. It asserts:
   * Declining sends NO content (an empty object), while accepting carries the entered answer.
 
 No Azure credentials or server are required; the component, store and controller are the shipped
-code. The browser checks are skipped (reported, not failed) when node_modules is absent.
+code. Missing browser dependencies are reported as unavailable coverage, not passing checks.
 """
 
 import sys
@@ -32,7 +33,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.085"
+IMPLEMENTED_IN = "0.261.096"
 
 _PAGE = None
 
@@ -87,7 +88,7 @@ _SEED_ELICITATION = r"""
 """
 
 # Drive the real controller: the first plan POST answers with an elicitation, the re-plan that a
-# decline/accept triggers answers with a bare done. Every plan body is recorded for inspection.
+# decline/accept triggers answers with a real plan. Every plan body is recorded for inspection.
 _DRIVE_ELICITATION = r"""
 async (spec) => {
     const H = window.OrchHarness;
@@ -104,7 +105,19 @@ async (spec) => {
             window.__planCalls.push(parsed);
             const isReplan = Boolean(parsed.elicitation_response);
             const frames = isReplan
-                ? ['data: {"done": true}\n\n']
+                ? ['data: ' + JSON.stringify({
+                      type: 'orchestration_plan',
+                      plan: {
+                          plan_id: 'accepted-plan',
+                          run_id: 'accepted-run',
+                          turn_id: parsed.turn_id,
+                          revision: 1,
+                          intent: { summary: 'Use the supplied answer', complexity: 'simple' },
+                          steps: [{ step_id: 'respond', capability_id: 'respond', title: 'Answer', arguments: {} }],
+                          approval: { mode: 'manual', state: 'pending', timeout_seconds: 0 },
+                          status: 'awaiting_approval',
+                      },
+                  }) + '\n\n']
                 : [
                       'data: ' + JSON.stringify({
                           type: 'orchestration_elicitation',
@@ -156,37 +169,31 @@ def test_version_is_at_least_the_implementing_release():
 
 
 def test_enum_renders_as_a_choice_and_text_as_a_box():
-    """A field with an enum renders as radios; a plain string field renders as a text input."""
+    """Fixed choices stay radios while both question kinds offer rich editing."""
     print("Testing an enum renders as a choice control, not a free-text box...")
     page = _PAGE
     try:
         conv, turn = "c-elic", "t-el"
         page.evaluate(_SEED_ELICITATION, {"conv": conv, "turn": turn, "elicitation": _single_page_schema()})
 
+        topic = page.get_by_role("textbox", name="Topic", exact=True)
+        assert topic.evaluate("el => el.tagName.toLowerCase()") == "textarea"
         shape = page.evaluate(
             r"""
             () => {
                 const root = document.getElementById('mount-a');
-                const topic = root.querySelector('#elicitation-topic');
                 const radios = Array.from(root.querySelectorAll('input[type="radio"]'));
                 return {
-                    topicType: topic ? topic.getAttribute('type') : null,
-                    topicTag: topic ? topic.tagName.toLowerCase() : null,
                     radioCount: radios.length,
                     radioNames: Array.from(new Set(radios.map((r) => r.getAttribute('name')))),
-                    // A well-formed enum field must NOT also render a free-text input for itself.
-                    toneTextInput: Boolean(root.querySelector('#elicitation-tone')),
                     optionText: radios.map((r) => r.closest('label').innerText.trim()),
                 };
             }
             """
         )
-        assert shape["topicTag"] == "input" and shape["topicType"] == "text", (
-            f"the string field must be a text input, saw {shape['topicTag']}/{shape['topicType']}"
-        )
         assert shape["radioCount"] == 3, f"the enum must render 3 radios, saw {shape['radioCount']}"
-        assert shape["radioNames"] == ["tone"], f"radios must belong to 'tone', saw {shape['radioNames']}"
-        assert shape["toneTextInput"] is False, "the enum field must not also offer a free-text box"
+        assert len(shape["radioNames"]) == 1, "the enum must remain one radio group"
+        assert page.get_by_role("textbox", name="Additional details for Tone (optional)").count() == 1
         assert shape["optionText"] == ["formal", "casual", "playful"], shape["optionText"]
         print("  ok  the enum is a radio group and the string is a text box")
         return True
@@ -215,7 +222,7 @@ def test_required_field_gates_finish():
             "the card must explain why Finish is disabled"
         )
 
-        page.fill("#elicitation-topic", "quarterly earnings")
+        page.get_by_role("textbox", name="Topic", exact=True).fill("quarterly earnings")
         page.wait_for_function(
             "() => !document.querySelector(\"#mount-a button[type='submit']\").disabled",
             timeout=5000,
@@ -246,13 +253,13 @@ def test_paging_next_back_and_finish():
 
         def indicator():
             return page.evaluate(
-                "() => document.querySelector('#mount-a span[aria-hidden=\"true\"]').innerText.trim()"
+                "() => document.querySelector('#mount-a [aria-label^=\"Question page\"]').innerText.trim()"
             )
 
         # Page 1: the text field, a Next submit, and no Back yet.
         assert indicator() == "1/3", f"expected page 1 of 3, saw {indicator()}"
         assert page.inner_text(submit).strip() == "Next"
-        assert page.query_selector("#elicitation-topic") is not None
+        assert page.get_by_role("textbox", name="Topic", exact=True).count() == 1
         assert page.evaluate(
             "() => Array.from(document.querySelectorAll('#mount-a button'))"
             ".some(b => b.innerText.trim() === 'Back')"
@@ -261,7 +268,7 @@ def test_paging_next_back_and_finish():
         # Advance to page 2: the enum.
         page.click(submit)
         page.wait_for_function(
-            "() => document.querySelector('#mount-a span[aria-hidden=\"true\"]').innerText.trim() === '2/3'",
+            "() => document.querySelector('#mount-a [aria-label^=\"Question page\"]').innerText.trim() === '2/3'",
             timeout=5000,
         )
         assert page.query_selector("#mount-a input[type='radio']") is not None, "page 2 shows the enum"
@@ -273,7 +280,7 @@ def test_paging_next_back_and_finish():
         # Advance to page 3: the number, and the submit becomes Finish.
         page.click(submit)
         page.wait_for_function(
-            "() => document.querySelector('#mount-a span[aria-hidden=\"true\"]').innerText.trim() === '3/3'",
+            "() => document.querySelector('#mount-a [aria-label^=\"Question page\"]').innerText.trim() === '3/3'",
             timeout=5000,
         )
         assert page.inner_text(submit).strip() == "Finish", "the last page's submit must read Finish"
@@ -283,7 +290,7 @@ def test_paging_next_back_and_finish():
         # Back returns to page 2.
         page.click("#mount-a button:has-text('Back')")
         page.wait_for_function(
-            "() => document.querySelector('#mount-a span[aria-hidden=\"true\"]').innerText.trim() === '2/3'",
+            "() => document.querySelector('#mount-a [aria-label^=\"Question page\"]').innerText.trim() === '2/3'",
             timeout=5000,
         )
         print("  ok  paged forward to Finish and back again")
@@ -343,7 +350,7 @@ def test_accepting_carries_the_answer():
         turn = page.evaluate(_DRIVE_ELICITATION, {"conv": conv, "elicitation": _single_page_schema()})
         assert turn, "the controller must have minted a turn and set the elicitation"
 
-        page.fill("#elicitation-topic", "supply chain risk")
+        page.get_by_role("textbox", name="Topic", exact=True).fill("supply chain risk")
         page.wait_for_function(
             "() => !document.querySelector(\"#mount-a button[type='submit']\").disabled",
             timeout=5000,
@@ -390,8 +397,8 @@ def main():
                 page.evaluate("() => window.OrchHarness.reset()")
                 results.append(test())
     except hb.HarnessUnavailable as exc:
-        print(f"\n  --  skipped the browser-driven checks: {exc}")
-        results.extend([True] * len(PAGE_TESTS))
+        print(f"\nBrowser coverage is unavailable: {exc}")
+        return False
 
     if errors:
         print("\nUncaught page errors observed during the run:")
@@ -399,7 +406,7 @@ def main():
             print(f"  !!  {message}")
 
     print(f"\nResults: {sum(results)}/{len(results)} tests passed")
-    return all(results)
+    return all(results) and not errors
 
 
 if __name__ == "__main__":
