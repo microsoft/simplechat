@@ -51,9 +51,11 @@ import {
     buildComposerDraftSubmission,
     composerDraftContextItems,
     composerDraftHasPendingUploads,
+    composerDraftUnfilledVariables,
+    composerDraftUserPromptValues,
     createComposerDraft,
 } from '../../lib/composerDraft';
-import { ComposerEditor } from './ComposerEditor';
+import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
 import {
     CONTEXT_HANDOFF_PARAMS,
     readContextHandoff,
@@ -135,7 +137,7 @@ function ToolToggle({
     );
 }
 
-export function Composer() {
+export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
     const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
     // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
     // suggested when saving what is written as a prompt.
@@ -199,9 +201,11 @@ export function Composer() {
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const editorActionsRef = useRef<ComposerEditorActions>(null);
 
     const [draft, setDraft] = useState(createComposerDraft);
     const { text, attachedPrompt } = draft;
+    const promptInstance = draft.promptInstance ?? 0;
     const contextItems = composerDraftContextItems(draft);
     const uploading = composerDraftHasPendingUploads(draft);
     const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
@@ -213,10 +217,20 @@ export function Composer() {
     const chatWidth = useUiStore((state) => state.chatWidth);
 
     /** Set while a prompt is waiting on its large-run confirmation. */
-    const [largeRun, setLargeRun] = useState<TabularRunEstimate | null>(null);
+    const [largeRun, setLargeRun] = useState<{
+        estimate: TabularRunEstimate;
+        outgoing: { message: string; promptInfo: Json | null };
+        draftKey: string;
+    } | null>(null);
 
     /** Whether the Documents button's picker is open. */
     const [pickerOpen, setPickerOpen] = useState(false);
+    const [showPromptWarning, setShowPromptWarning] = useState(false);
+    const [promptReview, setPromptReview] = useState({ instance: 0, request: 0 });
+    useEffect(() => {
+        setShowPromptWarning(false);
+        setPromptReview({ instance: 0, request: 0 });
+    }, [activeConversationId, shared]);
     /** A prompt being saved from what is currently written, if any. */
     const [savingDraft, setSavingDraft] = useState<PromptDraft | null>(null);
     const [savingPrompt, setSavingPrompt] = useState(false);
@@ -228,6 +242,7 @@ export function Composer() {
         imageGeneration: false,
         deepResearch: false,
         urlAccess: false,
+        agentSelection: initialAgentSelection,
     });
 
     /**
@@ -251,12 +266,12 @@ export function Composer() {
     const orchestrationAvailable = Boolean(
         features.enable_chat_orchestration && orchestrationConfig?.enabled,
     );
-    const [orchestrationOn, setOrchestrationOn] = useState(orchestrationAvailable);
+    const [orchestrationOn, setOrchestrationOn] = useState(orchestrationAvailable && !initialAgentSelection);
     // Whether the user has expressed an opinion. The bootstrap resolves after the first
     // render, so the deployment's answer has to be adopted when it lands -- but adopting it
     // unconditionally would switch orchestration back on every time the payload refreshed,
     // overriding somebody who had just turned it off.
-    const orchestrationChosen = useRef(false);
+    const orchestrationChosen = useRef(Boolean(initialAgentSelection));
     useEffect(() => {
         if (!orchestrationChosen.current) {
             setOrchestrationOn(orchestrationAvailable);
@@ -671,7 +686,13 @@ export function Composer() {
      * The confirmation is raised before anything is sent and before the composer is cleared,
      * so declining leaves the typed prompt exactly where it was to be edited.
      */
-    const submit = () => {
+    const outgoingDraftKey = () =>
+        JSON.stringify([
+            activeConversationId, draft,
+            promptContext(), options, orchestrating,
+        ]);
+
+    const submit = (allowUnfilled = false) => {
         if (streaming || !canPost || uploadsBlocked) {
             return;
         }
@@ -680,11 +701,18 @@ export function Composer() {
         if (!text.trim() && !attachedPrompt) {
             return;
         }
+        if (attachedPrompt && !allowUnfilled && composerDraftUnfilledVariables(draft, promptContext()).length > 0) {
+            setShowPromptWarning(true);
+            setPromptReview((current) => ({ instance: promptInstance, request: current.request + 1 }));
+            return;
+        }
 
         const outgoing = buildOutgoing();
         if (!outgoing.message) {
             return;
         }
+        editorActionsRef.current?.cancelKnowledge();
+        setShowPromptWarning(false);
 
         // Orchestration takes a different road entirely: the server plans the work rather than
         // running a chat stream, so the large-run confirmation — a manual-flow concern about a
@@ -698,7 +726,7 @@ export function Composer() {
         // whether the request came from the card or from the box.
         const estimate = estimateLargeTabularRun(outgoing.message, tabularRunSettings);
         if (estimate.shouldConfirm) {
-            setLargeRun(estimate);
+            setLargeRun({ estimate, outgoing, draftKey: outgoingDraftKey() });
             return;
         }
 
@@ -715,16 +743,19 @@ export function Composer() {
      * just sent, and leaving it attached would silently prepend it to the next message too.
      */
     const clearDraft = () => {
+        editorActionsRef.current?.cancelKnowledge();
         setDraft(createComposerDraft());
         setPickerOpen(false);
         uploadConversationRef.current = null;
+        setShowPromptWarning(false);
+        setPromptReview({ instance: 0, request: 0 });
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
         // Remembered only once the message is actually on its way, so a prompt that was
         // filled in and then abandoned leaves nothing behind.
         if (attachedPrompt && outgoing.promptInfo) {
-            rememberPromptValues(attachedPrompt.id, outgoing.promptInfo.variables as Record<string, string>);
+            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
         if (!activeConversationId && uploadConversationRef.current) {
             useChatStore.setState({
@@ -806,7 +837,7 @@ export function Composer() {
 
     const dispatchOrchestration = (message: string, promptInfo: Json | null = null) => {
         if (attachedPrompt && promptInfo) {
-            rememberPromptValues(attachedPrompt.id, promptInfo.variables as Record<string, string>);
+            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
         }
         const conversationId = activeConversationId ?? uploadConversationRef.current;
         if (!activeConversationId && conversationId) {
@@ -945,8 +976,9 @@ export function Composer() {
      * instruction without a deliberate act.
      */
     const promptContext = () => {
+        const ownMessages = messages.filter((message) => message.conversation_id === activeConversationId);
         const lastOfRole = (role: string) =>
-            [...messages].reverse().find((message) => message.role === role);
+            [...ownMessages].reverse().find((message) => message.role === role);
         const assistant = lastOfRole('assistant');
         const user = lastOfRole('user');
         const conversation = conversations.find((item) => item.id === activeConversationId);
@@ -962,6 +994,9 @@ export function Composer() {
     };
 
     const attachPrompt = (prompt: PromptOption) => {
+        editorActionsRef.current?.cancelKnowledge();
+        setShowPromptWarning(false);
+        setPromptReview({ instance: 0, request: 0 });
         setDraft((current) => attachPromptToDraft(current, prompt));
         window.requestAnimationFrame(() => textareaRef.current?.focus());
     };
@@ -1014,8 +1049,16 @@ export function Composer() {
         const prompt = bootstrap?.catalogs?.prompts?.find((item) => item.id === promptId);
         if (prompt) {
             attachPrompt(prompt as PromptOption);
+        } else if (promptId === undefined) {
+            editorActionsRef.current?.cancelKnowledge();
+            setDraft((current) => ({
+                ...current, attachedPrompt: null, promptValues: {}, promptAiValues: {},
+                promptInstance: (current.promptInstance ?? 0) + 1,
+            }));
+            setShowPromptWarning(false);
+            setPromptReview({ instance: 0, request: 0 });
         } else {
-            setDraft((current) => ({ ...current, attachedPrompt: null, promptValues: {} }));
+            toast.error('That prompt is no longer available.');
         }
     };
 
@@ -1023,10 +1066,17 @@ export function Composer() {
         <div className="shrink-0 px-4 pb-4">
             {largeRun && (
                 <LargeRunDialog
-                    estimate={largeRun}
+                    estimate={largeRun.estimate}
                     onContinue={() => {
                         setLargeRun(null);
-                        dispatch(buildOutgoing());
+                        if (streaming || !canPost || uploadsBlocked) {
+                            return;
+                        }
+                        if (outgoingDraftKey() !== largeRun.draftKey) {
+                            submit();
+                            return;
+                        }
+                        dispatch(largeRun.outgoing);
                     }}
                     onCancel={() => setLargeRun(null)}
                 />
@@ -1066,6 +1116,16 @@ export function Composer() {
                         disabled={!canPost}
                         rows={1}
                         promptContext={promptContext()}
+                        actionsRef={editorActionsRef}
+                        showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
+                        submitDisabled={streaming || uploadsBlocked}
+                        promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
+                        onSendWithUnfilled={() => submit(true)}
+                        knowledgeAgent={buildSelectionFields({
+                            agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                            agentSelection: options.agentSelection,
+                        }).agent_info}
                         shared={shared}
                         textareaRef={textareaRef}
                         fileInputRef={fileInputRef}
@@ -1089,7 +1149,7 @@ export function Composer() {
                             setReplyTo(null);
                             return true;
                         }}
-                        onSubmit={submit}
+                        onSubmit={() => submit()}
                         onUploadComplete={(response, ownerConversationId) => {
                             if (useChatStore.getState().activeConversationId !== ownerConversationId) {
                                 return;
@@ -1222,6 +1282,7 @@ export function Composer() {
                                         clearable
                                         icon={<FileText size={15} />}
                                         onChange={onPickPrompt}
+                                        hint={<>Tip: type <strong>/</strong> in your message to choose a prompt.</>}
                                     />
                                 )}
 
@@ -1381,7 +1442,7 @@ export function Composer() {
                             ) : (
                                 <button
                                     type="button"
-                                    onClick={submit}
+                                    onClick={() => submit()}
                                     disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked}
                                     aria-label={
                                         shared && !streaming

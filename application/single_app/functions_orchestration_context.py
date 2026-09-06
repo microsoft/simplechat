@@ -27,17 +27,28 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.096
+Version: 0.261.099
 """
 
+import hashlib
 import json
 import logging
 import math
 from copy import deepcopy
+from datetime import datetime, timezone
 
 from functions_appinsights import log_event
-from functions_orchestration_registry import WORKSPACE_SCOPE_SETTINGS, build_agent_planner_projection
+from functions_action_catalog import build_action_planner_projection
+from functions_message_block_revisions import resolve_block_sources_in_content
+from functions_message_masking import remove_masked_content
+from functions_orchestration_registry import (
+    CAPABILITY_ACTION_INVOKE,
+    WORKSPACE_SCOPE_SETTINGS,
+    build_agent_planner_projection,
+    resolve_available_capability_ids,
+)
 from functions_orchestration_schema import validate_elicitation_response
+from functions_prompt_metadata import build_prompt_selection_metadata
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -52,10 +63,12 @@ LEDGER_SUMMARY_LENGTH = 240
 LEDGER_MAX_DOCUMENTS_PER_RUN = 8
 LEDGER_MAX_ANSWERED_QUESTIONS = 12
 
-# Conversation history handed to the planner. The planner decides *what to do*, not what
-# to say, so it needs the shape of the conversation rather than its full text.
 HISTORY_MAX_TURNS = 6
-HISTORY_TURN_LENGTH = 300
+HISTORY_MAX_MESSAGES = 50
+HISTORY_MAX_BYTES = 16384
+HISTORY_SCAN_LIMIT = 200
+HISTORY_SCHEMA_VERSION = 1
+CLARIFICATION_MAX_BYTES = 32768
 
 # How much of a selected prompt the planner is shown.
 #
@@ -504,24 +517,38 @@ def resolve_elicitation_candidates(candidates, user_id, conversation_id, seeds=N
 def _normalize_answer_prompt(prompt):
     if not isinstance(prompt, dict) or set(prompt) - {
         'id', 'name', 'content', 'original_content', 'variables', 'edited', 'user_text',
+        'template_content', 'composer_text', 'composer_embedded', 'scope_type', 'scope_name', 'index',
     }:
         raise ElicitationContextError('The attached prompt metadata is invalid.')
     clean = {}
-    for key in ('id', 'name', 'content', 'original_content', 'user_text'):
+    for key in (
+        'id', 'name', 'content', 'original_content', 'user_text',
+        'template_content', 'composer_text', 'scope_type', 'scope_name',
+    ):
         if key in prompt:
-            clean[key] = _bounded_answer_text(prompt[key])
-    if 'edited' in prompt:
-        if not isinstance(prompt['edited'], bool):
+            if prompt[key] is None and key in ('id', 'name', 'scope_type', 'scope_name'):
+                clean[key] = None
+            else:
+                _bounded_answer_text(prompt[key])
+                clean[key] = prompt[key]
+    for key in ('edited', 'composer_embedded'):
+        if key in prompt:
+            if not isinstance(prompt[key], bool):
+                raise ElicitationContextError('The attached prompt metadata is invalid.')
+            clean[key] = prompt[key]
+    if 'index' in prompt:
+        if prompt['index'] is not None and type(prompt['index']) not in (str, int):
             raise ElicitationContextError('The attached prompt metadata is invalid.')
-        clean['edited'] = prompt['edited']
+        clean['index'] = prompt['index']
     if 'variables' in prompt:
         variables = prompt['variables']
         if not isinstance(variables, dict) or len(variables) > 50:
             raise ElicitationContextError('The attached prompt has too many variables.')
-        clean['variables'] = {
-            _bounded_answer_text(key, 128): _bounded_answer_text(value, 4000)
-            for key, value in variables.items()
-        }
+        clean['variables'] = {}
+        for key, value in variables.items():
+            _bounded_answer_text(key, 128)
+            _bounded_answer_text(value, 4000)
+            clean['variables'][key] = value
     return clean
 
 
@@ -556,6 +583,12 @@ def normalize_elicitation_answer(question, response, answer_context, user_id, co
                 context['prompt_info'] = _normalize_answer_prompt(raw['prompt_info'])
                 if not context.get('text'):
                     context['text'] = context['prompt_info'].get('content', '')
+                if any(key in context['prompt_info'] for key in (
+                    'template_content', 'composer_text', 'composer_embedded',
+                )) and build_prompt_selection_metadata(
+                    context['prompt_info'], _elicitation_answer_text(context),
+                ) is None:
+                    raise ElicitationContextError('The attached prompt snapshot does not match this answer.')
             references = raw.get('references', [])
             if not isinstance(references, list):
                 raise ElicitationContextError('Context references must be a list.')
@@ -878,6 +911,27 @@ def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
 # Run ledger
 # --------------------------------------------------------------------------------------
 
+def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None):
+    """Discover action metadata only when this request can use direct actions."""
+    settings = settings or {}
+    seeds = seeds or {}
+    if (seeds.get('agent') or {}).get('name'):
+        return []
+    available = resolve_available_capability_ids(
+        settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        candidate_ids=(CAPABILITY_ACTION_INVOKE,),
+    )
+    if CAPABILITY_ACTION_INVOKE not in available:
+        return []
+
+    # Storage imports initialize Azure clients; keep disabled orchestration lightweight.
+    from functions_action_catalog import build_accessible_action_catalog
+
+    return build_accessible_action_catalog(
+        user_id, settings=settings, user_groups=user_groups,
+    )
+
+
 def _compact_run_entry(entry):
     """Reduce a ledger entry to one line, for when the ledger is over budget."""
     return {
@@ -917,7 +971,7 @@ def build_run_ledger(runs, settings=None, answered_questions=None):
 
     ordered = [
         run for run in (runs or ())
-        if isinstance(run, dict) and run.get('record_type') in (None, 'orchestration_run')
+        if isinstance(run, dict) and run.get('record_type') in (None, 'run', 'orchestration_run')
     ]
     # Zero runs is a real configuration: it makes every turn plan from scratch.
     if max_runs == 0:
@@ -995,7 +1049,7 @@ def collect_answered_questions(runs):
     """
     answered = []
     for run in runs or ():
-        if not isinstance(run, dict) or run.get('record_type') not in (None, 'orchestration_run'):
+        if not isinstance(run, dict) or run.get('record_type') not in (None, 'run', 'orchestration_run'):
             continue
         for item in run.get('answered_questions') or ():
             if isinstance(item, dict) and _text(item.get('question')):
@@ -1007,21 +1061,252 @@ def collect_answered_questions(runs):
 # Conversation signals
 # --------------------------------------------------------------------------------------
 
-def build_conversation_signals(messages, user_message):
-    """The shape of the conversation so far, plus anything in the message itself."""
-    turns = []
-    for message in (messages or ())[-(HISTORY_MAX_TURNS * 2):]:
+class ConversationContextError(ValueError):
+    """Conversation context could not be safely prepared or reused."""
+
+
+def history_message_limit(settings=None):
+    """Honor the chat history setting, rounding up to an even, bounded message count."""
+    try:
+        limit = math.ceil(float((settings or {}).get(
+            'conversation_history_limit', HISTORY_MAX_TURNS
+        )))
+    except (TypeError, ValueError, OverflowError):
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Invalid history limit; using the default.',
+            level=logging.WARNING,
+        )
+        limit = HISTORY_MAX_TURNS
+    return max(0, min(HISTORY_MAX_MESSAGES, limit + limit % 2))
+
+
+def _history_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return '\n'.join(
+            block['text'] for block in content
+            if isinstance(block, dict)
+            and block.get('type') in ('text', 'input_text')
+            and isinstance(block.get('text'), str)
+        )
+    return ''
+
+
+def normalize_history_message(message):
+    """Project one eligible stored message, after masks and current block revisions."""
+    if not isinstance(message, dict) or message.get('role') not in ('user', 'assistant'):
+        return None
+    metadata = message.get('metadata') or {}
+    if not isinstance(metadata, dict):
+        raise ConversationContextError('The conversation contains invalid message metadata.')
+    thread = metadata.get('thread_info') or {}
+    if not isinstance(thread, dict):
+        raise ConversationContextError('The conversation contains invalid thread metadata.')
+    if (
+        metadata.get('masked')
+        or metadata.get('is_generated_chat_artifact')
+        or thread.get('active_thread') is False
+    ):
+        return None
+
+    content = _history_text(message.get('content'))
+    ranges = metadata.get('masked_ranges') or []
+    if not isinstance(ranges, list):
+        raise ConversationContextError('The conversation contains invalid message masks.')
+    content = remove_masked_content(content, ranges)
+    content = resolve_block_sources_in_content(message, content).strip()
+    if not content:
+        return None
+
+    projected = {
+        'id': _text(message.get('id')),
+        'role': message['role'],
+        'content': content,
+        'timestamp': _text(message.get('timestamp')),
+    }
+    projected['fingerprint'] = hashlib.sha256(
+        json.dumps(projected, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    return projected
+
+
+def _history_order(message):
+    timestamp = _text(message.get('timestamp'))
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError:
+        raise ConversationContextError('The conversation contains an invalid timestamp.') from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed, message['id']
+
+
+def conversation_snapshot_size(snapshot):
+    return len(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+
+
+def build_conversation_snapshot(messages, settings=None, *, turn_id=None, truncated=False):
+    """Keep the recent eligible conversation, bounded independently of the current request."""
+    eligible = []
+    for message in messages or ():
         if not isinstance(message, dict):
             continue
-        role = _text(message.get('role'))
-        if role not in ('user', 'assistant'):
+        metadata = message.get('metadata') or {}
+        orchestration = (metadata.get('orchestration') or {}) if isinstance(metadata, dict) else {}
+        if turn_id and isinstance(orchestration, dict) and orchestration.get('turn_id') == turn_id:
             continue
-        content = _text(message.get('content'), HISTORY_TURN_LENGTH)
-        if content:
-            turns.append({'role': role, 'content': content})
+        normalized = normalize_history_message(message)
+        if normalized is not None:
+            if not normalized['id']:
+                raise ConversationContextError('The conversation contains a message without an ID.')
+            eligible.append(normalized)
+    eligible.sort(key=_history_order)
+    limit = history_message_limit(settings)
+    retained = eligible[-limit:] if limit else []
+    snapshot = {
+        'schema_version': HISTORY_SCHEMA_VERSION,
+        'messages': retained,
+        'truncated': bool(truncated or len(eligible) > len(retained)),
+    }
+    while len(retained) > 1 and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        retained.pop(0)
+        snapshot['truncated'] = True
+    if retained and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        # Preserve both ends of an oversized turn; constraints often occur at the end.
+        newest = retained[0]
+        original = newest['content']
+        newest['truncated'] = True
+        snapshot['truncated'] = True
+        lower, upper = 0, len(original)
+        while lower < upper:
+            length = (lower + upper + 1) // 2
+            tail_length = length // 2
+            newest['content'] = (
+                original[:length - tail_length]
+                + '\n[Conversation message truncated.]\n'
+                + (original[-tail_length:] if tail_length else '')
+            )
+            if conversation_snapshot_size(snapshot) <= HISTORY_MAX_BYTES:
+                lower = length
+            else:
+                upper = length - 1
+        tail_length = lower // 2
+        newest['content'] = (
+            original[:lower - tail_length]
+            + '\n[Conversation message truncated.]\n'
+            + (original[-tail_length:] if tail_length else '')
+        )
+    if conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        raise ConversationContextError('The conversation context exceeds its size limit.')
+    return snapshot
+
+
+def validate_conversation_snapshot(snapshot, messages):
+    """Reject a saved context if a source was edited, hidden, or removed after planning."""
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get('schema_version') != HISTORY_SCHEMA_VERSION
+        or not isinstance(snapshot.get('messages'), list)
+        or len(snapshot['messages']) > HISTORY_MAX_MESSAGES
+        or conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES
+    ):
+        raise ConversationContextError('This plan needs to be created again.')
+    current = {}
+    sources = {}
+    for message in messages or ():
+        normalized = normalize_history_message(message)
+        if normalized is not None:
+            current[normalized['id']] = normalized
+            sources[normalized['id']] = message
+    seen = set()
+    for previous in snapshot['messages']:
+        if not isinstance(previous, dict):
+            raise ConversationContextError('This plan needs to be created again.')
+        message_id = previous.get('id')
+        if (
+            not message_id
+            or message_id in seen
+            or message_id not in current
+            or previous.get('fingerprint') != current[message_id]['fingerprint']
+        ):
+            raise ConversationContextError(
+                'Conversation context changed. Create a new plan before running this request.'
+            )
+        seen.add(message_id)
+    rebuilt = build_conversation_snapshot(
+        [sources[item['id']] for item in snapshot['messages']],
+        {'conversation_history_limit': len(snapshot['messages'])},
+        truncated=bool(snapshot.get('truncated')),
+    )
+    if rebuilt != snapshot:
+        raise ConversationContextError('This plan needs to be created again.')
+    return rebuilt
+
+
+def conversation_reference_messages(snapshot, message_ids=None):
+    """Return only role/content/ID fields, never stored metadata or citation payloads."""
+    allowed = set(message_ids) if message_ids is not None else None
+    return [
+        {'id': message['id'], 'role': message['role'], 'content': message['content']}
+        for message in (snapshot or {}).get('messages', [])
+        if allowed is None or message['id'] in allowed
+    ]
+
+
+def validate_clarification_answers(answers):
+    primitive_answers = [
+        {key: value for key, value in answer.items() if key != 'context'}
+        if isinstance(answer, dict) else answer
+        for answer in answers
+    ]
+    if (
+        len(answers) > LEDGER_MAX_ANSWERED_QUESTIONS
+        or len(json.dumps(primitive_answers, ensure_ascii=False).encode('utf-8')) > CLARIFICATION_MAX_BYTES
+        or len(json.dumps(answers, ensure_ascii=False).encode('utf-8')) > ELICITATION_CONTEXT_BYTE_LIMIT
+    ):
+        raise ConversationContextError('The clarification limit was reached. Start a new request.')
+
+
+def conversation_user_urls(user_message, snapshot=None, message_ids=None, answered_questions=None):
+    """URL provenance comes from user text, not from a model's interpretation."""
+    urls = []
+    for answer in reversed(answered_questions or []):
+        if not isinstance(answer, dict) or answer.get('action', 'accept') != 'accept':
+            continue
+        content = answer.get('answer')
+        values = list(content.values()) if isinstance(content, dict) else [content]
+        for value in values:
+            texts = value if isinstance(value, list) else [value]
+            for text in texts:
+                if isinstance(text, str):
+                    urls.extend(_extract_urls(text))
+        for context in (answer.get('context') or {}).values():
+            if isinstance(context, dict):
+                urls.extend(_extract_urls(_elicitation_answer_text(context)))
+    urls.extend(_extract_urls(user_message))
+    allowed = set(message_ids or [])
+    for message in (snapshot or {}).get('messages', []):
+        if message['id'] in allowed and message['role'] == 'user' and not message.get('truncated'):
+            urls.extend(_extract_urls(message['content']))
+    return _string_list(urls, limit=8)
+
+
+def build_conversation_signals(messages, user_message, *, truncated=False, message_ids=None):
+    """Project already bounded history for the planner; the route owns loading it."""
+    allowed = set(message_ids) if message_ids is not None else None
+    turns = [
+        {'id': message.get('id'), 'role': message['role'], 'content': _history_text(message.get('content'))}
+        for message in messages or ()
+        if isinstance(message, dict)
+        and message.get('role') in ('user', 'assistant')
+        and (allowed is None or message.get('id') in allowed)
+        and _history_text(message.get('content'))
+    ]
 
     return {
-        'recent_turns': turns[-HISTORY_MAX_TURNS:],
+        'recent_turns': turns,
+        'truncated': bool(truncated),
         'urls': _extract_urls(user_message),
     }
 
@@ -1065,6 +1350,9 @@ def build_planner_context(
     capabilities=None,
     agents=None,
     answered_questions=None,
+    actions=None,
+    original_message=None,
+    request_resolution=None,
 ):
     """Assemble everything the planner is shown, in one place.
 
@@ -1083,14 +1371,18 @@ def build_planner_context(
         'message': _text(user_message),
         'user_request': build_elicitation_user_request(user_message, answered_questions),
         'clarifications': deepcopy(answered_questions or []),
+        'original_message': _text(original_message) if original_message is not None else _text(user_message),
+        'request_resolution': request_resolution or {},
         'capabilities': capabilities or [],
         'agents': build_agent_planner_projection(agents),
+        'actions': build_action_planner_projection(actions),
         'candidate_documents': [
             {key: value for key, value in candidate.items() if key != 'score'}
             for candidate in (candidates or ())
         ],
         'user_selected': {
             'documents': seeds.get('document_ids') or [],
+            'context_references': deepcopy(seeds.get('elicitation_references') or []),
             'agent': (seeds.get('agent') or {}).get('name') if seeds.get('agent') else None,
             'prompt': _selected_prompt(seeds),
             'web_search': bool(seeds.get('web_search')),

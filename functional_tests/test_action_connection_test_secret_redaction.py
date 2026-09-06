@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 # test_action_connection_test_secret_redaction.py
 """
 Functional test for action connection test error sanitization.
-Version: 0.250.217
+Version: 0.261.096
 Implemented in: 0.250.217
 
 This test ensures that action Test Connection failures never echo stored
@@ -19,6 +18,7 @@ import os
 import sys
 import traceback
 import types
+from unittest.mock import patch
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -59,15 +59,16 @@ def _install_test_stubs():
 
 def _load_tester_module():
     """Load functions_action_connection_tests.py without the full app config."""
-    _install_test_stubs()
-    spec = importlib.util.spec_from_file_location("functions_action_connection_tests", TESTER_FILE)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("Unable to load the action connection test module.")
+    with patch.dict(sys.modules):
+        _install_test_stubs()
+        spec = importlib.util.spec_from_file_location("functions_action_connection_tests", TESTER_FILE)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load the action connection test module.")
 
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["functions_action_connection_tests"] = module
-    spec.loader.exec_module(module)
-    return module
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["functions_action_connection_tests"] = module
+        spec.loader.exec_module(module)
+        return module
 
 
 def test_manifest_secrets_are_redacted():

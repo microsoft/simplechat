@@ -1,13 +1,16 @@
 // ComposerEditor.tsx
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Check, FileText, Loader2, Paperclip, RotateCcw, Search, X } from 'lucide-react';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import {
     addContextItem,
+    contextDocumentIds,
+    contextFilterMode,
     contextScopes,
+    contextTags,
     removeContextItem,
     type ContextItem,
 } from '../../lib/chatContext';
@@ -22,6 +25,8 @@ import {
 import { candidateToContextItem, type ContextCandidate } from '../../lib/contextMentions';
 import {
     attachPromptToDraft,
+    composerDraftKnowledgeContext,
+    composerDraftReferences,
     composerReferenceKey,
     interruptComposerDraftUploads,
     type ComposerDraft,
@@ -44,8 +49,10 @@ import { findMentionAtCaret, replaceMention, type MentionMatch, type MentionSugg
 import { attachedPromptContent, attachedPromptIsEdited } from '../../lib/promptRequest';
 import { filterPromptsForSlash, readSlashQuery, type SlashQuery } from '../../lib/promptSlash';
 import type { PromptResolutionContext } from '../../lib/promptVariables';
-import { usePromptVariableValues } from '../../lib/usePromptVariableValues';
-import type { PromptOption, WorkspaceRef } from '../../lib/types';
+import { usePromptVariableValues, type PromptAiValue } from '../../lib/usePromptVariableValues';
+import { usePromptKnowledgeFill } from '../../lib/usePromptKnowledgeFill';
+import type { PromptKnowledgeRequest } from '../../lib/promptKnowledge';
+import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
 import { AttachedPromptCard } from './AttachedPromptCard';
 import {
     COMPOSER_TEXT_CLASS,
@@ -71,6 +78,13 @@ export interface ComposerEditorProps {
     onSubmit?: () => void;
     multipleFiles?: boolean;
     promptContext?: PromptResolutionContext;
+    knowledgeReferences?: readonly ComposerReference[];
+    knowledgeAgent?: Json;
+    actionsRef?: React.Ref<ComposerEditorActions>;
+    showPromptWarning?: boolean;
+    submitDisabled?: boolean;
+    promptReviewRequest?: number;
+    onSendWithUnfilled?: () => void;
     shared?: boolean;
     textareaRef?: React.RefObject<HTMLTextAreaElement>;
     fileInputRef?: React.RefObject<HTMLInputElement>;
@@ -88,6 +102,10 @@ export interface ComposerEditorProps {
     onUploadComplete?: (response: ChatUploadResponse, ownerConversationId: string | null) => void;
 }
 
+export interface ComposerEditorActions {
+    cancelKnowledge: () => void;
+}
+
 let uploadSequence = 0;
 
 export function ComposerEditor({
@@ -102,6 +120,13 @@ export function ComposerEditor({
     onSubmit,
     multipleFiles = true,
     promptContext = {},
+    knowledgeReferences = [],
+    knowledgeAgent,
+    actionsRef,
+    showPromptWarning = false,
+    submitDisabled = false,
+    promptReviewRequest = 0,
+    onSendWithUnfilled,
     shared: sharedOverride,
     textareaRef: externalTextareaRef,
     fileInputRef: externalFileInputRef,
@@ -192,9 +217,11 @@ export function ComposerEditor({
     );
 
     const attached = draft.attachedPrompt;
+    const promptInstance = draft.promptInstance ?? 0;
+    const promptKey = JSON.stringify([id, conversationId, promptInstance]);
     const setPromptValues = useCallback<React.Dispatch<React.SetStateAction<Record<string, string>>>>(
         (update) => onChange((current) => {
-            if (current.attachedPrompt?.id !== attached?.id) {
+            if (current.attachedPrompt?.id !== attached?.id || (current.promptInstance ?? 0) !== promptInstance) {
                 return current;
             }
             return {
@@ -202,9 +229,29 @@ export function ComposerEditor({
                 promptValues: typeof update === 'function' ? update(current.promptValues) : update,
             };
         }),
-        [onChange, attached?.id],
+        [onChange, attached?.id, promptInstance],
     );
-    const resolutionContext = { ...promptContext, composerText: draft.text };
+    const setPromptAiValues = useCallback<React.Dispatch<React.SetStateAction<Record<string, PromptAiValue>>>>(
+        (update) => onChange((current) => {
+            if (current.attachedPrompt?.id !== attached?.id || (current.promptInstance ?? 0) !== promptInstance) {
+                return current;
+            }
+            return {
+                ...current,
+                promptAiValues: typeof update === 'function' ? update(current.promptAiValues ?? {}) : update,
+            };
+        }),
+        [onChange, attached?.id, promptInstance],
+    );
+    const knowledgeItems = composerDraftKnowledgeContext(draft, knowledgeReferences);
+    const selectedFiles = [...composerDraftReferences(draft), ...knowledgeReferences]
+        .filter((reference) => reference.kind === 'document' || reference.kind === 'chat_attachment');
+    const resolutionContext = {
+        ...promptContext,
+        selectedDocuments: promptContext.selectedDocuments
+            ?? [...new Set(selectedFiles.map((reference) => reference.label || reference.id))],
+        composerText: draft.text,
+    };
     const promptVariables = usePromptVariableValues({
         promptId: attached?.id ?? '',
         content: attached ? attachedPromptContent(attached) : '',
@@ -212,7 +259,46 @@ export function ComposerEditor({
         shared,
         values: draft.promptValues,
         onValuesChange: setPromptValues,
+        aiValues: draft.promptAiValues ?? {},
+        onAiValuesChange: setPromptAiValues,
+        instanceKey: promptKey,
     });
+    const [searchAllKnowledge, setSearchAllKnowledge] = useState(false);
+    const [localReview, setLocalReview] = useState({ promptKey: '', request: 0 });
+    useEffect(() => {
+        setSearchAllKnowledge(false);
+        setLocalReview({ promptKey, request: 0 });
+    }, [promptKey, shared]);
+    const knowledgeScopes = contextScopes(knowledgeItems);
+    const knowledgeKinds = [...new Set(knowledgeItems.map((item) => item.scope.kind))];
+    const knowledgeRequest: PromptKnowledgeRequest = {
+        prompt_content: attached ? attachedPromptContent(attached) : '',
+        composer_text: draft.text,
+        conversation_id: conversationId ?? undefined,
+        conversation_kind: shared ? 'collaborative' : 'personal',
+        selected_document_ids: searchAllKnowledge ? [] : contextDocumentIds(knowledgeItems),
+        tags: searchAllKnowledge ? [] : contextTags(knowledgeItems),
+        doc_scope: searchAllKnowledge || knowledgeKinds.length > 1 ? 'all' : knowledgeKinds[0] ?? 'personal',
+        active_group_ids: searchAllKnowledge ? [] : knowledgeScopes.groupIds,
+        active_public_workspace_ids: searchAllKnowledge ? [] : knowledgeScopes.publicWorkspaceIds,
+        document_filter_mode: contextFilterMode(knowledgeItems) ?? 'intersection',
+        search_all: searchAllKnowledge,
+        scope_selected: !searchAllKnowledge && knowledgeItems.some((item) => item.kind === 'scope'),
+        context_items: searchAllKnowledge ? [] : knowledgeItems.map((item) => ({
+            kind: item.kind, id: item.id, scope: { kind: item.scope.kind, id: item.scope.id },
+        })),
+        agent_info: knowledgeAgent,
+    };
+    const knowledgeEnabled = !disabled && Boolean(attached)
+        && (searchAllKnowledge || knowledgeItems.length > 0);
+    const promptKnowledge = usePromptKnowledgeFill({
+        request: knowledgeRequest,
+        variableState: promptVariables,
+        enabled: knowledgeEnabled,
+        draftKey: JSON.stringify([promptKey, attached?.id, knowledgeItems]),
+    });
+    useImperativeHandle(actionsRef, () => ({ cancelKnowledge: promptKnowledge.cancel }));
+    const reviewRequest = promptReviewRequest + (localReview.promptKey === promptKey ? localReview.request : 0);
     const fillSources = [
         { label: 'Last reply', value: promptContext.lastAssistantMessage ?? '' },
         { label: 'My last message', value: promptContext.lastUserMessage ?? '' },
@@ -324,6 +410,7 @@ export function ComposerEditor({
         if (!slash) {
             return;
         }
+        promptKnowledge.cancel();
         onChange((current) => attachPromptToDraft(current, prompt, slash));
         const caret = slash.start;
         setSlash(null);
@@ -682,22 +769,85 @@ export function ComposerEditor({
                 onRemoveAll={(items) => !disabled && removeContextChips(items)}
                 onClear={() => !disabled && removeContextChips(draft.contextItems)} />
             {attached && (
-                <AttachedPromptCard key={attached.id} id={`${id}-prompt`} name={attached.name}
+                <AttachedPromptCard key={`${attached.id}:${promptInstance}`} id={`${id}-prompt`} name={attached.name}
                     scopeLabel={attached.scopeName} content={attachedPromptContent(attached)}
                     edited={attachedPromptIsEdited(attached)} variableState={promptVariables}
                     sources={fillSources} disabled={disabled}
-                    onContentChange={(value) => onChange((current) => ({
-                        ...current,
-                        attachedPrompt: current.attachedPrompt ? { ...current.attachedPrompt, editedContent: value } : null,
-                    }))}
-                    onResetContent={() => onChange((current) => ({
-                        ...current,
-                        attachedPrompt: current.attachedPrompt ? { ...current.attachedPrompt, editedContent: null } : null,
-                    }))}
+                    reviewRequest={reviewRequest}
+                    knowledge={promptKnowledge}
+                    knowledgeEnabled={knowledgeEnabled}
+                    knowledgeControls={(
+                        <div className="space-y-1 rounded-lg bg-surface-sunken px-2.5 py-2 text-xs text-text-3">
+                            <p className="break-words">
+                                {searchAllKnowledge
+                                    ? 'AI fill searches all knowledge you can access.'
+                                    : knowledgeItems.length > 0
+                                        ? `AI fill searches: ${knowledgeItems.map((item) => item.label).join(', ')}`
+                                        : 'Choose documents, tags or a workspace to find values in knowledge.'}
+                            </p>
+                            <button type="button" disabled={disabled} onClick={() => setPickerOpen(true)}
+                                className="rounded py-1 text-accent disabled:opacity-50">
+                                Choose knowledge
+                            </button>
+                            <label className="flex items-start gap-2">
+                                <input type="checkbox" checked={searchAllKnowledge} disabled={disabled}
+                                    onChange={(event) => {
+                                        promptKnowledge.cancel();
+                                        setSearchAllKnowledge(event.target.checked);
+                                    }} className="mt-0.5 accent-accent" />
+                                Search all accessible knowledge for AI fill
+                            </label>
+                            {searchAllKnowledge && <p>Only widens AI fill, not your message's document selection.</p>}
+                            {shared && <p>Filled values will be visible to participants when you send.</p>}
+                        </div>
+                    )}
+                    onContentChange={(value) => {
+                        promptKnowledge.cancel();
+                        onChange((current) => ({
+                            ...current,
+                            attachedPrompt: current.attachedPrompt ? { ...current.attachedPrompt, editedContent: value } : null,
+                        }));
+                    }}
+                    onResetContent={() => {
+                        promptKnowledge.cancel();
+                        onChange((current) => ({
+                            ...current,
+                            attachedPrompt: current.attachedPrompt ? { ...current.attachedPrompt, editedContent: null } : null,
+                        }));
+                    }}
                     onRemove={() => {
-                        onChange((current) => ({ ...current, attachedPrompt: null, promptValues: {} }));
+                        promptKnowledge.cancel();
+                        onChange((current) => ({
+                            ...current, attachedPrompt: null, promptValues: {}, promptAiValues: {},
+                            promptInstance: (current.promptInstance ?? 0) + 1,
+                        }));
                         focusAt();
                     }} />
+            )}
+            {attached && showPromptWarning && promptVariables.unfilled.length > 0 && (
+                <div role="alert" className="mb-2 rounded-xl border border-warn/40 bg-surface-1 px-3 py-2 text-xs text-text-2">
+                    <p className="font-medium">Some prompt variables are still unanswered.</p>
+                    <p className="mt-1 break-words">
+                        {promptVariables.unfilled.map((variable) => `{{${variable.name}}}`).join(', ')}
+                        {' '}will be sent as literal placeholders if you send anyway.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-3">
+                        <button type="button" onClick={() => setLocalReview((current) => ({
+                            promptKey, request: current.request + 1,
+                        }))} className="text-accent">Review fields</button>
+                        <button type="button" disabled={!knowledgeEnabled || promptKnowledge.pendingKeys.length > 0
+                            || !promptVariables.unfilled.some((variable) => !variable.builtIn)}
+                            onClick={() => void promptKnowledge.fill()} className="text-accent disabled:opacity-50">
+                            Fill missing fields
+                        </button>
+                        {onSendWithUnfilled && (
+                            <button type="button" disabled={disabled || submitDisabled}
+                                onClick={onSendWithUnfilled} className="font-medium text-text-1 disabled:opacity-50">
+                                Send anyway
+                            </button>
+                        )}
+                    </div>
+                </div>
             )}
             <label htmlFor={id} className="sr-only">{label}</label>
             <div className="relative">

@@ -1,8 +1,9 @@
 # test_orchestration_elicitation_context.py
 """
 Behavioral coverage for persisted inline clarification and execution context.
-Version: 0.261.096
+Version: 0.261.099
 Implemented in: 0.261.096
+Conversation-context, prompt-snapshot, and action integration: 0.261.099
 
 Drives the actual Flask plan/answer/run handlers, planner normalization, Cosmos state
 helpers, source manifest, document-context resolver, executor, and adapters. Only external
@@ -12,6 +13,7 @@ storage/model/authentication services are replaced. No Azure credentials or file
 import ast
 import importlib
 import json
+import re
 import sys
 import types
 import unittest
@@ -27,6 +29,7 @@ from flask import Blueprint, Flask, request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import test_orchestration_conversation_context_routes as server_context_tests  # noqa: E402
 from test_support.app_stubs import APP_ROOT, stubbed_config  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
@@ -78,16 +81,32 @@ class MemoryContainer:
             deepcopy(document) for (partition, _), document in self.items.items()
             if partition_key is None or partition == partition_key
         ]
-        for parameter, field in (('@user_id', 'user_id'), ('@document_id', 'id'), ('@run_id', 'id')):
+        for parameter, field in (
+            ('@user_id', 'user_id'), ('@document_id', 'id'), ('@run_id', 'id'),
+            ('@conversation_id', 'conversation_id'), ('@turn_id', 'turn_id'),
+        ):
             if parameter in values:
                 items = [item for item in items if item.get(field) == values[parameter]]
+        if '@message_ids' in values:
+            items = [item for item in items if item['id'] in values['@message_ids']]
+        if '@before_timestamp' in values:
+            items = [item for item in items if item.get('timestamp', '') < values['@before_timestamp']]
         if 'record_type' in query:
-            items = [item for item in items if item.get('record_type') in (None, 'orchestration_run')]
+            items = [item for item in items if item.get('record_type') in (None, 'run', 'orchestration_run')]
+        if 'c.role IN' in query:
+            items = [
+                item for item in items if item.get('role') in ('user', 'assistant')
+                and not (item.get('metadata') or {}).get('masked')
+                and not (item.get('metadata') or {}).get('is_generated_chat_artifact')
+                and (item.get('metadata') or {}).get('thread_info', {}).get('active_thread') is not False
+            ]
         if 'MAX(c.turn_index)' in query:
             return [max((item.get('turn_index', 0) for item in items), default=None)]
-        if 'ORDER BY c.turn_index DESC' in query:
-            items.sort(key=lambda item: item.get('turn_index', 0), reverse=True)
-        return items
+        for field in ('turn_index', 'created_at', 'timestamp'):
+            if f'ORDER BY c.{field} DESC' in query:
+                items.sort(key=lambda item: item.get(field, 0 if field == 'turn_index' else ''), reverse=True)
+        top = re.search(r'SELECT TOP (\d+)', query)
+        return items[:int(top.group(1))] if top else items
 
 
 def module(name, **attributes):
@@ -239,6 +258,7 @@ class ElicitationContextTests(unittest.TestCase):
         }
         self.model_outputs = []
         self.planner_contexts = []
+        self.resolution_contexts = []
         self.builder_contexts = []
         self.answer_prompts = []
         self.document_reads = []
@@ -421,8 +441,18 @@ class ElicitationContextTests(unittest.TestCase):
             ]},
         }
 
-    def plan(self, client, deployment, messages):
-        self.planner_contexts.append(json.loads(messages[1]['content']))
+    def plan(self, client, deployment, messages, **kwargs):
+        payload = json.loads(messages[1]['content'])
+        if messages[0]['content'] == self.planner.RESOLUTION_SYSTEM_PROMPT:
+            self.resolution_contexts.append(payload)
+            return json.dumps({
+                'relationship': 'follow_up',
+                'resolved_message': payload['original_message'],
+                'message_ids': [item['id'] for item in payload['conversation']],
+                'requires_retrieval': True,
+                'clarification': '',
+            }), None
+        self.planner_contexts.append(payload)
         if not self.model_outputs:
             raise AssertionError('Unexpected planner call.')
         return json.dumps(self.model_outputs.pop(0)), None
@@ -1019,7 +1049,7 @@ class ElicitationContextTests(unittest.TestCase):
         for key in ('elicitation_id', 'elicitation_revision', 'elicitation_submission_id'):
             missing.pop(key)
         missing['turn_id'] = 'never-persisted'
-        missing['elicitation'] = elicitation
+        missing['elicitation'] = {**elicitation, 'turn_id': 'never-persisted'}
         expired = self.post_reply(missing)
         self.assertEqual(409, expired.status_code)
         self.assertEqual('elicitation_expired', expired.get_json()['code'])
@@ -1108,6 +1138,16 @@ class ElicitationContextTests(unittest.TestCase):
         })
         self.assertEqual(5, self.store.next_turn_index('conv', 'owner'))
         self.assertEqual(['legacy-run'], [item['id'] for item in self.store.list_conversation_runs('conv', 'owner')])
+        for index, record_type in enumerate(('orchestration_run', 'run'), start=5):
+            self.runs.create_item({
+                'id': f'typed-{index}', 'record_type': record_type, 'user_id': 'owner',
+                'conversation_id': 'conv', 'turn_index': index,
+            })
+            self.assertIsNotNone(self.store.get_orchestration_run(f'typed-{index}', 'owner', 'conv'))
+        self.assertEqual(7, self.store.next_turn_index('conv', 'owner'))
+        self.assertEqual(['legacy-run', 'typed-5', 'typed-6'], [
+            item['id'] for item in self.store.list_conversation_runs('conv', 'owner')
+        ])
         ledger = self.context.build_run_ledger([pending])
         self.assertEqual([], ledger['runs'])
         self.assertNotIn('run_id', pending)
@@ -1159,6 +1199,193 @@ class ElicitationContextTests(unittest.TestCase):
             self.assertIn('workspace_document', values)
 
 
+class MergedTurnContextTests(unittest.TestCase):
+    setUp = server_context_tests.ConversationRouteTests.setUp
+    plan = server_context_tests.ConversationRouteTests.plan
+    planned = server_context_tests.ConversationRouteTests.planned
+    run_plan = server_context_tests.ConversationRouteTests.run_plan
+    clarification = server_context_tests.ConversationRouteTests.clarification
+
+    def test_existing_original_message_survives_rich_question_and_frozen_prompt_retry(self):
+        original_prompt = 'Use the original itinerary requirements.'
+        content = f'{original_prompt}\n\n{server_context_tests.LATEST}'
+        prompt_info = {
+            'id': 'original-prompt', 'name': 'Itinerary',
+            'content': original_prompt, 'template_content': original_prompt,
+            'original_content': original_prompt,
+            'composer_text': server_context_tests.LATEST, 'composer_embedded': False,
+            'user_text': server_context_tests.LATEST,
+        }
+        first = self.planned(message=content, prompt_info=prompt_info)
+        first_record = self.runs.read_item(first['run_id'], 'conv1')
+        original_message = self.messages.read_item(first_record['user_message_id'], 'conv1')
+
+        self.model.plan_override = preference_question()
+        _, events = self.plan(message=content)
+        question = next(item['elicitation'] for item in events if item.get('type') == 'orchestration_elicitation')
+        pending = self.route.get_pending_turn_context('conv1', 'user1', 'turn1')
+        self.assertEqual(first_record['user_message_id'], pending['turn_context']['user_message_id'])
+        self.assertEqual(original_message, self.messages.read_item(first_record['user_message_id'], 'conv1'))
+
+        inline_text = 'Use British spelling.'
+        inline_prompt = 'Include a separate accessibility risk section.'
+        snapshot = {
+            'id': 'inline-prompt', 'name': 'Answer-only prompt',
+            'content': inline_prompt,
+            'template_content': f'  {inline_prompt}\n',
+            'original_content': f'  {inline_prompt}\n',
+            'composer_text': inline_text, 'composer_embedded': False, 'user_text': inline_text,
+            'variables': {}, 'scope_type': 'personal', 'scope_name': 'My workspace',
+        }
+        reply = {
+            'message': 'A tampered replacement must not become the original request.',
+            'revision': 999,
+            'elicitation_id': question['elicitation_id'],
+            'elicitation_revision': question['revision'],
+            'elicitation_submission_id': 'merged-rich-answer',
+            'elicitation_response': {'action': 'accept', 'content': {'style': 'brief'}},
+            'elicitation_context': {'style': {'text': inline_text, 'prompt_info': snapshot}},
+            'prompt_info': {'content': 'Do not replace the frozen main prompt.'},
+        }
+        self.model.plan_override = None
+        final = self.planned(**reply)
+        final_record = self.runs.read_item(final['run_id'], 'conv1')
+        self.assertEqual(question['revision'] + 1, final['revision'])
+        self.assertEqual(first_record['user_message_id'], final_record['user_message_id'])
+        self.assertEqual(first_record['user_message_fingerprint'], final_record['user_message_fingerprint'])
+        self.assertEqual(prompt_info, final_record['seeds']['prompt'])
+        self.assertEqual(snapshot, final_record['answered_questions'][0]['context']['style']['prompt_info'])
+        self.assertEqual(original_message, self.messages.read_item(final_record['user_message_id'], 'conv1'))
+        self.assertEqual(1, sum(row.get('content') == content for row in self.messages.items.values()))
+        self.assertEqual(60, final_record['planning_token_usage']['total_tokens'])
+
+        calls = len(self.model.calls)
+        duplicate = self.planned(**reply)
+        self.assertEqual(final['run_id'], duplicate['run_id'])
+        self.assertEqual(calls, len(self.model.calls))
+        run_events = server_context_tests.frames(self.run_plan(final))
+        self.assertFalse(any(event.get('error') for event in run_events), run_events)
+        messages = self.model.calls[-1]['messages']
+        self.assertIn('Schmidt', json.dumps(messages))
+        self.assertIn(server_context_tests.RESOLVED, messages[-1]['content'])
+        self.assertEqual(1, messages[-1]['content'].count(inline_text))
+        self.assertEqual(1, messages[-1]['content'].count(inline_prompt))
+        self.assertEqual(75, self.runs.read_item(final['run_id'], 'conv1')['token_usage']['total_tokens'])
+
+        self.messages.items[('conv1', final_record['user_message_id'])]['metadata']['masked'] = True
+        rejected, _ = self.plan(**reply)
+        self.assertEqual(409, rejected.status_code, 'A cached answer must still revalidate the original message')
+
+    def test_completed_cas_turn_can_ask_again_without_duplicate_original_messages(self):
+        first = self.clarification()
+        self.model.resolution_override = None
+        first_plan = self.planned(
+            elicitation=first,
+            elicitation_response={'action': 'accept', 'content': {'clarification': 'Grants Pass'}},
+        )
+        first_record = self.runs.read_item(first_plan['run_id'], 'conv1')
+        original = self.messages.read_item(first_record['user_message_id'], 'conv1')
+        self.model.plan_override = preference_question()
+        _, events = self.plan()
+        second = next(item['elicitation'] for item in events if item.get('type') == 'orchestration_elicitation')
+        self.assertGreater(second['revision'], first_plan['revision'])
+        pending = self.route.get_pending_turn_context('conv1', 'user1', 'turn1')
+        self.assertEqual({'clarification': 'Grants Pass'}, pending['answered_questions'][0]['answer'])
+        self.assertEqual(first_record['user_message_id'], pending['turn_context']['user_message_id'])
+        self.model.plan_override = None
+        final = self.planned(
+            elicitation_id=second['elicitation_id'],
+            elicitation_revision=second['revision'],
+            elicitation_submission_id='second-question-after-run',
+            elicitation_response={'action': 'accept', 'content': {'style': 'brief'}},
+            elicitation_context={'style': {'text': 'Keep all earlier itinerary constraints.'}},
+        )
+        record = self.runs.read_item(final['run_id'], 'conv1')
+        self.assertEqual([{'clarification': 'Grants Pass'}, {'style': 'brief'}], [
+            item['answer'] for item in record['answered_questions']
+        ])
+        self.assertEqual(first_record['user_message_id'], record['user_message_id'])
+        self.assertEqual(original, self.messages.read_item(record['user_message_id'], 'conv1'))
+        self.assertEqual(1, sum(
+            row.get('content') == server_context_tests.LATEST for row in self.messages.items.values()
+        ))
+        self.assertIsNone(self.route.get_pending_turn_context('conv1', 'user1', 'turn1'))
+
+    def test_legacy_identical_answer_is_bound_to_the_reopened_question(self):
+        self.model.plan_override = preference_question()
+        _, events = self.plan()
+        first_question = next(
+            item['elicitation'] for item in events if item.get('type') == 'orchestration_elicitation'
+        )
+        self.model.plan_override = None
+        reply = {'elicitation_response': {'action': 'accept', 'content': {'style': 'brief'}}}
+        first = self.planned(**reply)
+        self.model.plan_override = preference_question()
+        self.model.plan_override['message'] = 'Choose the style for this revision.'
+        _, events = self.plan()
+        next_question = next(
+            item['elicitation'] for item in events if item.get('type') == 'orchestration_elicitation'
+        )
+        self.assertNotEqual(first_question['elicitation_id'], next_question['elicitation_id'])
+        self.model.plan_override = None
+        final = self.planned(**reply)
+        self.assertNotEqual(first['run_id'], final['run_id'])
+        self.assertEqual(next_question['revision'] + 1, final['revision'])
+        answers = self.runs.read_item(final['run_id'], 'conv1')['answered_questions']
+        self.assertEqual(2, len(answers))
+        self.assertEqual([{'style': 'brief'}, {'style': 'brief'}], [item['answer'] for item in answers])
+        self.assertEqual(final['run_id'], self.planned(**reply)['run_id'])
+
+    def test_rich_answer_urls_keep_user_provenance_and_snapshot_validation(self):
+        urls = self.modules.context.conversation_user_urls('Read the selected report.', answered_questions=[
+            {
+                'action': 'accept', 'answer': {},
+                'context': {'style': {
+                    'text': 'Use https://accepted.example/report',
+                    'prompt_info': {'content': 'Compare with https://prompt.example/report'},
+                    'references': [{'label': 'https://label-only.example'}],
+                }},
+            },
+            {
+                'action': 'decline', 'answer': {},
+                'context': {'style': {'text': 'https://declined.example'}},
+            },
+        ])
+        self.assertEqual(
+            ['https://prompt.example/report', 'https://accepted.example/report'], urls,
+        )
+        schema = {
+            'requested_schema': {'properties': {'style': {'type': 'string'}}, 'required': ['style']},
+        }
+        with self.assertRaises(self.modules.context.ElicitationContextError):
+            self.modules.context.normalize_elicitation_answer(
+                schema, {'action': 'accept', 'content': {'style': 'brief'}},
+                {'style': {'text': 'Different composer wording', 'prompt_info': {
+                    'content': 'Apply the prompt.', 'template_content': 'Apply the prompt.',
+                    'composer_text': 'Frozen wording', 'composer_embedded': False,
+                    'user_text': 'Frozen wording',
+                }}},
+                'user1', 'conv1', self.settings,
+            )
+
+    def test_prompt_snapshots_use_the_rich_context_budget_without_widening_primitive_answers(self):
+        text = 'x' * 12000
+        answers = [{
+            'question': 'Choose a style.', 'action': 'accept', 'answer': {'style': 'brief'},
+            'context': {'style': {
+                'text': text, 'prompt_info': {'content': text, 'original_content': text},
+            }},
+        }]
+        self.assertGreater(len(json.dumps(answers)), self.modules.context.CLARIFICATION_MAX_BYTES)
+        self.modules.context.validate_clarification_answers(answers)
+        with self.assertRaises(self.modules.context.ConversationContextError):
+            self.modules.context.validate_clarification_answers([{'answer': 'x' * 32769}])
+        oversized = deepcopy(answers)
+        oversized[0]['context']['style']['text'] = 'x' * self.modules.context.ELICITATION_CONTEXT_BYTE_LIMIT
+        with self.assertRaises(self.modules.context.ConversationContextError):
+            self.modules.context.validate_clarification_answers(oversized)
+
+
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.096')
+    assert_app_version_at_least('0.261.099')
     unittest.main(verbosity=2)

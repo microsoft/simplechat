@@ -34,6 +34,10 @@ import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
 import { InviteBanner } from '../components/chat/InviteBanner';
 import { FileApprovals } from '../components/chat/FileApprovals';
 import { panelTargetForConversation, canShareConversation } from '../lib/sharing';
+import { readWorkspaceAgentLaunch, workspaceAgentForLaunch } from '../lib/workspaceAgentLaunch';
+import { agentSelectionKey } from '../lib/agents';
+import { toast } from '../stores/toastStore';
+import type { BootstrapPayload } from '../lib/types';
 
 /**
  * Keep the address bar and the open conversation describing each other.
@@ -54,6 +58,12 @@ function useConversationUrlSync() {
     const openLinkedConversation = useChatStore((state) => state.openLinkedConversation);
 
     const [linkedConversationId] = useState(() => readConversationParam(searchParams));
+    const [agentLaunch] = useState(() => readWorkspaceAgentLaunch(searchParams));
+    const [hasAgentRequest] = useState(() => !readConversationParam(searchParams) && searchParams.has('agent_id'));
+    const [agentLaunchHandled, setAgentLaunchHandled] = useState(!hasAgentRequest);
+    const [launchAgentSelection, setLaunchAgentSelection] = useState<string>();
+    const agentLinkConsumed = useRef(false);
+    const agentLaunchRequest = useRef<Promise<BootstrapPayload> | null>(null);
     // Two flags with two jobs. The ref makes opening the link happen exactly once: React's
     // StrictMode runs effects twice on mount, and a state flag is still false in the second
     // invocation's closure, so it would open the conversation — and refetch its messages —
@@ -83,9 +93,40 @@ function useConversationUrlSync() {
     }, [linkedConversationId, openLinkedConversation]);
 
     useEffect(() => {
+        if (!hasAgentRequest || agentLinkConsumed.current) return;
+        if (!agentLaunch) {
+            agentLinkConsumed.current = true;
+            toast.error('That agent link is not valid.');
+            setAgentLaunchHandled(true);
+            return;
+        }
+        let active = true;
+        // Both StrictMode setups observe one request, but only the active setup can launch.
+        agentLaunchRequest.current ??= useBootstrapStore.getState().refreshRequired();
+        void agentLaunchRequest.current.then((fresh) => {
+            if (!active || agentLinkConsumed.current) return;
+            agentLinkConsumed.current = true;
+            const agent = workspaceAgentForLaunch(fresh.catalogs?.agents, agentLaunch);
+            if (!agent) {
+                toast.error('That agent is no longer available in this workspace.');
+            } else {
+                useChatStore.getState().startNewConversation();
+                setLaunchAgentSelection(agentSelectionKey(agent));
+            }
+            setAgentLaunchHandled(true);
+        }, () => {
+            if (!active || agentLinkConsumed.current) return;
+            agentLinkConsumed.current = true;
+            toast.error('Could not refresh available agents. Try again.');
+            setAgentLaunchHandled(true);
+        });
+        return () => { active = false; };
+    }, [hasAgentRequest, agentLaunch]);
+
+    useEffect(() => {
         // Held back until the link has been consumed, so the parameter survives long enough
         // to be read.
-        if (!linkHandled) {
+        if (!linkHandled || !agentLaunchHandled) {
             return;
         }
 
@@ -98,7 +139,9 @@ function useConversationUrlSync() {
         // `history.replaceState`: the address bar should describe what is open, not turn the
         // back button into a list of every conversation visited.
         setSearchParams(next, { replace: true });
-    }, [activeConversationId, linkHandled, searchParams, setSearchParams]);
+    }, [activeConversationId, linkHandled, agentLaunchHandled, searchParams, setSearchParams]);
+
+    return { launchAgentSelection, agentLaunchPending: !agentLaunchHandled };
 }
 
 function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
@@ -333,7 +376,7 @@ export function ChatPage() {
         (state) => state.setVisibleConversation,
     );
 
-    useConversationUrlSync();
+    const { launchAgentSelection, agentLaunchPending } = useConversationUrlSync();
 
     // Image approvals keep running after the reader goes elsewhere, and are reported by a
     // notice when they do. Only this page knows whether their cards are actually on screen:
@@ -352,6 +395,10 @@ export function ChatPage() {
         return () => setOrchestrationVisible(null);
     }, [activeConversationId, setOrchestrationVisible]);
 
+    if (agentLaunchPending) {
+        return <div role="status" className="flex flex-1 items-center justify-center text-sm text-text-3">Opening agent chat...</div>;
+    }
+
     return (
         <div className="flex min-h-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col">
@@ -359,7 +406,7 @@ export function ChatPage() {
                 <FileApprovals />
                 <InviteBanner />
                 <MessageList />
-                <Composer />
+                <Composer initialAgentSelection={launchAgentSelection} />
             </div>
             <ConversationDrawer />
             {/* Gated on there being a conversation as well as on the panel being open, so

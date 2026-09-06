@@ -1,6 +1,13 @@
 // composerDraft.ts
 
-import { addContextItem, documentContextItem, type ContextItem } from './chatContext';
+import {
+    addContextItem,
+    documentContextItem,
+    scopeContextItem,
+    tagContextItem,
+    type ContextItem,
+    type ContextScopeRef,
+} from './chatContext';
 import { reconcileContextItems } from './chatContextTokens';
 import { insertPromptText } from './promptSlash';
 import {
@@ -11,12 +18,15 @@ import {
 } from './promptRequest';
 import {
     applyPromptVariables,
+    describeUnfilledVariables,
     parsePromptVariables,
-    resolveBuiltInPromptVariables,
+    resolvePromptVariableValues,
     type PromptResolutionContext,
+    type PromptVariable,
 } from './promptVariables';
 import type { ChatUploadTarget } from './endpoints';
 import type { Json, PromptOption } from './types';
+import type { PromptAiValue } from './usePromptVariableValues';
 
 export interface ComposerReference {
     kind: 'document' | 'tag' | 'scope' | 'chat_attachment';
@@ -48,6 +58,8 @@ export interface ComposerDraft {
     contextItems: ContextItem[];
     attachedPrompt: AttachedPrompt | null;
     promptValues: Record<string, string>;
+    promptAiValues?: Record<string, PromptAiValue>;
+    promptInstance?: number;
     uploads: ComposerUpload[];
 }
 
@@ -77,7 +89,9 @@ export function attachPromptToDraft(
             originalContent: content,
             editedContent: null,
         },
-        promptValues: draft.attachedPrompt?.id === String(prompt.id ?? '') ? draft.promptValues : {},
+        promptValues: {},
+        promptAiValues: {},
+        promptInstance: (draft.promptInstance ?? 0) + 1,
     };
 }
 
@@ -126,6 +140,31 @@ export function composerDraftContextItems(draft: ComposerDraft): ContextItem[] {
     }, draft.contextItems);
 }
 
+/** Ground variable filling in actual workspace references, not chat-message ids or labels. */
+export function composerDraftKnowledgeContext(
+    draft: ComposerDraft,
+    references: readonly ComposerReference[] = [],
+): ContextItem[] {
+    return references.reduce((items, reference) => {
+        if (reference.kind === 'chat_attachment' || reference.scope.kind === 'chat'
+            || (reference.kind !== 'scope' && !reference.id)
+            || (reference.scope.kind !== 'personal' && !reference.scope.id)) {
+            return items;
+        }
+        const scope: ContextScopeRef = {
+            ...reference.scope,
+            kind: reference.scope.kind,
+            name: reference.scope.name ?? (reference.scope.kind === 'personal' ? 'My workspace' : 'Workspace'),
+        };
+        const item = reference.kind === 'document'
+            ? documentContextItem({ id: reference.id, title: reference.label }, scope, items)
+            : reference.kind === 'tag'
+                ? tagContextItem(reference.id, scope, items)
+                : scopeContextItem(scope, items);
+        return addContextItem(items, item);
+    }, composerDraftContextItems(draft));
+}
+
 export function composerReferenceKey(reference: ComposerReference): string {
     if (reference.kind === 'document') {
         return `document:${reference.id}`;
@@ -168,6 +207,35 @@ export function composerDraftHasContent(draft: ComposerDraft): boolean {
     );
 }
 
+export function composerDraftPromptValues(
+    draft: ComposerDraft,
+    context: PromptResolutionContext,
+): Record<string, string> {
+    const content = draft.attachedPrompt ? attachedPromptContent(draft.attachedPrompt) : '';
+    return resolvePromptVariableValues(parsePromptVariables(content), draft.promptValues, {
+        ...context,
+        composerText: draft.text,
+    });
+}
+
+export function composerDraftUnfilledVariables(
+    draft: ComposerDraft,
+    context: PromptResolutionContext,
+): PromptVariable[] {
+    const content = draft.attachedPrompt ? attachedPromptContent(draft.attachedPrompt) : '';
+    return describeUnfilledVariables(parsePromptVariables(content), composerDraftPromptValues(draft, context));
+}
+
+/** AI-derived values and built-ins are snapshots, not reusable personal preferences. */
+export function composerDraftUserPromptValues(draft: ComposerDraft): Record<string, string> {
+    const content = draft.attachedPrompt ? attachedPromptContent(draft.attachedPrompt) : '';
+    return Object.fromEntries(parsePromptVariables(content)
+        .filter((variable) => !variable.builtIn
+            && !Object.prototype.hasOwnProperty.call(draft.promptAiValues ?? {}, variable.key)
+            && Object.prototype.hasOwnProperty.call(draft.promptValues, variable.key))
+        .map((variable) => [variable.key, draft.promptValues[variable.key]]));
+}
+
 export function buildComposerDraftSubmission(
     draft: ComposerDraft,
     context: PromptResolutionContext,
@@ -180,20 +248,8 @@ export function buildComposerDraftSubmission(
     }
 
     const content = attachedPromptContent(attached);
-    // Only this prompt's user variables are supplied values. Built-ins always resolve now,
-    // and {{composer}} always belongs to this editor, never another draft on the page.
-    const values = Object.fromEntries(
-        parsePromptVariables(content)
-            .filter((variable) => !variable.builtIn && variable.key in draft.promptValues)
-            .map((variable) => [variable.key, draft.promptValues[variable.key]]),
-    );
-    const promptText = applyPromptVariables(content, {
-        ...values,
-        ...resolveBuiltInPromptVariables({
-            ...context,
-            composerText: draft.text,
-        }),
-    });
+    const values = composerDraftPromptValues(draft, context);
+    const promptText = applyPromptVariables(content, values);
     const outgoing = buildOutgoingMessage(content, promptText, typed);
     return {
         message: outgoing.message,
@@ -201,6 +257,7 @@ export function buildComposerDraftSubmission(
             attached,
             promptText,
             userText: outgoing.userText,
+            composerText: typed,
             values,
         }),
         references,

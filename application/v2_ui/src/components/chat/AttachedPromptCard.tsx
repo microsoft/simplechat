@@ -1,28 +1,18 @@
 // AttachedPromptCard.tsx
-// A saved prompt attached to the turn being written, shown above the message box.
-//
-// Picking a prompt used to paste its text into the composer. That answered the question "what
-// does this prompt say" and lost every other one: which part of the box is the template and
-// which part is yours, how to take it back off, how to change a variable you got wrong. The
-// text was just text, and the prompt stopped existing the moment it was inserted.
-//
-// So the prompt stays a prompt until send. It sits here as a card, the box below stays yours
-// to type in, and the two are combined only when the message is actually sent.
-//
-// Collapsed by default, because the common case is a prompt you already know the contents of
-// and a message you want room to write. It expands to fill in variables, read the resolved
-// text, or edit the wording for this one turn -- an edit that never touches the saved prompt,
-// which is why it is badged and reversible rather than silent.
+// The draft's prompt stays separate from the message and exposes its inputs before send.
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
-import { ChevronDown, Lightbulb, Pencil, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
 import type { BuiltInPromptVariable } from '../../lib/promptVariables';
 import type { PromptVariableValues } from '../../lib/usePromptVariableValues';
+import type { usePromptKnowledgeFill } from '../../lib/usePromptKnowledgeFill';
 import {
     PromptVariableField,
     type PromptFillSource,
 } from '../prompts/PromptVariableField';
+import { PromptVariablePicker, usePromptVariableInsertion } from '../prompts/PromptVariablePicker';
+import { PromptCard } from './PromptCard';
 
 export type { PromptFillSource };
 
@@ -38,6 +28,10 @@ export function AttachedPromptCard({
     onContentChange,
     onResetContent,
     onRemove,
+    knowledge,
+    knowledgeEnabled = false,
+    knowledgeControls,
+    reviewRequest = 0,
 }: {
     id?: string;
     name: string;
@@ -51,63 +45,54 @@ export function AttachedPromptCard({
     onContentChange: (value: string) => void;
     onResetContent: () => void;
     onRemove: () => void;
+    knowledge?: ReturnType<typeof usePromptKnowledgeFill>;
+    knowledgeEnabled?: boolean;
+    knowledgeControls?: ReactNode;
+    reviewRequest?: number;
 }) {
     const instanceId = useId();
     const idPrefix = id ?? `attached-prompt-${instanceId}`;
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState(false);
+    const [variablesOpen, setVariablesOpen] = useState(true);
+    const contentRef = useRef<HTMLTextAreaElement>(null);
+    const insertion = usePromptVariableInsertion(contentRef, content, onContentChange);
 
     const { variables, values, builtIns, prefilled, unfilled, history, setValue, resolve } =
         variableState;
+    const firstMissing = useRef<string>();
+    firstMissing.current = unfilled[0]?.key;
+    useEffect(() => {
+        if (reviewRequest === 0) {
+            return;
+        }
+        setVariablesOpen(true);
+        const frame = window.requestAnimationFrame(() => {
+            document.getElementById(`${idPrefix}-var-${firstMissing.current}`)?.focus();
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [reviewRequest, idPrefix]);
 
-    // One line, because it is read at a glance while writing something else. What is still
-    // missing outranks how many there are: an unfilled placeholder is the thing that would
-    // reach the model as a literal `{{customer}}`.
-    const summary =
+    const variableSummary =
         variables.length === 0
             ? null
             : unfilled.length > 0
-              ? `${unfilled.length} still to fill in`
+              ? `${unfilled.length} ${unfilled.length === 1 ? 'value' : 'values'} still to fill in`
               : `${variables.length} variable${variables.length === 1 ? '' : 's'} ready`;
+    const aiCount = variables.filter((variable) => variableState.aiValues[variable.key]).length;
+    const summary = [variableSummary, aiCount > 0 ? `${aiCount} AI-filled` : ''].filter(Boolean).join('; ');
 
     return (
-        <div className="mb-2 rounded-xl border border-edge glass-flat">
-            <div className="flex items-center gap-1.5 px-2 py-1.5">
-                <button
-                    type="button"
-                    onClick={() => setOpen((isOpen) => !isOpen)}
-                    aria-expanded={open}
-                    className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1 py-0.5 text-left text-xs text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1"
-                >
-                    <Lightbulb size={13} className="shrink-0 text-accent" aria-hidden="true" />
-                    <span className="truncate font-medium text-text-1">{name}</span>
-                    {scopeLabel ? (
-                        <span className="shrink-0 truncate text-text-3">{scopeLabel}</span>
-                    ) : null}
-                    {edited ? (
-                        <span className="shrink-0 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] leading-none font-medium text-accent">
-                            Edited
-                        </span>
-                    ) : null}
-                    {summary ? (
-                        <span
-                            className={clsx(
-                                'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] leading-none',
-                                unfilled.length > 0
-                                    ? 'bg-accent-soft font-medium text-accent'
-                                    : 'text-text-3',
-                            )}
-                        >
-                            {summary}
-                        </span>
-                    ) : null}
-                    <ChevronDown
-                        size={12}
-                        aria-hidden="true"
-                        className={clsx('ml-auto shrink-0 transition-transform', open && 'rotate-180')}
-                    />
-                </button>
-
+        <PromptCard
+            className="max-h-[40vh] overflow-y-auto"
+            name={name}
+            scopeLabel={scopeLabel}
+            edited={edited}
+            summary={summary}
+            content={resolve()}
+            open={open}
+            onToggle={() => setOpen((isOpen) => !isOpen)}
+            actions={<>
                 <button
                     type="button"
                     onClick={() => {
@@ -131,70 +116,109 @@ export function AttachedPromptCard({
                 >
                     <X size={13} />
                 </button>
-            </div>
-
-            {open ? (
-                <div className="space-y-3 border-t border-edge px-3 py-2.5">
-                    {variables.map((variable) => (
-                        <PromptVariableField
-                            key={variable.key}
-                            variable={variable}
-                            value={values[variable.key] ?? ''}
-                            builtInValue={builtIns[variable.key as BuiltInPromptVariable]}
-                            prefilled={prefilled.has(variable.key)}
-                            history={history[variable.key] ?? []}
-                            sources={sources}
-                            onChange={(value) => setValue(variable.key, value)}
-                            idPrefix={`${idPrefix}-var`}
-                            disabled={disabled}
-                        />
-                    ))}
-
-                    {editing ? (
-                        <div>
-                            <div className="mb-1 flex items-center gap-2">
-                                <label
-                                    htmlFor={`${idPrefix}-content`}
-                                    className="text-[11px] font-semibold tracking-wide text-text-3 uppercase"
-                                >
-                                    Prompt text
-                                </label>
-                                <span className="text-[11px] text-text-3">
-                                    Changes apply to this message only
-                                </span>
-                                {edited ? (
-                                    <button
-                                        type="button"
-                                        onClick={onResetContent}
+            </>}
+            footer={variables.length > 0 ? (
+                <div className="border-t border-edge px-3 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <button type="button" onClick={() => setVariablesOpen((current) => !current)}
+                            aria-expanded={variablesOpen}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-text-2">
+                            <ChevronDown size={12} className={clsx(!variablesOpen && '-rotate-90')} />
+                            Variables ({variables.length})
+                        </button>
+                        {knowledge && variables.some((variable) => !variable.builtIn) && (
+                            <button type="button" onClick={() => void knowledge.fill()}
+                                disabled={disabled || !knowledgeEnabled || knowledge.pendingKeys.length > 0
+                                    || !unfilled.some((variable) => !variable.builtIn)}
+                                className="inline-flex items-center gap-1 rounded px-1 py-1 text-xs text-accent hover:bg-accent-soft disabled:opacity-50">
+                                <Sparkles size={12} /> Fill missing fields
+                            </button>
+                        )}
+                    </div>
+                    {variablesOpen && (
+                        <div className="mt-2 max-h-64 space-y-3 overflow-y-auto">
+                            {variables.some((variable) => !variable.builtIn) && knowledgeControls}
+                            {knowledge?.notice && <p role="status" className="text-xs text-text-2">{knowledge.notice}</p>}
+                            {knowledge?.error && <p role="alert" className="text-xs text-danger">{knowledge.error}</p>}
+                            {knowledge && knowledge.pendingKeys.length > 0 && (
+                                <button type="button" onClick={knowledge.cancel} className="text-xs text-accent">
+                                    Cancel lookup
+                                </button>
+                            )}
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                {variables.map((variable) => (
+                                    <PromptVariableField
+                                        key={variable.key}
+                                        variable={variable}
+                                        value={values[variable.key] ?? ''}
+                                        builtInValue={builtIns[variable.key as BuiltInPromptVariable]}
+                                        prefilled={prefilled.has(variable.key)}
+                                        history={history[variable.key] ?? []}
+                                        sources={sources}
                                         disabled={disabled}
-                                        className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1"
-                                    >
-                                        <RotateCcw size={10} />
-                                        Reset
-                                    </button>
-                                ) : null}
+                                        aiValue={variableState.aiValues[variable.key]}
+                                        onUndo={() => {
+                                            knowledge?.cancel();
+                                            variableState.undoAiValue(variable.key);
+                                        }}
+                                        onFind={knowledge && knowledgeEnabled ? () => void knowledge.fill([variable.key]) : undefined}
+                                        finding={knowledge?.pendingKeys.includes(variable.key)}
+                                        unresolved={knowledge?.unresolved.find((item) => item.key === variable.key)}
+                                        onChooseAlternative={(value) => knowledge?.chooseAlternative(variable.key, value)}
+                                        onChange={(value) => {
+                                            knowledge?.cancel();
+                                            setValue(variable.key, value);
+                                        }}
+                                        idPrefix={`${idPrefix}-var`}
+                                    />
+                                ))}
                             </div>
-                            <textarea
-                                id={`${idPrefix}-content`}
-                                rows={6}
-                                value={content}
-                                disabled={disabled}
-                                onChange={(event) => onContentChange(event.target.value)}
-                                className="w-full resize-y rounded-lg border border-edge bg-surface-1 px-2.5 py-1.5 font-mono text-xs text-text-1 focus:border-accent focus:outline-none"
-                            />
-                        </div>
-                    ) : (
-                        <div>
-                            <h4 className="mb-1 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
-                                {variables.length > 0 ? 'Preview' : 'Prompt text'}
-                            </h4>
-                            <pre className="max-h-48 overflow-y-auto rounded-lg border border-edge bg-surface-sunken px-2.5 py-2 text-xs whitespace-pre-wrap text-text-2">
-                                {resolve()}
-                            </pre>
                         </div>
                     )}
                 </div>
             ) : null}
-        </div>
+        >
+            {editing ? (
+                <div>
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                        <label
+                            htmlFor={`${idPrefix}-content`}
+                            className="text-[11px] font-semibold tracking-wide text-text-3 uppercase"
+                        >
+                            Prompt text
+                        </label>
+                        <span className="text-[11px] text-text-3">
+                            Changes apply to this message only
+                        </span>
+                        <PromptVariablePicker
+                            onOpen={insertion.rememberSelection}
+                            onInsert={insertion.insert}
+                            disabled={disabled}
+                            builtIns={builtIns}
+                        />
+                        {edited ? (
+                            <button
+                                type="button"
+                                onClick={onResetContent}
+                                disabled={disabled}
+                                className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1"
+                            >
+                                <RotateCcw size={10} />
+                                Reset
+                            </button>
+                        ) : null}
+                    </div>
+                    <textarea
+                        id={`${idPrefix}-content`}
+                        ref={contentRef}
+                        rows={6}
+                        value={content}
+                        disabled={disabled}
+                        onChange={(event) => onContentChange(event.target.value)}
+                        className="w-full resize-y rounded-lg border border-edge bg-surface-1 px-2.5 py-1.5 font-mono text-xs text-text-1 focus:border-accent focus:outline-none"
+                    />
+                </div>
+            ) : undefined}
+        </PromptCard>
     );
 }

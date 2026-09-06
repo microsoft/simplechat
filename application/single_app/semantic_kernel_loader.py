@@ -8,6 +8,7 @@ Loader for Semantic Kernel plugins/actions from app settings.
 import logging
 import builtins
 import os
+from copy import deepcopy
 from agent_execution_context import execution_user_id as get_execution_user_id
 from openai import AsyncOpenAI
 from azure.identity import AzureAuthorityHosts, ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -1379,6 +1380,18 @@ def load_agent_specific_plugins(kernel, plugin_names, settings, mode_label="glob
                 exceptionTraceback=True
             )
             print(f"[SK_LOADER][Error] Fallback plugin loading also failed: {fallback_error}")
+
+
+def prepare_action_plugin_manifest(manifest, settings):
+    """Prepare one already-authorized action without loading agents or core plugins."""
+    if manifest.get('type') == 'agent':
+        raise PermissionError('Call agent actions require agent delegation.')
+    prepared = _apply_agent_plugin_runtime_overlays(
+        [deepcopy(manifest)], group_id=manifest.get('group_id'),
+    )[0]
+    if settings.get('enable_key_vault_secret_storage') and settings.get('key_vault_name'):
+        prepared = resolve_key_vault_secrets_in_plugins(prepared, settings)
+    return hydrate_workspace_identity_in_plugin(prepared)
 
 
 def _apply_agent_plugin_runtime_overlays(plugin_manifests, agent_other_settings=None, group_id=None):

@@ -18,7 +18,7 @@ response outlives the request context, so touching ``request`` from inside the g
 raises rather than returning the value it would have had -- a failure that only appears
 once streaming is actually exercised.
 
-Version: 0.261.096
+Version: 0.261.099
 """
 
 import hashlib
@@ -32,6 +32,8 @@ from agent_execution_context import capture_execution_identity
 from datetime import datetime, timezone
 
 from azure.cosmos import exceptions
+from azure.core.exceptions import AzureError
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from flask import Response, jsonify, request, session
 
 from config import cosmos_conversations_container, cosmos_messages_container
@@ -47,6 +49,10 @@ from functions_authentication import (
 from functions_orchestration_context import (
     ELICITATION_CONTEXT_BYTE_LIMIT,
     ElicitationContextError,
+    HISTORY_MAX_MESSAGES,
+    HISTORY_SCAN_LIMIT,
+    ConversationContextError,
+    build_conversation_snapshot,
     build_conversation_signals,
     build_elicitation_user_request,
     build_planner_context,
@@ -54,10 +60,16 @@ from functions_orchestration_context import (
     collect_answered_questions,
     merge_elicitation_context,
     normalize_elicitation_answer,
+    conversation_user_urls,
+    history_message_limit,
+    normalize_history_message,
+    resolve_action_catalog,
     resolve_agent_catalog,
     resolve_candidate_documents,
     resolve_elicitation_references,
     resolve_seeds,
+    validate_clarification_answers,
+    validate_conversation_snapshot,
 )
 from functions_orchestration_events import (
     build_cancelled_event,
@@ -75,8 +87,10 @@ from functions_orchestration_events import (
 )
 from functions_orchestration_executor import RunContext, execute_plan
 from functions_orchestration_planner import (
+    ConversationResolutionError,
     build_trivial_plan,
     plan_request,
+    resolve_conversation_request,
     resolve_planner_client,
     triage_request,
 )
@@ -86,26 +100,35 @@ from functions_orchestration_runs import (
     complete_elicitation_submission,
     create_orchestration_run,
     create_pending_elicitation,
+    clear_pending_turn_context,
+    get_latest_turn_run,
+    get_pending_elicitation,
+    get_pending_turn_context,
     get_orchestration_run,
     list_conversation_runs,
     list_run_steps,
     prepare_elicitation_outcome,
     release_elicitation_submission,
     save_orchestration_step,
+    save_pending_turn_context,
     update_orchestration_run,
 )
 from functions_orchestration_schema import (
     APPROVAL_STATE_APPROVED,
     COMPLEXITY_TRIVIAL,
     ELICITATION_ACTION_ACCEPT,
+    ELICITATION_ACTION_CANCEL,
     PLAN_STATUS_CANCELLED,
     PLAN_STATUS_COMPLETED,
+    PLAN_STATUS_FAILED,
     PLAN_STATUS_RUNNING,
     apply_plan_edits,
     normalize_plan,
+    normalize_elicitation,
     summarize_plan,
 )
 from functions_settings import get_settings, get_user_settings
+from functions_prompt_metadata import build_prompt_selection_metadata
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -216,6 +239,12 @@ def _build_invoke_prompt(settings, token_usage=None):
     return invoke_prompt
 
 
+def _combined_token_usage(prompt_usage, step_usage):
+    usage = dict(step_usage or {})
+    usage.update(_sum_token_usage(prompt_usage, step_usage))
+    return usage
+
+
 def _authorized_document_ids(candidates, seeds):
     """Documents a plan is allowed to name.
 
@@ -253,19 +282,183 @@ def _load_ledger(conversation_id, user_id, settings):
     if not conversation_id:
         return build_run_ledger([], settings=settings)
     try:
-        limit = int(settings.get('chat_orchestration_ledger_max_runs') or 10)
+        limit = int(settings.get('chat_orchestration_ledger_max_runs', 10))
     except (TypeError, ValueError):
         limit = 10
+    if limit <= 0:
+        return build_run_ledger([], settings=settings)
     try:
-        runs = list_conversation_runs(conversation_id, user_id, limit=max(limit, 1))
+        runs = list_conversation_runs(conversation_id, user_id, limit=min(limit, 50))
     except Exception as exc:
         log_event(
             f"[ORCHESTRATION] Could not read the run ledger; planning without it: {exc}",
             level=logging.WARNING,
         )
         return build_run_ledger([], settings=settings)
+    # A derived intent or clarification can repeat redacted text even when the message
+    # snapshot excludes it. Omit the whole ledger entry when its source turn is hidden.
+    _authorize_context_conversation(conversation_id, user_id)
+    source_ids = list({
+        run[key] for run in runs for key in ('user_message_id', 'assistant_message_id')
+        if isinstance(run.get(key), str) and run[key]
+    })
+    try:
+        sources = list(cosmos_messages_container.query_items(
+            query=(
+                'SELECT c.id, c.role, c.metadata FROM c WHERE c.conversation_id = @conversation_id '
+                'AND ARRAY_CONTAINS(@message_ids, c.id)'
+            ),
+            parameters=[
+                {'name': '@conversation_id', 'value': conversation_id},
+                {'name': '@message_ids', 'value': source_ids},
+            ],
+            partition_key=conversation_id,
+        )) if source_ids else []
+    except AzureError as exc:
+        log_event(
+            '[ORCHESTRATION] Could not revalidate earlier run context; omitting the ledger.',
+            level=logging.WARNING, extra={'error_type': type(exc).__name__},
+        )
+        return {'runs': [], 'answered_questions': [], 'truncated': True}
+    visible = set()
+    for source in sources:
+        metadata = source.get('metadata') or {}
+        thread = (metadata.get('thread_info') or {}) if isinstance(metadata, dict) else None
+        if (
+            source.get('role') in ('user', 'assistant')
+            and isinstance(metadata, dict) and isinstance(thread, dict)
+            and not metadata.get('masked') and not metadata.get('masked_ranges')
+            and not metadata.get('is_generated_chat_artifact')
+            and thread.get('active_thread') is not False
+        ):
+            visible.add(source['id'])
+    runs = [
+        run for run in runs
+        if run.get('user_message_id') in visible
+        and (not run.get('assistant_message_id') or run['assistant_message_id'] in visible)
+    ]
     return build_run_ledger(
         runs, settings=settings, answered_questions=collect_answered_questions(runs)
+    )
+
+
+def _authorize_context_conversation(conversation_id, user_id):
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id, partition_key=conversation_id
+        )
+    except CosmosResourceNotFoundError:
+        raise ConversationContextError('That conversation could not be opened.') from None
+    if conversation.get('user_id') != user_id:
+        raise ConversationContextError('That conversation could not be opened.')
+    return conversation
+
+
+def _load_conversation_snapshot(
+    conversation_id, user_id, settings, *, turn_id=None, before_message_id=None
+):
+    """Read history from the owned partition, never from the browser's loaded page."""
+    _authorize_context_conversation(conversation_id, user_id)
+    parameters = [{'name': '@conversation_id', 'value': conversation_id}]
+    before_clause = ''
+    if before_message_id:
+        try:
+            before = cosmos_messages_container.read_item(
+                item=before_message_id, partition_key=conversation_id
+            )
+        except CosmosResourceNotFoundError:
+            raise ConversationContextError('This request needs a new plan.') from None
+        if (
+            before.get('conversation_id') != conversation_id
+            or before.get('role') != 'user'
+            or not before.get('timestamp')
+        ):
+            raise ConversationContextError('This request needs a new plan.')
+        before_clause = ' AND c.timestamp < @before_timestamp'
+        parameters.append({'name': '@before_timestamp', 'value': before['timestamp']})
+
+    limit = history_message_limit(settings)
+    if not limit:
+        return build_conversation_snapshot([], settings)
+    scan_limit = min(HISTORY_SCAN_LIMIT, limit * 2 + 1)
+    messages = list(cosmos_messages_container.query_items(
+        query=(
+            f'SELECT TOP {scan_limit} * FROM c '
+            'WHERE c.conversation_id = @conversation_id '
+            'AND c.role IN ("user", "assistant") '
+            'AND (NOT IS_DEFINED(c.metadata.masked) OR c.metadata.masked != true) '
+            'AND (NOT IS_DEFINED(c.metadata.is_generated_chat_artifact) '
+            'OR c.metadata.is_generated_chat_artifact != true) '
+            'AND (NOT IS_DEFINED(c.metadata.thread_info.active_thread) '
+            'OR c.metadata.thread_info.active_thread != false)'
+            f'{before_clause} ORDER BY c.timestamp DESC'
+        ),
+        parameters=parameters,
+        partition_key=conversation_id,
+    ))
+    return build_conversation_snapshot(
+        messages, settings, turn_id=turn_id, truncated=len(messages) >= scan_limit
+    )
+
+
+def _validate_saved_conversation_context(snapshot, conversation_id, user_id):
+    _authorize_context_conversation(conversation_id, user_id)
+    entries = snapshot.get('messages') if isinstance(snapshot, dict) else None
+    if not isinstance(entries, list) or len(entries) > HISTORY_MAX_MESSAGES:
+        raise ConversationContextError('This request needs a new plan.')
+    message_ids = [
+        entry['id'] for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get('id'), str) and entry['id']
+    ]
+    if len(message_ids) != len(entries) or len(set(message_ids)) != len(message_ids):
+        raise ConversationContextError('This request needs a new plan.')
+    messages = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT * FROM c WHERE c.conversation_id = @conversation_id '
+            'AND ARRAY_CONTAINS(@message_ids, c.id)'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@message_ids', 'value': message_ids},
+        ],
+        partition_key=conversation_id,
+    )) if message_ids else []
+    return validate_conversation_snapshot(snapshot, messages)
+
+
+def _conversation_context_for_run(record, user_id, settings):
+    conversation_id = record['conversation_id']
+    _authorize_context_conversation(conversation_id, user_id)
+    if record.get('user_message_id'):
+        try:
+            current = cosmos_messages_container.read_item(
+                item=record['user_message_id'], partition_key=conversation_id
+            )
+        except CosmosResourceNotFoundError:
+            raise ConversationContextError('This request needs a new plan.') from None
+        normalized = normalize_history_message(current)
+        if (
+            not normalized
+            or normalized['role'] != 'user'
+            or current.get('conversation_id') != conversation_id
+            or (
+                record.get('user_message_fingerprint')
+                and normalized['fingerprint'] != record['user_message_fingerprint']
+            )
+            or (
+                not record.get('user_message_fingerprint')
+                and normalized['content'] != record.get('user_message')
+            )
+        ):
+            raise ConversationContextError('This request needs a new plan.')
+    if 'conversation_context' in record:
+        return _validate_saved_conversation_context(
+            record['conversation_context'], conversation_id, user_id
+        )
+    if not record.get('user_message_id'):
+        raise ConversationContextError('This older request needs a new plan.')
+    return _load_conversation_snapshot(
+        conversation_id, user_id, settings, before_message_id=record['user_message_id']
     )
 
 
@@ -323,7 +516,7 @@ def _ensure_conversation(conversation_id, user_id, title=''):
             # id cannot be used to probe for conversations that exist.
             return None, False
         return conversation_id, False
-    except exceptions.CosmosResourceNotFoundError:
+    except CosmosResourceNotFoundError:
         pass
     except Exception as exc:
         log_event(
@@ -405,7 +598,9 @@ def _request_identity(user_id=None, seeded_agent=None):
     }
 
 
-def _capability_request_context(user_id, identity, user_message, agent_catalog):
+def _capability_request_context(
+    user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None
+):
     """Describe this caller, so the capability request gates can answer for them.
 
     Distinct from the deployment-level gates: those answer "does this installation have
@@ -418,18 +613,7 @@ def _capability_request_context(user_id, identity, user_message, agent_catalog):
     Flask, and the gates stay next to the capabilities they belong to.
     """
     identity = identity or {}
-    urls = []
-    try:
-        from functions_source_review import extract_urls_from_text
-
-        urls = extract_urls_from_text(user_message or '') or []
-    except Exception as exc:
-        # No URLs found is the safe reading: url_fetch is withheld rather than offered for
-        # a message we could not scan.
-        log_event(
-            f"[ORCHESTRATION] Could not scan the message for URLs: {exc}",
-            level=logging.WARNING,
-        )
+    urls = list(allowed_user_urls) if allowed_user_urls is not None else conversation_user_urls(user_message)
 
     return {
         'user_id': user_id,
@@ -439,34 +623,33 @@ def _capability_request_context(user_id, identity, user_message, agent_catalog):
         'user_email': identity.get('user_email'),
         'user_enable_agents': identity.get('user_enable_agents', True),
         'agent_catalog': list(agent_catalog or ()),
+        'action_catalog': list(action_catalog or ()),
     }
 
 
 def _partition_citations(citations):
-    """Split a run's citations into the document and web buckets chat already uses.
+    """Split citations into the document, web, and tool fields chat already renders.
 
-    An assistant message carries these in two separate fields, and the difference is not
-    cosmetic: ``hybrid_citations`` is what the conversation's used-document tracking reads
-    to work out which documents an answer actually drew on, and a web citation has no
-    document to track. Folding both into one field would either lose the web sources or
-    put entries with no ``document_id`` in front of ``build_used_documents``, which skips
-    them silently -- a bug that looks like nothing happening.
+    ``hybrid_citations`` also feeds used-document tracking. Native calls belong in
+    ``agent_citations`` so their arguments and results reach the tool renderer instead
+    of becoming web-source entries without a URL.
     """
     document_citations = []
     web_citations = []
+    tool_citations = []
     for citation in citations or ():
         if not isinstance(citation, dict):
             continue
         if _text(citation.get('document_id')):
             document_citations.append(citation)
+        elif citation.get('tool_name') or citation.get('function_name'):
+            tool_citations.append(citation)
         elif _text(citation.get('url')) or citation.get('source_type') == 'web':
             web_citations.append(citation)
         else:
-            # Neither a document nor a page: an agent tool call, for instance. Carried as
-            # a web-style citation so it is still visible on the message rather than
-            # discarded, but kept out of document tracking where it has no place.
+            # Preserve older non-document source records without treating them as documents.
             web_citations.append(citation)
-    return document_citations, web_citations
+    return document_citations, web_citations, tool_citations
 
 
 def _record_cited_documents(conversation_id, user_id, document_citations):
@@ -542,24 +725,93 @@ def _elicitation_outcome_events(outcome):
         yield build_plan_event(outcome['document'])
 
 
-def _persist_planned_turn(plan, turn_context, user_id, conversation_id):
-    message_id = _save_message(
-        conversation_id, 'user', turn_context['user_message'],
-        message_id=turn_context['user_message_id'],
+def _persist_planned_turn(plan, turn_context, user_id, conversation_id, submission=None):
+    message_id, fingerprint = _save_turn_message(
+        conversation_id, user_id, turn_context['turn_id'], turn_context['user_message'],
+        previous=turn_context, prompt_selection=turn_context.get('prompt_selection'),
     )
-    if not message_id:
-        raise RuntimeError('The user message could not be saved.')
+    turn_context['user_message_id'] = message_id
+    turn_context['user_message_fingerprint'] = fingerprint
     create_orchestration_run(
         plan, user_id, conversation_id=conversation_id, idempotent=True,
-        initial_updates={
-            'user_message': turn_context['user_message'],
-            'user_message_id': message_id,
-            'turn_id': turn_context['turn_id'],
-            'seeds': turn_context['seeds'],
-            'original_seeds': turn_context['original_seeds'],
-            'answered_questions': turn_context['answered_questions'],
-        },
+        turn_context=turn_context,
     )
+    if submission:
+        prepare_elicitation_outcome(submission, 'plan', plan, turn_context)
+
+
+def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None, prompt_selection=None):
+    """A stable ID makes retries and revised plans reuse their original user message."""
+    _authorize_context_conversation(conversation_id, user_id)
+    message_id = (previous or {}).get('user_message_id') or (
+        f"user_orchestration_{uuid.uuid5(uuid.NAMESPACE_URL, f'{conversation_id}:{turn_id}').hex}"
+    )
+    try:
+        stored = cosmos_messages_container.read_item(
+            item=message_id, partition_key=conversation_id
+        )
+    except CosmosResourceNotFoundError:
+        stored = None
+    if stored is not None:
+        normalized = normalize_history_message(stored)
+        if (
+            not normalized or normalized['role'] != 'user'
+            or stored.get('conversation_id') != conversation_id
+            or normalized['content'] != message
+            or (
+                (previous or {}).get('user_message_fingerprint')
+                and normalized['fingerprint'] != previous['user_message_fingerprint']
+            )
+        ):
+            raise ConversationContextError('This turn changed. Submit a new request.')
+        return message_id, normalized['fingerprint']
+    metadata = {'orchestration': {'turn_id': turn_id}}
+    if prompt_selection:
+        metadata['orchestration_turn_id'] = turn_id
+        metadata['prompt_selection'] = prompt_selection
+    saved = _save_message(
+        conversation_id, 'user', message,
+        metadata=metadata,
+        message_id=message_id,
+    )
+    if not saved:
+        raise ConversationContextError('The user message could not be saved.')
+    stored = cosmos_messages_container.read_item(item=saved, partition_key=conversation_id)
+    return saved, normalize_history_message(stored)['fingerprint']
+
+
+def _sum_token_usage(*usages):
+    total = {}
+    for usage in usages:
+        if not isinstance(usage, dict):
+            continue
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+            value = usage.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                total[field] = total.get(field, 0) + value
+    return total
+
+
+def _save_pending_elicitation(
+    elicitation, turn_context, user_id, conversation_id, turn_id,
+    *, submission=None, expected_pending=None,
+):
+    question = {
+        **elicitation,
+        'turn_id': turn_id,
+        'conversation_id': conversation_id,
+    }
+    if submission:
+        outcome = prepare_elicitation_outcome(submission, 'elicitation', question, turn_context)
+        complete_elicitation_submission(submission)
+        return outcome
+    pending = create_pending_elicitation(
+        question, turn_context, user_id, conversation_id, turn_id,
+        expected_pending=expected_pending,
+    )
+    if pending.get('status') == 'completed':
+        return pending['submissions'][-1]['outcome']
+    return {'kind': 'elicitation', 'document': pending['question']}
 
 
 def _touch_conversation(conversation_id, user_id, title=None):
@@ -625,22 +877,23 @@ def register_route_backend_orchestration(bp):
             approval_mode = ''
 
         seeds = resolve_seeds(data)
-        recent_messages = data.get('recent_messages')
         replan_hint = _text(data.get('replan_hint'), 600)
         answered_record = []
         submission = None
         allow_elicitation = True
+        prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message)
         turn_context = {
             'user_message': message,
-            'user_message_id': f'user_{uuid.uuid4().hex}',
             'turn_id': turn_id,
             'seeds': seeds,
             'original_seeds': deepcopy(seeds),
             'answered_questions': [],
-            'recent_messages': recent_messages,
+            'prompt_selection': prompt_selection,
+            'planning_token_usage': {},
             'approval_mode': approval_mode,
             'replan_hint': replan_hint,
         }
+        prior_elicitation = data.get('elicitation')
         if is_reply:
             try:
                 if not conversation_id or not data.get('turn_id'):
@@ -652,6 +905,11 @@ def register_route_backend_orchestration(bp):
                 )
                 if conversation.get('user_id') != user_id:
                     raise ElicitationStateError('This question has expired. Please send the request again.')
+                if isinstance(prior_elicitation, dict) and (
+                    prior_elicitation.get('conversation_id') not in (None, '', conversation_id)
+                    or prior_elicitation.get('turn_id') not in (None, '', turn_id)
+                ):
+                    raise ElicitationContextError('The clarification belongs to a different turn.')
                 response = data.get('elicitation_response')
                 if not isinstance(response, dict):
                     raise ElicitationContextError('The question response must be an object.')
@@ -668,14 +926,31 @@ def register_route_backend_orchestration(bp):
                     raise ElicitationContextError('The answer contains an invalid value.') from exc
                 if len(fingerprint_data) > ELICITATION_CONTEXT_BYTE_LIMIT:
                     raise ElicitationContextError('The answer is too large. Shorten it and try again.')
+                fingerprint = hashlib.sha256(fingerprint_data).hexdigest()
+                question_id = data.get('elicitation_id')
+                question_revision = data.get('elicitation_revision')
+                submission_id = data.get('elicitation_submission_id')
+                if (
+                    all(value is None for value in (question_id, question_revision, submission_id))
+                    and isinstance(prior_elicitation, dict)
+                    and prior_elicitation.get('elicitation_id') is not None
+                ):
+                    # Older upstream clients return the question envelope. Only its
+                    # identity is used; its schema, labels, and message are never trusted.
+                    question_id = prior_elicitation.get('elicitation_id')
+                    question_revision = prior_elicitation.get('revision')
+                    submission_id = 'legacy_' + hashlib.sha256(
+                        f'{question_id}:{question_revision}:{fingerprint}'.encode('utf-8')
+                    ).hexdigest()
                 submission = claim_elicitation_submission(
                     user_id, conversation_id, turn_id,
-                    hashlib.sha256(fingerprint_data).hexdigest(),
-                    elicitation_id=data.get('elicitation_id'),
-                    revision=data.get('elicitation_revision'),
-                    submission_id=data.get('elicitation_submission_id'),
+                    fingerprint, elicitation_id=question_id,
+                    revision=question_revision, submission_id=submission_id,
                 )
                 if submission.get('replayed'):
+                    _conversation_context_for_run({
+                        **submission['record']['turn_context'], 'conversation_id': conversation_id,
+                    }, user_id, settings)
                     return _sse(_elicitation_outcome_events(submission['outcome']))
                 pending = submission['record']
                 if submission.get('outcome'):
@@ -708,7 +983,10 @@ def register_route_backend_orchestration(bp):
                 message = turn_context['user_message']
                 seeds = turn_context['seeds']
                 answered_record = turn_context['answered_questions']
-                recent_messages = turn_context.get('recent_messages')
+                validate_clarification_answers(answered_record)
+                _conversation_context_for_run({
+                    **turn_context, 'conversation_id': conversation_id,
+                }, user_id, settings)
                 approval_mode = turn_context.get('approval_mode', '')
                 if not settings.get('chat_orchestration_allow_user_approval_override', True):
                     approval_mode = ''
@@ -720,6 +998,14 @@ def register_route_backend_orchestration(bp):
                 )
             except ElicitationStateError as exc:
                 release_elicitation_submission(submission)
+                if (
+                    exc.code == 'elicitation_expired'
+                    and not isinstance(prior_elicitation, dict)
+                    and not any(key in data for key in (
+                        'elicitation_id', 'elicitation_revision', 'elicitation_submission_id',
+                    ))
+                ):
+                    return jsonify({'error': exc.message, 'code': exc.code}), 400
                 return jsonify({'error': exc.message, 'code': exc.code}), exc.status_code
             except ElicitationContextError as exc:
                 release_elicitation_submission(submission)
@@ -727,6 +1013,11 @@ def register_route_backend_orchestration(bp):
                 if exc.field:
                     payload['field_errors'] = {exc.field: exc.message}
                 return jsonify(payload), 400
+            except ConversationContextError:
+                release_elicitation_submission(submission)
+                return jsonify({
+                    'error': 'Conversation context changed or is unavailable. Create a new request.',
+                }), 409
             except exceptions.CosmosResourceNotFoundError:
                 release_elicitation_submission(submission)
                 return jsonify({
@@ -744,20 +1035,27 @@ def register_route_backend_orchestration(bp):
         # Captured on the request thread, before the streamed generator body runs. See
         # _request_identity: a generator runs after the view returns, when the session is
         # already gone.
-        identity = _request_identity(user_id, seeded_agent=seeds.get('agent'))
+        identity = _request_identity(user_id)
 
         def generate():
+            nonlocal turn_context, seeds, answered_record, approval_mode, replan_hint
             try:
                 if submission and submission.get('outcome'):
                     outcome = submission['outcome']
                     if outcome['kind'] == 'plan':
-                        _persist_planned_turn(outcome['document'], turn_context, user_id, conversation_id)
+                        _persist_planned_turn(
+                            outcome['document'], turn_context, user_id, conversation_id, submission,
+                        )
                     complete_elicitation_submission(submission)
                     yield from _elicitation_outcome_events(outcome)
                     return
-                resolved_conversation_id, created = _ensure_conversation(
-                    conversation_id, user_id, title=message
-                )
+                if submission:
+                    _authorize_context_conversation(conversation_id, user_id)
+                    resolved_conversation_id, created = conversation_id, False
+                else:
+                    resolved_conversation_id, created = _ensure_conversation(
+                        conversation_id, user_id, title=message
+                    )
                 if not resolved_conversation_id:
                     yield build_error_event('That conversation could not be opened.')
                     return
@@ -768,20 +1066,133 @@ def register_route_backend_orchestration(bp):
                         resolved_conversation_id, _text(message, 80)
                     )
 
-                effective_request = build_elicitation_user_request(message, answered_record)
-                candidates, _probed = resolve_candidate_documents(
-                    effective_request, user_id, seeds=seeds,
-                    conversation_id=resolved_conversation_id, settings=settings,
+                observed_pending = None
+                current_revision = revision
+                if submission:
+                    snapshot = _conversation_context_for_run({
+                        **turn_context, 'conversation_id': resolved_conversation_id,
+                    }, user_id, settings)
+                else:
+                    previous = get_latest_turn_run(resolved_conversation_id, user_id, turn_id)
+                    observed_pending = get_pending_elicitation(
+                        user_id, resolved_conversation_id, turn_id,
+                    )
+                    if observed_pending and observed_pending.get('status') != 'completed':
+                        pending_context = observed_pending['turn_context']
+                        if pending_context['user_message'] != message:
+                            raise ConversationContextError('This turn changed. Submit a new request.')
+                        _conversation_context_for_run({
+                            **pending_context, 'conversation_id': resolved_conversation_id,
+                        }, user_id, settings)
+                        yield build_elicitation_event(observed_pending['question'])
+                        return
+                    if observed_pending:
+                        completed = (observed_pending.get('submissions') or [])[-1:]
+                        completed_plan = (completed[0].get('outcome') or {}).get('document') if completed else None
+                        if completed_plan and (
+                            not previous or int(completed_plan.get('revision') or 0) > int(previous.get('revision') or 0)
+                        ):
+                            previous = get_orchestration_run(
+                                completed_plan['run_id'], user_id, resolved_conversation_id,
+                            )
+                            if not previous:
+                                raise ConversationContextError('The last plan could not be opened. Submit a new request.')
+                    if previous:
+                        if previous.get('user_message') != message:
+                            raise ConversationContextError('This turn changed. Submit a new request.')
+                        snapshot = _conversation_context_for_run(previous, user_id, settings)
+                        current_revision = max(revision, int(previous.get('revision') or 0) + 1)
+                        for key in (
+                            'user_message_id', 'user_message_fingerprint', 'seeds', 'original_seeds',
+                            'answered_questions', 'prompt_selection',
+                        ):
+                            if key in previous:
+                                turn_context[key] = deepcopy(previous[key])
+                        seeds = turn_context['seeds']
+                        answered_record = turn_context['answered_questions']
+                    else:
+                        snapshot = _load_conversation_snapshot(
+                            resolved_conversation_id, user_id, settings, turn_id=turn_id,
+                        )
+                turn_context['conversation_context'] = snapshot
+                turn_context['revision'] = current_revision
+                validate_clarification_answers(answered_record)
+                resolve_elicitation_references(
+                    seeds.get('elicitation_references') or [],
+                    user_id, resolved_conversation_id, settings=settings,
                 )
+                action_catalog = resolve_action_catalog(
+                    user_id, seeds=seeds, settings=settings,
+                    user_groups=seeds.get('active_group_ids') or None,
+                )
+                planning_identity = dict(identity)
+                if isinstance(seeds.get('agent'), dict) and seeds['agent'].get('name'):
+                    planning_identity['user_enable_agents'] = True
+                resolution = resolve_conversation_request(
+                    message, snapshot, settings=settings, answered_questions=answered_record,
+                )
+                planning_usage = _sum_token_usage(
+                    turn_context.get('planning_token_usage'), resolution.get('token_usage')
+                )
+                turn_context['planning_token_usage'] = planning_usage
+                if resolution['relationship'] == 'clarification':
+                    if not allow_elicitation:
+                        resolution.update({
+                            'relationship': 'follow_up',
+                            'resolved_message': message,
+                            'message_ids': [item['id'] for item in snapshot['messages']],
+                            'requires_retrieval': False,
+                        })
+                if resolution['relationship'] == 'clarification':
+                    question = resolution['clarification']
+                    elicitation = normalize_elicitation({
+                        'message': question,
+                        'requested_schema': {
+                            'type': 'object',
+                            'properties': {'clarification': {'type': 'string', 'title': question}},
+                            'required': ['clarification'],
+                        },
+                    }, run_id=None, revision=current_revision)
+                    outcome = _save_pending_elicitation(
+                        elicitation, turn_context, user_id, resolved_conversation_id, turn_id,
+                        submission=submission, expected_pending=observed_pending,
+                    )
+                    yield from _elicitation_outcome_events(outcome)
+                    return
+
+                effective_message = resolution['resolved_message']
+                turn_context['request_resolution'] = resolution
+                turn_context['resolved_message'] = effective_message
+                effective_request = build_elicitation_user_request(effective_message, answered_record)
+                if (
+                    resolution.get('requires_retrieval') is False
+                    and not seeds.get('document_ids') and not seeds.get('elicitation_references')
+                ):
+                    candidates = []
+                else:
+                    candidates, _probed = resolve_candidate_documents(
+                        effective_request, user_id, seeds=seeds,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                    )
                 ledger = _load_ledger(resolved_conversation_id, user_id, settings)
-                signals = build_conversation_signals(recent_messages, effective_request)
+                signals = build_conversation_signals(
+                    snapshot['messages'], message, truncated=snapshot['truncated'],
+                    message_ids=resolution['message_ids'],
+                )
+                allowed_user_urls = conversation_user_urls(
+                    message, snapshot, resolution['message_ids'], answered_record
+                )
+                signals['urls'] = allowed_user_urls
 
                 context = build_planner_context(
-                    message, candidates=candidates, seeds=seeds, ledger=ledger, signals=signals,
-                    answered_questions=answered_record,
+                    effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
+                    signals=signals, original_message=message, request_resolution=resolution,
+                    actions=action_catalog, answered_questions=answered_record,
                 )
+                if answered_record:
+                    context['answered_now'] = answered_record
 
-                complexity = triage_request(message, context)
+                complexity = triage_request(effective_message, context)
                 yield build_triage_thought(complexity)
 
                 authorized = _authorized_document_ids(candidates, seeds)
@@ -791,7 +1202,7 @@ def register_route_backend_orchestration(bp):
                     # No planning round trip. The point of triage is to make a
                     # conversational reply feel instant rather than sent away to think.
                     plan = normalize_plan(
-                        build_trivial_plan(message, context),
+                        build_trivial_plan(effective_message, context),
                         resolved_conversation_id, user_id, settings=settings,
                         approval_mode=approval_mode,
                         authorized_document_ids=authorized,
@@ -814,18 +1225,21 @@ def register_route_backend_orchestration(bp):
                     # projected down to its naming fields. Writing the key directly would
                     # put an agent's full instructions in front of the planner.
                     context = build_planner_context(
-                        message, candidates=candidates, seeds=seeds, ledger=ledger,
-                        signals=signals, agents=agent_catalog,
+                        effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
+                        signals=signals, agents=agent_catalog, original_message=message,
+                        request_resolution=resolution, actions=action_catalog,
                         answered_questions=answered_record,
                     )
+                    if answered_record:
+                        context['answered_now'] = answered_record
 
                     kind, plan = plan_request(
-                        message, context, resolved_conversation_id, user_id,
+                        effective_message, context, resolved_conversation_id, user_id,
                         settings=settings,
                         approval_mode=approval_mode,
                         authorized_document_ids=authorized,
                         replan_hint=replan_hint or None,
-                        revision=revision,
+                        revision=current_revision,
                         allow_elicitation=allow_elicitation,
                         turn_id=turn_id, seeds=seeds, document_labels=labels,
                         # Narrows one resolution and thereby three things: what the planner
@@ -833,38 +1247,41 @@ def register_route_backend_orchestration(bp):
                         # an adapter. Without it a plan could propose reading links in a
                         # message that has none, or an agent this user does not have.
                         request_context=_capability_request_context(
-                            user_id, identity, effective_request, agent_catalog,
+                            user_id, planning_identity, message, agent_catalog,
+                            action_catalog,
+                            allowed_user_urls=allowed_user_urls,
                         ),
                     )
 
+                planning_usage = _sum_token_usage(planning_usage, plan.get('token_usage'))
+                turn_context['planning_token_usage'] = planning_usage
                 if kind == 'elicitation':
-                    plan['turn_id'] = turn_id
-                    plan['conversation_id'] = resolved_conversation_id
-                    plan['revision'] = revision
-                    if submission:
-                        outcome = prepare_elicitation_outcome(submission, kind, plan, turn_context)
-                        complete_elicitation_submission(submission)
-                    else:
-                        pending = create_pending_elicitation(
-                            plan, turn_context, user_id, resolved_conversation_id, turn_id,
-                        )
-                        outcome = (
-                            pending['submissions'][-1]['outcome']
-                            if pending.get('status') == 'completed'
-                            else {'kind': 'elicitation', 'document': pending['question']}
-                        )
+                    plan['revision'] = current_revision
+                    outcome = _save_pending_elicitation(
+                        plan, turn_context, user_id, resolved_conversation_id, turn_id,
+                        submission=submission, expected_pending=observed_pending,
+                    )
                     yield from _elicitation_outcome_events(outcome)
                     return
 
-                plan['revision'] = revision
+                plan['revision'] = current_revision
                 outcome = {'kind': kind, 'document': plan}
                 if submission:
                     outcome = prepare_elicitation_outcome(submission, kind, plan, turn_context)
-                _persist_planned_turn(plan, turn_context, user_id, resolved_conversation_id)
+                _persist_planned_turn(plan, turn_context, user_id, resolved_conversation_id, submission)
                 if submission:
                     complete_elicitation_submission(submission)
                 yield from _elicitation_outcome_events(outcome)
 
+            except (ConversationContextError, ConversationResolutionError) as exc:
+                log_event(
+                    '[ORCHESTRATION] Conversation context could not be used for planning.',
+                    level=logging.WARNING, extra={'error_type': type(exc).__name__},
+                )
+                yield build_error_event(
+                    'Conversation context could not be used. Retry or create a new plan.',
+                    conversation_id,
+                )
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION] Planning failed.',
@@ -916,6 +1333,21 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'The plan edits were not valid.'}), 400
 
         conversation_id = conversation_id or _text(record.get('conversation_id'))
+        try:
+            snapshot = _conversation_context_for_run(record, user_id, settings)
+        except ConversationContextError:
+            return jsonify({
+                'error': 'Conversation context changed or is unavailable. Create a new plan.'
+            }), 409
+        except AzureError as exc:
+            log_event(
+                '[ORCHESTRATION] Could not load conversation context for execution.',
+                level=logging.ERROR, extra={'error_type': type(exc).__name__},
+            )
+            return jsonify({'error': 'Conversation history could not be loaded. Please retry.'}), 503
+        # Legacy records are hydrated once. The finalization callback must validate this
+        # exact snapshot rather than silently loading a different history and discarding it.
+        record = {**record, 'conversation_context': snapshot}
 
         seeds = record.get('seeds') if isinstance(record.get('seeds'), dict) else {}
         try:
@@ -930,7 +1362,7 @@ def register_route_backend_orchestration(bp):
             }), 409
 
         # One accumulator for the whole run, filled by every model call the closure makes.
-        run_token_usage = {}
+        run_token_usage = _sum_token_usage(record.get('planning_token_usage'))
         try:
             invoke_prompt = _build_invoke_prompt(settings, token_usage=run_token_usage)
         except Exception as exc:
@@ -939,6 +1371,11 @@ def register_route_backend_orchestration(bp):
 
         user_message = _text(record.get('user_message')) or _text(
             (plan.get('intent') or {}).get('summary')
+        )
+        resolution = record.get('request_resolution') or {}
+        context_message_ids = resolution.get('message_ids')
+        allowed_user_urls = conversation_user_urls(
+            user_message, snapshot, context_message_ids, record.get('answered_questions')
         )
 
         # Captured out here, on the request thread, and closed over by the generator. A
@@ -955,6 +1392,19 @@ def register_route_backend_orchestration(bp):
             user_id, seeds=seeds, settings=settings,
             user_groups=seeds.get('active_group_ids') or None,
         )
+        action_catalog = resolve_action_catalog(
+            user_id, seeds=seeds, settings=settings,
+            user_groups=seeds.get('active_group_ids') or None,
+        )
+        selected_model = seeds.get('model') or {}
+        action_model_context = {
+            'model_id': selected_model.get('model_id'),
+            'endpoint_id': selected_model.get('model_endpoint_id'),
+            'provider': selected_model.get('model_provider'),
+            'model_deployment': selected_model.get('model_deployment'),
+            'user_id': user_id,
+            'active_group_ids': seeds.get('active_group_ids') or [],
+        }
 
         def generate():
             approved_at = _now_iso()
@@ -964,6 +1414,7 @@ def register_route_backend_orchestration(bp):
                     'started_at': approved_at,
                     'plan': plan,
                     'plan_summary': summarize_plan(plan),
+                    'conversation_context': snapshot,
                     'approval': {**(plan.get('approval') or {}),
                                  'state': APPROVAL_STATE_APPROVED,
                                  'approved_at': approved_at,
@@ -1036,6 +1487,13 @@ def register_route_backend_orchestration(bp):
                 elicitation_references=seeds.get('elicitation_references') or [],
                 selected_document_ids=seeds.get('document_ids') or [],
                 original_seeds=record.get('original_seeds') or {},
+                resolved_message=_text(record.get('resolved_message')) or user_message,
+                conversation_context=snapshot,
+                context_message_ids=context_message_ids,
+                allowed_user_urls=allowed_user_urls,
+                revalidate_conversation_context=lambda: _conversation_context_for_run(
+                    record, user_id, settings
+                ),
                 doc_scope=seeds.get('doc_scope') or 'all',
                 tags=seeds.get('tags') or None,
                 document_filter_mode=seeds.get('document_filter_mode') or None,
@@ -1048,6 +1506,9 @@ def register_route_backend_orchestration(bp):
                 user_enable_agents=identity.get('user_enable_agents', True),
                 active_group_id=(seeds.get('active_group_ids') or [None])[0],
                 agent_catalog=agent_catalog,
+                action_catalog=action_catalog,
+                gpt_model=selected_model.get('model_deployment'),
+                model_context=action_model_context,
                 agent_execution_identity=agent_execution_identity,
             )
 
@@ -1097,10 +1558,28 @@ def register_route_backend_orchestration(bp):
             thread.join(timeout=RUN_JOIN_TIMEOUT_SECONDS)
 
             if 'error' in outcome or 'result' not in outcome:
-                yield build_error_event('The run could not be completed.', conversation_id)
+                error_message = (
+                    'Conversation context changed. Create a new plan.'
+                    if isinstance(outcome.get('error'), ConversationContextError)
+                    else 'The run could not be completed.'
+                )
+                try:
+                    update_orchestration_run(run_id, user_id, {
+                        'status': PLAN_STATUS_FAILED,
+                        'error': error_message,
+                        'completed_at': _now_iso(),
+                        'token_usage': run_token_usage,
+                    }, conversation_id=conversation_id)
+                except AzureError as exc:
+                    log_event(
+                        '[ORCHESTRATION] Could not persist a failed run.',
+                        level=logging.ERROR, extra={'error_type': type(exc).__name__},
+                    )
+                yield build_error_event(error_message, conversation_id)
                 return
 
             result = outcome['result']
+            combined_usage = _combined_token_usage(run_token_usage, result.get('token_usage'))
             answer = _text(result.get('message'))
             if (result.get('reauthorization') or {}).get('reason') == 'elicitation_context_unavailable':
                 yield build_error_event(
@@ -1116,7 +1595,7 @@ def register_route_backend_orchestration(bp):
             summary['status'] = result.get('status')
 
             # Everything the run gathered, split the way an assistant message carries it.
-            document_citations, web_citations = _partition_citations(result.get('citations'))
+            document_citations, web_citations, tool_citations = _partition_citations(result.get('citations'))
 
             # The answer is an ordinary assistant message. Written before the terminal
             # frame so that a client which reloads the moment it arrives finds the answer
@@ -1126,14 +1605,17 @@ def register_route_backend_orchestration(bp):
                 metadata={
                     'orchestration': {
                         'run_id': run_id,
+                        'turn_id': record.get('turn_id'),
                         'plan_summary': summary,
                     },
-                    'token_usage': run_token_usage or result.get('token_usage') or {},
+                    'token_usage': combined_usage,
                 },
                 extra={
                     'hybrid_citations': document_citations,
                     'web_search_citations': web_citations,
-                    'augmented': bool(document_citations or web_citations),
+                    'agent_citations': tool_citations,
+                    'generated_artifacts': result.get('artifacts') or [],
+                    'augmented': bool(document_citations or web_citations or tool_citations),
                 },
             ) if answer else None
 
@@ -1148,7 +1630,7 @@ def register_route_backend_orchestration(bp):
             try:
                 update_orchestration_run(run_id, user_id, {
                     'assistant_message_id': message_id,
-                    'token_usage': run_token_usage,
+                    'token_usage': combined_usage,
                 }, conversation_id=conversation_id)
             except Exception:
                 # The answer is already saved and streamed; failing to cross-reference it
@@ -1162,6 +1644,7 @@ def register_route_backend_orchestration(bp):
                 full_content=answer,
                 citations=document_citations,
                 web_citations=web_citations,
+                agent_citations=tool_citations,
                 artifacts=result.get('artifacts'),
                 plan_summary=summary,
                 status=result.get('status') or PLAN_STATUS_COMPLETED,
@@ -1227,7 +1710,13 @@ def register_route_backend_orchestration(bp):
             log_event(f"[ORCHESTRATION] Could not list runs: {exc}", level=logging.ERROR)
             return jsonify({'error': 'The run history could not be loaded.'}), 500
 
-        return jsonify({'runs': runs}), 200
+        private_fields = {'conversation_context', 'request_resolution', 'user_message_fingerprint'}
+        return jsonify({
+            'runs': [
+                {key: value for key, value in run.items() if key not in private_fields}
+                for run in runs
+            ]
+        }), 200
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/steps", methods=["GET"])
     @swagger_route(security=get_auth_security())

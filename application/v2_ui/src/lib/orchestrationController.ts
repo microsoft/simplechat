@@ -20,6 +20,7 @@ import {
     runOrchestration,
     type ApprovalMode,
     type ElicitationContext,
+    type Elicitation,
     type ElicitationResponse,
     type OrchestrationPlan,
     type OrchestrationPlanRequest,
@@ -27,6 +28,7 @@ import {
     type RunStreamEvent,
 } from './orchestration';
 import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable } from './orchestrationPlan';
+import type { Json } from './types';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
@@ -89,6 +91,7 @@ const activeControllers = new Map<string, AbortController>();
 export type ElicitationSubmitResult = { ok: true } | { ok: false; error: string };
 
 interface ElicitationContinuation {
+    elicitation: Elicitation;
     response: ElicitationResponse;
     context?: ElicitationContext;
     elicitationId: string;
@@ -192,7 +195,13 @@ async function dispatchPlan(
 
     const pendingUserMessageId = useChatStore
         .getState()
-        .beginOrchestrationTurn(currentConversationId, context.message, addUserMessage, currentTurnId);
+        .beginOrchestrationTurn(
+            currentConversationId,
+            context.message,
+            addUserMessage,
+            currentTurnId,
+            context.seeds.prompt_info as Json | undefined,
+        );
     if (addUserMessage) {
         context.pendingUserMessageId = pendingUserMessageId;
         turnContexts.set(key, context);
@@ -294,6 +303,7 @@ async function dispatchPlan(
         ...context.seeds,
     };
     if (continuation) {
+        body.elicitation = continuation.elicitation;
         body.elicitation_response = continuation.response;
         body.elicitation_id = continuation.elicitationId;
         body.elicitation_revision = continuation.revision;
@@ -454,10 +464,9 @@ export async function startOrchestrationPlan(params: StartPlanParams): Promise<v
 /**
  * Answer a planner's question and re-plan the same turn.
  *
- * The reply keeps its MCP shape unchanged — a decline or cancel carries no content — and is handed
- * back to the planner, which decides what to do with (or without) the answer. The turn id is
- * reused, the revision bumped, and the original message and seeds resent, because the re-plan is
- * the same turn continued, not a new one.
+ * Accept and decline continue the same turn with its original message, seeds and stored-question
+ * identity. The draft stays until that continuation succeeds. Cancel abandons the local turn
+ * without another planning request.
  */
 export async function answerElicitation(params: {
     conversationId: string;
@@ -489,6 +498,17 @@ export async function answerElicitation(params: {
     if (draft.submitting) {
         return { ok: false, error: 'An answer is already being submitted.' };
     }
+    if (response.action === 'cancel') {
+        cancelOrchestration(conversationId);
+        turnContexts.delete(key);
+        store.clearElicitation(conversationId, turnId);
+        store.clearActiveTurn(conversationId);
+        useChatStore.getState().settleOrchestrationTurn(conversationId, {
+            status: 'cancelled',
+            accumulated: '',
+        });
+        return { ok: true };
+    }
     const previous = turnContexts.get(key);
     if (!previous) {
         return fail('This request is no longer available in this browser session. Send the request again.');
@@ -514,6 +534,7 @@ export async function answerElicitation(params: {
         nextContext,
         false,
         {
+            elicitation,
             response: cleanedResponse,
             context: answerContext,
             elicitationId: elicitation.elicitation_id,

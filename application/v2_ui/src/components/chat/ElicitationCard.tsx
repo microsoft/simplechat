@@ -312,6 +312,7 @@ function QuestionField({
                 disabled={draft.submitting}
                 rows={kind === 'arrayText' ? 3 : 2}
                 multipleFiles={!files || field.type === 'array'}
+                knowledgeReferences={elicitationFieldReferences(elicitation, name, draft)}
                 placeholder={kind === 'arrayText' && primaryEditor
                     ? 'One value per line, # references, or / prompts'
                     : files

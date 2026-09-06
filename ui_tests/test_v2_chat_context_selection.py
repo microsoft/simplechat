@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.096
+Version: 0.261.099
 Implemented in: 0.261.094
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 
@@ -753,7 +753,7 @@ def test_shared_editor_prompt_variables_and_context_reach_both_main_send_paths(c
     expect_pills(page, "Quarterly brief", "Context report")
 
     page.get_by_role("button", name="Edit Context report for this message", exact=True).click()
-    page.get_by_role("textbox", name="{{topic}}", exact=True).fill("resilience")
+    page.get_by_role("textbox", name="topic", exact=True).fill("resilience")
     page.get_by_role("textbox", name="Prompt text", exact=True).fill(
         "Compare {{topic}} using {{composer}}."
     )
@@ -765,7 +765,7 @@ def test_shared_editor_prompt_variables_and_context_reach_both_main_send_paths(c
         page.get_by_role("button", name="Send message", exact=True).click()
     payload = sent.value.post_data_json
     assert payload["message"] == "Compare resilience using the latest report."
-    assert payload["prompt_info"]["variables"] == {"topic": "resilience"}
+    assert payload["prompt_info"]["variables"] == {"topic": "resilience", "composer": "the latest report"}
     assert payload["prompt_info"]["original_content"] == "For {{topic}}: {{composer}}"
     assert payload["prompt_info"]["edited"] is True
     assert payload["prompt_info"]["user_text"] == ""
@@ -1046,8 +1046,8 @@ def test_shared_editor_retained_processing_and_prompt_values_survive_remount(con
     expect(card.get_by_role("listbox", name="Prompt suggestions")).to_be_visible()
     draft.press("Tab")
     card.get_by_role("button", name="Edit Lifecycle prompt for this message", exact=True).click()
-    card.get_by_role("textbox", name="{{topic}}", exact=True).fill("contracts")
-    card.get_by_role("textbox", name="{{note}}", exact=True).fill("")
+    card.get_by_role("textbox", name="topic", exact=True).fill("contracts")
+    card.get_by_role("textbox", name="note", exact=True).fill("")
     edited = "Review {{topic}}: {{composer}}. {{note|keep default}}"
     card.get_by_role("textbox", name="Prompt text", exact=True).fill(edited)
     draft.fill("the first answer")
@@ -1108,8 +1108,8 @@ def test_shared_editor_retained_processing_and_prompt_values_survive_remount(con
     card.get_by_role("button", name="Back", exact=True).click()
     expect(card.get_by_text("Ready", exact=True)).to_be_visible()
     card.get_by_role("button", name="Edit Lifecycle prompt for this message", exact=True).click()
-    expect(card.get_by_role("textbox", name="{{topic}}", exact=True)).to_have_value("contracts")
-    expect(card.get_by_role("textbox", name="{{note}}", exact=True)).to_have_value("")
+    expect(card.get_by_role("textbox", name="topic", exact=True)).to_have_value("contracts")
+    expect(card.get_by_role("textbox", name="note", exact=True)).to_have_value("")
     expect(card.get_by_role("textbox", name="Prompt text", exact=True)).to_have_value(edited)
     expect(draft).to_have_value("the first answer")
     resumed = read_inline_lifecycle_draft(page)
@@ -1183,6 +1183,90 @@ def test_shared_editor_late_upload_cannot_revive_a_retired_question(context_page
         assert current is None
         expect(card).to_have_count(0)
     expect(page.get_by_text("retired.txt", exact=True)).to_have_count(0)
+
+
+def test_shared_editor_preserves_workspace_agent_launch_selection(context_page):
+    page, _ = context_page
+    mount_workflow(page, orchestration=True)
+    page.evaluate(
+        """() => {
+            const H = window.OrchHarness;
+            H.unmount('mount-a');
+            H.stores.bootstrap.useBootstrapStore.setState(state => ({data: {...state.data,
+                catalogs: {...state.data.catalogs, agents: [{
+                    id: 'launch-agent', catalog_key: 'personal::launch-agent',
+                    name: 'launch-agent', display_name: 'Launched agent', scope_type: 'personal'
+                }]}
+            }}));
+            H.mount('mount-a', 'Composer', {initialAgentSelection: 'personal::launch-agent'});
+        }"""
+    )
+    expect(page.get_by_title("Orchestrate", exact=True)).to_have_attribute("aria-pressed", "false")
+    expect(page.get_by_role("button", name="Launched agent", exact=True)).to_be_visible()
+    page.get_by_role("textbox", name="Message", exact=True).fill("Use the launched agent.")
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == STREAM_PATHS["chat"]
+    ) as sent:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    assert sent.value.post_data_json["agent_info"]["id"] == "launch-agent"
+    assert sent.value.post_data_json["agent_info"]["name"] == "launch-agent"
+    assert "model_deployment" not in sent.value.post_data_json
+
+
+def test_shared_editor_grounded_prompt_values_and_undo_survive_inline_paging(context_page):
+    page, _ = context_page
+    card = mount_inline_lifecycle(page)
+    answer = card.get_by_role("textbox", name="Additional details for Source files (optional)", exact=True)
+    answer.fill("/Lifecycle")
+    expect(card.get_by_role("listbox", name="Prompt suggestions")).to_be_visible()
+    answer.press("Tab")
+    answer.fill("Use this answer, not the main composer.")
+    card.get_by_role("textbox", name="note", exact=True).fill("")
+    card.get_by_role("button", name="Choose knowledge", exact=True).click()
+    picker_candidate(page, "Quarterly brief").click()
+    page.get_by_role("button", name="Done", exact=True).click()
+    fills = []
+
+    def fill(route):
+        fills.append(route.request.post_data_json)
+        route.fulfill(json={"values": [{
+            "key": "topic", "value": "Grounded contracts", "sources": [{
+                "document_id": "personal-brief", "chunk_id": "page-1", "title": "Quarterly brief",
+                "excerpt": "Authorized evidence for the answer.",
+            }],
+        }], "unresolved": []})
+
+    page.route("**/api/v2/prompts/fill-variables", fill)
+    card.get_by_role("button", name="Fill missing fields", exact=True).click()
+    expect(card.get_by_role("textbox", name="topic", exact=True)).to_have_value("Grounded contracts")
+    expect(card.get_by_text("AI-filled", exact=True)).to_be_visible()
+    assert fills[0]["conversation_id"] == CONVERSATION_ID
+    assert fills[0]["composer_text"] == "Use this answer, not the main composer."
+    assert fills[0]["selected_document_ids"] == ["personal-brief"]
+    card.get_by_role("button", name="Next", exact=True).click()
+    card.get_by_role("textbox", name="Details", exact=True).fill("A separate answer.")
+    page.evaluate(
+        """(conv) => {
+            const H = window.OrchHarness;
+            H.unmount('mount-a');
+            H.mount('mount-a', 'ElicitationCard', {conversationId: conv, turnId: 'lifecycle-turn'},
+                {strictMode: true});
+        }""",
+        CONVERSATION_ID,
+    )
+    card.get_by_role("button", name="Back", exact=True).click()
+    expect(card.get_by_role("textbox", name="topic", exact=True)).to_have_value("Grounded contracts")
+    expect(card.get_by_role("textbox", name="note", exact=True)).to_have_value("")
+    expect(card.get_by_text("AI-filled", exact=True)).to_be_visible()
+    card.get_by_role("button", name="Sources (1)", exact=True).click()
+    expect(card.get_by_role("list", name="Sources for topic", exact=True)).to_contain_text(
+        "Authorized evidence for the answer."
+    )
+    card.get_by_role("button", name="Undo AI fill for topic", exact=True).click()
+    expect(card.get_by_role("textbox", name="topic", exact=True)).to_have_value("")
+    expect(card.get_by_text("AI-filled", exact=True)).to_have_count(0)
+    assert len(fills) == 1
+    assert read_inline_lifecycle_draft(page)["editors"]["details"]["text"] == "A separate answer."
 
 
 if __name__ == "__main__":

@@ -68,6 +68,12 @@ from functions_agent_delegation import (
     update_agent_delegation_bindings,
     validate_agent_delegation_bindings,
 )
+from functions_workspace_authoring import (
+    build_agent_editor_options,
+    editor_error_response,
+    ensure_editor_options_access,
+    personal_editor_response,
+)
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
@@ -1076,6 +1082,11 @@ def draft_agent_instructions():
 @login_required
 @user_required
 def get_user_agents():
+    if request.args.get('view') == 'editor':
+        return personal_editor_response(
+            'agents', get_current_user_id(), _prepare_personal_agent_for_editor,
+            migrate=ensure_migration_complete,
+        )
     settings = get_settings()
     if not settings.get('allow_user_agents', False):
         return jsonify([])
@@ -1189,14 +1200,18 @@ def _find_personal_agent(user_id, agent_ref):
     return None
 
 
-def _prepare_personal_agent_payload(user_id, agent, settings):
+def _prepare_personal_agent_for_editor(user_id, agent, settings, existing):
+    return _prepare_personal_agent_payload(user_id, agent, settings, editor_existing=existing)
+
+
+def _prepare_personal_agent_payload(user_id, agent, settings, *, editor_existing=None):
     """Clean, enrich and validate a single personal agent.
 
     This is the per-agent half of the bulk save, factored out so the per-item create and
     update routes cannot drift from it. Returns ``(cleaned_agent, error_response)`` where
     exactly one of the two is None.
     """
-    if not settings.get('allow_user_custom_endpoints', False):
+    if not settings.get('allow_user_custom_endpoints', False) and editor_existing is None:
         _strip_disallowed_local_custom_connection_fields(agent)
 
     try:
@@ -1208,12 +1223,16 @@ def _prepare_personal_agent_payload(user_id, agent, settings):
     cleaned_agent['is_group'] = False
 
     try:
-        cleaned_agent = apply_assigned_knowledge_to_agent_payload(
-            cleaned_agent,
-            user_id=user_id,
-            agent_scope='personal',
-            is_admin=False,
-        )
+        if editor_existing is None or (
+            cleaned_agent.get('other_settings', {}).get('assigned_knowledge')
+            != (editor_existing.get('other_settings') or {}).get('assigned_knowledge')
+        ):
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='personal',
+                is_admin=False,
+            )
     except AssignedKnowledgeError as exc:
         return None, (jsonify({'error': str(exc)}), 400)
 
@@ -1226,8 +1245,10 @@ def _prepare_personal_agent_payload(user_id, agent, settings):
             cleaned_agent, user_id=user_id, scope_type='personal', scope_id=user_id,
             settings=settings,
             existing_agent=(
-                _find_personal_agent(user_id, cleaned_agent.get('id'))
-                if cleaned_agent.get('actions_to_load') else None
+                editor_existing if editor_existing is not None else (
+                    _find_personal_agent(user_id, cleaned_agent.get('id'))
+                    if cleaned_agent.get('actions_to_load') else None
+                )
             ),
         )
     except PermissionError:
@@ -1286,6 +1307,8 @@ def set_user_agents():
     PATCH for edits and DELETE for removals.
     """
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor)
     payload = request.get_json(silent=True)
 
     if isinstance(payload, dict):
@@ -1358,6 +1381,8 @@ def set_user_agents():
 def get_user_agent(agent_id):
     """Return one personal agent, addressed by id or by name."""
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor, agent_id)
     try:
         ensure_governance_access('governance_user_agents', user_id)
     except PermissionError as exc:
@@ -1388,6 +1413,8 @@ def update_user_agent(agent_id):
     client round-trips a stale copy.
     """
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor, agent_id)
     try:
         ensure_governance_access('governance_user_agents', user_id)
     except PermissionError as exc:
@@ -1435,6 +1462,8 @@ def update_user_agent(agent_id):
 def delete_user_agent(agent_id):
     """Delete one personal agent, addressed by id or by name."""
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor, agent_id)
     # The collection save enforces governance; deleting is just as destructive, so it is
     # enforced here too rather than left to the container helper, which does not check.
     try:
@@ -1767,6 +1796,19 @@ def set_user_selected_agent():
 @user_required
 def get_global_agent_settings_for_users():
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        try:
+            settings = get_settings()
+            can_manage_agents = ensure_editor_options_access(user_id, settings)
+            result = build_agent_editor_options(
+                user_id, settings,
+                build_combined_model_endpoints(settings, user_id=user_id) if can_manage_agents else [],
+            )
+            response = jsonify(result)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except Exception as exc:
+            return editor_error_response(exc)
     return get_global_agent_settings(include_admin_extras=False, user_id=user_id)
 
 @bpa.route('/api/group/agent/settings', methods=['GET'])

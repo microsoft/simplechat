@@ -31,12 +31,13 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.096
+Version: 0.261.099
 """
 
 import logging
 from agent_execution_context import DelegationBudget
 import time
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from functions_appinsights import log_event
@@ -174,6 +175,11 @@ class RunContext:
         elicitation_references=None,
         selected_document_ids=None,
         original_seeds=None,
+        resolved_message=None,
+        conversation_context=None,
+        context_message_ids=None,
+        allowed_user_urls=None,
+        revalidate_conversation_context=None,
         chat_type='personal',
         selection_mode=None,
         doc_scope='all',
@@ -191,6 +197,7 @@ class RunContext:
         user_roles=None,
         user_email=None,
         agent_catalog=None,
+        action_catalog=None,
         user_enable_agents=True,
         agent_execution_identity=None,
         delegation_budget=None,
@@ -203,12 +210,19 @@ class RunContext:
 
         self.invoke_prompt = invoke_prompt
         self.user_message = user_message
-        self.answered_questions = list(answered_questions or [])
-        self.user_request = build_elicitation_user_request(user_message, self.answered_questions)
+        self.answered_questions = deepcopy(answered_questions or [])
+        self.resolved_message = resolved_message if resolved_message is not None else user_message
+        self.user_request = build_elicitation_user_request(self.resolved_message, self.answered_questions)
         self.elicitation_references = list(elicitation_references or [])
         self.selected_document_ids = list(selected_document_ids or [])
         self.original_seeds = dict(original_seeds or {})
         self.user_message_id = user_message_id
+        self.conversation_context = deepcopy(conversation_context or {})
+        self.context_message_ids = (
+            list(context_message_ids) if context_message_ids is not None else None
+        )
+        self.allowed_user_urls = list(allowed_user_urls) if allowed_user_urls is not None else None
+        self.revalidate_conversation_context = revalidate_conversation_context
         self.chat_type = chat_type
 
         self.selection_mode = selection_mode
@@ -251,6 +265,7 @@ class RunContext:
         # The agent adapter refuses any agent name absent from this list, so a plan can never
         # invoke an agent the catalog did not offer this user, even after a repair.
         self.agent_catalog = list(agent_catalog) if agent_catalog else None
+        self.action_catalog = list(action_catalog or [])
         # Semantic Kernel can be enabled deployment-wide while a user has agents switched off in
         # their own settings; carried so the agent adapter re-checks it without touching user
         # state it cannot reach from the worker thread.
@@ -486,6 +501,9 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
     the terminal step builds its handoff from, so this both enforces access and supplies the
     coverage manifest in one pass.
     """
+    revalidate_context = getattr(context, 'revalidate_conversation_context', None)
+    if callable(revalidate_context):
+        revalidate_context()
     evidence = [envelope for envelope in (context.evidence or []) if isinstance(envelope, dict)]
     if not evidence:
         context.source_manifest = []

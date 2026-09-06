@@ -146,11 +146,19 @@ These controls exist only in the V2 interface, so they are not part of the gener
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |
 | Attached prompt card | Sits above the message box carrying the prompt you picked, showing its name, workspace, and how many of its variables are still unfilled. The message box below stays yours to type in. | Use it to see what instructions the assistant is being given while you write the request itself, instead of scrolling through pasted text to find your own words. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }})<br>[`enable_group_workspaces`]({{ '/admin/workspaces/' | relative_url }})<br>[`enable_public_workspaces`]({{ '/admin/workspaces/' | relative_url }}) |
-| Expand on the card | Opens the card to show a field per variable and the prompt as it will actually be sent. | Use it to fill in or correct a variable at any point before you send, rather than only at the moment you pick the prompt. | Same as the card |
+| Expand on the card | Opens the scrollable prompt preview independently of the visible variable fields. | Use it to inspect the resolved instructions without hiding the fields you are completing. | Same as the card |
 | Edit on the card | Turns the prompt text into an editable box and marks the card **Edited**, with a Reset that restores the saved wording. | Use it to adjust wording for one message. The change never reaches the saved prompt, so a one-off tweak does not alter it for everyone else using it. | Same as the card |
 | Remove on the card | Takes the prompt off the message. | Use it when you have changed your mind. Nothing you typed is disturbed, because the prompt was never in the message box. | Same as the card |
 | `/` in the message box | Searches your saved prompts and attaches the one you pick, consuming the `/query` token you typed. | Use it to reach a prompt by name while writing, without leaving the sentence. | Same as the card |
-| **Prompt:** row on a sent message | Collapsed above your own words in the sent message, expanding to the full prompt text. | Use it to see which standing instructions produced a reply, especially in a shared conversation where somebody else picked the prompt. | Same as the card |
+| Prompt card on a sent message | Keeps the prompt snapshot above your own words, with the same expandable, scrollable presentation after a reload. | Use it to see which instructions produced a reply without burying the actual question. | Same as the card |
+| Insert variable | Explains built-ins and adds a custom field with an optional default at the cursor in either V2 prompt editor. | Use it to make a reusable template without memorizing placeholder syntax. | Same as the card |
+| Find in knowledge / Fill missing fields | Retrieves values for one or all unanswered custom fields from selected knowledge. AI-filled values include Sources and Undo. | Use it to complete a prompt from document evidence instead of copying values between screens. | Same as the card; requires configured search and model services |
+| Search all accessible knowledge for AI fill | Explicitly widens the variable lookup without changing the chat message's document selection. | Use it when the selected sources do not contain the value you need. | Same as knowledge fill |
+| Unanswered-variable warning | Offers Review fields, Fill missing fields, or an explicit Send anyway that retains literal placeholders. | Use it to catch omissions while retaining control over whether to send. | Same as the card |
+
+The variable picker, knowledge fill, and persistent card enhancements were implemented
+in **0.261.096**. See [Use prompts in chat]({{ '/guides/use-prompts-in-chat/' | relative_url }})
+for the complete workflow.
 
 ## Inline follow-up questions (V2 interface)
 

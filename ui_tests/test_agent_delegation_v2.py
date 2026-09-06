@@ -1,13 +1,16 @@
 # test_agent_delegation_v2.py
 """
-Real V2 Call agent create/edit/attach workflows for personal, group and global scopes.
-Version: 0.261.093
+Real V2 Call agent create/edit/attach workflows for group and global scopes.
+Version: 0.261.096
 Implemented in: 0.261.093
 
 Deterministic local Playwright coverage using the existing orchestration harness pattern.
 No deployed service, model calls, credentials or remote browser workspace is needed.
 The real components and API client run against scoped response fixtures. Browser errors
-fail tests, and desktop/mobile runs load the real production V2 CSS.
+fail tests, and desktop/mobile runs load the real production V2 CSS. Personal
+create/edit/delete, mixed bindings, conflicts, unavailable targets, keyboard
+selection, and target-type coverage now live in test_v2_workspace_authoring.py,
+which loads the production SPA and its data router rather than MemoryRouter.
 """
 
 import copy
@@ -192,56 +195,7 @@ def create_call(page, name, label):
     expect(page.get_by_role("status").filter(has_text="Call agent action saved.")).to_be_visible()
 
 
-@pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
-def test_personal_create_edit_and_safe_rendering(ui, viewport):
-    page, api = ui
-    page.set_viewport_size(viewport)
-    mount(page, "actions")
-    create_call(page, "<img src=x onerror=alert(1)>", "global shared · global · foundry_workflow")
-    first = api.writes[-1]
-    assert first[:2] == ("POST", "/api/user/plugins")
-    assert first[3]["endpoint"] == "internal://agent"
-    assert first[3]["auth"] == {"type": "user"}
-    assert first[3]["additionalFields"]["target_agent"] == {
-        "id": "shared", "scope_type": "global", "scope_id": "global",
-    }
-    expect(page.locator("img")).to_have_count(0)
-    page.get_by_role("button", name="Edit Call agent action <img src=x onerror=alert(1)>").click()
-    page.get_by_label("Action name", exact=True).fill("Renamed action")
-    page.get_by_role("button", name="Save Call agent action", exact=True).click()
-    expect(page.get_by_text("Renamed action", exact=True)).to_be_visible()
-    assert api.writes[-1][:2] == ("PATCH", "/api/user/plugins/new-action")
-    assert api.writes[-1][3]["id"] == "new-action"
-    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-
-
-def test_personal_bindings_preserve_unknown_refs_and_conflict(ui):
-    page, api = ui
-    before = copy.deepcopy(api.agents["personal"][0])
-    mount(page, "agents")
-    page.get_by_role("button", name="Attach Call agent actions to Local caller").click()
-    expect(page.get_by_role("checkbox", name="Call self")).to_be_disabled()
-    expect(page.get_by_text("Target only — configure tools in Foundry")).to_be_visible()
-    page.get_by_role("checkbox", name="Call call-1").check()
-    api.conflict = True
-    page.get_by_role("button", name="Save bindings", exact=True).click()
-    expect(page.get_by_role("alert").filter(has_text="changed in another session")).to_be_visible()
-    expect(page.get_by_role("button", name="Save bindings", exact=True)).to_be_disabled()
-    assert api.writes[-1][3] == {
-        "action_ids": ["call-1"], "expected_actions_to_load": ["legacy-name", "unknown-id"],
-    }
-    page.get_by_role("button", name="Reload Call agent resources").click()
-    page.get_by_role("button", name="Discard changes and reload").click()
-    api.conflict = False
-    page.get_by_role("button", name="Attach Call agent actions to Local caller").click()
-    page.get_by_role("checkbox", name="Call call-1").check()
-    page.get_by_role("button", name="Save bindings", exact=True).click()
-    expect(page.get_by_role("status").filter(has_text="bindings saved")).to_be_visible()
-    assert api.agents["personal"][0] == {**before, "actions_to_load": ["legacy-name", "unknown-id", "call-1"]}
-
-
 @pytest.mark.parametrize("scope,view,action_id", [
-    ("personal", "actions", "call-1"),
     ("group", "groups", "group-call"),
     ("global", "admin", "global-call"),
 ])
@@ -262,21 +216,6 @@ def test_native_call_action_deletion_requires_confirmation_and_preserves_callers
     assert api.writes[-1][:2] == ("DELETE", f"/api/{owner}/plugins/{action_id}")
     assert api.writes[-1][2] == ({"group_id": ["group-1"]} if scope == "group" else {})
     assert api.agents == original_agents
-
-
-def test_personal_new_agent_then_attach(ui):
-    page, api = ui
-    mount(page, "agents")
-    page.get_by_role("button", name="New agent", exact=True).click()
-    page.get_by_label("Name", exact=True).fill("New caller")
-    page.get_by_label("Instructions", exact=True).fill("Delegate careful reviews.")
-    page.get_by_role("button", name="Create agent", exact=True).click()
-    page.get_by_role("button", name="Attach Call agent actions to New caller").click()
-    page.get_by_role("checkbox", name="Call call-1").check()
-    page.get_by_role("button", name="Save bindings", exact=True).click()
-    expect(page.get_by_role("status").filter(has_text="bindings saved")).to_be_visible()
-    assert api.writes[-1][:2] == ("PATCH", "/api/user/agents/new-agent/agent-actions")
-    assert api.writes[-1][3]["expected_actions_to_load"] == []
 
 
 def test_group_native_scoping_permissions_and_unsaved_changes(ui):
@@ -348,54 +287,3 @@ def test_non_admin_does_not_fetch_global_resources(ui):
     mount(page, "admin", admin=False)
     expect(page.get_by_text("Administrator access required")).to_be_visible()
     assert not api.reads
-
-
-def test_unavailable_target_empty_catalog_denial_and_keyboard(ui):
-    page, api = ui
-    api.targets["personal"] = []
-    mount(page, "actions")
-    page.get_by_role("button", name="Edit Call agent action Call call-1").click()
-    expect(page.get_by_role("alert").filter(has_text="saved target is unavailable")).to_be_visible()
-    expect(page.get_by_role("button", name="Save Call agent action", exact=True)).to_be_disabled()
-    expect(page.get_by_role("status").filter(has_text="No permitted target")).to_be_visible()
-    page.get_by_role("button", name="Cancel", exact=True).click()
-    api.targets["personal"] = [target()]
-    page.get_by_role("button", name="Reload Call agent resources").click()
-    page.get_by_role("button", name="New Call agent action", exact=True).click()
-    expect(page.get_by_label("Action name", exact=True)).to_be_focused()
-    page.get_by_label("Action name", exact=True).fill("Keyboard action")
-    page.get_by_label("Target agent", exact=True).focus()
-    page.keyboard.press("ArrowDown")
-    page.keyboard.press("Enter")
-    expect(page.get_by_role("button", name="Save Call agent action", exact=True)).to_be_enabled()
-    page.get_by_role("button", name="Cancel", exact=True).click()
-    api.denied = True
-    page.get_by_role("button", name="Reload Call agent resources").click()
-    expect(page.get_by_role("alert").filter(has_text="Access denied")).to_be_visible()
-    expect(page.get_by_role("button", name="New Call agent action", exact=True)).to_have_count(0)
-
-
-@pytest.mark.parametrize("agent_type", ["local", "aifoundry", "new_foundry", "foundry_workflow"])
-def test_all_supported_target_types_can_be_selected(ui, agent_type):
-    page, api = ui
-    api.targets["personal"] = [target(agent_type=agent_type)]
-    mount(page, "actions")
-    create_call(page, f"Delegate {agent_type}", f"personal target · personal · {agent_type}")
-    assert api.writes[-1][3]["additionalFields"]["target_agent"]["id"] == "target"
-
-
-def test_existing_unavailable_binding_can_be_detached(ui):
-    page, api = ui
-    api.agents["personal"][0]["actions_to_load"].append("call-1")
-    api.targets["personal"] = []
-    mount(page, "agents")
-    page.get_by_role("button", name="Attach Call agent actions to Local caller").click()
-    selected = page.get_by_role("checkbox", name="Call call-1")
-    expect(selected).to_be_checked()
-    expect(selected).to_be_enabled()
-    selected.uncheck()
-    page.get_by_role("button", name="Save bindings", exact=True).click()
-    expect(page.get_by_role("status").filter(has_text="bindings saved")).to_be_visible()
-    assert api.writes[-1][3] == {
-        "action_ids": [], "expected_actions_to_load": ["legacy-name", "unknown-id", "call-1"],
-    }
