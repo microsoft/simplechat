@@ -128,9 +128,10 @@ later step found.
 Three capabilities cost noticeably more than the rest and are each limited to one use per
 plan:
 
-- **Deep research** reads and cross-checks multiple sources. It is for questions that need
-  several independent sources reconciled; web search is the cheaper choice for ordinary
-  factual questions.
+- **Deep research** discovers sources through a bounded set of web queries, then reads
+  and follows sources. It is useful when broader discovery, detailed reading, or
+  reconciling independent evidence would materially improve the answer. Web search is
+  still the cheaper choice for focused lookups, even when it returns several sources.
 - **Agents** load the agent's tools, connections and instructions before running. That
   setup is the expensive part of the turn, so a plan uses at most one agent.
 - **Reading linked pages** uses links the user pasted in the current request or an
@@ -141,6 +142,27 @@ plan:
 Reading linked pages and deep research also honour the `UrlAccessUser` and
 `DeepResearchUser` app roles where your deployment requires them. A user without the role
 does not get the capability, whether they ask by hand or a plan proposes it.
+
+#### How research depth is chosen
+
+The planner compares the expected benefit of additional gathering with its cost. It sees
+the request, available capabilities, selected context, and earlier-run summaries. There
+is no separate deep-research score or keyword rule that turns a subject into a research
+task. A long request, several preferences, or a need for current information does not by
+itself require deep research.
+
+A research step includes its own discovery, so a plan does not need a separate web-search
+step merely to give research its first sources. Distinct searches can still serve distinct
+parts of a request. The step's rationale explains why that depth of gathering is useful;
+choosing ordinary search does not start an automatic research-upgrade loop afterward.
+
+Discovery honours the existing Deep Research query limit and source-review limits in
+[Knowledge settings]({{ '/admin/knowledge/' | relative_url }}). It does not enable web
+search if that capability is disabled globally; permitted supplied sources can still be
+reviewed. A query-planning model that is unavailable or fails leaves the existing backup
+query generation available. Recovery is recorded in logs, without a user-facing fallback
+notice when useful evidence is obtained. If no usable evidence is found, the answer must
+not claim that research verified the requested details.
 
 #### Settings
 

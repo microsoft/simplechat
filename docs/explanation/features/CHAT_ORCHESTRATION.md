@@ -1,9 +1,10 @@
 # Chat Orchestration
 
-**Version: 0.261.098** (tracked in `application/single_app/config.py`)
+**Version: 0.261.099** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
+**Research selection and multi-query execution updated in version: 0.261.099**
 **Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
 
@@ -192,6 +193,22 @@ an adapter is reached. The validator repairs where repair is honest and drops wh
 not, and records what it did in `validation.repairs` so the card can show a plan that
 differs from the proposal and say why.
 
+#### Choosing research depth
+
+The planner weighs the expected benefit of additional discovery and evidence against
+its cost. Ordinary web search is appropriate for focused lookups; deep research becomes
+useful when exploring different perspectives, reading detailed sources, or reconciling
+evidence would materially improve the requested result. It is not necessary to prove
+that a shallow search could produce no answer at all.
+
+The choice remains model-led. There is no keyword router, fixed research-selection rate,
+or automatic preference for deeper work. Prompt length, multiple preferences, and
+freshness alone do not determine the choice. A short rationale in the existing plan
+step explains why the selected depth fits the request.
+
+The planner makes this choice before execution. Ordinary search results are not graded
+by a new model call or automatically escalated into research.
+
 ### Phases
 
 Every capability declares a `phase`, and the phases are ordered:
@@ -237,6 +254,37 @@ So `agent_invoke`, `action_invoke`, `url_fetch` and `deep_research` produce `not
 This is not a workaround: `RunContext.merge_step_result` already accumulates notes, and the
 respond adapter already folds them into its prompt. A knowledge step that gathers *text*
 rather than *document evidence* reaches the answer through a path that already existed.
+
+#### Self-contained deep research
+
+Since version **0.261.099** (`application/single_app/config.py`), the research adapter
+calls the same `perform_research_web_searches` helper as manual Deep Research before
+calling `perform_source_review`. It can discover sources without a preceding web-search
+step or a URL in the request. A separate search is only useful when it serves a distinct
+objective rather than duplicating research's discovery.
+
+The shared query generator retains model-planned queries and its existing supplemental
+and backup variants. Queries stay within the configured limit, and source review retains
+its URL, page, depth, domain, and robots policy. The capability remains high-cost and
+limited to one step per plan. Feature and role permission is rechecked before discovery
+starts, not only when the planner sees the capability.
+
+Outbound query planning uses only the current user message. The orchestration objective
+can reflect earlier context, but private document content, previous conversation text,
+and internal search rewrites are not forwarded into this new discovery path. Current-run
+web citations and the user's own URLs can still seed source review.
+
+Query progress uses existing orchestration events. Cancellation and deadlines are checked
+between internal searches and before source review; this does not add hard interruption
+of an in-flight provider call.
+
+If the optional query planner fails, research continues using the existing backup plan.
+Recovery details stay in logs when useful evidence is obtained. Per-query outcomes keep
+failed-query control messages out of successful evidence notes, while usable search
+results and reviewed sources remain available to the answer. A run that finds nothing
+usable explicitly tells synthesis not to claim research verification.
+
+#### Direct action execution
 
 Direct actions retain their existing function restrictions and behavior; this capability
 does not classify operations as read-only or introduce another approval system. **Call
@@ -402,6 +450,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_orchestration_runs.py` | Run and step persistence |
 | `functions_orchestration_events.py` | Stream event builders |
 | `route_backend_orchestration.py` | The V2 endpoints, conversation and message persistence |
+| `route_backend_chats.py` | Shared ordinary and multi-query web-search helpers |
+| `functions_source_review.py` | Shared bounded query generation, backup planning, and source review |
 
 ## Usage
 
@@ -435,6 +485,8 @@ to the front.
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
 | `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list; document, web and tool citations use their respective message channels |
+| `functional_tests/test_orchestration_research_selection.py` | Balanced planning cases, preserved model choices, initial/replan guidance, and capability gates |
+| `functional_tests/test_orchestration_deep_research.py` | Multi-query discovery and review, query bounds, logs-only backup recovery, cancellation, partial/empty results, resolved follow-ups, and user-URL provenance |
 | `functional_tests/test_orchestration_action_catalog.py` | Scoped discovery, existing governance, exact references, secret-free projections and revocation |
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup |
@@ -442,6 +494,13 @@ to the front.
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, follow-up resolution, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | Owned server history across HTTP/SSE planning and execution, all approval modes, clarification, retries, stale sources, and legacy cutoffs |
 | `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification transport, cancellation, original-turn continuity, all approval modes, and navigation |
+
+Research-selection evaluation distinguishes contract coverage from model behaviour. A
+mocked plan proves that the application preserves an allowed choice; it does not prove
+that a real planner chooses the right depth. Compare baseline and revised guidance on
+the same approved deployment and synthetic cases, considering both underuse and overuse.
+Ambiguous requests may legitimately use ordinary search or deep research. A higher
+research-selection rate is not itself a quality improvement.
 
 ## Known limitations
 
@@ -472,3 +531,4 @@ to the front.
 - [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
 - [Conversation context fix](../fixes/ORCHESTRATION_CONVERSATION_CONTEXT_FIX.md)
 - `docs/explanation/release_notes.md`
+- [Deep research selection and execution fix](../fixes/ORCHESTRATION_DEEP_RESEARCH_SELECTION_FIX.md)
