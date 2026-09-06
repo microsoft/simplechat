@@ -15,10 +15,11 @@
 
 import { useMemo } from 'react';
 import { clsx } from 'clsx';
-import { FileText, Lock, RotateCcw, X } from 'lucide-react';
+import { Archive, FileText, Lock, RotateCcw, X } from 'lucide-react';
 import { Toggle } from '../ui/primitives';
 import {
     selectEdits,
+    selectIsReadOnly,
     selectPlan,
     selectStepRuntime,
     useOrchestrationStore,
@@ -111,6 +112,9 @@ export function OrchestrationRunView({
     const enableStep = useOrchestrationStore((state) => state.enableStep);
     const removeDocument = useOrchestrationStore((state) => state.removeDocument);
     const restoreDocument = useOrchestrationStore((state) => state.restoreDocument);
+    const readOnly = useOrchestrationStore((state) =>
+        selectIsReadOnly(state, conversationId, turnId),
+    );
 
     const orderedSteps = useMemo(
         () => (plan ? orderStepsForDisplay(plan.steps) : []),
@@ -218,7 +222,10 @@ export function OrchestrationRunView({
         );
     }
 
-    const editable = planRequiresApproval(plan);
+    // A stored plan is a record of what happened, not a proposal. Its status is adopted verbatim,
+    // so one written down while it still awaited approval would otherwise offer to narrow steps
+    // that were settled long ago, on a device that is not the one being asked.
+    const editable = planRequiresApproval(plan) && !readOnly;
     const disabledStepIds = new Set(edits.disabled_step_ids);
 
     const renderStep = (step: OrchestrationStep, displayNumber: number) => {
@@ -424,6 +431,12 @@ export function OrchestrationRunView({
 
     return (
         <div className="space-y-3 p-3">
+            {readOnly ? (
+                <p className="flex items-center gap-1.5 rounded-lg border border-edge bg-surface-2 px-2 py-1.5 text-[11px] text-text-3">
+                    <Archive size={12} className="shrink-0" />
+                    A record of a run from this conversation. It cannot be changed or re-run.
+                </p>
+            ) : null}
             <div>
                 <p className="text-sm font-medium text-text-1">{plan.intent.summary}</p>
                 {plan.assumptions.length > 0 ? (

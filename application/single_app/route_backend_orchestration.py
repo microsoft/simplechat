@@ -151,6 +151,13 @@ def _text(value, limit=None):
     return value[:limit].rstrip() if limit and len(value) > limit else value
 
 
+def _coerce_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _sse(generator):
     return Response(generator, mimetype='text/event-stream', headers=dict(SSE_HEADERS))
 
@@ -709,9 +716,15 @@ def _save_turn_message(conversation_id, user_id, turn_id, message, previous=None
         ):
             raise ConversationContextError('This turn changed. Submit a new request.')
         return message_id, normalized['fingerprint']
-    metadata = {'orchestration': {'turn_id': turn_id}}
+    # The flat turn id is what ties a reloaded thread back to its run: the live card stamps
+    # the same field on its optimistic bubble, and a message fetched from the server has
+    # nothing to match against without it. It belongs on every orchestrated question, not
+    # only the ones that happened to carry a saved prompt.
+    metadata = {
+        'orchestration': {'turn_id': turn_id},
+        'orchestration_turn_id': turn_id,
+    }
     if prompt_selection:
-        metadata['orchestration_turn_id'] = turn_id
         metadata['prompt_selection'] = prompt_selection
     saved = _save_message(
         conversation_id, 'user', message,
@@ -779,6 +792,58 @@ def _touch_conversation(conversation_id, user_id, title=None):
         log_event(f"[ORCHESTRATION] Could not touch a conversation: {exc}",
                   level=logging.WARNING)
     return item
+
+
+def _run_summary_row(record):
+    """Project a stored run down to what the drawer's map view actually reads.
+
+    An allowlist rather than a blocklist, and deliberately so. The stored run holds the whole
+    plan -- every step, with its inputs and its document lists -- alongside the ``seeds`` that
+    constrained it, and the map view needs none of it: ``plan_summary`` already carries the
+    intent, the step count and the capabilities. Returning the record as stored would put
+    twenty-five full plans on the wire to draw twenty-five one-line rows, and would ship the
+    request's internal seeding to the browser as a side effect of a listing. Anything a future
+    field adds to the record therefore stays server-side until it is named here.
+    """
+    record = record if isinstance(record, dict) else {}
+    approval = record.get('approval') if isinstance(record.get('approval'), dict) else {}
+    return {
+        'run_id': record.get('run_id') or record.get('id'),
+        'conversation_id': record.get('conversation_id'),
+        'turn_id': record.get('turn_id'),
+        'turn_index': _coerce_int(record.get('turn_index')),
+        'status': record.get('status'),
+        'created_at': record.get('created_at'),
+        'started_at': record.get('started_at'),
+        'completed_at': record.get('completed_at'),
+        'error': _text(record.get('error'), 400) or None,
+        'user_message': _text(record.get('user_message'), 400),
+        'user_message_id': record.get('user_message_id'),
+        'assistant_message_id': record.get('assistant_message_id'),
+        'plan_summary': record.get('plan_summary') or {},
+        'capabilities_used': list(record.get('capabilities_used') or ()),
+        'artifact_count': len(record.get('artifacts') or ()),
+        'revision': _coerce_int(record.get('revision')),
+        # Only the two approval fields the card reads. `approved_by` is a user id and has no
+        # business being echoed back to a browser that already knows whose runs these are.
+        'approval': {
+            'mode': approval.get('mode'),
+            'state': approval.get('state'),
+        },
+    }
+
+
+def _run_detail_row(record):
+    """One run in full, for opening a stored plan rather than listing it.
+
+    The summary plus the plan itself, which is the only heavy field the client ever wants and
+    only ever for one run at a time. Built on the same allowlist so that the listing and the
+    detail cannot drift into disagreeing about what a run looks like.
+    """
+    record = record if isinstance(record, dict) else {}
+    row = _run_summary_row(record)
+    row['plan'] = record.get('plan') or {}
+    return row
 
 
 def register_route_backend_orchestration(bp):
@@ -1458,7 +1523,13 @@ def register_route_backend_orchestration(bp):
     @login_required
     @user_required
     def orchestration_runs():
-        """Every run in a conversation, oldest first, for the drawer's map view."""
+        """Every run in a conversation, oldest first, for the drawer's map view.
+
+        Lean by default: a row is projected through ``_run_summary_row``, because the map
+        draws one line per run and the stored record carries the whole plan. ``include_plan``
+        adds the plan back for a caller that genuinely wants it, but still through a
+        projection, so neither shape can leak a field the record happens to gain later.
+        """
         user_id = get_current_user_id()
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
@@ -1472,19 +1543,53 @@ def register_route_backend_orchestration(bp):
         except (TypeError, ValueError):
             limit = 25
 
+        include_plan = _text(request.args.get('include_plan')).lower() in ('1', 'true', 'yes')
+
         try:
             runs = list_conversation_runs(conversation_id, user_id, limit=limit)
         except Exception as exc:
             log_event(f"[ORCHESTRATION] Could not list runs: {exc}", level=logging.ERROR)
             return jsonify({'error': 'The run history could not be loaded.'}), 500
 
-        private_fields = {'conversation_context', 'request_resolution', 'user_message_fingerprint'}
-        return jsonify({
-            'runs': [
-                {key: value for key, value in run.items() if key not in private_fields}
-                for run in runs
-            ]
-        }), 200
+        # Both paths go through a projection, so no caller can reach a raw record. The
+        # allowlist already excludes the conversation context, the request resolution and the
+        # message fingerprint that this route used to strip by name, and it will keep
+        # excluding whatever a future field adds to the record until it is named there.
+        rows = _run_detail_row if include_plan else _run_summary_row
+        return jsonify({'runs': [rows(run) for run in runs]}), 200
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_run_detail(run_id):
+        """One stored run in full, so an earlier turn's plan can be reopened.
+
+        This is what makes the map view's rows more than labels: the listing is deliberately
+        too lean to render a plan, and the plan is fetched here for the one run the user
+        actually opened. Ownership is enforced inside ``get_orchestration_run``, which
+        compares ``user_id`` on both the point read and the cross-partition fallback, so a
+        guessed run id belonging to somebody else is indistinguishable from a missing one.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        conversation_id = _text(request.args.get('conversation_id'))
+
+        try:
+            record = get_orchestration_run(
+                run_id, user_id, conversation_id=conversation_id or None
+            )
+        except Exception as exc:
+            log_event(f"[ORCHESTRATION] Could not read run {run_id}: {exc}",
+                      level=logging.ERROR)
+            return jsonify({'error': 'The run could not be loaded.'}), 500
+
+        if not record:
+            return jsonify({'error': 'Run not found.'}), 404
+
+        return jsonify({'run': _run_detail_row(record)}), 200
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/steps", methods=["GET"])
     @swagger_route(security=get_auth_security())
