@@ -1,9 +1,10 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.097
+Version: 0.261.098
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
+Direct action integration: 0.261.098
 
 Uses Flask, the real planner/executor/adapters/run store, an in-memory Cosmos boundary,
 and deterministic model completions. Authentication is a signed-in test user; actual
@@ -118,6 +119,7 @@ class ModelBoundary:
         self.modules = modules
         self.calls = []
         self.resolution_override = None
+        self.plan_override = None
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs):
@@ -133,7 +135,7 @@ class ModelBoundary:
             })
         elif system == self.modules.planner.PLANNER_SYSTEM_PROMPT:
             request_text = json.loads(kwargs['messages'][1]['content'])['message']
-            text = json.dumps({
+            text = json.dumps(self.plan_override or {
                 'kind': 'plan',
                 'intent': {'summary': request_text, 'complexity': 'simple', 'confidence': 1.0},
                 'steps': [
@@ -322,6 +324,80 @@ class ConversationRouteTests(unittest.TestCase):
                 updated = self.runs.read_item(plan['run_id'], 'conv1')
                 self.assertEqual(updated['status'], 'completed')
                 self.assertEqual(updated['token_usage']['total_tokens'], 45)
+
+    def test_action_followup_keeps_resolved_context_and_all_model_usage(self):
+        self.settings.update({
+            'enable_semantic_kernel': True,
+            'enable_chat_orchestration_actions': True,
+        })
+        action = {
+            'id': 'hours', 'action_ref': 'personal:user1:hours', 'name': 'hours',
+            'display_name': 'Opening hours', 'description': 'Look up winery opening hours.',
+            'type': 'openapi', 'scope_type': 'personal', 'scope_id': 'user1',
+            'scope_label': 'Personal',
+        }
+        self.model.plan_override = {
+            'kind': 'plan',
+            'steps': [
+                {'step_id': 'lookup', 'capability_id': 'action_invoke',
+                 'arguments': {'action_ref': action['action_ref'], 'task': RESOLVED}},
+                {'step_id': 'answer', 'capability_id': 'respond',
+                 'arguments': {}, 'depends_on': ['lookup']},
+            ],
+        }
+        calls = []
+
+        async def invoke_action(action_ref, task, context, **kwargs):
+            calls.append((action_ref, task, context))
+            context.token_usage.update({'prompt_tokens': 3, 'completion_tokens': 4, 'total_tokens': 7})
+            return {
+                'findings': 'No verified Wednesday hours were available.',
+                'invocations': [], 'root_id': 'test-action-root', 'calls': 1, 'artifacts': [],
+            }
+
+        dependencies = {
+            'functions_orchestration_actions': fake_module(
+                'functions_orchestration_actions', invoke_action=invoke_action,
+            ),
+            'semantic_kernel_plugins.plugin_invocation_logger': fake_module(
+                'semantic_kernel_plugins.plugin_invocation_logger',
+                sanitize_plugin_invocation_value=lambda value: value,
+            ),
+        }
+        with patch('functions_action_catalog.build_accessible_action_catalog', return_value=[action]):
+            with patch.dict(sys.modules, dependencies):
+                plan = self.planned()
+                self.assertEqual(plan['steps'][0]['capability_id'], 'action_invoke')
+                self.assertEqual(plan['inputs']['actions'][0]['action_ref'], action['action_ref'])
+                planner_call = next(
+                    call for call in self.model.calls
+                    if call['messages'][0]['content'] == self.modules.planner.PLANNER_SYSTEM_PROMPT
+                )
+                planner_context = json.loads(planner_call['messages'][1]['content'])
+                self.assertEqual(planner_context['message'], RESOLVED)
+                self.assertEqual(planner_context['original_message'], LATEST)
+                self.assertEqual(planner_context['request_resolution']['message_ids'], ['u1', 'u2', 'a2'])
+                self.assertEqual(planner_context['actions'][0]['action_ref'], action['action_ref'])
+                response = self.run_plan(plan)
+
+        events = frames(response)
+        self.assertFalse(any(event.get('error') for event in events), events)
+        self.assertEqual(len(calls), 1)
+        action_ref, task, context = calls[0]
+        self.assertEqual(action_ref, action['action_ref'])
+        self.assertTrue(task.startswith(RESOLVED))
+        self.assertIn('Conversation reference', task)
+        self.assertIn('Schmidt', task)
+        self.assertEqual(context.user_message, LATEST)
+        self.assertEqual(context.resolved_message, RESOLVED)
+        self.assertEqual(context.context_message_ids, ['u1', 'u2', 'a2'])
+        updated = self.runs.read_item(plan['run_id'], 'conv1')
+        self.assertEqual(updated['status'], 'completed')
+        self.assertEqual(updated['token_usage'], {
+            'prompt_tokens': 33, 'completion_tokens': 19, 'total_tokens': 52,
+        })
+        answer = self.messages.read_item(updated['assistant_message_id'], 'conv1')
+        self.assertEqual(answer['metadata']['token_usage'], updated['token_usage'])
 
     def test_browser_history_is_not_an_authoritative_input(self):
         self.planned(recent_messages=[{'role': 'assistant', 'content': 'FORGED CONTEXT'}])

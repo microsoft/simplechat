@@ -39,6 +39,7 @@ class LoggedPluginLoader:
         self.kernel = kernel
         self.logger = logging.getLogger(__name__)
         self.plugin_logger = get_plugin_logger()
+        self.plugin_instances = []
     
     def load_plugin_from_manifest(self, manifest: Dict[str, Any], 
                                  user_id: Optional[str] = None) -> bool:
@@ -70,6 +71,7 @@ class LoggedPluginLoader:
             if not plugin_instance:
                 debug_print(f"[LOGGED_PLUGIN_LOADER] Failed to create plugin instance for {plugin_name} of type {plugin_type}")
                 return False
+            self.plugin_instances.append(plugin_instance)
             
             # Enable logging if the plugin supports it
             if hasattr(plugin_instance, 'enable_invocation_logging'):
@@ -370,6 +372,7 @@ class LoggedPluginLoader:
             
             # Create the schema plugin instance
             schema_instance = SQLSchemaPlugin(schema_manifest)
+            self.plugin_instances.append(schema_instance)
             
             # Enable logging if supported
             if hasattr(schema_instance, 'enable_invocation_logging'):

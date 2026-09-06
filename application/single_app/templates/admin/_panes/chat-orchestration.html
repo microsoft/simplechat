@@ -89,8 +89,23 @@
                     <h5>
                         <i class="bi bi-puzzle me-2"></i>Capabilities
                     </h5>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_orchestration_actions"
+                            name="enable_chat_orchestration_actions"
+                            aria-describedby="chat-orchestration-actions-help"
+                            {% if settings.enable_chat_orchestration_actions %}checked{% endif %} />
+                        <label class="form-check-label ms-2" for="enable_chat_orchestration_actions">
+                            Enable Action Access
+                        </label>
+                        <div class="form-text" id="chat-orchestration-actions-help">
+                            Off by default. Requires Chat Orchestration and Semantic Kernel. Lets plans use an existing personal, group or global action directly, without loading a configured agent. Existing access and governance still apply. A step can call several functions from its selected action within the run limits; gathering knowledge does not make an action read-only.
+                        </div>
+                    </div>
                     <p class="text-muted">
-                        Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled.
+                        Which kinds of work a plan may contain. Leave every box ticked to allow whatever the rest of this deployment's settings already permit; untick one to keep it out of plans even where it is otherwise enabled. An empty selection also means every otherwise-enabled capability. Use an action still requires Enable Action Access.
                     </p>
                     <p class="text-muted small">
                         Answering is always available. A plan has to end somewhere.

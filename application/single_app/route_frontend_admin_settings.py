@@ -465,6 +465,9 @@ def normalize_chat_orchestration_settings(form_data, settings=None):
 
     return {
         'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
+        'enable_chat_orchestration_actions': (
+            form_data.get('enable_chat_orchestration_actions') == 'on'
+        ),
         'chat_orchestration_default_approval_mode': approval_mode,
         'chat_orchestration_timed_approval_seconds': _clamped(
             'chat_orchestration_timed_approval_seconds', 10, 3, 120

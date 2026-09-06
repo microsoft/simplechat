@@ -70,6 +70,7 @@ from functions_mixed_source_orchestration import (
     partition_source_manifest,
 )
 from functions_orchestration_registry import (
+    CAPABILITY_ACTION_INVOKE,
     CAPABILITY_AGENT_INVOKE,
     CAPABILITY_DEEP_RESEARCH,
     CAPABILITY_DOCUMENT_ANALYZE,
@@ -1248,7 +1249,7 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
     imported lazily and degraded past on failure, because losing a citation must never lose the
     answer.
     """
-    if plugin_logger is None:
+    if plugin_logger is None and scoped_invocations is None:
         return []
     try:
         invocations = scoped_invocations if scoped_invocations is not None else plugin_logger.get_invocations_for_conversation(user_id, conversation_id)
@@ -1312,6 +1313,65 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
             'delegation': getattr(inv, 'provenance', None),
         })
     return citations
+
+
+def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requested):
+    # Action dependencies initialize SK/Azure; keep them out of the adapter import path.
+    import asyncio
+    from agent_execution_context import AgentExecutionCancelled
+    from functions_orchestration_actions import invoke_action
+    from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
+
+    arguments = _arguments(step)
+    action_ref = _text(arguments.get('action_ref'))
+    task = _text(arguments.get('task'))
+    selected = next(
+        (action for action in (_ctx(context, 'action_catalog', []) or [])
+         if action.get('action_ref') == action_ref),
+        None,
+    )
+    if not action_ref or not task or selected is None:
+        return _failed_result(
+            'The action is not available.', 'The step requires an accessible action and a task.',
+        )
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before using the action.')
+    display_name = _text(selected.get('display_name') or selected.get('name'), 200)
+    _emit(emit, _progress(step, CAPABILITY_ACTION_INVOKE, f'Using action {display_name}'))
+    task = _with_conversation_reference(task, context)
+    try:
+        result = asyncio.run(invoke_action(
+            action_ref, task, context, settings=settings, user_id=user_id,
+            cancel_requested=lambda: _is_cancelled(cancel_requested),
+        ))
+    except AgentExecutionCancelled:
+        return _cancelled_result('Action execution was cancelled.')
+    except Exception as exc:
+        # This is the boundary for arbitrary plugin/provider code; never expose its exceptions.
+        log_event(
+            f'{_LOG_PREFIX} Direct action execution failed.',
+            level=logging.ERROR,
+            extra={'action_ref': action_ref, 'step_id': (step or {}).get('step_id'),
+                   'error_type': type(exc).__name__},
+        )
+        return _failed_result(
+            'The action could not complete.',
+            'Check action access, configuration, enabled functions, and model availability.',
+        )
+    citations = _agent_citations(
+        None, user_id, _ctx(context, 'conversation_id'), set(),
+        root_id=result['root_id'], scoped_invocations=result['invocations'],
+    )
+    for citation in citations:
+        citation['action_ref'] = action_ref
+    citations = sanitize_plugin_invocation_value(citations)
+    return build_step_result(
+        status=STEP_STATUS_COMPLETED,
+        summary=f'Used {display_name} ({result["calls"]} function calls).',
+        notes=[f'Action "{display_name}" findings:\n{result["findings"]}'],
+        citations=citations,
+        artifacts=result['artifacts'],
+    )
 
 
 def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested):
@@ -1648,6 +1708,7 @@ ADAPTER_REGISTRY = {
     CAPABILITY_URL_FETCH: run_url_fetch,
     CAPABILITY_DEEP_RESEARCH: run_deep_research,
     CAPABILITY_AGENT_INVOKE: run_agent_invoke,
+    CAPABILITY_ACTION_INVOKE: run_action_invoke,
     CAPABILITY_RESPOND: run_respond,
 }
 

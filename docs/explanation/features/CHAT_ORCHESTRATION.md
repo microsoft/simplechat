@@ -1,7 +1,10 @@
 # Chat Orchestration
 
+**Version: 0.261.098** (tracked in `application/single_app/config.py`)
+
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
+**Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
 
 ## Overview
@@ -14,11 +17,11 @@ and runs it once approved.
 The plan is built by a model, but that model never performs any work. It is shown a short
 list of described capabilities and returns a plan as JSON. A deterministic executor then
 runs the plan's steps through adapters over the retrieval and analysis functions that
-already exist. This is deliberately not Semantic Kernel function calling: with 44 plugin
-classes and 27 actions available in this application, handing all of them to a model and
-relying on auto-invocation is both unreliable and expensive. Semantic Kernel remains how an
-*agent* runs; when a plan eventually dispatches an agent, that agent still sees only its
-own configured actions.
+already exist. The top-level planner is deliberately not handed the entire plugin
+catalogue. A configured agent still sees its own configured actions, while an optional
+**Use an action** step can reach one existing integration directly, without loading an
+agent. That step uses a bounded function-calling loop limited to the selected action and
+its required companions.
 
 This is a V2 interface feature. The classic interface is unchanged.
 
@@ -28,6 +31,9 @@ This is a V2 interface feature. The classic interface is unchanged.
 - Each capability a plan can use must be separately enabled. Orchestration reaches only
   what a user could already reach by hand, and grants no new access.
 - A chat model must be configured. A dedicated planner deployment is optional.
+- Direct action access additionally requires Semantic Kernel and the default-off
+  `enable_chat_orchestration_actions` switch. Existing action scope settings and
+  governance continue to determine which actions the caller can use.
 
 ## Architecture
 
@@ -36,7 +42,7 @@ The framework has four phases.
 ### Inputs
 
 `functions_orchestration_registry.py` holds the capability registry: one declarative
-descriptor per capability, carrying its identifier, label, kind, a one-line summary,
+descriptor per capability, carrying its identifier, label, phase, a one-line summary,
 guidance on when it applies, its settings gates, a JSON Schema for its arguments, what it
 produces, a cost class and a per-plan cap. The registry is the only capability information
 the planner ever sees, and it is also what the validator checks a plan against, so a
@@ -56,6 +62,10 @@ enablement lives in a nested capability record rather than a flag.
   already selected documents, no probe runs.
 - **Seeds as constraints.** Anything chosen in the composer narrows the plan rather than
   suggesting to it.
+- **Accessible actions by description.** Where action access is enabled, the planner
+  receives safe metadata for governed actions, not credentials, connection settings or
+  every action's function schemas. Scoped references distinguish actions with the same
+  name. A manually selected agent keeps direct action access out of that request.
 - **Conversation history.** Eligible recent user and assistant messages are loaded from
   the owned conversation on the server, not from whichever messages the browser has loaded.
   This gives a follow-up its subject and preserves relevant earlier constraints.
@@ -170,6 +180,10 @@ false negative answers a document question without looking at the documents.
 
 Where a plan is needed, the planner returns either a plan or an elicitation.
 
+When eligible actions are available, short questions also reach planning: message length
+cannot distinguish a general question from a ticket-status lookup. The existing fast
+path remains when direct actions are disabled or unavailable.
+
 `functions_orchestration_schema.py` holds both contracts and the validator. **Planner
 output is treated as untrusted input.** A plan naming a capability that does not exist,
 using one an administrator disabled, referencing an unreadable document, or containing a
@@ -188,7 +202,7 @@ knowledge  ->  reasoning  ->  output
 
 | Phase | Meaning | Capabilities |
 | --- | --- | --- |
-| `knowledge` | Produces something the answer can be based on | `document_search`, `document_analyze`, `document_compare`, `tabular_analyze`, `web_search`, `url_fetch`, `deep_research`, `agent_invoke` |
+| `knowledge` | Produces something the answer can be based on | `document_search`, `document_analyze`, `document_compare`, `tabular_analyze`, `web_search`, `url_fetch`, `deep_research`, `agent_invoke`, `action_invoke` |
 | `reasoning` | Turns what was gathered into an answer | `respond` |
 | `output` | Declared, not yet populated | — |
 
@@ -219,10 +233,16 @@ or `narrative`, and an `engine` from three values. An agent returns free text pl
 citations tied to no document, and source review returns a JSON blob plus citations.
 Neither can honestly produce evidence.
 
-So `agent_invoke`, `url_fetch` and `deep_research` produce `notes` and `citations` instead.
+So `agent_invoke`, `action_invoke`, `url_fetch` and `deep_research` produce `notes` and `citations` instead.
 This is not a workaround: `RunContext.merge_step_result` already accumulates notes, and the
 respond adapter already folds them into its prompt. A knowledge step that gathers *text*
 rather than *document evidence* reaches the answer through a path that already existed.
+
+Direct actions retain their existing function restrictions and behavior; this capability
+does not classify operations as read-only or introduce another approval system. **Call
+agent** actions stay on the existing **Ask an agent** path. See
+[Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md) for configuration,
+scope rules and execution details.
 
 ### Two levels of gate
 
@@ -231,7 +251,7 @@ A capability is gated twice, and the two answer different questions.
 | Gate | Question | Read by |
 |---|---|---|
 | `gate(settings)` | Does this deployment have the capability at all? | The admin page, the bootstrap payload, and planning |
-| `request_gate(settings, context)` | May *this caller, asking this question* use it? | Planning only |
+| `request_gate(settings, context)` | May *this caller, asking this question* use it? | Planning, plus direct action execution checks |
 
 `resolve_available_capabilities` applies request gates **only when a request context is
 given**. That is deliberate: the admin page and the bootstrap payload describe a
@@ -256,6 +276,10 @@ cancellation and telemetry come with it.
 
 Authorization is checked twice: when the plan is validated, and again before the answer is
 composed. Those are not the same moment, and access can be revoked between them.
+
+An action is also resolved and authorized at execution and before subsequent function
+calls. Revocation, definition changes, cancellation or a failed operation stop further
+action calls instead of silently substituting an agent or another integration.
 
 #### The worker-thread boundary
 
@@ -369,7 +393,9 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | --- | --- |
 | `functions_orchestration_registry.py` | Capability descriptors, gating, planner and client projections |
 | `functions_orchestration_schema.py` | Plan and elicitation contracts, validator, repair, step results |
-| `functions_orchestration_context.py` | Candidate documents, seeds, bounded history snapshots, signals, run ledger |
+| `functions_orchestration_context.py` | Candidate documents, accessible agent/action metadata, seeds, bounded history snapshots, signals, run ledger |
+| `functions_action_catalog.py` | Metadata-only action discovery, scoped references and fresh authorization |
+| `functions_orchestration_actions.py` | Isolated, bounded execution of one selected action |
 | `functions_orchestration_planner.py` | Follow-up resolution, triage, plan synthesis, elicitation, re-planning |
 | `functions_orchestration_adapters.py` | Capability adapters over existing functions |
 | `functions_orchestration_executor.py` | Step engine, budgets, cancellation, re-authorization |
@@ -408,7 +434,10 @@ to the front.
 | `functional_tests/test_orchestration_executor.py` | Step ordering, dependency skipping, cancellation, budget caps, re-authorization |
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
-| `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list, and document and web citations are separated |
+| `functional_tests/test_orchestration_citation_persistence.py` | Cited documents reach the conversation's used-document list; document, web and tool citations use their respective message channels |
+| `functional_tests/test_orchestration_action_catalog.py` | Scoped discovery, existing governance, exact references, secret-free projections and revocation |
+| `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
+| `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
 | `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, follow-up resolution, contextualized adapters, synthesis roles, and URL provenance |
 | `functional_tests/test_orchestration_conversation_context_routes.py` | Owned server history across HTTP/SSE planning and execution, all approval modes, clarification, retries, stale sources, and legacy cutoffs |
@@ -418,14 +447,13 @@ to the front.
 
 - **Recent context only.** There is no orchestration rolling summary or cross-chat memory.
   A reference outside the retained window may need clarification.
-
-- **Model routing is not implemented.** The model catalogue currently records almost no
-  capability metadata, so plans use one configured planner model and the default chat model
-  for execution. Each step records which model it used, so per-step routing can be added
-  without changing the plan contract.
-- **Retrieval and reasoning only.** Image generation, file exports, workspace placement,
-  sharing, mail and MCP or OpenAPI actions are not yet capabilities a plan can contain. The
-  `output` phase is declared for them but empty.
+- **Automatic per-step model routing is not implemented.** Planning uses its configured
+  model. Direct action execution honors an explicitly selected, available chat model or
+  the deployment defaults; it does not select models by task capability or cost.
+- **No output-phase workflow.** Existing MCP, OpenAPI and other action types can now
+  gather knowledge directly, but the `output` phase remains empty. There are no dedicated
+  output scheduling, workspace placement or delivery steps. Actions retain their existing
+  operations, so knowledge-phase placement is not a read-only guarantee.
 - **An agent step produces no artifacts.** Charts and images an agent generates are written
   through the Flask-bound message-artifact pipeline, which the worker thread cannot reach.
   The adapter surfaces the agent's tool activity as citations instead and returns no
@@ -441,5 +469,6 @@ to the front.
 ## Related
 
 - [Orchestration settings](../../admin/orchestration.md)
+- [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
 - [Conversation context fix](../fixes/ORCHESTRATION_CONVERSATION_CONTEXT_FIX.md)
 - `docs/explanation/release_notes.md`
