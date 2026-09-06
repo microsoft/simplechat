@@ -19,6 +19,7 @@ import {
     planOrchestration,
     runOrchestration,
     type ApprovalMode,
+    type Elicitation,
     type ElicitationResponse,
     type OrchestrationPlan,
     type OrchestrationPlanRequest,
@@ -29,6 +30,7 @@ import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable 
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
+    selectElicitation,
     selectPlan,
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
@@ -162,7 +164,7 @@ async function dispatchPlan(
     turnId: string,
     context: TurnContext,
     addUserMessage: boolean,
-    elicitationResponse?: ElicitationResponse,
+    clarification?: { elicitation: Elicitation; response: ElicitationResponse },
 ): Promise<void> {
     // The ids the turn is keyed on. Mutable because the server can, in principle, reconcile
     // either one mid-stream: it names a brand-new conversation on `conversation_metadata`, and it
@@ -280,8 +282,9 @@ async function dispatchPlan(
         approval_mode: context.approvalMode,
         ...context.seeds,
     };
-    if (elicitationResponse) {
-        body.elicitation_response = elicitationResponse;
+    if (clarification) {
+        body.elicitation = clarification.elicitation;
+        body.elicitation_response = clarification.response;
     }
 
     let produced = false;
@@ -405,16 +408,30 @@ export async function answerElicitation(params: {
     const { conversationId, turnId, response } = params;
     const key = scopeKey(conversationId, turnId);
     const previous = turnContexts.get(key);
-    if (!previous) {
+    const elicitation = selectElicitation(useOrchestrationStore.getState(), conversationId, turnId);
+    if (!previous || !elicitation) {
+        useChatStore.getState().settleOrchestrationTurn(conversationId, {
+            status: 'failed',
+            error: 'This clarification is no longer available. Submit a new request.',
+        });
         return;
     }
     useOrchestrationStore.getState().clearElicitation(conversationId, turnId);
+    if (response.action === 'cancel') {
+        turnContexts.delete(key);
+        useOrchestrationStore.getState().clearActiveTurn(conversationId);
+        useChatStore.getState().settleOrchestrationTurn(conversationId, {
+            status: 'cancelled',
+            accumulated: '',
+        });
+        return;
+    }
     await dispatchPlan(
         conversationId,
         turnId,
         { ...previous, revision: previous.revision + 1 },
         false,
-        response,
+        { elicitation, response },
     );
 }
 
