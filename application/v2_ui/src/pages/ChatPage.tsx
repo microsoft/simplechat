@@ -24,6 +24,7 @@ import {
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
 import { enabledSteps, isPlanAwaitingApproval } from '../lib/orchestrationPlan';
+import { resumeOrchestrationForConversation } from '../lib/orchestrationResume';
 import { readConversationParam, syncedConversationParams } from '../lib/conversationUrl';
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
@@ -369,6 +370,8 @@ function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
 export function ChatPage() {
     const [detailsOpen, setDetailsOpen] = useState(false);
     const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const messages = useChatStore((state) => state.messages);
+    const messagesLoading = useChatStore((state) => state.messagesLoading);
     const setVisibleConversation = useImageProposalStore(
         (state) => state.setVisibleConversation,
     );
@@ -394,6 +397,22 @@ export function ChatPage() {
         setOrchestrationVisible(activeConversationId);
         return () => setOrchestrationVisible(null);
     }, [activeConversationId, setOrchestrationVisible]);
+
+    // Read the conversation's stored runs once it is genuinely on screen.
+    //
+    // Waits for the thread because both things this does need it: the plan drawer's history is
+    // only worth having next to the messages it describes, and deciding whether an unanswered plan
+    // is still unanswered means looking at what follows its question. Runs itself once per
+    // conversation, so the dependency on `messages` costs nothing after the first pass.
+    //
+    // Declared above the pending-launch return below, because a hook that runs only on some
+    // renders is not a hook.
+    useEffect(() => {
+        if (!activeConversationId || messagesLoading) {
+            return;
+        }
+        void resumeOrchestrationForConversation(activeConversationId);
+    }, [activeConversationId, messagesLoading, messages]);
 
     if (agentLaunchPending) {
         return <div role="status" className="flex flex-1 items-center justify-center text-sm text-text-3">Opening agent chat...</div>;
