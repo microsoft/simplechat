@@ -62,6 +62,11 @@ STORED_RUN = {
     # Heavy or internal, and none of it belongs in a listing.
     "plan": {"steps": [{"step_id": "s1"}], "inputs": {"documents": [{"document_id": "d1"}]}},
     "seeds": {"selected_document_ids": ["d1"], "internal_hint": "do not publish"},
+    # These three were once stripped by name in the route. The allowlist replaced that
+    # blocklist, so they are kept here to prove the replacement is not a regression.
+    "conversation_context": {"messages": [{"id": "msg-0", "content": "private"}]},
+    "request_resolution": {"resolved_from": "internal"},
+    "user_message_fingerprint": "fingerprint-internal",
     "_rid": "cosmos-internal",
     "_etag": "etag-internal",
 }
@@ -134,7 +139,10 @@ def test_summary_projection_is_an_allowlist():
         )
 
         # The heavy and the internal are both absent.
-        for forbidden in ("plan", "seeds", "user_id", "_rid", "_etag", "artifacts"):
+        for forbidden in (
+            "plan", "seeds", "user_id", "_rid", "_etag", "artifacts",
+            "conversation_context", "request_resolution", "user_message_fingerprint",
+        ):
             assert forbidden not in row, f"{forbidden!r} must not be published by the listing"
         assert "approved_by" not in row["approval"], (
             "the approving user id must not be echoed back"
@@ -177,6 +185,12 @@ def test_detail_projection_adds_only_the_plan():
             assert detail[key] == value, f"{key!r} disagrees between the listing and the detail"
         assert detail["plan"]["steps"][0]["step_id"] == "s1", "the plan must be returned in full"
         assert "seeds" not in detail, "the seeds stay server-side even in the detail"
+        for forbidden in (
+            "conversation_context", "request_resolution", "user_message_fingerprint",
+        ):
+            assert forbidden not in detail, (
+                f"{forbidden!r} must not ride along with the plan"
+            )
         print("  ok  the detail row is the listing row plus the plan")
         return True
     except Exception as exc:  # noqa: BLE001
@@ -290,13 +304,22 @@ def test_listing_projects_unless_the_plan_is_asked_for():
         body = ast.get_source_segment(source, listing)
         assert "_run_summary_row" in body, "the listing must project its rows"
         assert "include_plan" in body, (
-            "a caller that genuinely wants full records must have a way to ask"
+            "a caller that genuinely wants the plans must have a way to ask"
         )
-        # The projection is the default: it is applied when include_plan is falsey.
-        assert re.search(r"if\s+not\s+include_plan", body), (
-            "the projection must be the default path, not the opt-in one"
+        # The lean summary is what a caller gets without asking for anything.
+        assert re.search(r"else\s+_run_summary_row", body) or re.search(
+            r"if\s+not\s+include_plan", body
+        ), "the summary projection must be the default path, not the opt-in one"
+        # The opt-in path is projected too. This is the part that actually matters: asking
+        # for plans must not be a way to ask for the raw stored record, which carries the
+        # conversation context, the request resolution and the message fingerprint.
+        assert "_run_detail_row" in body, (
+            "include_plan must widen the projection, not bypass it"
         )
-        print("  ok  the listing projects unless the plan is explicitly requested")
+        assert not re.search(r"jsonify\(\s*\{\s*['\"]runs['\"]\s*:\s*runs\s*\}", body), (
+            "the listing must never serialise the stored records as they are"
+        )
+        print("  ok  both listing paths project, and neither returns a raw record")
         return True
     except Exception as exc:  # noqa: BLE001
         print(f"Test failed: {exc}")

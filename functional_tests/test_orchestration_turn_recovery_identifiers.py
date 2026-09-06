@@ -66,19 +66,33 @@ def test_user_message_is_saved_with_its_turn_id():
     """The saved question carries orchestration_turn_id, so a fetched thread can be matched."""
     print("Testing the user message is stamped with its turn id...")
     try:
-        body = _function_source("orchestration_plan")
+        # The plan route delegates the save, so the stamp lives in the helper. What matters
+        # is that the helper writes it for every orchestrated question -- the flat key is
+        # what the reloaded thread matches on, and a stamp applied only in some cases is the
+        # same as no stamp at all for the cases it misses.
+        body = _function_source("_save_turn_message")
 
-        save_calls = re.findall(
-            r"_save_message\(\s*resolved_conversation_id,\s*'user'.*?\)",
-            body,
-            flags=re.DOTALL,
+        assert "orchestration_turn_id" in body, (
+            "the question must be saved with its turn id in metadata"
         )
-        assert save_calls, "the plan route must save the user's question"
-        for call in save_calls:
-            assert "orchestration_turn_id" in call, (
-                "the question must be saved with its turn id in metadata:\n" + call
-            )
-            assert "turn_id" in call, "the stamp must carry the turn id itself, not a literal"
+
+        metadata_block = re.search(
+            r"metadata\s*=\s*\{(.*?)\n    \}", body, flags=re.DOTALL
+        ) or re.search(r"metadata\s*=\s*\{([^}]*)\}", body, flags=re.DOTALL)
+        assert metadata_block, "could not find the metadata the helper builds"
+        assert "orchestration_turn_id" in metadata_block.group(1), (
+            "the turn id must be stamped unconditionally, not inside a branch:\n"
+            + metadata_block.group(1)
+        )
+        assert re.search(r"['\"]orchestration_turn_id['\"]\s*:\s*turn_id", metadata_block.group(1)), (
+            "the stamp must carry the turn id itself, not a literal"
+        )
+
+        # And the plan route must still route through that helper.
+        plan_body = _function_source("orchestration_plan")
+        assert "_save_turn_message(" in plan_body, (
+            "the plan route must save the user's question through the stamping helper"
+        )
         print("  ok  the question is saved with its turn id")
         return True
     except Exception as exc:  # noqa: BLE001
@@ -121,9 +135,21 @@ def test_run_record_keeps_the_turn_and_question_ids():
             "the run record must keep the turn id"
         )
         assert "user_message_id" in body, "the run record must keep the question's message id"
-        assert "update_orchestration_run" in body, (
-            "the ids are written back onto the run record once the message exists"
+        # The ids go in when the record is created rather than in a follow-up write, so a
+        # run is never briefly stored without the identifiers a reload needs to find it.
+        turn_context = re.search(
+            r"create_orchestration_run\(.*?turn_context\s*=\s*\{(.*?)\n\s*\},",
+            body,
+            flags=re.DOTALL,
         )
+        assert turn_context, (
+            "the run must be created with the turn context carrying its identifiers"
+        )
+        context_block = turn_context.group(1)
+        for field in ("turn_id", "user_message_id", "user_message"):
+            assert field in context_block, (
+                f"{field!r} must be on the run record at creation:\n{context_block}"
+            )
         print("  ok  the run record keeps both identifiers")
         return True
     except Exception as exc:  # noqa: BLE001
