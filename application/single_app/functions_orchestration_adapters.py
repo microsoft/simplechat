@@ -995,11 +995,11 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
 
 
 # --------------------------------------------------------------------------------------
-# url_fetch and deep_research -> functions_source_review.perform_source_review
+# url_fetch and deep_research -> shared discovery and source review
 #
-# One function backs both capabilities. In url_access_only mode it reads only the links the
-# user pasted; with that flag off it plans and crawls several pages toward a research question.
-# Both return the same shape, so a single finalizer turns either into notes and citations.
+# URL access reads only the links the user pasted. Deep research first discovers sources
+# through the same bounded multi-query search as manual Research, then reviews those sources.
+# Source review returns the same shape in both modes, so they share its finalizer.
 # perform_source_review is imported lazily: it drags in aiohttp and the whole crawl stack, and
 # routing that through module import would make this file unimportable without them.
 # --------------------------------------------------------------------------------------
@@ -1059,8 +1059,7 @@ def _finalize_source_review(
     capability between planning and running; access is re-checked at run time, so that is a
     clean failure the answer can still work around, not licence to invent web content. When it
     is enabled, the step completes even with no pages: an empty crawl is a real, reportable
-    outcome (a link 404'd, a robots rule blocked it), and for deep research the replan hint
-    points at running a web search first rather than treating emptiness as an error.
+    outcome (a link 404'd, a robots rule blocked it). Callers may attach a relevant replan hint.
     """
     result = result if isinstance(result, dict) else {}
     if not bool(result.get('enabled')):
@@ -1093,18 +1092,27 @@ def _finalize_source_review(
 
 
 def _resolve_source_review_planner(settings):
-    """The client and model deep research uses for its own link-selection planning.
+    """The optional client for research query and link-selection planning.
 
     perform_source_review takes a planner client/model so it can decide which discovered links
     are worth reading. The context's ``invoke_prompt`` closure has already resolved a client,
     but it is a ``call(prompt) -> text`` seam by design and does not expose the client object,
     so we resolve one the same way the planner does. ``resolve_planner_client`` handles APIM,
     managed identity and key auth and returns the planner deployment -- the right model for an
-    internal planning call rather than for writing the final answer.
+    internal planning call rather than for writing the final answer. Expected configuration
+    failures leave the existing backup query/link planning available.
     """
-    from functions_orchestration_planner import resolve_planner_client
+    from functions_orchestration_planner import PlannerError, resolve_planner_client
 
-    return resolve_planner_client(settings)
+    try:
+        return resolve_planner_client(settings)
+    except (PlannerError, ValueError) as exc:
+        log_event(
+            f'{_LOG_PREFIX} Research planner unavailable; using backup research planning.',
+            extra={'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return None, None
 
 
 def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
@@ -1185,49 +1193,119 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
     query = _step_user_request(arguments.get('query'), context)
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before deep research.')
-    if not query:
-        return _failed_result('No research question was available.', 'deep_research requires a query.')
-
-    _emit(emit, _progress(step, CAPABILITY_DEEP_RESEARCH, 'Researching sources'))
+    if not query or not user_message:
+        return _failed_result(
+            'No research question was available.',
+            'Deep research requires a current user request.',
+        )
 
     try:
         from functions_source_review import (
             URL_ACCESS_CONTEXT_CHAT,
+            build_source_review_system_message,
             extract_urls_from_text,
+            is_source_review_enabled_for_user,
             perform_source_review,
         )
-    except Exception as exc:
+    except ImportError as exc:
         log_event(
-            f'{_LOG_PREFIX} deep_research is unavailable: {exc}',
-            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            f'{_LOG_PREFIX} Deep research is unavailable.',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'),
+                   'error_type': type(exc).__name__},
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Deep research is unavailable.', str(exc))
+        return _failed_result('Deep research is unavailable.', 'Unable to start research.')
 
-    # Deep research crawls seeds; it does not itself search the web. Its seeds are the citations
-    # any earlier web_search or url_fetch step left on the context, plus URLs the user pasted.
-    # We pass the research question as user_message so planning and relevance target the question
-    # rather than the whole turn, and pass the message's own URLs explicitly so narrowing the
-    # question does not drop a link the user gave us. Citations without a URL (document sources)
-    # are ignored by the seed collector, so handing the whole citation list over is safe.
-    prior_citations = [c for c in (_ctx(context, 'citations', []) or ()) if isinstance(c, dict)]
-    message_seed_urls = _request_urls(context, extract_urls_from_text) or None
-
-    try:
-        planner_client, planner_model = _resolve_source_review_planner(settings)
-    except Exception as exc:
-        log_event(
-            f'{_LOG_PREFIX} deep_research could not resolve a planner client: {exc}',
-            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
-            level=logging.ERROR,
-            exceptionTraceback=True,
+    # Source review also enforces this gate, but discovery must not spend a search before it.
+    if not is_source_review_enabled_for_user(
+        settings,
+        user_id,
+        user_email=_ctx(context, 'user_email', None),
+        user_roles=_ctx(context, 'user_roles', None),
+    ):
+        return _failed_result(
+            'Deep research is not available for this user.',
+            'Deep research is not enabled or permitted.',
         )
-        return _failed_result('Deep research could not start.', str(exc))
 
+    planner_client, planner_model = _resolve_source_review_planner(settings)
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before deep research.')
 
+    search_notes = []
+    search_citations = []
+    query_results = []
+    if settings.get('enable_web_search'):
+        # Lazy for the same circular-import boundary as run_web_search.
+        from route_backend_chats import build_web_search_query_text, perform_research_web_searches
+
+        def query_progress(query_index, total_queries):
+            _emit(emit, _progress(
+                step, CAPABILITY_DEEP_RESEARCH,
+                f'Research search {query_index} of {total_queries}',
+            ))
+
+        active_group_ids = _ctx(context, 'active_group_ids', None) or []
+        try:
+            search_result = perform_research_web_searches(
+                settings=settings,
+                conversation_id=_ctx(context, 'conversation_id', None),
+                user_id=user_id,
+                user_message=user_message,
+                user_message_id=_ctx(context, 'user_message_id', None),
+                chat_type=_text(_ctx(context, 'chat_type', 'personal')) or 'personal',
+                document_scope=_ctx(context, 'doc_scope', 'all'),
+                active_group_id=(
+                    active_group_ids[0] if active_group_ids
+                    else _ctx(context, 'active_group_id', None)
+                ),
+                active_public_workspace_id=_ctx(context, 'active_public_workspace_id', None),
+                # Use the resolved current request, not the step's context-derived objective.
+                web_search_query_text=build_web_search_query_text(user_message),
+                system_messages_for_augmentation=[],
+                agent_citations_list=[],
+                web_search_citations_list=[],
+                deep_research_enabled=True,
+                deep_research_planner_client=planner_client,
+                deep_research_planner_model=planner_model,
+                cancel_requested=cancel_requested,
+                on_query_progress=query_progress,
+            )
+        except MixedSourceCancellationError:
+            return _cancelled_result('Cancelled during research searches.')
+
+        query_results = search_result['query_results']
+        for query_result in query_results:
+            if not query_result['success']:
+                continue
+            search_notes.extend(
+                _text(message.get('content'))
+                for message in query_result['messages']
+                if isinstance(message, dict) and _text(message.get('content'))
+            )
+            search_citations.extend(query_result['citations'])
+
+        query_plan = search_result['query_plan']
+        if not query_plan.get('used_model_planner') and query_plan.get('max_queries', 1) > 1:
+            log_event(
+                f'{_LOG_PREFIX} Research is using backup query planning.',
+                extra={
+                    'user_id': user_id,
+                    'step_id': (step or {}).get('step_id'),
+                    'planner_attempted': bool(query_plan.get('attempted')),
+                    'planner_error': bool(query_plan.get('error')),
+                    'query_count': len(query_results),
+                },
+                level=logging.WARNING if query_plan.get('error') else logging.INFO,
+            )
+
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled before reviewing research sources.')
+
+    _emit(emit, _progress(step, CAPABILITY_DEEP_RESEARCH, 'Reviewing research sources'))
+    prior_citations = [c for c in (_ctx(context, 'citations', []) or ()) if isinstance(c, dict)]
+    message_seed_urls = _request_urls(context, extract_urls_from_text) or None
     try:
         result = perform_source_review(
             settings=settings,
@@ -1235,7 +1313,7 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
             user_email=_ctx(context, 'user_email', None),
             user_roles=_ctx(context, 'user_roles', None),
             user_message=query,
-            web_search_citations=prior_citations,
+            web_search_citations=prior_citations + search_citations,
             conversation_id=_ctx(context, 'conversation_id', None),
             source_review_planner_client=planner_client,
             source_review_planner_model=planner_model,
@@ -1244,23 +1322,70 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
             include_direct_user_urls=False,
             additional_seed_urls=message_seed_urls,
         )
-    except Exception as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         log_event(
-            f'{_LOG_PREFIX} deep_research failed: {exc}',
-            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id')},
+            f'{_LOG_PREFIX} Research source review failed.',
+            extra={'user_id': user_id, 'step_id': (step or {}).get('step_id'),
+                   'error_type': type(exc).__name__},
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Deep research failed.', str(exc))
+        return build_step_result(
+            status=STEP_STATUS_FAILED,
+            summary='Research sources could not be reviewed.',
+            error='Unable to review research sources.',
+            notes=search_notes,
+            citations=search_citations,
+        )
 
-    return _finalize_source_review(
+    if _is_cancelled(cancel_requested):
+        return _cancelled_result('Cancelled during research source review.')
+
+    if isinstance(result, dict):
+        # Link-planner diagnostics also belong in logs, not in the answer's evidence packet.
+        result = {**result, 'planner': {}}
+        result['system_message'] = build_source_review_system_message(result)
+
+    finalized = _finalize_source_review(
         result,
         capability_id=CAPABILITY_DEEP_RESEARCH,
         unavailable_summary='Deep research is not available for this user.',
         empty_summary='Deep research found no readable sources.',
         found_summary='Reviewed {count} source(s) for the research question.',
-        empty_replan_hint='Run a web_search step first so deep_research has sources to read.',
     )
+    if finalized['status'] == STEP_STATUS_FAILED:
+        return finalized
+
+    citations_by_url = {citation['url']: citation for citation in search_citations}
+    citations_by_url.update({citation['url']: citation for citation in finalized['citations']})
+    finalized['citations'] = list(citations_by_url.values())
+    finalized['notes'] = _string_list(finalized['notes'] + search_notes)
+    successful_queries = sum(item['success'] for item in query_results)
+    if query_results:
+        finalized['summary'] = (
+            f'Completed {successful_queries} of {len(query_results)} research searches. '
+            f"{finalized['summary']}"
+        )
+    if not finalized['notes'] and not finalized['citations']:
+        finalized['notes'] = [
+            'Research returned no usable evidence for this request. Do not present '
+            'current information or requested details as verified by research.'
+        ]
+        if query_results and not successful_queries:
+            finalized['status'] = STEP_STATUS_FAILED
+            finalized['error'] = 'Research searches did not return usable sources.'
+    log_event(
+        f'{_LOG_PREFIX} Research gathering finished.',
+        extra={
+            'user_id': user_id,
+            'step_id': (step or {}).get('step_id'),
+            'query_count': len(query_results),
+            'successful_query_count': successful_queries,
+            'citation_count': len(finalized['citations']),
+        },
+        level=logging.INFO,
+    )
+    return finalized
 
 
 # --------------------------------------------------------------------------------------

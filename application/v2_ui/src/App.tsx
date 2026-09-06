@@ -11,6 +11,7 @@ import { useBootstrapStore } from './stores/bootstrapStore';
 import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
 import { startImageApprovalTracking } from './lib/imageProposalResume';
+import { restorePersistedRuns } from './stores/orchestrationStore';
 import { ChatPage } from './pages/ChatPage';
 import { HomePage } from './pages/HomePage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
@@ -91,6 +92,11 @@ export function App() {
         // rather than in the chat page: a reload can land anywhere, and the approval still
         // has to be picked back up and reported.
         startImageApprovalTracking();
+        // Same reasoning for orchestration runs, which have been written to session storage
+        // since the feature shipped but were never read back, so a reload silently forgot a
+        // run that was still going. The restored record has no stream behind it; the run
+        // history fetched when the panel opens is what settles it.
+        restorePersistedRuns();
     }, [load, loadUserSettings]);
 
     /**
