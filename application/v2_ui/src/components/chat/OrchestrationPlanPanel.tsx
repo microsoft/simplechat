@@ -12,13 +12,14 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { ArrowDownToLine, ListTree, Map as MapIcon, Undo2 } from 'lucide-react';
+import { AlertCircle, ArrowDownToLine, ListTree, Loader2, Map as MapIcon, Undo2 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import {
     selectActiveTurn,
     useOrchestrationStore,
     type TrackedRun,
 } from '../../stores/orchestrationStore';
+import { fetchOrchestrationRun, fetchRunSteps } from '../../lib/orchestration';
 import { OrchestrationRunView } from './OrchestrationRunView';
 import { OrchestrationMapView } from './OrchestrationMapView';
 
@@ -29,16 +30,35 @@ interface PinnedRun {
     runId: string;
 }
 
-/** Scroll a turn's question into view and flash it, matching the contents-drawer jump behaviour. */
-function scrollToTurn(turnId: string, messages: ReturnType<typeof useChatStore.getState>['messages']) {
-    // The turn id is stamped on the optimistic user bubble at submit and kept across the id
-    // reconciliation, so a run always has a question to scroll back to even after it completes.
-    const message = messages.find(
-        (entry) =>
-            entry.role === 'user' &&
-            (entry.metadata as { orchestration_turn_id?: string } | undefined)
-                ?.orchestration_turn_id === turnId,
-    );
+/** Mirror of the store's private scope key; the NUL separator must match `orchestrationStore`. */
+function scopeKey(conversationId: string, turnId: string): string {
+    return `${conversationId}\u0000${turnId}`;
+}
+
+/**
+ * Scroll a turn's question into view and flash it, matching the contents-drawer jump behaviour.
+ *
+ * Two ways to find the question, because there are two kinds of run. A run this page started
+ * stamped its turn id on the user bubble at submit and kept it across the id reconciliation. A run
+ * restored from the server has no such stamp on messages written before that stamping existed, so
+ * the stored record's own `user_message_id` is used as a fallback -- which is also the only handle
+ * available for a run that happened on another device entirely.
+ */
+function scrollToTurn(
+    turnId: string,
+    userMessageId: string | null,
+    messages: ReturnType<typeof useChatStore.getState>['messages'],
+) {
+    const message =
+        messages.find(
+            (entry) =>
+                entry.role === 'user' &&
+                (entry.metadata as { orchestration_turn_id?: string } | undefined)
+                    ?.orchestration_turn_id === turnId,
+        ) ??
+        (userMessageId
+            ? messages.find((entry) => entry.role === 'user' && entry.id === userMessageId)
+            : undefined);
     if (!message) {
         return;
     }
@@ -64,6 +84,9 @@ export function OrchestrationPlanPanel() {
 
     const [view, setView] = useState<PanelView>('run');
     const [pinned, setPinned] = useState<PinnedRun | null>(null);
+    /** The archived run currently being fetched, so the Run view can say so instead of sitting empty. */
+    const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const headingRef = useRef<HTMLHeadingElement | null>(null);
 
     // Move focus into the panel when it opens, so a keyboard user is not left back on the toggle
@@ -91,16 +114,62 @@ export function OrchestrationPlanPanel() {
 
     const clearPin = () => {
         setPinned(null);
+        setLoadError(null);
         pinRun(null);
+    };
+
+    /**
+     * Fetch an archived run's plan and step outcomes, then adopt them for display.
+     *
+     * Only reached for a run this page never watched, so there is nothing in memory to draw. The
+     * plan is adopted read-only: it is a record of what happened, and offering to narrow the steps
+     * of a run that already finished would be offering something that cannot be done.
+     */
+    const loadArchivedRun = (turnId: string, runId: string) => {
+        setLoadingRunId(runId);
+        setLoadError(null);
+        Promise.all([
+            fetchOrchestrationRun(runId, { conversationId: activeConversationId }),
+            fetchRunSteps(runId, { conversationId: activeConversationId }),
+        ])
+            .then(([run, steps]) => {
+                if (!run?.plan) {
+                    setLoadError('This run did not keep a plan.');
+                    return;
+                }
+                useOrchestrationStore
+                    .getState()
+                    .adoptPersistedPlan(activeConversationId, turnId, run.plan, steps, {
+                        readOnly: true,
+                    });
+            })
+            .catch(() => {
+                setLoadError('This run could not be loaded.');
+            })
+            .finally(() => {
+                setLoadingRunId((current) => (current === runId ? null : current));
+            });
     };
 
     const selectRun = (turnId: string, runId: string, live: boolean) => {
         setPinned({ turnId, runId });
+        setLoadError(null);
         // Only a live run can be pinned in the store, whose pin resolves against in-flight records;
         // a settled run is browsed through this component's own pin instead.
         pinRun(live ? runId : null);
         setView('run');
-        scrollToTurn(turnId, messages);
+
+        const store = useOrchestrationStore.getState();
+        const entry = (store.hydratedHistory[activeConversationId] ?? []).find(
+            (candidate) => candidate.runId === runId,
+        );
+        scrollToTurn(turnId, entry?.userMessageId ?? null, messages);
+
+        // A live run is streaming its plan in; anything already in memory is authoritative.
+        if (live || store.plans[scopeKey(activeConversationId, turnId)]) {
+            return;
+        }
+        loadArchivedRun(turnId, runId);
     };
 
     const showJumpBar = Boolean(pinned && liveRun && liveRun.turnId !== shownTurnId);
@@ -178,7 +247,17 @@ export function OrchestrationPlanPanel() {
 
             <div className="min-h-0 flex-1 overflow-y-auto">
                 {view === 'run' ? (
-                    shownTurnId ? (
+                    loadingRunId && loadingRunId === pinned?.runId ? (
+                        <p className="flex items-center gap-2 p-4 text-sm text-text-3">
+                            <Loader2 size={14} className="animate-spin" />
+                            Loading this run&hellip;
+                        </p>
+                    ) : loadError ? (
+                        <p className="flex items-center gap-2 p-4 text-sm text-danger">
+                            <AlertCircle size={14} />
+                            {loadError}
+                        </p>
+                    ) : shownTurnId ? (
                         <OrchestrationRunView
                             conversationId={activeConversationId}
                             turnId={shownTurnId}

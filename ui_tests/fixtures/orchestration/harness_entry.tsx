@@ -19,6 +19,7 @@ import * as bootstrapStore from '../../../application/v2_ui/src/stores/bootstrap
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
+import * as resume from '../../../application/v2_ui/src/lib/orchestrationResume';
 
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
@@ -126,6 +127,9 @@ function reset(): void {
         stepRuntime: {},
         inFlight: {},
         history: {},
+        hydratedHistory: {},
+        hydration: {},
+        readOnlyTurns: {},
         pinnedRunId: null,
         visibleConversationId: null,
         activeTurns: {},
@@ -140,6 +144,9 @@ function reset(): void {
     } catch {
         /* localStorage may be unavailable; the stores are already reset. */
     }
+    // The resume module remembers which conversations it has already considered, so a test
+    // reusing a conversation id would otherwise be silently skipped.
+    resume.resetOrchestrationResume();
 }
 
 const harness = {
@@ -155,6 +162,7 @@ const harness = {
     controller,
     plan,
     orchestration,
+    resume,
     components,
 };
 

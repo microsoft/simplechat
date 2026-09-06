@@ -176,6 +176,30 @@ model, which means orchestration works as soon as it is switched on.
 | Planner model endpoint id | Identifies the endpoint when planning through a configured model endpoint rather than the default deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
 | Planner model provider | Identifies the provider when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_provider` |
 
+## Run history and switching devices
+
+Every plan, every step and every result is stored against the conversation, not against
+the browser that produced it. There is nothing to configure here, but it changes what
+users can expect, so it is worth knowing when you answer questions about it.
+
+Opening a conversation on a second device rebuilds the orchestration panel from what the
+server holds. A user who plans on a laptop and then opens the same conversation on a
+phone sees the same list of runs, can expand any of them, and can read the steps and
+results of a run they were not present for. Runs opened this way are shown as a record:
+they can be read but not edited or run again, because they have already happened.
+
+A plan that was still waiting for approval when the user moved is the one case that stays
+actionable. It reappears as a plan the user can approve, edit or discard, so a plan is
+never stranded on a device the user has walked away from. Two things are deliberately
+adjusted when this happens. A plan that had a countdown is restored without one, so
+nothing starts running on a device where nobody was watching. And if the plan was in fact
+approved elsewhere in the meantime, approving it again is refused rather than run twice,
+and the conversation reloads to show the answer that already exists.
+
+A run that was interrupted — the browser closed, the device slept, the network dropped
+mid-run — is shown as interrupted rather than silently disappearing or appearing to still
+be working.
+
 ## Common tasks
 
 1. **Introduce orchestration to a pilot group.** Enable Chat Orchestration, leave the
@@ -202,6 +226,9 @@ model, which means orchestration works as soon as it is switched on.
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
 | A plan proposed reading a link but found nothing | The link was produced by the model rather than pasted by the user. | Only links present in the user's own message are read. Ask the user to paste the URL into their message. |
+| Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
+| A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
+| A run is shown as interrupted | The browser or device that started it went away before the run finished. | Ask the user to send the question again. An interrupted run is a record of what happened, not a run that can be continued. |
 
 ## Related
 

@@ -21,7 +21,7 @@
 // through `/api/chat/stream/reattach`, and orchestration has no such endpoint, so a dropped
 // stream here is reported rather than recovered.
 
-import { apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import { readSsePost } from './sse';
 import type { ChatStreamEvent, Json } from './types';
 
@@ -424,6 +424,14 @@ export interface RunStreamHandlers {
     onDone?: (event: RunStreamEvent, accumulated: string) => void;
     /** The run was cancelled, either by the user or server-side. */
     onCancelled?: (event: RunStreamEvent, accumulated: string) => void;
+    /**
+     * The server refused because this plan has already been run (HTTP 409).
+     *
+     * Not a failure, and it must not be shown as one. It means another device -- or an earlier
+     * tab -- already approved this plan and the answer exists; the right response is to drop the
+     * card and reload the thread, not to tell the user their run broke.
+     */
+    onAlreadyRun?: (message: string) => void;
     /** An error frame arrived, or the transport failed. */
     onError?: (message: string, event?: RunStreamEvent) => void;
 }
@@ -433,24 +441,149 @@ export interface RunStreamResult {
     completed: boolean;
     cancelled: boolean;
     errored: boolean;
+    /** The plan was already run elsewhere. Distinct from `errored`; see `onAlreadyRun`. */
+    alreadyRun: boolean;
 }
 
 export const ORCHESTRATION_PLAN_PATH = '/api/v2/orchestration/plan';
 export const ORCHESTRATION_RUN_PATH = '/api/v2/orchestration/run';
+export const ORCHESTRATION_RUNS_PATH = '/api/v2/orchestration/runs';
+
+/* -------------------------------------------------------------------------- */
+/* Stored runs                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One stored run as the listing returns it: a row, not a plan.
+ *
+ * Mirrors `_run_summary_row` in `route_backend_orchestration.py`, which is an allowlist. The
+ * listing deliberately omits `plan` -- twenty-five rows would otherwise carry twenty-five full
+ * plans -- so anything that needs the steps themselves fetches the run through
+ * `fetchOrchestrationRun`.
+ */
+export interface PersistedRunSummary {
+    run_id: string;
+    conversation_id: string;
+    /** The turn this run answered. Present on every run the plan route created. */
+    turn_id: string | null;
+    turn_index: number;
+    status: PlanStatus | null;
+    created_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    error: string | null;
+    user_message: string;
+    /** The stored question's message id, which is how a reloaded thread finds the turn. */
+    user_message_id: string | null;
+    assistant_message_id: string | null;
+    plan_summary: {
+        run_id?: string;
+        plan_id?: string;
+        turn_id?: string;
+        intent_summary?: string;
+        step_count?: number;
+        capabilities_used?: string[];
+        status?: PlanStatus;
+    };
+    capabilities_used: string[];
+    artifact_count: number;
+    revision: number;
+    approval: { mode: ApprovalMode | null; state: ApprovalState | null };
+}
+
+/** A stored run with its plan, from the detail route. Mirrors `_run_detail_row`. */
+export interface PersistedRun extends PersistedRunSummary {
+    plan: Json;
+}
+
+/**
+ * One stored step, as `list_run_steps` returns it.
+ *
+ * Loose about everything but the fields the map view reads, because a step record is written by
+ * the executor and carries result payloads this client has no use for.
+ */
+export interface PersistedRunStep {
+    step_id: string;
+    step_index: number;
+    capability_id?: string;
+    title?: string;
+    status?: StepStatus;
+    summary?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * A conversation's stored runs, oldest first.
+ *
+ * This is the read half that was missing: runs have always been persisted, and the planner has
+ * always read them back, but nothing drew them. Without this a conversation opened on a second
+ * device shows an empty Plan drawer for work that definitely happened.
+ */
+export async function fetchConversationRuns(
+    conversationId: string,
+    options: { limit?: number; signal?: AbortSignal } = {},
+): Promise<PersistedRunSummary[]> {
+    const params = new URLSearchParams({ conversation_id: conversationId });
+    if (options.limit) {
+        params.set('limit', String(options.limit));
+    }
+    const payload = await api.get<{ runs?: PersistedRunSummary[] }>(
+        `${ORCHESTRATION_RUNS_PATH}?${params.toString()}`,
+        options.signal,
+    );
+    return Array.isArray(payload?.runs) ? payload.runs : [];
+}
+
+/** One stored run in full, including its plan. */
+export async function fetchOrchestrationRun(
+    runId: string,
+    options: { conversationId?: string; signal?: AbortSignal } = {},
+): Promise<PersistedRun | null> {
+    const params = new URLSearchParams();
+    if (options.conversationId) {
+        params.set('conversation_id', options.conversationId);
+    }
+    const query = params.toString();
+    const payload = await api.get<{ run?: PersistedRun }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}${query ? `?${query}` : ''}`,
+        options.signal,
+    );
+    return payload?.run ?? null;
+}
+
+/** One stored run's steps, in execution order. */
+export async function fetchRunSteps(
+    runId: string,
+    options: { conversationId?: string; signal?: AbortSignal } = {},
+): Promise<PersistedRunStep[]> {
+    const params = new URLSearchParams();
+    if (options.conversationId) {
+        params.set('conversation_id', options.conversationId);
+    }
+    const query = params.toString();
+    const payload = await api.get<{ steps?: PersistedRunStep[] }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/steps${query ? `?${query}` : ''}`,
+        options.signal,
+    );
+    return Array.isArray(payload?.steps) ? payload.steps : [];
+}
 
 /**
  * Open a POST SSE stream and hand back the response, or report why it could not open.
  *
  * A failure before the stream opens comes back as an ordinary JSON error, not an SSE frame, so
- * it is read here rather than in the framing loop. An abort before the response arrives is
- * returned as a plain null with no error reported, so the caller can record it as a cancellation
- * rather than a failure -- pressing Stop before the first byte is not an error.
+ * it is read here rather than in the framing loop. The HTTP status is reported alongside the
+ * message because one of them is not a failure at all: a 409 from the run endpoint means the
+ * plan was already run, which the caller reconciles rather than displays. An abort before the
+ * response arrives is returned as a plain null with no error reported, so the caller can record
+ * it as a cancellation rather than a failure -- pressing Stop before the first byte is not an
+ * error.
  */
 async function openOrchestrationStream(
     path: string,
     body: unknown,
     signal: AbortSignal | undefined,
-    onError: (message: string) => void,
+    onError: (message: string, status?: number) => void,
 ): Promise<Response | null> {
     let response: Response;
     try {
@@ -482,7 +615,7 @@ async function openOrchestrationStream(
         } catch {
             /* Non-JSON error body; keep the status-based message. */
         }
-        onError(message);
+        onError(message, response.status);
         return null;
     }
 
@@ -610,13 +743,22 @@ export async function runOrchestration(
         completed: false,
         cancelled: false,
         errored: false,
+        alreadyRun: false,
     };
 
     const response = await openOrchestrationStream(
         ORCHESTRATION_RUN_PATH,
         body,
         signal,
-        (message) => {
+        (message, status) => {
+            // 409 is the server's re-run guard, which is the whole reason approving a restored
+            // plan from a second device is safe. Reported as its own outcome so the caller can
+            // reconcile with the answer that already exists.
+            if (status === 409) {
+                result.alreadyRun = true;
+                handlers.onAlreadyRun?.(message);
+                return;
+            }
             result.errored = true;
             handlers.onError?.(message);
         },
