@@ -27,7 +27,7 @@ tries several strategies before giving up, and a total failure degrades to a sin
 answering step rather than to an error -- a user who asked a question should get an
 answer even when the planning layer had a bad day.
 
-Version: 0.261.087
+Version: 0.261.096
 """
 
 import json
@@ -267,12 +267,22 @@ Return ONE JSON object with this shape:
 
 Rules:
 - The final step is always "respond". Everything before it gathers what "respond" needs.
-- Prefer the cheapest capability that will actually answer the question. Searching
-  documents is much cheaper than analysing them; only analyse when the question needs
-  whole-document coverage.
-- On the open web, web_search is the cheap default. deep_research is the most expensive
-  capability available to you; reach for it deliberately, only when a shallow web_search
-  genuinely could not cover the question.
+- Prefer the least costly plan that adequately meets the request's evidence and discovery
+  needs. Searching documents is much cheaper than analysing them; only analyse when the
+  question needs whole-document coverage.
+- For web gathering, weigh the expected benefit of additional coverage against the extra
+  effort. web_search suits focused lookups and limited discovery, including current facts;
+  it can already return multiple sources. Consider deep_research when deliberate discovery
+  across different perspectives or alternatives, detailed source reading, or reconciling
+  evidence would materially improve the answer enough to justify its higher cost. A
+  plausible shallow answer does not rule out valuable deeper research.
+- Do not choose research merely because a request is long, creative, current, or has several
+  preferences. If focused search or the available context is adequate, keep the plan modest.
+- deep_research includes its own bounded multi-query discovery and source review. Do not
+  add a web_search step just to seed it or repeat that discovery; a separate search should
+  serve a distinct objective.
+- In each gathering step's rationale, briefly explain why that depth fits this request,
+  including the useful added coverage or why a less costly approach is sufficient.
 - Only name a document id that appears in the candidate documents or that the user
   selected. Never invent one.
 - If the user already selected documents, plan around those documents.
@@ -518,6 +528,7 @@ def plan_request(
                 turn_id=turn_id,
                 seeds=seeds,
                 document_labels=document_labels,
+                request_context=request_context,
             )
 
     if kind == 'elicitation':

@@ -28,7 +28,7 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.085
+Version: 0.261.096
 """
 
 import logging
@@ -417,8 +417,10 @@ CAPABILITY_REGISTRY = (
         'request_gate': None,
         'summary': "Look the question up on the public web.",
         'when_to_use': (
-            "The question is about current events, or about something no internal document "
-            "would hold. Do not use it to answer questions about the user's own material."
+            "Use for focused external lookups, current facts, or limited discovery that "
+            "search results can adequately support. One search can return several sources; "
+            "that alone does not require deep research. Do not use it to answer questions "
+            "about the user's own material."
         ),
         'settings_gates': ('enable_web_search',),
         'settings_gates_any': (),
@@ -479,12 +481,14 @@ CAPABILITY_REGISTRY = (
         'label': 'Research in depth',
         'phase': PHASE_KNOWLEDGE,
         'request_gate': _deep_research_request_gate,
-        'summary': "Follow a question across several web sources and cross-check them.",
+        'summary': "Discover sources with bounded web queries, then read and follow relevant pages.",
         'when_to_use': (
-            "The question needs more than one source to answer honestly -- comparing "
-            "accounts, establishing what is current, or building a picture no single page "
-            "holds. This is the most expensive capability here: it crawls and reads several "
-            "pages. For anything a single search result would settle, use web search."
+            "Use when exploring distinct perspectives or alternatives, reading sources in "
+            "detail, or reconciling evidence would materially improve the answer enough to "
+            "justify the added cost. Prefer focused web search when that coverage is "
+            "sufficient. Includes its own bounded multi-query discovery, so a separate web "
+            "search should not duplicate it. Discovery respects web-search settings; when "
+            "web search is disabled, only supplied or already discovered sources can be read."
         ),
         'settings_gates': ('enable_source_review',),
         'settings_gates_any': (),

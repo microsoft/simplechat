@@ -27076,11 +27076,15 @@ def perform_research_web_searches(
     deep_research_enabled=False,
     deep_research_planner_client=None,
     deep_research_planner_model=None,
+    cancel_requested=None,
+    on_query_progress=None,
 ):
     """Run one or more current-message-only web searches for normal or Deep Research mode."""
     web_search_runs = []
+    query_results = []
     query_plan = {}
 
+    raise_if_mixed_source_cancelled(cancel_requested, phase='research_query_planning')
     if deep_research_enabled:
         query_plan = build_deep_research_query_plan(
             settings=settings,
@@ -27111,10 +27115,16 @@ def perform_research_web_searches(
         query_text = str(query_item.get('query') or '').strip()
         if not query_text:
             continue
+        raise_if_mixed_source_cancelled(cancel_requested, phase='research_web_search')
+        if on_query_progress is not None:
+            on_query_progress(query_index, total_queries)
+        raise_if_mixed_source_cancelled(cancel_requested, phase='research_web_search')
         search_label = None
         if deep_research_enabled:
             search_label = f"Deep Research query {query_index}/{total_queries}"
-        perform_web_search(
+        messages_start = len(system_messages_for_augmentation)
+        citations_start = len(web_search_citations_list)
+        success = perform_web_search(
             settings=settings,
             conversation_id=conversation_id,
             user_id=user_id,
@@ -27131,10 +27141,17 @@ def perform_research_web_searches(
             web_search_runs_list=web_search_runs,
             search_context_label=search_label,
         )
+        query_results.append({
+            'query_index': query_index,
+            'success': success is not False,
+            'messages': system_messages_for_augmentation[messages_start:],
+            'citations': web_search_citations_list[citations_start:],
+        })
 
     return {
         'query_plan': query_plan,
         'web_search_runs': web_search_runs,
+        'query_results': query_results,
     }
 
 def perform_web_search(

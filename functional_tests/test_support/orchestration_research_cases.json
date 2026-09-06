@@ -1,0 +1,168 @@
+{
+  "version": "0.261.096",
+  "implemented_in": "0.261.096",
+  "purpose": "Public synthetic planner-selection evaluation; no real conversations or credentials.",
+  "rubric": {
+    "review_method": "Human semantic review of each proposed and validated plan, its task-specific rationale, available evidence, and cost. These annotations are not sent to the planner.",
+    "dimensions": [
+      "Does the chosen depth satisfy the task's actual evidence, discovery, freshness, and verification needs?",
+      "Would additional query perspectives or source reading materially improve coverage rather than merely add work?",
+      "Is the proposed extra effort justified against an adequate direct answer or focused lookup?",
+      "Does the plan reuse genuinely sufficient prior evidence and respect all capability gates?",
+      "Does the rationale explain the tradeoff for this request, without treating length, creativity, multiple sources, or topic as a routing rule?"
+    ],
+    "interpretation": [
+      "Assess underuse and overuse separately. Do not optimize or prescribe a research-selection rate.",
+      "Acceptable choices are review anchors, not automatic grades or a topic-to-tool mapping.",
+      "The original playlist is deliberately ambiguous: either ordinary web search or deep research can be justified.",
+      "A research step alone is not evidence of quality. Mock completions prove contracts, not real model-selection quality.",
+      "Provider failures, exhausted budgets, and direct-answer fallbacks are operational outcomes, not successful semantic choices.",
+      "Planner-only evaluation cannot establish final answer quality; that requires a separately approved paired execution evaluation."
+    ]
+  },
+  "settings": {
+    "enable_web_search": true,
+    "enable_source_review": true,
+    "require_member_of_deep_research_user": true,
+    "chat_orchestration_enabled_capabilities": [
+      "web_search",
+      "deep_research",
+      "respond"
+    ]
+  },
+  "user_roles": [
+    "DeepResearchUser"
+  ],
+  "cases": [
+    {
+      "id": "stable-direct",
+      "message": "Why does the Moon have phases? Explain it in two sentences for a child.",
+      "acceptable_choices": ["respond"],
+      "evidence_objectives": ["Explain a stable, well-established concept accurately and simply."],
+      "overuse_risk": "External research adds cost without addressing a missing evidence need.",
+      "underuse_risk": "A direct answer still needs to be correct; no novel evidence gathering is requested.",
+      "review_notes": "The production triage shortcut may answer directly without calling the planner."
+    },
+    {
+      "id": "long-simple-drafting",
+      "message": "Write a warm invitation to our imaginary neighborhood picnic. Keep it under 200 words, make it friendly to first-time visitors, mention that everyone can bring a favorite snack, and include a gentle reminder to bring a reusable cup. Use a cheerful opening and a short closing. The location and date are placeholders. Give me three possible subject lines and avoid jokes about the weather. This is a creative draft, not an announcement requiring checked facts.",
+      "acceptable_choices": ["respond"],
+      "evidence_objectives": ["Follow the supplied creative constraints without inventing factual event details."],
+      "overuse_risk": "Length and many stylistic preferences do not independently justify research.",
+      "underuse_risk": "No absent external facts need to be resolved before drafting."
+    },
+    {
+      "id": "focused-current-lookup",
+      "message": "What is the current admission price for one adult at the Oregon Coast Aquarium? Give the price and the official page so I can check it.",
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Find a current authoritative price and cite its source."],
+      "overuse_risk": "Broad discovery across unrelated pages is unnecessary for a focused official-price lookup.",
+      "underuse_risk": "A memory-only answer could give an outdated price."
+    },
+    {
+      "id": "original-playlist",
+      "message": "Help me create a music playlist for 3 hrs of music while we drive from Medford Oregon to crescent city Ca. We will be driving to forests and redwoods and seeing the coast. I want a nastalgic vibe we were born in early 80s with bluegrass, country and more modern stuff from the 2000s to fun contemporary stuff playing now.",
+      "acceptable_choices": ["web_search", "deep_research"],
+      "evidence_objectives": [
+        "Combine nostalgic selections, roots genres, 2000s music, and current options with a forest/coastal driving mood.",
+        "Plan roughly three hours without claiming exact track-duration verification that was not performed.",
+        "Explain whether focused current grounding is enough or deliberate discovery/checking adds material value."
+      ],
+      "overuse_risk": "A long playlist and varied taste constraints do not automatically require research or a mandatory web-search-plus-research sequence.",
+      "underuse_risk": "Treating current or less-obvious recommendations as known without useful discovery can miss the requested range.",
+      "review_notes": "Do not mark an ordinary web-search choice wrong merely because it did not select deep research. Judge its task-specific rationale; the same applies to a justified research choice."
+    },
+    {
+      "id": "quick-playlist",
+      "message": "Give me ten quick nostalgic road-trip song ideas with a little bluegrass and country. No sourced research or exact runtimes needed; familiar favorites are fine.",
+      "acceptable_choices": ["respond"],
+      "evidence_objectives": ["Brainstorm familiar songs matching the stated mood at modest effort."],
+      "overuse_risk": "Turning explicitly lightweight brainstorming into a research project ignores the user's priorities.",
+      "underuse_risk": "Do not claim that dates, popularity, or runtimes were externally checked."
+    },
+    {
+      "id": "broad-discovery-checking",
+      "message": "Discover twelve less-obvious contemporary roots artists spanning bluegrass, country, folk, and cross-genre collaborations. Look beyond one recommendation list, identify promising options from several independent perspectives, and verify that each suggested recording exists and its release year. Explain tradeoffs in stylistic fit and flag conflicting or uncertain details rather than filling gaps from memory.",
+      "acceptable_choices": ["deep_research", "web_search"],
+      "evidence_objectives": [
+        "Explore beyond obvious options and a single recommendation perspective.",
+        "Check recording identities and release years against suitable sources.",
+        "Explain stylistic coverage and uncertainty."
+      ],
+      "overuse_risk": "Repeated broad searching without useful added coverage is not justified by simply selecting research.",
+      "underuse_risk": "One shallow recommendation result can leave deliberate discovery and verification objectives unsupported.",
+      "review_notes": "Research should be a genuine option for its expected discovery and checking benefit. An ordinary-search plan needs a credible, bounded explanation of how it will meet those objectives."
+    },
+    {
+      "id": "independent-evidence-reconciliation",
+      "message": "Compare published evidence on heat-pump performance in cold climates. Reconcile differences between independent field studies and manufacturer claims, including outdoor temperature, home insulation, energy use, and study limitations. Seek contrasting results and distinguish measured findings from marketing claims; I need a source-backed synthesis, not purchase advice for a particular household.",
+      "acceptable_choices": ["deep_research", "web_search"],
+      "evidence_objectives": [
+        "Gather independent studies and relevant primary manufacturer claims.",
+        "Reconcile results using comparable conditions and identify limitations.",
+        "Distinguish conflicting measurements, claims, and unresolved uncertainty."
+      ],
+      "overuse_risk": "Unbounded collection without a relevant comparison framework wastes effort.",
+      "underuse_risk": "A generic search summary may miss methodological differences or contradictory evidence.",
+      "review_notes": "Judge the evidence-reconciliation needs, not the non-music topic. Several sources alone are not a sufficient rationale for research."
+    },
+    {
+      "id": "supported-follow-up",
+      "message": "Using the comparison we already gathered, turn it into a three-sentence summary for our club newsletter. Do not gather anything new.",
+      "acceptable_choices": ["respond"],
+      "prior_messages": [
+        {
+          "role": "assistant",
+          "content": "Our completed comparison: fictional Museum A has more indoor exhibits; fictional Park B has more walking space. Both have picnic areas. We already checked the supplied activity descriptions. The remaining choice is indoor comfort versus outdoor time."
+        }
+      ],
+      "earlier_runs": {
+        "runs": [
+          {
+            "run_id": "synthetic-prior-run",
+            "status": "completed",
+            "summary": "Compared the supplied fictional activity descriptions: indoor Museum A versus outdoor Park B; both have picnic areas.",
+            "steps": [
+              {
+                "capability_id": "respond",
+                "status": "completed"
+              }
+            ]
+          }
+        ],
+        "answered_questions": [],
+        "truncated": false
+      },
+      "evidence_objectives": ["Condense already-sufficient synthetic context without redundant gathering."],
+      "overuse_risk": "Ignoring prior context or repeating completed work adds cost and violates the requested scope.",
+      "underuse_risk": "The summary must stay within the facts actually supplied, not assert newly checked details."
+    },
+    {
+      "id": "research-disabled",
+      "message": "Explore several independent accounts of recent coastal restoration projects, compare their reported ecological outcomes, and explain important evidence gaps with sources.",
+      "settings": {"enable_source_review": false},
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Use permitted search to gather relevant evidence while honestly acknowledging coverage limits."],
+      "overuse_risk": "A useful research rationale does not authorize a disabled capability.",
+      "underuse_risk": "Do not replace unavailable research with an unsupported claim that comprehensive verification succeeded."
+    },
+    {
+      "id": "research-role-missing",
+      "message": "Explore several independent accounts of recent coastal restoration projects, compare their reported ecological outcomes, and explain important evidence gaps with sources.",
+      "user_roles": [],
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Meet as much of the task as permitted without the required DeepResearchUser role."],
+      "overuse_risk": "Do not offer deep research merely because the deployment enabled it.",
+      "underuse_risk": "Use allowed alternatives and represent any remaining evidence limitations honestly."
+    },
+    {
+      "id": "research-allowlist-excluded",
+      "message": "Explore several independent accounts of recent coastal restoration projects, compare their reported ecological outcomes, and explain important evidence gaps with sources.",
+      "settings": {"chat_orchestration_enabled_capabilities": ["web_search"]},
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Honor administrator narrowing while keeping the terminal answer available."],
+      "overuse_risk": "Feature enablement and the required role do not override the orchestration capability allowlist.",
+      "underuse_risk": "A narrowed plan should not pretend its limited coverage is comprehensive research."
+    }
+  ]
+}
