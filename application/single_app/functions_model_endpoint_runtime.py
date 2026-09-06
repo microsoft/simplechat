@@ -200,11 +200,15 @@ def _append_model_endpoint_candidate(endpoints, scope, endpoint):
         endpoints.append({**endpoint, '_endpoint_scope': scope})
 
 
-def resolve_model_endpoint_from_context(settings, model_context):
+def resolve_model_endpoint_from_context(settings, model_context, *, authorize=False):
     """Resolve selected endpoint metadata, including secrets, from non-secret model context."""
     from functions_group import get_group_model_endpoints
     from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
     from functions_settings import get_user_settings, normalize_model_endpoints
+    # Orchestration resolves models off the request thread using a captured identity.
+    if authorize:
+        from functions_governance import filter_governed_model_endpoints
+        from functions_group import assert_group_role
 
     settings = settings or {}
     model_context = model_context if isinstance(model_context, dict) else {}
@@ -219,10 +223,16 @@ def resolve_model_endpoint_from_context(settings, model_context):
 
     endpoints = []
     user_id = str(model_context.get('user_id') or '').strip()
+    if authorize and not user_id:
+        raise PermissionError('A model execution identity is required.')
     if user_id and settings.get('allow_user_custom_endpoints', False):
         user_settings_doc = get_user_settings(user_id)
         user_settings = user_settings_doc.get('settings', {}) if isinstance(user_settings_doc, dict) else {}
         personal_endpoints, _ = normalize_model_endpoints(user_settings.get('personal_model_endpoints', []) or [])
+        if authorize:
+            personal_endpoints = filter_governed_model_endpoints(
+                user_id, personal_endpoints, 'governance_user_endpoints',
+            )
         for endpoint in personal_endpoints:
             _append_model_endpoint_candidate(endpoints, 'user', endpoint)
 
@@ -233,11 +243,23 @@ def resolve_model_endpoint_from_context(settings, model_context):
             if not group_key or group_key in seen_group_ids:
                 continue
             seen_group_ids.add(group_key)
+            if authorize:
+                assert_group_role(
+                    user_id, group_key, allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'),
+                )
             group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_key) or [])
+            if authorize:
+                group_endpoints = filter_governed_model_endpoints(
+                    user_id, group_endpoints, 'governance_group_endpoints',
+                )
             for endpoint in group_endpoints:
                 _append_model_endpoint_candidate(endpoints, 'group', endpoint)
 
     global_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []) or [])
+    if authorize:
+        global_endpoints = filter_governed_model_endpoints(
+            user_id, global_endpoints, 'governance_global_endpoints',
+        )
     for endpoint in global_endpoints:
         _append_model_endpoint_candidate(endpoints, 'global', endpoint)
 

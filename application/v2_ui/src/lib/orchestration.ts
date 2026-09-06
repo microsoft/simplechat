@@ -174,9 +174,18 @@ export interface OrchestrationPlanDocument {
     selected_by_user: boolean;
 }
 
+/** Server-resolved action identity; never an executable manifest or connection settings. */
+export interface OrchestrationPlanAction {
+    action_ref: string;
+    display_name: string;
+    scope_label: string;
+}
+
 /** What the plan will act on, for the approval card. */
 export interface OrchestrationPlanInputs {
     documents: OrchestrationPlanDocument[];
+    /** Older plans do not carry action metadata. Match steps by action_ref, not by name. */
+    actions?: OrchestrationPlanAction[];
     web: boolean;
     agent?: Json;
     model?: Json;

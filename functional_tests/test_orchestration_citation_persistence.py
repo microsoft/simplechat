@@ -1,8 +1,10 @@
-#!/usr/bin/env python3
+# test_orchestration_citation_persistence.py
 """
 Functional test for orchestration citation persistence.
-Version: 0.261.089
+Version: 0.261.096
 Implemented in: 0.261.087
+
+Action tool-citation channel coverage added in: 0.261.096
 
 An orchestrated answer searched documents, found the right material, and cited it in its
 prose -- and the Documents drawer still said "No documents used yet".
@@ -69,7 +71,7 @@ def test_citations_are_split_into_document_and_web():
     try:
         route = _isolated(ROUTE, '_text', '_partition_citations')
 
-        documents, web = route['_partition_citations']([
+        documents, web, tools = route['_partition_citations']([
             {'document_id': 'doc1', 'file_name': 'Algebra.pdf', 'citation_id': 'c1'},
             {'url': 'https://example.test/a', 'source_type': 'web'},
             {'document_id': 'doc2', 'file_name': 'Handbook.pdf'},
@@ -82,7 +84,10 @@ def test_citations_are_split_into_document_and_web():
         assert [c['document_id'] for c in documents] == ['doc1', 'doc2'], (
             f"document citations were not separated: {documents}"
         )
-        assert len(web) == 2, f"web and tool citations should survive: {web}"
+        assert len(web) == 1, f"web sources should remain in their own channel: {web}"
+        assert len(tools) == 1 and tools[0]['function_name'] == 'run', (
+            'native tool citations must use the existing tool renderer, not web sources'
+        )
         assert all('document_id' not in c for c in web), (
             "a citation with no document must never reach document tracking, where "
             "build_used_documents would skip it silently"
@@ -112,7 +117,7 @@ def test_assistant_message_carries_its_citations():
         )
 
         body = ast.dump(ast.parse(source))
-        for field in ('hybrid_citations', 'web_search_citations'):
+        for field in ('hybrid_citations', 'web_search_citations', 'agent_citations', 'generated_artifacts'):
             assert field in body, f"the run must persist {field} on the assistant message"
 
         # And the terminal frame carries them too, so a client that never reloads still
@@ -124,6 +129,7 @@ def test_assistant_message_carries_its_citations():
         assert 'web_citations' in done_parameters, (
             'the done event must carry web citations separately from document ones'
         )
+        assert 'agent_citations' in done_parameters, 'the done event must carry tool calls'
 
         print("  ok  citations are persisted and streamed")
         return True
