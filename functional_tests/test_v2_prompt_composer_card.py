@@ -1,8 +1,9 @@
+# test_v2_prompt_composer_card.py
 #!/usr/bin/env python3
 """
 Functional test for the attached-prompt card in the V2 composer.
-Version: 0.261.092
-Implemented in: 0.261.092
+Version: 0.261.096
+Implemented in: 0.261.096
 
 Picking a saved prompt used to paste its text into the composer. Everything below exists
 because of what that cost:
@@ -16,13 +17,15 @@ because of what that cost:
   - The planner was told the prompt's name and nothing else, and did not count it as a signal
     that the user had pointed at something.
 
-This test asserts the wiring. The behaviour is executed by the companion
-test_v2_prompt_composer_card_logic.ts, which this file bundles and runs.
+This test checks UI wiring and executes the companion TypeScript against real backend
+persistence fixtures, including streaming, orchestration and shared-message snapshots.
 """
 
+import json
 import re
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -33,9 +36,11 @@ V2_SRC = V2_DIR / "src"
 sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_v2_prompt_attachment_persistence import build_prompt_lifecycle_fixtures  # noqa: E402
 
 COMPOSER_TSX = V2_SRC / "components" / "chat" / "Composer.tsx"
 CARD_TSX = V2_SRC / "components" / "chat" / "AttachedPromptCard.tsx"
+SHARED_CARD_TSX = V2_SRC / "components" / "chat" / "PromptCard.tsx"
 FIELD_TSX = V2_SRC / "components" / "prompts" / "PromptVariableField.tsx"
 MESSAGE_LIST_TSX = V2_SRC / "components" / "chat" / "MessageList.tsx"
 PROMPT_REQUEST_TS = V2_SRC / "lib" / "promptRequest.ts"
@@ -64,7 +69,7 @@ def _strip_comments(source):
 def test_version_is_at_least_the_implementing_release():
     """The card and its request contract landed together in one release."""
     print("Testing version...")
-    assert_app_version_at_least("0.261.092")
+    assert_app_version_at_least("0.261.096")
     print("  ok  version is at or past the implementing release")
     return True
 
@@ -84,10 +89,14 @@ def test_the_prompt_is_attached_rather_than_pasted():
     assert CARD_TSX.exists(), "the attached prompt must have a card to render in"
 
     card = _strip_comments(_read(CARD_TSX))
-    # Collapsed by default: the common case is a prompt whose contents you already know and a
-    # message you want room to write.
-    assert "useState(false)" in card, "the card must start collapsed"
-    assert "aria-expanded={open}" in card, "the disclosure must announce its state"
+    shell = _strip_comments(_read(SHARED_CARD_TSX))
+    assert "<PromptCard" in card, "draft and sent prompts must share their presentation"
+    assert "const [open, setOpen] = useState(false)" in card, "only the preview starts collapsed"
+    assert "const [variablesOpen, setVariablesOpen] = useState(true)" in card, (
+        "variable fields must be discoverable without first opening the preview"
+    )
+    assert "aria-expanded={open}" in shell, "the preview disclosure must announce its state"
+    assert "aria-expanded={variablesOpen}" in card, "the variable disclosure must announce its state"
     assert "onRemove" in card, "an attached prompt must be removable in one action"
 
     print("  ok  the prompt is attached, not pasted")
@@ -115,7 +124,9 @@ def test_an_edit_applies_to_this_turn_only():
         )
 
     card = _strip_comments(_read(CARD_TSX))
-    assert "Edited" in card, "an edited prompt must say so"
+    assert "edited={edited}" in card and "Edited" in _read(SHARED_CARD_TSX), (
+        "an edited prompt must say so through the shared card"
+    )
     assert "onResetContent" in card, "an edit must be reversible"
 
     print("  ok  an edit is turn-local, badged and reversible")
@@ -197,26 +208,15 @@ def test_the_server_records_what_the_bubble_needs():
     """Without user_text nothing can tell the prompt and the message apart afterwards."""
     print("Testing stored metadata...")
 
-    route = _read(CHATS_ROUTE)
-    # Matched to a closing brace on its own line: the block contains an inline `or {}`, which
-    # a non-greedy match to the first brace would stop at.
-    block = re.search(
-        r"user_metadata\['prompt_selection'\] = \{(.*?)\n\s*\}\n", route, re.DOTALL
-    )
-    assert block, "prompt_selection must still be written"
-    stored = block.group(1)
-
-    # The original contract, unchanged: an older client reads back exactly as it always did.
-    for key in (
-        "'selected_prompt_index'",
-        "'selected_prompt_text'",
-        "'prompt_name'",
-        "'prompt_id'",
-    ):
-        assert key in stored, f"the original prompt_selection key {key} must be preserved"
-
-    for key in ("'user_text'", "'original_prompt_text'", "'prompt_variables'", "'prompt_edited'"):
-        assert key in stored, f"prompt_selection must record {key}"
+    for fixture in build_prompt_lifecycle_fixtures():
+        stored = fixture["stored"]["metadata"]["prompt_selection"]
+        for key in (
+            "selected_prompt_index", "selected_prompt_text", "prompt_name", "prompt_id",
+            "user_text", "original_prompt_text", "prompt_variables", "prompt_edited",
+            "template_content", "composer_text", "composer_embedded", "scope_type", "scope_name",
+        ):
+            assert key in stored, f"{fixture['path']} must persist {key}"
+        assert fixture["echo"]["metadata"]["prompt_selection"] == stored
 
     print("  ok  the server records what the bubble needs")
     return True
@@ -282,7 +282,7 @@ def test_no_remote_asset_references():
     print("Testing for remote asset references...")
 
     offenders = []
-    for path in [CARD_TSX, FIELD_TSX, PROMPT_REQUEST_TS, MESSAGE_PROMPT_TS, VARIABLE_VALUES_TS]:
+    for path in [CARD_TSX, SHARED_CARD_TSX, FIELD_TSX, PROMPT_REQUEST_TS, MESSAGE_PROMPT_TS, VARIABLE_VALUES_TS]:
         source = _strip_comments(_read(path))
         for match in re.finditer(r"https?://[^\s'\"`)]+", source):
             url = match.group(0)
@@ -296,12 +296,12 @@ def test_no_remote_asset_references():
 
 
 def test_the_typescript_logic_checks_pass():
-    """Execute the behavioural half, skipping when the front-end toolchain is absent."""
+    """Execute client composition and recovery against actual backend persistence fixtures."""
     print("Testing composer card logic (TypeScript)...")
 
-    if not (V2_DIR / "node_modules").exists():
-        print("  skip  application/v2_ui/node_modules is absent; run npm install to include")
-        return True
+    assert (V2_DIR / "node_modules").exists(), (
+        "application/v2_ui/node_modules is absent; restore the existing frontend dependencies"
+    )
 
     assert LOGIC_CHECK_TS.exists(), "The TypeScript logic checks are missing"
 
@@ -312,12 +312,14 @@ def test_the_typescript_logic_checks_pass():
         subprocess.run(
             [
                 "npx",
+                "--no-install",
                 "esbuild",
                 str(LOGIC_CHECK_TS),
                 "--bundle",
                 "--platform=node",
                 "--format=esm",
                 "--packages=external",
+                "--jsx=automatic",
                 "--define:import.meta.env={}",
                 f"--outfile={bundle}",
                 "--log-level=error",
@@ -327,10 +329,11 @@ def test_the_typescript_logic_checks_pass():
             shell=(sys.platform == "win32"),
         )
         result = subprocess.run(
-            ["node", str(bundle)],
+            ["node", str(bundle), "--lifecycle-fixtures"],
             cwd=str(V2_DIR),
             capture_output=True,
             text=True,
+            input=json.dumps(build_prompt_lifecycle_fixtures()),
             shell=(sys.platform == "win32"),
         )
     finally:
@@ -368,8 +371,6 @@ if __name__ == "__main__":
             results.append(bool(test()))
         except Exception as error:  # noqa: BLE001
             print(f"  FAIL  {test.__name__}: {error}")
-            import traceback
-
             traceback.print_exc()
             results.append(False)
 

@@ -393,7 +393,7 @@ def _resolve_personal_document_context(document_id, user_id):
     }
 
 
-def _resolve_group_document_context(document_id, user_id, authorized_group_ids):
+def _resolve_group_document_context(document_id, user_id, authorized_group_ids, context_validator=None):
     for group_id in authorized_group_ids or []:
         group_document = get_document_record(
             user_id=user_id,
@@ -401,12 +401,14 @@ def _resolve_group_document_context(document_id, user_id, authorized_group_ids):
             group_id=group_id,
         )
         if group_document:
-            return {
+            context = {
                 "scope": "group",
                 "group_id": group_id,
                 "public_workspace_id": None,
                 "document": group_document,
             }
+            if context_validator is None or context_validator(context, document_id):
+                return context
     return None
 
 
@@ -414,6 +416,7 @@ def _resolve_public_document_context(
     document_id,
     user_id,
     authorized_public_workspace_ids,
+    context_validator=None,
 ):
     for public_workspace_id in authorized_public_workspace_ids or []:
         public_document = get_document_record(
@@ -422,12 +425,14 @@ def _resolve_public_document_context(
             public_workspace_id=public_workspace_id,
         )
         if public_document:
-            return {
+            context = {
                 "scope": "public",
                 "group_id": None,
                 "public_workspace_id": public_workspace_id,
                 "document": public_document,
             }
+            if context_validator is None or context_validator(context, document_id):
+                return context
     return None
 
 
@@ -492,19 +497,25 @@ def resolve_document_contexts(
     active_public_workspace_id=None,
     conversation_id=None,
     include_content=True,
+    allow_scope_fallback=True,
+    context_validator=None,
 ):
-    """Resolve ordered document contexts using one current authorization snapshot."""
+    """Resolve documents, optionally requiring explicit scopes and an accepted access path."""
     normalized_scope = normalize_search_scope(doc_scope)
     normalized_document_ids = normalize_search_id_list(document_ids)
     authorized_group_ids = []
-    if normalized_scope in ("all", "group"):
+    if normalized_scope in ("all", "group") and (
+        allow_scope_fallback or normalize_search_id_list(active_group_ids)
+    ):
         authorized_group_ids = _resolve_active_group_ids(
             user_id,
             active_group_ids=active_group_ids,
             fallback_to_memberships=True,
         )
     authorized_public_workspace_ids = []
-    if normalized_scope in ("all", "public"):
+    if normalized_scope in ("all", "public") and (
+        allow_scope_fallback or normalize_search_id_list(active_public_workspace_id)
+    ):
         authorized_public_workspace_ids = _resolve_public_workspace_ids(
             user_id,
             active_public_workspace_id=active_public_workspace_id,
@@ -517,21 +528,26 @@ def resolve_document_contexts(
     )
 
     resolved_contexts = []
+    context_options = {"context_validator": context_validator} if context_validator is not None else {}
     for document_id in normalized_document_ids:
         document_context = None
         if normalized_scope in ("all", "personal"):
             document_context = _resolve_personal_document_context(document_id, user_id)
+            if document_context and context_validator and not context_validator(document_context, document_id):
+                document_context = None
         if not document_context and normalized_scope in ("all", "group"):
             document_context = _resolve_group_document_context(
                 document_id,
                 user_id,
                 authorized_group_ids,
+                **context_options,
             )
         if not document_context and normalized_scope in ("all", "public"):
             document_context = _resolve_public_document_context(
                 document_id,
                 user_id,
                 authorized_public_workspace_ids,
+                **context_options,
             )
         if not document_context and chat_conversation_authorized:
             document_context = _resolve_chat_upload_context(
@@ -541,6 +557,8 @@ def resolve_document_contexts(
                 include_content=include_content,
                 authorization_prechecked=True,
             )
+            if document_context and context_validator and not context_validator(document_context, document_id):
+                document_context = None
         resolved_contexts.append(document_context)
 
     return resolved_contexts

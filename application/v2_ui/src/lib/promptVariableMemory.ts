@@ -28,6 +28,17 @@ export const MAX_REMEMBERED_VALUE_LENGTH = 2000;
 /** `{ [promptId]: { [variableKey]: string[] } }`, most recent value first. */
 export type PromptVariableMemory = Record<string, Record<string, string[]>>;
 
+function ownValue<T>(record: Record<string, T>, key: string): T | undefined {
+    return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
+function setOwnValue<T>(record: Record<string, T>, key: string, value: T): void {
+    // A prompt/variable named "__proto__" must be an ordinary serializable entry.
+    Object.defineProperty(record, key, {
+        value, enumerable: true, configurable: true, writable: true,
+    });
+}
+
 /**
  * Shapes that should not be written to disk.
  *
@@ -113,11 +124,11 @@ export function pruneMemory(memory: PromptVariableMemory): PromptVariableMemory 
                 .filter((value) => typeof value === 'string' && value !== '')
                 .slice(0, MAX_REMEMBERED_VALUES);
             if (values.length > 0) {
-                kept[key] = values;
+                setOwnValue(kept, key, values);
             }
         }
         if (Object.keys(kept).length > 0) {
-            pruned[promptId] = kept;
+            setOwnValue(pruned, promptId, kept);
         }
     }
 
@@ -129,7 +140,7 @@ export function recallPromptValues(promptId: string): Record<string, string[]> {
     if (!promptId) {
         return {};
     }
-    return readRaw()[promptId] ?? {};
+    return ownValue(readRaw(), promptId) ?? {};
 }
 
 /**
@@ -145,7 +156,7 @@ export function suggestedPromptValues(promptId: string): Record<string, string> 
     const suggested: Record<string, string> = {};
     for (const [key, values] of Object.entries(recalled)) {
         if (values.length > 0) {
-            suggested[key] = values[0];
+            setOwnValue(suggested, key, values[0]);
         }
     }
     return suggested;
@@ -166,7 +177,7 @@ export function rememberPromptValues(promptId: string, values: Record<string, st
 
     const memory = readRaw();
     // Re-inserted so this prompt counts as the most recently written for pruning.
-    const existing = memory[promptId] ?? {};
+    const existing = ownValue(memory, promptId) ?? {};
     delete memory[promptId];
 
     const next: Record<string, string[]> = { ...existing };
@@ -177,11 +188,12 @@ export function rememberPromptValues(promptId: string, values: Record<string, st
         if (!value || value.length > MAX_REMEMBERED_VALUE_LENGTH || looksLikeSecret(value)) {
             continue;
         }
-        const previous = next[key] ?? [];
-        next[key] = [value, ...previous.filter((item) => item !== value)].slice(
+        const stored = ownValue(next, key);
+        const previous = Array.isArray(stored) ? stored : [];
+        setOwnValue(next, key, [value, ...previous.filter((item) => item !== value)].slice(
             0,
             MAX_REMEMBERED_VALUES,
-        );
+        ));
         changed = true;
     }
 
@@ -190,7 +202,7 @@ export function rememberPromptValues(promptId: string, values: Record<string, st
         return;
     }
 
-    memory[promptId] = next;
+    setOwnValue(memory, promptId, next);
     writeRaw(pruneMemory(memory));
 }
 
@@ -200,7 +212,7 @@ export function forgetPromptValues(promptId: string): void {
         return;
     }
     const memory = readRaw();
-    if (!(promptId in memory)) {
+    if (ownValue(memory, promptId) === undefined) {
         return;
     }
     delete memory[promptId];

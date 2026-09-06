@@ -18,12 +18,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { Braces, Code, Eye, Heading, List, ListOrdered, PenLine, Quote } from 'lucide-react';
+import { Code, Eye, Heading, List, ListOrdered, PenLine, Quote } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { GlassButton } from '../ui/primitives';
 import { PlainMarkdown } from '../ui/PlainMarkdown';
 import { parsePromptVariables } from '../../lib/promptVariables';
 import { VariableChip } from './promptPresentation';
+import { PromptVariablePicker, usePromptVariableInsertion } from './PromptVariablePicker';
 
 export interface PromptDraft {
     id: string | null;
@@ -90,7 +91,6 @@ const TOOLBAR: {
     { label: 'Numbered list', icon: ListOrdered, prefix: '1. ', block: true },
     { label: 'Quote', icon: Quote, prefix: '> ', block: true },
     { label: 'Code', icon: Code, prefix: '`', suffix: '`', placeholder: 'code' },
-    { label: 'Variable', icon: Braces, prefix: '{{', suffix: '}}', placeholder: 'name' },
 ];
 
 export function PromptEditorDialog({
@@ -112,6 +112,9 @@ export function PromptEditorDialog({
     const [confirmingDiscard, setConfirmingDiscard] = useState(false);
     const contentRef = useRef<HTMLTextAreaElement>(null);
     const nameRef = useRef<HTMLInputElement>(null);
+    const variableInsertion = usePromptVariableInsertion(
+        contentRef, draft.content, (content) => onChange({ ...draft, content }),
+    );
 
     // What the draft looked like when the dialog opened, so "has anything changed?" is a real
     // comparison rather than a flag every edit path has to remember to set.
@@ -172,6 +175,11 @@ export function PromptEditorDialog({
                         </button>
                     );
                 })}
+                <PromptVariablePicker
+                    onOpen={variableInsertion.rememberSelection}
+                    onInsert={variableInsertion.insert}
+                    disabled={saving}
+                />
             </div>
             <textarea
                 id="prompt-content"
