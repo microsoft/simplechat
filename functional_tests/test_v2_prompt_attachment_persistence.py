@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional regression for prompt attachments at actual message persistence boundaries.
-Version: 0.261.097
+Version: 0.261.099
 Implemented in: 0.261.096
 Turn-reuse integration coverage expanded in: 0.261.097
+Frozen turn-context persistence integration: 0.261.099
 
 Execute the shipping metadata helper, chat persistence statements, orchestration writer,
 and shared post/stream routes against in-memory Cosmos containers. Importing the full chat
@@ -48,8 +49,10 @@ USER = {"user_id": "author-1", "display_name": "Author", "email": "author@exampl
 class MemoryContainer:
     def __init__(self):
         self.rows = {}
+        self.write_count = 0
 
     def upsert_item(self, document):
+        self.write_count += 1
         self.rows[document["id"]] = deepcopy(document)
         return deepcopy(document)
 
@@ -243,10 +246,21 @@ def _orchestration_boundary(info, content):
     storage = MemoryContainer()
     context = load_modules().context
     authorize = Mock()
+    persisted_contexts = []
+
+    def capture_run(plan, user_id, *, conversation_id, idempotent, turn_context):
+        assert plan["run_id"] == "run-1"
+        assert user_id == USER["user_id"]
+        assert conversation_id == "conversation-1"
+        assert idempotent is True
+        persisted_contexts.append(deepcopy(turn_context))
+
+    data = {"prompt_info": deepcopy(info)}
     namespace = {
-        "data": {"prompt_info": deepcopy(info)}, "message": content,
+        "data": data, "message": content,
         "resolved_conversation_id": "conversation-1", "turn_id": "turn-1",
-        "user_id": USER["user_id"], "previous": None,
+        "user_id": USER["user_id"], "seeds": context.resolve_seeds(data),
+        "approval_mode": "manual", "replan_hint": "", "deepcopy": deepcopy,
         "_authorize_context_conversation": authorize,
         "normalize_history_message": context.normalize_history_message,
         "ConversationContextError": context.ConversationContextError,
@@ -254,21 +268,64 @@ def _orchestration_boundary(info, content):
         "build_prompt_selection_metadata": build_prompt_selection_metadata,
         "cosmos_messages_container": storage, "datetime": datetime,
         "timezone": timezone, "uuid": uuid, "logging": logging, "log_event": Mock(),
+        "create_orchestration_run": capture_run,
     }
-    _load_functions("route_backend_orchestration.py", namespace, "_now_iso", "_save_message", "_save_turn_message")
+    _load_functions(
+        "route_backend_orchestration.py", namespace,
+        "_now_iso", "_save_message", "_save_turn_message", "_persist_planned_turn",
+    )
     function = _function("route_backend_orchestration.py", "orchestration_plan")
-    generator = next(node for node in ast.walk(function)
-                     if isinstance(node, ast.FunctionDef) and node.name == "generate")
-    body = next(node.body for node in generator.body if isinstance(node, ast.Try))
-    first = next(index for index, statement in enumerate(body)
-                 if _assigns(statement, "prompt_selection"))
-    message_id = _execute_boundary(body[first:first + 2], namespace, "user_message_id", [])
+    selections = [
+        node for node in ast.walk(function)
+        if _assigns(node, "prompt_selection") and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "build_prompt_selection_metadata"
+    ]
+    turn_contexts = [
+        node for node in ast.walk(function)
+        if _assigns(node, "turn_context") and isinstance(node.value, ast.Dict)
+        and any(isinstance(key, ast.Constant) and key.value == "prompt_selection" for key in node.value.keys)
+    ]
+    assert len(selections) == 1, "Expected one production prompt snapshot capture."
+    assert len(turn_contexts) == 1, "Expected one frozen turn-context initialization."
+    assert any(
+        isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "_persist_planned_turn"
+        for node in ast.walk(function)
+    ), "The planning route must use the merged turn persistence helper."
+    turn_context = _execute_boundary(
+        [selections[0], turn_contexts[0]], namespace, "turn_context", [],
+    )
+    expected_snapshot = build_prompt_selection_metadata(info, content)
+    assert turn_context["prompt_selection"] == expected_snapshot
+
+    # The streamed planner runs later; request-data changes must not replace its snapshot.
+    data["prompt_info"] = {"content": "A later, unrelated prompt."}
+    plan = {"run_id": "run-1"}
+    namespace["_persist_planned_turn"](plan, turn_context, USER["user_id"], "conversation-1")
+    message_id = turn_context["user_message_id"]
     assert message_id
     stored = storage.read_item(message_id, "conversation-1")
     authorize.assert_called_once_with("conversation-1", USER["user_id"])
+    assert storage.write_count == 1
+    fingerprint = context.normalize_history_message(stored)["fingerprint"]
+    assert turn_context["user_message_fingerprint"] == fingerprint
+    assert persisted_contexts[0]["user_message_id"] == message_id
+    assert persisted_contexts[0]["user_message_fingerprint"] == fingerprint
+    assert persisted_contexts[0]["prompt_selection"] == expected_snapshot
     assert stored["metadata"]["orchestration"]["turn_id"] == "turn-1"
-    if build_prompt_selection_metadata(info, content):
+    if expected_snapshot:
         assert stored["metadata"]["orchestration_turn_id"] == "turn-1"
+
+    # A retry missing prompt_info still reuses the exact original message and metadata.
+    retried_context = deepcopy(turn_context)
+    retried_context["prompt_selection"] = None
+    namespace["_persist_planned_turn"](plan, retried_context, USER["user_id"], "conversation-1")
+    assert retried_context["user_message_id"] == message_id
+    assert retried_context["user_message_fingerprint"] == fingerprint
+    assert storage.write_count == 1
+    assert storage.read_item(message_id, "conversation-1") == stored
+    assert len(persisted_contexts) == 2
     return stored, deepcopy(stored)
 
 

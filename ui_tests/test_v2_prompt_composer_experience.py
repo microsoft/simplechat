@@ -1,7 +1,7 @@
 # test_v2_prompt_composer_experience.py
 """
 Focused browser regressions for the approved V2 prompt composer experience.
-Version: 0.261.096
+Version: 0.261.099
 Implemented in: 0.261.096
 
 The existing harness bundles the real Composer, MessageList, editors, and stores.
@@ -430,7 +430,7 @@ def message_box(page):
 
 
 def variable(page, key):
-    return page.locator(f"#attached-prompt-var-{key}")
+    return page.locator('[data-composer-editor="composer-input"]').locator(f'[id$="-var-{key}"]')
 
 
 def field_box(page, key):
@@ -828,6 +828,20 @@ def test_reattaching_after_send_anyway_does_not_replay_the_previous_field_focus_
             f"The new prompt replayed the previous review focus: {focused_id}. "
             "Selecting a new attachment should restore focus to the Message field."
         ) from error
+
+
+def test_unfilled_prompt_warning_respects_the_hosts_busy_send_gate(prompt_ui):
+    page, api = prompt_ui
+    mount(page, api, prompts=[prompt("For {{customer}}.")])
+    pick_prompt(page)
+    page.get_by_role("button", name="Send message", exact=True).click()
+    warning = page.get_by_role("alert").filter(has_text="Some prompt variables")
+    expect(warning).to_be_visible()
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({streaming: true})")
+    expect(warning.get_by_role("button", name="Send anyway", exact=True)).to_be_disabled()
+    assert not api.sends
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.setState({streaming: false})")
+    expect(warning.get_by_role("button", name="Send anyway", exact=True)).to_be_enabled()
 
 
 def test_warning_fill_is_explicit_scoped_and_does_not_send_after_success(prompt_ui):

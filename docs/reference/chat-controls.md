@@ -159,3 +159,20 @@ These controls exist only in the V2 interface, so they are not part of the gener
 The variable picker, knowledge fill, and persistent card enhancements were implemented
 in **0.261.096**. See [Use prompts in chat]({{ '/guides/use-prompts-in-chat/' | relative_url }})
 for the complete workflow.
+
+## Inline follow-up questions (V2 interface)
+
+Implemented in **0.261.096**. These controls appear when chat orchestration needs more
+information before it can plan the request. They use the composer's editing capabilities
+without adding another model, agent, or execution toolbar. See
+[Chat Orchestration]({{ '/explanation/features/CHAT_ORCHESTRATION/' | relative_url }}).
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Suggested choices | Uses radio buttons for one choice and checkboxes for several. File suggestions retain actual source identities rather than just filenames. | Choose the intended options quickly, while retaining the ability to supply a different file for a file question. | `enable_chat_orchestration` |
+| Inline answer / Additional details | Accepts text, `#` references, and `/` saved prompts. An optional answer can accompany selected choices. | Explain a qualification or supply missing context without starting another chat message. | `enable_chat_orchestration`, with the existing workspace and prompt permissions |
+| Attach a file | Uploads a supported file for this answer and shows its processing state. | Supply a source omitted from the original request, whether tabular or another supported file type. | `enable_chat_orchestration`, `enable_chat_file_uploads`, and the existing upload role policy |
+| Upload Retry / Remove | Retries an unsuccessful attachment or removes it from the answer without discarding other selections. Removing a reference does not delete an already uploaded file. | Recover from upload failure or correct a mistaken selection before continuing. | Same as Attach a file |
+| Clear suggested selections | Clears chosen file suggestions without clearing the answer editor. | Use your own referenced or uploaded file when none of the suggestions is right. | `enable_chat_orchestration` |
+| Back / Next / Finish | Keeps each page's answer while navigating; Finish submits the answers for the same request and waits for required answers and ready uploads. | Complete a multi-question clarification without losing drafts or continuing with unfinished files. | `enable_chat_orchestration` |
+| Decline / Cancel | Sends no answer text, selected references, or attached-prompt metadata. | Decline to provide the requested information or abandon the current answer. | `enable_chat_orchestration` |

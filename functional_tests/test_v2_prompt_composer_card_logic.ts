@@ -1,8 +1,10 @@
 // test_v2_prompt_composer_card_logic.ts
 //
 // Runtime test for the attached-prompt card's composition and recovery rules.
-// Version: 0.261.096
-// Implemented in: 0.261.096
+// Version: 0.261.099
+// Implemented in: 0.261.092
+// Shared editor implemented in: 0.261.096
+// Frozen prompt snapshots implemented in: 0.261.096
 //
 // The companion test, test_v2_prompt_composer_card.py, asserts that the pieces are wired
 // together. This file executes the behaviour, because these failure modes are all quiet ones
@@ -35,6 +37,15 @@ import {
     type AttachedPrompt,
 } from '../application/v2_ui/src/lib/promptRequest';
 import { readMessagePrompt } from '../application/v2_ui/src/lib/messagePrompt';
+import {
+    attachPromptToDraft,
+    buildComposerDraftSubmission,
+    composerDraftHasContent,
+    composerDraftKnowledgeContext,
+    composerDraftUnfilledVariables,
+    composerDraftUserPromptValues,
+    createComposerDraft,
+} from '../application/v2_ui/src/lib/composerDraft';
 import { applyPromptVariables } from '../application/v2_ui/src/lib/promptVariables';
 import { startOrchestrationPlan } from '../application/v2_ui/src/lib/orchestrationController';
 import { useChatStore } from '../application/v2_ui/src/stores/chatStore';
@@ -371,6 +382,157 @@ check('an unnamed prompt still gets a label rather than an empty one', () => {
     assert.equal(found!.name, 'Prompt');
 });
 
+check('independent editor drafts never share text, prompt values or selections', () => {
+    const main = createComposerDraft();
+    const answer = attachPromptToDraft(createComposerDraft(), {
+        id: 'shared-prompt', name: 'Answer prompt', content: 'For {{topic}}: {{composer}}',
+    });
+    answer.text = 'the inline answer';
+    answer.promptValues.topic = 'reliability';
+    assert.equal(main.text, '');
+    assert.equal(main.attachedPrompt, null);
+    assert.deepEqual(main.promptValues, {});
+    assert.notEqual(main.contextItems, answer.contextItems);
+    assert.notEqual(main.uploads, answer.uploads);
+    const sent = buildComposerDraftSubmission(answer, { composerText: 'the main message' });
+    assert.equal(sent.message, 'For reliability: the inline answer');
+    assert.equal(sent.promptInfo?.user_text, '');
+    assert.deepEqual(sent.promptInfo?.variables, { topic: 'reliability', composer: 'the inline answer' });
+    assert.deepEqual(composerDraftUserPromptValues(answer), { topic: 'reliability' });
+    assert.equal(sent.promptInfo?.composer_text, 'the inline answer');
+});
+
+check('each send resolves the current answer and rejects stored built-in overrides', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'p1', content: '{{today}} / {{topic}} / {{composer}}',
+    });
+    draft.promptValues = { today: 'stale date', composer: 'wrong draft', topic: 'latency', removed: 'unused' };
+    draft.text = 'first answer';
+    const context = { now: new Date(2026, 8, 5, 12), composerText: 'not this draft' };
+    assert.equal(buildComposerDraftSubmission(draft, context).message, '2026-09-05 / latency / first answer');
+    draft.text = 'revised answer';
+    const sent = buildComposerDraftSubmission(draft, context);
+    assert.equal(sent.message, '2026-09-05 / latency / revised answer');
+    assert.deepEqual(sent.promptInfo?.variables, {
+        today: '2026-09-05', topic: 'latency', composer: 'revised answer',
+    });
+    assert.deepEqual(composerDraftUserPromptValues(draft), { topic: 'latency' });
+});
+
+check('prompt-only controlled drafts remain sendable without typed text', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'p1', content: 'Summarize the selected sources.',
+    });
+    assert.equal(composerDraftHasContent(draft), true);
+    const sent = buildComposerDraftSubmission(draft, {});
+    assert.equal(sent.message, 'Summarize the selected sources.');
+    assert.equal(sent.promptInfo?.user_text, '');
+});
+
+check('a slash attachment removes only its query and keeps the saved prompt untouched', () => {
+    const saved = { id: 'p1', content: 'Explain {{topic}}.' };
+    const before = { ...createComposerDraft(), text: 'Keep /explain this paragraph.' };
+    const draft = attachPromptToDraft(before, saved, { start: 5, end: 13 });
+    assert.equal(draft.text, 'Keep  this paragraph.');
+    assert.equal(before.text, 'Keep /explain this paragraph.');
+    draft.attachedPrompt!.editedContent = 'Compare {{topic}} instead.';
+    draft.promptValues = { topic: 'source A and B' };
+    const sent = buildComposerDraftSubmission(draft, {});
+    assert.equal(sent.message, 'Compare source A and B instead.\n\nKeep  this paragraph.');
+    assert.equal(sent.promptInfo?.edited, true);
+    assert.equal(sent.promptInfo?.original_content, saved.content);
+    assert.equal(saved.content, 'Explain {{topic}}.');
+});
+
+check('grounding includes primary file suggestions and ready workspace uploads without inventing chat documents', () => {
+    const draft = createComposerDraft();
+    draft.uploads = [
+        { id: 'ready', fileName: 'ready.pdf', state: 'ready', reference: {
+            kind: 'document', id: 'ready-document', scope: { kind: 'personal', id: null },
+        } },
+        { id: 'pending', fileName: 'pending.pdf', state: 'processing', reference: {
+            kind: 'document', id: 'pending-document', scope: { kind: 'personal', id: null },
+        } },
+        { id: 'chat', fileName: 'chat.txt', state: 'ready', reference: {
+            kind: 'chat_attachment', id: 'chat-message', scope: { kind: 'chat', id: 'answer-chat' },
+        } },
+    ];
+    const before = JSON.stringify(draft);
+    const items = composerDraftKnowledgeContext(draft, [
+        { kind: 'document', id: 'primary-file', label: 'Chosen suggestion',
+            scope: { kind: 'group', id: 'group-1', name: 'Team' } },
+        { kind: 'document', id: 'ready-document', scope: { kind: 'personal', id: null } },
+        { kind: 'tag', id: 'review', scope: { kind: 'personal', id: null } },
+        { kind: 'tag', id: 'review', scope: { kind: 'group', id: 'group-1' } },
+        { kind: 'chat_attachment', id: 'primary-chat-file', scope: { kind: 'chat', id: 'answer-chat' } },
+    ]);
+    assert.deepEqual(items.filter((item) => item.kind === 'document').map((item) => item.id),
+        ['ready-document', 'primary-file']);
+    assert.deepEqual(items.filter((item) => item.kind === 'tag').map((item) => item.scope.kind),
+        ['personal', 'group']);
+    assert.equal(JSON.stringify(draft), before);
+});
+
+check('sent built-ins and composer words are frozen independently of later conversation changes', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'snapshot', content: '{{me}} | {{last_response}} | {{last_message}} | {{selected_documents}} | {{composer}}',
+    });
+    draft.text = 'This answer';
+    const context = {
+        userName: 'Answer author', lastAssistantMessage: 'Earlier reply', lastUserMessage: 'Earlier request',
+        selectedDocuments: ['Answer file'],
+    };
+    const sent = buildComposerDraftSubmission(draft, context);
+    context.lastAssistantMessage = 'Later reply';
+    context.lastUserMessage = 'Later request';
+    context.selectedDocuments.push('Unrelated file');
+    draft.text = 'A different draft';
+    assert.equal(sent.message, 'Answer author | Earlier reply | Earlier request | Answer file | This answer');
+    assert.equal(sent.promptInfo?.composer_text, 'This answer');
+    assert.deepEqual(sent.promptInfo?.variables, {
+        me: 'Answer author', last_response: 'Earlier reply', last_message: 'Earlier request',
+        selected_documents: 'Answer file', composer: 'This answer',
+    });
+    assert.equal(readMessagePrompt({
+        content: sent.message, metadata: { prompt_selection: promptSelectionMetadata(sent.promptInfo!) },
+    })?.userText, 'This answer');
+});
+
+check('missing-field checks and snapshots agree on defaults and prototype-like names', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'missing', content: '{{constructor}} {{__proto__}} {{tone|friendly}} {{last_message}}',
+    });
+    assert.deepEqual(composerDraftUnfilledVariables(draft, {}).map((item) => item.key),
+        ['constructor', '__proto__', 'last_message']);
+    const sent = buildComposerDraftSubmission(draft, {});
+    assert.equal(sent.message, '{{constructor}} {{__proto__}} friendly {{last_message}}');
+    assert.deepEqual(sent.promptInfo?.variables, { tone: 'friendly' });
+});
+
+check('AI provenance survives a serialized draft but is never promoted into personal variable memory', () => {
+    const draft = attachPromptToDraft(createComposerDraft(), {
+        id: 'ai-values', content: '{{manual}} {{grounded}} {{composer}}',
+    });
+    draft.text = 'Own answer';
+    draft.promptValues = { manual: 'My value', grounded: 'Authorized lookup', removed: 'Old field' };
+    draft.promptAiValues = {
+        grounded: { value: 'Authorized lookup', sources: [{
+            document_id: 'source-id', chunk_id: 'chunk-1', title: 'Source', excerpt: 'Evidence',
+        }], previousValue: '', previouslyPrefilled: false },
+    };
+    const restored = JSON.parse(JSON.stringify(draft));
+    assert.deepEqual(composerDraftUserPromptValues(restored), { manual: 'My value' });
+    assert.deepEqual(buildComposerDraftSubmission(restored, {}).promptInfo?.variables, {
+        manual: 'My value', grounded: 'Authorized lookup', composer: 'Own answer',
+    });
+    const reattached = attachPromptToDraft(restored, { id: 'ai-values', content: '{{manual}} {{grounded}} {{composer}}' });
+    assert.equal(reattached.text, 'Own answer');
+    assert.equal(reattached.promptInstance, (draft.promptInstance ?? 0) + 1);
+    assert.deepEqual(reattached.promptValues, {});
+    assert.deepEqual(reattached.promptAiValues, {});
+    assert.equal(restored.promptValues.grounded, 'Authorized lookup');
+});
+
 check('a legacy split requires the exact delimiter, never a partial prefix', () => {
     const metadata = { prompt_selection: { selected_prompt_text: 'Prompt' } };
     assert.equal(readMessagePrompt({ content: 'Prompt\n\nQuestion.', metadata })?.userText, 'Question.');
@@ -572,7 +734,7 @@ for (const fixture of fixtures) {
 
 const plainSendOptions = {
     documentSearch: false, webSearch: false, imageGeneration: false,
-    deepResearch: false, urlAccess: false,
+    deepResearch: false, urlAccess: false, contextItems: [],
 };
 for (const fixture of fixtures.filter((item) => item.case === 'appended'
     && (item.path === 'chat-stream' || item.path === 'shared-post'))) {

@@ -19,6 +19,7 @@ import {
     planOrchestration,
     runOrchestration,
     type ApprovalMode,
+    type ElicitationContext,
     type Elicitation,
     type ElicitationResponse,
     type OrchestrationPlan,
@@ -32,6 +33,7 @@ import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
     selectElicitation,
+    selectElicitationDraft,
     selectPlan,
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
@@ -85,6 +87,17 @@ const turnContexts = new Map<string, TurnContext>();
  * re-plan superseding a plan — reaches the right one while another conversation's run is untouched.
  */
 const activeControllers = new Map<string, AbortController>();
+
+export type ElicitationSubmitResult = { ok: true } | { ok: false; error: string };
+
+interface ElicitationContinuation {
+    elicitation: Elicitation;
+    response: ElicitationResponse;
+    context?: ElicitationContext;
+    elicitationId: string;
+    revision: number;
+    submissionId: string;
+}
 
 export interface StartPlanParams {
     /** The open conversation, or null to create one for this first message. */
@@ -165,8 +178,8 @@ async function dispatchPlan(
     turnId: string,
     context: TurnContext,
     addUserMessage: boolean,
-    clarification?: { elicitation: Elicitation; response: ElicitationResponse },
-): Promise<void> {
+    continuation?: ElicitationContinuation,
+): Promise<ElicitationSubmitResult> {
     // The ids the turn is keyed on. Mutable because the server can, in principle, reconcile
     // either one mid-stream: it names a brand-new conversation on `conversation_metadata`, and it
     // echoes the turn id back on the plan. The client sends both and the server honours both, so
@@ -289,40 +302,76 @@ async function dispatchPlan(
         approval_mode: context.approvalMode,
         ...context.seeds,
     };
-    if (clarification) {
-        body.elicitation = clarification.elicitation;
-        body.elicitation_response = clarification.response;
+    if (continuation) {
+        body.elicitation = continuation.elicitation;
+        body.elicitation_response = continuation.response;
+        body.elicitation_id = continuation.elicitationId;
+        body.elicitation_revision = continuation.revision;
+        body.elicitation_submission_id = continuation.submissionId;
+        if (continuation.response.action === 'accept' && continuation.context) {
+            body.elicitation_context = continuation.context;
+        }
     }
 
     let produced = false;
     let errored = false;
+    let failure = '';
+    const isCurrentRequest = () =>
+        !controller.signal.aborted && activeControllers.get(currentConversationId) === controller;
     await planOrchestration(
         body,
         {
-            onThought: (event) =>
-                useChatStore
-                    .getState()
-                    .pushOrchestrationThought(currentConversationId, event as RunStreamEvent),
-            onConversationMetadata: (event) =>
+            onThought: (event) => {
+                if (isCurrentRequest()) {
+                    useChatStore.getState()
+                        .pushOrchestrationThought(currentConversationId, event as RunStreamEvent);
+                }
+            },
+            onConversationMetadata: (event) => {
+                if (!isCurrentRequest()) {
+                    return;
+                }
                 adoptServerConversationId(
                     typeof event.conversation_id === 'string' ? event.conversation_id : '',
                     event.conversation_title ?? event.title,
-                ),
+                );
+            },
             onPlan: (plan) => {
-                produced = true;
+                if (!isCurrentRequest()) {
+                    return;
+                }
                 adoptServerTurnId(plan.turn_id);
+                context.revision = plan.revision ?? context.revision;
                 useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, plan);
+                if (!selectPlan(useOrchestrationStore.getState(), currentConversationId, currentTurnId)) {
+                    errored = true;
+                    failure = 'The planner returned an invalid plan. Please try again.';
+                    useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
+                        status: 'failed',
+                        error: failure,
+                    });
+                    return;
+                }
+                produced = true;
                 maybeAutoOpenDrawer(currentConversationId, plan);
             },
             onElicitation: (elicitation) => {
-                produced = true;
+                if (!isCurrentRequest()) {
+                    return;
+                }
                 adoptServerTurnId(elicitation.turn_id);
+                context.revision = elicitation.revision ?? context.revision;
                 useOrchestrationStore
                     .getState()
                     .setElicitation(currentConversationId, currentTurnId, elicitation);
+                produced = true;
             },
             onError: (message) => {
+                if (!isCurrentRequest()) {
+                    return;
+                }
                 errored = true;
+                failure = message;
                 useChatStore
                     .getState()
                     .settleOrchestrationTurn(currentConversationId, {
@@ -334,11 +383,12 @@ async function dispatchPlan(
         controller.signal,
     );
 
-    if (activeControllers.get(currentConversationId) === controller) {
-        activeControllers.delete(currentConversationId);
+    if (activeControllers.get(currentConversationId) !== controller) {
+        return { ok: false, error: 'This request was superseded by another request.' };
     }
+    activeControllers.delete(currentConversationId);
 
-    if (produced) {
+    if (produced && !errored) {
         // Auto mode is pre-approved on arrival, so its run starts here rather than waiting for a
         // click or a countdown — and it starts INSTEAD OF settling `planned`, so the thinking
         // state flows straight into the run's streaming without a flicker to idle between them.
@@ -360,14 +410,26 @@ async function dispatchPlan(
                 .getState()
                 .settleOrchestrationTurn(currentConversationId, { status: 'planned' });
         }
+        return { ok: true };
     } else if (!errored && controller.signal.aborted) {
         // Cancelled before the planner committed: drop the thinking state and forget the card,
         // rather than leaving an empty plan slot the drawer would puzzle over.
         useChatStore
             .getState()
             .settleOrchestrationTurn(currentConversationId, { status: 'cancelled', accumulated: '' });
-        useOrchestrationStore.getState().clearActiveTurn(currentConversationId);
+        if (!continuation) {
+            useOrchestrationStore.getState().clearActiveTurn(currentConversationId);
+        }
+        return { ok: false, error: 'The request was interrupted. You can try again.' };
     }
+    failure ||= 'The planner did not return a plan or a question. Please try again.';
+    if (!errored) {
+        useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
+            status: 'failed',
+            error: failure,
+        });
+    }
+    return { ok: false, error: failure };
 }
 
 /**
@@ -402,44 +464,91 @@ export async function startOrchestrationPlan(params: StartPlanParams): Promise<v
 /**
  * Answer a planner's question and re-plan the same turn.
  *
- * The reply keeps its MCP shape unchanged — a decline or cancel carries no content — and is handed
- * back to the planner, which decides what to do with (or without) the answer. The turn id is
- * reused, the revision bumped, and the original message and seeds resent, because the re-plan is
- * the same turn continued, not a new one.
+ * Accept and decline continue the same turn with its original message, seeds and stored-question
+ * identity. The draft stays until that continuation succeeds. Cancel abandons the local turn
+ * without another planning request.
  */
 export async function answerElicitation(params: {
     conversationId: string;
     turnId: string;
     response: ElicitationResponse;
-}): Promise<void> {
+    context?: ElicitationContext;
+    elicitationId?: string;
+    elicitationRevision?: number;
+}): Promise<ElicitationSubmitResult> {
     const { conversationId, turnId, response } = params;
     const key = scopeKey(conversationId, turnId);
-    const previous = turnContexts.get(key);
-    const elicitation = selectElicitation(useOrchestrationStore.getState(), conversationId, turnId);
-    if (!previous || !elicitation) {
-        useChatStore.getState().settleOrchestrationTurn(conversationId, {
-            status: 'failed',
-            error: 'This clarification is no longer available. Submit a new request.',
-        });
-        return;
+    const store = useOrchestrationStore.getState();
+    const elicitation = selectElicitation(store, conversationId, turnId);
+    const draft = selectElicitationDraft(store, conversationId, turnId);
+    const fail = (message: string): ElicitationSubmitResult => {
+        if (elicitation && draft && (!params.elicitationId || params.elicitationId === elicitation.elicitation_id)
+            && (params.elicitationRevision === undefined || params.elicitationRevision === (elicitation.revision ?? 0))) {
+            useOrchestrationStore.getState().failElicitationSubmission(
+                conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0, message,
+            );
+        }
+        return { ok: false, error: message };
+    };
+    if (!elicitation || !draft || (params.elicitationId && params.elicitationId !== elicitation.elicitation_id)
+        || (params.elicitationRevision !== undefined && params.elicitationRevision !== (elicitation.revision ?? 0))
+        || store.activeTurns[conversationId] !== turnId) {
+        return fail('This question is no longer active. Open the current request to continue.');
     }
-    useOrchestrationStore.getState().clearElicitation(conversationId, turnId);
+    if (draft.submitting) {
+        return { ok: false, error: 'An answer is already being submitted.' };
+    }
     if (response.action === 'cancel') {
+        cancelOrchestration(conversationId);
         turnContexts.delete(key);
-        useOrchestrationStore.getState().clearActiveTurn(conversationId);
+        store.clearElicitation(conversationId, turnId);
+        store.clearActiveTurn(conversationId);
         useChatStore.getState().settleOrchestrationTurn(conversationId, {
             status: 'cancelled',
             accumulated: '',
         });
-        return;
+        return { ok: true };
     }
-    await dispatchPlan(
+    const previous = turnContexts.get(key);
+    if (!previous) {
+        return fail('This request is no longer available in this browser session. Send the request again.');
+    }
+    const cleanedResponse: ElicitationResponse = {
+        action: response.action,
+        content: response.action === 'accept' ? response.content : {},
+    };
+    const answerContext = response.action === 'accept' ? params.context : undefined;
+    const fingerprint = JSON.stringify({ response: cleanedResponse, context: answerContext });
+    const submissionId = draft.submissionFingerprint === fingerprint && draft.submissionId
+        ? draft.submissionId
+        : makeTurnId();
+    if (!store.beginElicitationSubmission(
+        conversationId, turnId, elicitation.elicitation_id, submissionId, fingerprint,
+    )) {
+        return { ok: false, error: 'This answer is already being submitted or is no longer current.' };
+    }
+    const nextContext = { ...previous, revision: previous.revision + 1 };
+    const result = await dispatchPlan(
         conversationId,
         turnId,
-        { ...previous, revision: previous.revision + 1 },
+        nextContext,
         false,
-        { elicitation, response },
+        {
+            elicitation,
+            response: cleanedResponse,
+            context: answerContext,
+            elicitationId: elicitation.elicitation_id,
+            revision: elicitation.revision ?? previous.revision,
+            submissionId,
+        },
     );
+    if (!result.ok) {
+        if (turnContexts.get(key) === nextContext) {
+            turnContexts.set(key, previous);
+        }
+        return fail(result.error);
+    }
+    return result;
 }
 
 /**

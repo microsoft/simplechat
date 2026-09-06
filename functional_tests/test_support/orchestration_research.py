@@ -2,7 +2,7 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.099
+Version: 0.261.100
 Implemented in: 0.261.099
 
 Only production definitions are executed, never their application imports. In particular,
@@ -83,10 +83,12 @@ def planner_runtime():
     catalog = _definitions("functions_action_catalog.py", seed=delegation)
     context = _definitions("functions_orchestration_context.py", seed={
         **registry, "build_action_planner_projection": catalog["build_action_planner_projection"],
+        "deepcopy": copy.deepcopy,
     }, names={
         "SELECTED_PROMPT_LENGTH", "_text", "_string_list", "_history_text",
         "_extract_urls", "_selected_prompt", "build_conversation_signals",
         "build_planner_context", "conversation_reference_messages",
+        "_elicitation_answer_text", "build_elicitation_user_request",
     })
     planner = _definitions(PLANNER_FILE, seed={
         **registry, **schema,
