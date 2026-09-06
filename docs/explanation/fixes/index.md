@@ -41,3 +41,4 @@ category: Version History
 - [Admin Settings Pane Variable Scope Fix](ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md)
 - [Inline Media Cited-Only Gating Fix](INLINE_MEDIA_CITED_ONLY_GATING_FIX.md)
 - [Agent Actions With Workspace Evidence Fix](AGENT_ACTIONS_WITH_WORKSPACE_EVIDENCE_FIX.md)
+- [Orchestration Run History Hydration Fix](ORCHESTRATION_RUN_HISTORY_HYDRATION_FIX.md)

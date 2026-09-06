@@ -534,6 +534,23 @@ export async function approveAndRunPlan(params: {
                     .settleOrchestrationTurn(conversationId, { status: 'failed', error: message });
                 useOrchestrationStore.getState().endRun(runId, 'failed');
             },
+            // The plan was already run somewhere else.
+            //
+            // Only reachable now that a pending approval can be picked up on a second device: two
+            // tabs can hold the same card, and the server refuses the second approval rather than
+            // doing the work twice. That is not a failure of this turn, so the thread is settled
+            // quietly and the conversation re-read -- the answer the other device produced is
+            // already stored, and fetching it is how this device catches up.
+            onAlreadyRun: () => {
+                settled = true;
+                useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                    status: 'cancelled',
+                    accumulated: '',
+                });
+                useOrchestrationStore.getState().endRun(runId, 'completed');
+                useOrchestrationStore.getState().clearActiveTurn(conversationId);
+                void useChatStore.getState().reloadMessages();
+            },
         },
         controller.signal,
     );
