@@ -42,6 +42,7 @@ export function PromptVariableField({
     history = [],
     sources = [],
     onChange,
+    disabled = false,
     /** Distinguishes ids when more than one card is on the page. */
     idPrefix = 'prompt-var',
     disabled = false,
@@ -59,6 +60,7 @@ export function PromptVariableField({
     history?: string[];
     sources?: PromptFillSource[];
     onChange: (value: string) => void;
+    disabled?: boolean;
     idPrefix?: string;
     disabled?: boolean;
     aiValue?: PromptKnowledgeValue;
@@ -97,6 +99,7 @@ export function PromptVariableField({
                         type="button"
                         disabled={disabled}
                         onClick={() => onChange('')}
+                        disabled={disabled}
                         className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-3 hover:text-text-1"
                     >
                         <RotateCcw size={10} />
@@ -143,6 +146,7 @@ export function PromptVariableField({
                             disabled={disabled}
                             title={item}
                             onClick={() => onChange(item)}
+                            disabled={disabled}
                             className="max-w-[14rem] truncate rounded-full border border-edge bg-surface-2 px-2 py-0.5 text-[11px] text-text-2 transition-colors hover:border-accent hover:text-text-1"
                         >
                             {item}
@@ -155,6 +159,7 @@ export function PromptVariableField({
                             disabled={disabled}
                             title={source.value}
                             onClick={() => onChange(source.value)}
+                            disabled={disabled}
                             className="rounded-full border border-dashed border-edge px-2 py-0.5 text-[11px] text-text-3 transition-colors hover:border-accent hover:text-text-1"
                         >
                             {source.label}

@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.087
+Version: 0.261.099
 """
 
 import logging
@@ -50,6 +50,11 @@ from functions_orchestration_adapters import (
     get_adapter as _default_get_adapter,
     resolve_context_source_manifest,
     synthesize_source_manifest_from_evidence,
+)
+from functions_orchestration_context import (
+    ElicitationContextError,
+    build_elicitation_user_request,
+    resolve_elicitation_references,
 )
 from functions_orchestration_registry import CAPABILITY_RESPOND
 from functions_orchestration_schema import (
@@ -166,11 +171,14 @@ class RunContext:
         invoke_prompt=None,
         user_message='',
         user_message_id=None,
+        answered_questions=None,
+        elicitation_references=None,
+        selected_document_ids=None,
+        original_seeds=None,
         resolved_message=None,
         conversation_context=None,
         context_message_ids=None,
         allowed_user_urls=None,
-        answered_questions=None,
         revalidate_conversation_context=None,
         chat_type='personal',
         selection_mode=None,
@@ -180,6 +188,7 @@ class RunContext:
         active_group_ids=None,
         active_group_id=None,
         active_public_workspace_id=None,
+        active_public_workspace_ids=None,
         gpt_model=None,
         model_context=None,
         request_correlation_id=None,
@@ -201,14 +210,18 @@ class RunContext:
 
         self.invoke_prompt = invoke_prompt
         self.user_message = user_message
-        self.user_message_id = user_message_id
+        self.answered_questions = deepcopy(answered_questions or [])
         self.resolved_message = resolved_message if resolved_message is not None else user_message
+        self.user_request = build_elicitation_user_request(self.resolved_message, self.answered_questions)
+        self.elicitation_references = list(elicitation_references or [])
+        self.selected_document_ids = list(selected_document_ids or [])
+        self.original_seeds = dict(original_seeds or {})
+        self.user_message_id = user_message_id
         self.conversation_context = deepcopy(conversation_context or {})
         self.context_message_ids = (
             list(context_message_ids) if context_message_ids is not None else None
         )
         self.allowed_user_urls = list(allowed_user_urls) if allowed_user_urls is not None else None
-        self.answered_questions = deepcopy(answered_questions or [])
         self.revalidate_conversation_context = revalidate_conversation_context
         self.chat_type = chat_type
 
@@ -222,6 +235,7 @@ class RunContext:
         self.active_group_ids = list(active_group_ids or [])
         self.active_group_id = active_group_id
         self.active_public_workspace_id = active_public_workspace_id
+        self.active_public_workspace_ids = _string_list(active_public_workspace_ids or active_public_workspace_id)
 
         self.gpt_model = gpt_model
         self.model_context = model_context
@@ -512,6 +526,12 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
+        if context.elicitation_references:
+            log_event(
+                f'{_LOG_PREFIX} Accepted source re-authorization failed.',
+                extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+            )
+            raise ElicitationContextError('Accepted answer sources could not be rechecked. Please retry the run.') from exc
         log_event(
             f'{_LOG_PREFIX} Re-authorization resolve failed; answering on gather-time authorization: {exc}',
             extra={'run_id': getattr(context, 'run_id', None)},
@@ -520,6 +540,8 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
         fresh_manifest = None
 
     if not fresh_manifest:
+        if context.elicitation_references:
+            raise ElicitationContextError('Accepted answer sources could not be rechecked. Please retry the run.')
         # The resolver could not run (no resolver wired, or it errored). The evidence was
         # authorized when it was gathered, so answering from it is the same guarantee the
         # non-orchestrated chat path already gives; the fallback manifest just lets the
@@ -538,6 +560,12 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
         and entry.get('authorization_status') == AUTHORIZATION_STATUS_AUTHORIZED
     }
     dropped = [document_id for document_id in touched if document_id not in authorized_ids]
+    accepted_ids = {
+        reference['id'] for reference in context.elicitation_references
+        if reference.get('kind') in ('document', 'chat_attachment')
+    }
+    if accepted_ids.intersection(dropped):
+        raise ElicitationContextError('An accepted answer source is no longer available. Please update the answer.')
 
     if dropped:
         context.evidence = [
@@ -616,9 +644,35 @@ def execute_plan(
         'started_at': _now_iso(),
     })
 
+    def check_accepted_context():
+        resolve_elicitation_references(
+            context.elicitation_references, user_id, context.conversation_id, settings=settings,
+        )
+
+    def unavailable_context_result():
+        result = {
+            'run_id': context.run_id,
+            'status': PLAN_STATUS_FAILED,
+            'completed_at': _now_iso(),
+            'message': '',
+            'error': 'Accepted answer context is no longer available. Please update the answer or retry.',
+            'evidence': [], 'citations': [], 'artifacts': [],
+            'reauthorization': {'checked': True, 'reason': 'elicitation_context_unavailable'},
+        }
+        _persist(persist, 'run', result)
+        return result
+
+    try:
+        check_accepted_context()
+    except ElicitationContextError:
+        return unavailable_context_result()
+
     # Capture the plan-time authorized manifest so the finalization re-check has something to
     # compare against. Only worth resolving when the plan actually names documents.
-    plan_document_ids = _collect_plan_document_ids(steps)
+    plan_document_ids = _string_list(
+        _collect_plan_document_ids(steps)
+        + [item['id'] for item in context.elicitation_references if item.get('kind') in ('document', 'chat_attachment')]
+    )
     if plan_document_ids:
         try:
             context.execution_manifest = resolve_context_source_manifest(
@@ -666,6 +720,11 @@ def execute_plan(
                          'completed': index + 1, 'total': total_units})
             continue
 
+        try:
+            check_accepted_context()
+        except ElicitationContextError:
+            return unavailable_context_result()
+
         # Re-authorize immediately before the terminal step, so the answer is written from
         # evidence that is still authorized rather than evidence that merely was.
         if is_terminal:
@@ -678,6 +737,8 @@ def execute_plan(
                 step_records.append(record)
                 _persist(persist, 'step', record)
                 continue
+            except ElicitationContextError:
+                return unavailable_context_result()
 
         # Disabled steps never run; a dependent non-optional step will then skip in turn.
         if not is_terminal and step.get('enabled', True) is False:

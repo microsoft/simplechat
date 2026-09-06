@@ -46,6 +46,25 @@ Use chat upload when you need to ask about a file in the moment: a PDF someone s
 
 6. Use the cancel icon on the **File** button if you selected the wrong file.
 
+## Answer an inline file question in V2
+
+From version **0.261.096**, an orchestration follow-up can ask for missing files directly.
+You do not need to leave that question or repeat the original request in the main composer.
+
+1. Review any suggested files. Choose one or several, according to the question.
+2. If the suggestions are wrong, type `#` in the inline answer to find another accessible file, or select **Attach a file** there.
+3. Wait for each upload to become ready. **Finish** remains unavailable during upload and processing; retry or remove a failed attachment.
+4. Add any explanation in the same answer. You can also use `/` to attach a saved prompt without changing the original request's prompt.
+5. Select **Finish**. SimpleChat continues planning the original request with the files and details you supplied.
+
+A different referenced or uploaded file can answer a file question without selecting any
+suggested file. This is not limited to tabular uploads: the existing supported file types
+and upload permissions still apply.
+
+If submitting the answer fails, the card keeps your draft so you can correct it or retry.
+Removing a reference or declining the question does not delete an already uploaded file;
+the normal chat/workspace retention rules still apply.
+
 ## Verify it worked
 
 The response can reference the uploaded file when relevant. If enabled, **Open used documents** can show documents used by the conversation.

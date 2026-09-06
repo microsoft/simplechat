@@ -1583,26 +1583,52 @@ export function uploadPersonalDocuments(files: File[], signal?: AbortSignal) {
     }>('/api/documents/upload', formData, signal);
 }
 
-/**
- * Upload a file. When `conversationId` is supplied the file is attached to that
- * conversation; otherwise it lands in the user's personal workspace.
- */
+export interface ChatUploadTarget {
+    id: string;
+    name: string;
+    can_upload: boolean;
+    role?: string | null;
+    reason?: string | null;
+}
+
+export interface ChatUploadResponse {
+    success?: boolean;
+    conversation_id?: string;
+    file_message_id?: string;
+    title?: string;
+    workspace_document_id?: string | null;
+    workspace_document?: WorkspaceDocument | null;
+    workspace_scope?: 'personal' | 'group';
+    group_upload_target?: ChatUploadTarget | null;
+    requires_group_upload_target?: boolean;
+    group_upload_targets?: ChatUploadTarget[];
+    error?: string;
+}
+
+export interface ChatUploadOptions {
+    groupUploadTargetId?: string;
+    uploadScopeGroupIds?: readonly string[];
+}
+
+/** Upload into the authorized chat destination, creating a conversation when needed. */
 export function uploadDocument(
     file: File,
     conversationId?: string | null,
     signal?: AbortSignal,
+    options: ChatUploadOptions = {},
 ) {
     const formData = new FormData();
     formData.append('file', file);
     if (conversationId) {
         formData.append('conversation_id', conversationId);
     }
-    return uploadFile<{
-        success?: boolean;
-        conversation_id?: string;
-        document_id?: string;
-        error?: string;
-    }>('/upload', formData, signal);
+    if (options.groupUploadTargetId) {
+        formData.append('group_upload_target_id', options.groupUploadTargetId);
+    }
+    for (const groupId of options.uploadScopeGroupIds ?? []) {
+        formData.append('upload_scope_group_ids', groupId);
+    }
+    return uploadFile<ChatUploadResponse>('/upload', formData, signal);
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,7 +1,7 @@
 // AttachedPromptCard.tsx
 // The draft's prompt stays separate from the message and exposes its inputs before send.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { clsx } from 'clsx';
 import { ChevronDown, Pencil, RotateCcw, Sparkles, X } from 'lucide-react';
 import type { BuiltInPromptVariable } from '../../lib/promptVariables';
@@ -17,6 +17,7 @@ import { PromptCard } from './PromptCard';
 export type { PromptFillSource };
 
 export function AttachedPromptCard({
+    id,
     name,
     scopeLabel,
     content,
@@ -32,6 +33,7 @@ export function AttachedPromptCard({
     knowledgeControls,
     reviewRequest = 0,
 }: {
+    id?: string;
     name: string;
     scopeLabel?: string;
     /** The wording this turn will use: the edited text when there is one, else the saved text. */
@@ -48,6 +50,8 @@ export function AttachedPromptCard({
     knowledgeControls?: ReactNode;
     reviewRequest?: number;
 }) {
+    const instanceId = useId();
+    const idPrefix = id ?? `attached-prompt-${instanceId}`;
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState(false);
     const [variablesOpen, setVariablesOpen] = useState(true);
@@ -64,10 +68,10 @@ export function AttachedPromptCard({
         }
         setVariablesOpen(true);
         const frame = window.requestAnimationFrame(() => {
-            document.getElementById(`attached-prompt-var-${firstMissing.current}`)?.focus();
+            document.getElementById(`${idPrefix}-var-${firstMissing.current}`)?.focus();
         });
         return () => window.cancelAnimationFrame(frame);
-    }, [reviewRequest]);
+    }, [reviewRequest, idPrefix]);
 
     const variableSummary =
         variables.length === 0
@@ -165,7 +169,7 @@ export function AttachedPromptCard({
                                             knowledge?.cancel();
                                             setValue(variable.key, value);
                                         }}
-                                        idPrefix="attached-prompt-var"
+                                        idPrefix={`${idPrefix}-var`}
                                     />
                                 ))}
                             </div>
@@ -178,7 +182,7 @@ export function AttachedPromptCard({
                 <div>
                     <div className="mb-1 flex flex-wrap items-center gap-2">
                         <label
-                            htmlFor="attached-prompt-content"
+                            htmlFor={`${idPrefix}-content`}
                             className="text-[11px] font-semibold tracking-wide text-text-3 uppercase"
                         >
                             Prompt text
@@ -205,7 +209,7 @@ export function AttachedPromptCard({
                         ) : null}
                     </div>
                     <textarea
-                        id="attached-prompt-content"
+                        id={`${idPrefix}-content`}
                         ref={contentRef}
                         rows={6}
                         value={content}

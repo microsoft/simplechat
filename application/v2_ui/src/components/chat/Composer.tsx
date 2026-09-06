@@ -29,7 +29,6 @@ import { useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
-import { uploadDocument } from '../../lib/endpoints';
 import { sendCollaborationTyping } from '../../lib/collaboration';
 import { agentSelectionKey } from '../../lib/agents';
 import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestSelection';
@@ -43,34 +42,20 @@ import {
     contextFilterMode,
     contextScopes,
     contextTags,
-    removeContextItem,
-    type ContextItem,
 } from '../../lib/chatContext';
 import {
-    hasContextMention,
-    insertContextToken,
-    readContextQuery,
     reconcileContextItems,
-    removeContextToken,
-    type ContextQuery,
 } from '../../lib/chatContextTokens';
 import {
-    candidateToContextItem,
-    type ContextCandidate,
-} from '../../lib/contextMentions';
-import { ContextChips } from './ContextChips';
-import {
-    COMPOSER_TEXT_CLASS,
-    COMPOSER_TRANSPARENT_TEXT_STYLE,
-    ComposerHighlight,
-    useHighlightScrollSync,
-} from './ComposerHighlight';
-import {
-    ContextMenu,
-    useContextSuggestions,
-    type ContextSearchScope,
-} from './ContextMenu';
-import { DocumentPickerPopover } from './DocumentPickerPopover';
+    attachPromptToDraft,
+    buildComposerDraftSubmission,
+    composerDraftContextItems,
+    composerDraftHasPendingUploads,
+    composerDraftUnfilledVariables,
+    composerDraftUserPromptValues,
+    createComposerDraft,
+} from '../../lib/composerDraft';
+import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
 import {
     CONTEXT_HANDOFF_PARAMS,
     readContextHandoff,
@@ -89,12 +74,7 @@ import {
     type TabularRunSettings,
 } from '../../lib/tabularRunEstimate';
 import { LargeRunDialog } from './LargeRunDialog';
-import {
-    findMentionAtCaret,
-    replaceMention,
-    type MentionMatch,
-    type MentionSuggestion,
-} from '../../lib/mentions';
+import type { MentionSuggestion } from '../../lib/mentions';
 import { useUiStore } from '../../stores/uiStore';
 import { toast } from '../../stores/toastStore';
 import { chatWidthClass } from '../../lib/chatWidth';
@@ -107,37 +87,18 @@ import {
     type ReasoningEffortSettings,
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
-import {
-    filterPromptsForSlash,
-    insertPromptText,
-    readSlashQuery,
-    suggestPromptName,
-    type SlashQuery,
-} from '../../lib/promptSlash';
+import { suggestPromptName } from '../../lib/promptSlash';
 import { readPromptParam } from '../../lib/conversationUrl';
 import { createPrompt } from '../../lib/workspaceApi';
 import { messageToPlainText } from '../../lib/messageText';
 import type { Json, PromptOption, WorkspaceRef } from '../../lib/types';
-import {
-    attachedPromptContent,
-    attachedPromptIsEdited,
-    buildOutgoingMessage,
-    buildPromptInfo,
-    type AttachedPrompt,
-} from '../../lib/promptRequest';
-import { usePromptVariableValues } from '../../lib/usePromptVariableValues';
-import { usePromptKnowledgeFill } from '../../lib/usePromptKnowledgeFill';
-import type { PromptKnowledgeRequest } from '../../lib/promptKnowledge';
+import { rememberPromptValues } from '../../lib/promptVariableMemory';
 import {
     EMPTY_PROMPT_DRAFT,
     PromptEditorDialog,
     type PromptDraft,
 } from '../prompts/PromptEditorDialog';
-import type { PromptFillSource } from '../prompts/PromptVariableField';
-import { AttachedPromptCard } from './AttachedPromptCard';
 import { AiNotice } from './AiNotice';
-import { MentionMenu, useMentionSuggestions } from './MentionMenu';
-import { PromptSlashMenu } from './PromptSlashMenu';
 import { VoiceInput } from './VoiceInput';
 import { WebSearchNotice } from './WebSearchNotice';
 
@@ -240,16 +201,20 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const editorActionsRef = useRef<ComposerEditorActions>(null);
 
-    const [text, setText] = useState('');
-    const [uploading, setUploading] = useState(false);
-    const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+    const [draft, setDraft] = useState(createComposerDraft);
+    const { text, attachedPrompt } = draft;
+    const promptInstance = draft.promptInstance ?? 0;
+    const contextItems = composerDraftContextItems(draft);
+    const uploading = composerDraftHasPendingUploads(draft);
+    const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
+    const uploadConversationRef = useRef<string | null>(null);
+    const setText: React.Dispatch<React.SetStateAction<string>> = (update) => setDraft((current) => {
+        const value = typeof update === 'function' ? update(current.text) : update;
+        return { ...current, text: value, contextItems: reconcileContextItems(value, current.contextItems) };
+    });
     const chatWidth = useUiStore((state) => state.chatWidth);
-
-    /** The `@` token under the caret, when the menu should be offering completions for it. */
-    const [mention, setMention] = useState<MentionMatch | null>(null);
-    const [mentionIndex, setMentionIndex] = useState(0);
-    const suggestions = useMentionSuggestions(shared && canPost ? (mention?.query ?? null) : null);
 
     /** Set while a prompt is waiting on its large-run confirmation. */
     const [largeRun, setLargeRun] = useState<{
@@ -258,46 +223,25 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         draftKey: string;
     } | null>(null);
 
-    /** The `/` token under the caret, when one is being typed. */
-    const [slash, setSlash] = useState<SlashQuery | null>(null);
-    const [slashIndex, setSlashIndex] = useState(0);
-
-    /** The `#` token under the caret, when the menu should be offering references for it. */
-    const [contextQuery, setContextQuery] = useState<ContextQuery | null>(null);
-    const [contextIndex, setContextIndex] = useState(0);
     /** Whether the Documents button's picker is open. */
     const [pickerOpen, setPickerOpen] = useState(false);
-    const backdropRef = useRef<HTMLDivElement>(null);
-
-    /**
-     * The saved prompt carried by this turn, if any.
-     *
-     * Held as a prompt rather than pasted into the box, so it can be collapsed, re-filled,
-     * edited for this turn and taken off again, and so the message below it stays the
-     * reader's own text right up to the moment the two are combined.
-     */
-    const [attachedPrompt, setAttachedPrompt] = useState<AttachedPrompt | null>(null);
-    const [promptInstance, setPromptInstance] = useState(0);
-    const [searchAllKnowledge, setSearchAllKnowledge] = useState(false);
     const [showPromptWarning, setShowPromptWarning] = useState(false);
-    const [promptReviewRequest, setPromptReviewRequest] = useState(0);
+    const [promptReview, setPromptReview] = useState({ instance: 0, request: 0 });
     useEffect(() => {
-        setSearchAllKnowledge(false);
         setShowPromptWarning(false);
-        setPromptReviewRequest(0);
+        setPromptReview({ instance: 0, request: 0 });
     }, [activeConversationId, shared]);
     /** A prompt being saved from what is currently written, if any. */
     const [savingDraft, setSavingDraft] = useState<PromptDraft | null>(null);
     const [savingPrompt, setSavingPrompt] = useState(false);
     const [saveError, setSaveError] = useState<string | null>(null);
 
-    const [options, setOptions] = useState<ComposerOptions>({
+    const [options, setOptions] = useState<Omit<ComposerOptions, 'contextItems' | 'promptId'>>({
         documentSearch: false,
         webSearch: false,
         imageGeneration: false,
         deepResearch: false,
         urlAccess: false,
-        contextItems: [],
         agentSelection: initialAgentSelection,
     });
 
@@ -437,18 +381,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         );
     }, [bootstrap]);
 
-    const autoGrow = () => {
-        const element = textareaRef.current;
-        if (!element) {
-            return;
-        }
-        element.style.height = 'auto';
-        element.style.height = `${Math.min(element.scrollHeight, 224)}px`;
-    };
-
-    useEffect(autoGrow, [text]);
-    useHighlightScrollSync(textareaRef, backdropRef, text);
-
     /**
      * Tell the other participants that this person is writing.
      *
@@ -508,9 +440,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     useEffect(() => {
         // A conversation change invalidates both the draft's mention state and any typing
         // claim made in the conversation being left.
-        setMention(null);
-        setSlash(null);
         typingRef.current = false;
+        uploadConversationRef.current = null;
+        setDraft((current) => current.uploads.length ? { ...current, uploads: [] } : current);
     }, [activeConversationId]);
 
     /**
@@ -542,7 +474,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             toast.error('That prompt is no longer available.');
             return;
         }
-        setOptions((current) => ({ ...current, promptId: prompt.id }));
         attachPrompt(prompt);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [bootstrap, promptCatalog, linkedPromptId]);
@@ -589,18 +520,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         },
         { value: 'manual', label: 'Review', description: 'Wait for your approval every time' },
     ];
-
-    /**
-     * What the `/` menu is currently offering.
-     *
-     * An empty result is also what closes the menu, which is what makes a query containing
-     * spaces safe: an ordinary sentence that happens to start with a slash stops matching
-     * almost immediately and the menu goes away, rather than hovering over the composer.
-     */
-    const slashResults = useMemo(
-        () => (slash && canPost ? filterPromptsForSlash(promptCatalog, slash.query) : []),
-        [slash, canPost, promptCatalog],
-    );
 
     // Names the agent in the model picker's tooltip. Saying which one is holding the model
     // back is the difference between an explanation and a control that has simply gone dim.
@@ -759,27 +678,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * mean the message written underneath the card, and it is why editing a variable after
      * typing changes what is actually sent instead of only what the preview shows.
      */
-    const buildOutgoing = (): { message: string; promptInfo: Json | null } => {
-        const typed = text.trim();
-        if (!attachedPrompt) {
-            return { message: typed, promptInfo: null };
-        }
-
-        const content = attachedPromptContent(attachedPrompt);
-        const promptText = promptVariables.resolve(promptContext());
-        const outgoing = buildOutgoingMessage(content, promptText, typed);
-
-        return {
-            message: outgoing.message,
-            promptInfo: buildPromptInfo({
-                attached: attachedPrompt,
-                promptText,
-                userText: outgoing.userText,
-                composerText: typed,
-                values: promptVariables.values,
-            }),
-        };
-    };
+    const buildOutgoing = () => buildComposerDraftSubmission(draft, promptContext());
 
     /**
      * Send, unless the prompt is about to start a long row-level export.
@@ -789,12 +688,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      */
     const outgoingDraftKey = () =>
         JSON.stringify([
-            activeConversationId, text, attachedPrompt, promptVariables.values,
+            activeConversationId, draft,
             promptContext(), options, orchestrating,
         ]);
 
     const submit = (allowUnfilled = false) => {
-        if (streaming || !canPost) {
+        if (streaming || !canPost || uploadsBlocked) {
             return;
         }
         // An attached prompt is a complete message on its own, so a turn carrying one may be
@@ -802,9 +701,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (!text.trim() && !attachedPrompt) {
             return;
         }
-        if (attachedPrompt && !allowUnfilled && promptVariables.getUnfilled(promptContext()).length > 0) {
+        if (attachedPrompt && !allowUnfilled && composerDraftUnfilledVariables(draft, promptContext()).length > 0) {
             setShowPromptWarning(true);
-            setPromptReviewRequest((current) => current + 1);
+            setPromptReview((current) => ({ instance: promptInstance, request: current.request + 1 }));
             return;
         }
 
@@ -812,7 +711,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         if (!outgoing.message) {
             return;
         }
-        promptKnowledge.cancel();
+        editorActionsRef.current?.cancelKnowledge();
         setShowPromptWarning(false);
 
         // Orchestration takes a different road entirely: the server plans the work rather than
@@ -844,30 +743,31 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * just sent, and leaving it attached would silently prepend it to the next message too.
      */
     const clearDraft = () => {
-        setText('');
-        setMention(null);
-        setContextQuery(null);
-        setAttachedPrompt(null);
-        setSearchAllKnowledge(false);
+        editorActionsRef.current?.cancelKnowledge();
+        setDraft(createComposerDraft());
+        setPickerOpen(false);
+        uploadConversationRef.current = null;
         setShowPromptWarning(false);
-        setPromptReviewRequest(0);
-        promptKnowledge.cancel();
-        setOptions((current) => {
-            const next = current.contextItems.length === 0 ? current : { ...current, contextItems: [] };
-            return next.promptId === undefined ? next : { ...next, promptId: undefined };
-        });
+        setPromptReview({ instance: 0, request: 0 });
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
         // Remembered only once the message is actually on its way, so a prompt that was
         // filled in and then abandoned leaves nothing behind.
-        if (attachedPrompt) {
-            promptVariables.commit();
+        if (attachedPrompt && outgoing.promptInfo) {
+            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
+        }
+        if (!activeConversationId && uploadConversationRef.current) {
+            useChatStore.setState({
+                activeConversationId: uploadConversationRef.current,
+                activeConversationKind: 'personal',
+            });
         }
         // `options` is read before the clear below replaces it, so the request carries the
         // references this message was written with.
         void sendMessage(outgoing.message, {
             ...options,
+            contextItems,
             promptInfo: outgoing.promptInfo,
         });
         clearDraft();
@@ -886,7 +786,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * keeps the agent-XOR-model exclusivity the chat request already relies on.
      */
     const buildOrchestrationSeeds = (promptInfo: Json | null = null): Record<string, unknown> => {
-        const workspaces = contextScopes(options.contextItems);
+        const workspaces = contextScopes(contextItems);
         const scope = resolveDocumentScope({
             activeGroupId: bootstrap?.scope?.active_group_id,
             activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
@@ -896,23 +796,23 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
         const seeds: Record<string, unknown> = {
             web_search_enabled: options.webSearch,
-            selected_document_ids: contextDocumentIds(options.contextItems),
+            selected_document_ids: contextDocumentIds(contextItems),
             // Names for those ids, so the planner can reason about "the Q3 contract" and the
             // approval card can be read. Display only -- the server authorizes from the ids.
-            context_documents: contextDocumentDescriptors(options.contextItems),
+            context_documents: contextDocumentDescriptors(contextItems),
             // `resolve_seeds` reads doc_scope and the workspace ids alongside the document
             // ids, and `seeds_are_explicit` turns the planner's candidate probe off once
             // documents are named. Sending the ids without the scope that reaches them would
             // suppress the probe and then find nothing.
             ...scope,
         };
-        const tags = contextTags(options.contextItems);
+        const tags = contextTags(contextItems);
         if (tags.length > 0) {
             seeds.tags = tags;
         }
         // Without this a picked document beside an unrelated tag chip intersects to nothing,
         // exactly as it did on the chat path before the same field was sent there.
-        const filterMode = contextFilterMode(options.contextItems);
+        const filterMode = contextFilterMode(contextItems);
         if (filterMode) {
             seeds.document_filter_mode = filterMode;
         }
@@ -936,11 +836,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     };
 
     const dispatchOrchestration = (message: string, promptInfo: Json | null = null) => {
-        if (attachedPrompt) {
-            promptVariables.commit();
+        if (attachedPrompt && promptInfo) {
+            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
+        }
+        const conversationId = activeConversationId ?? uploadConversationRef.current;
+        if (!activeConversationId && conversationId) {
+            useChatStore.setState({ activeConversationId: conversationId, activeConversationKind: 'personal' });
         }
         void startOrchestrationPlan({
-            conversationId: activeConversationId ?? null,
+            conversationId,
             message,
             approvalMode: effectiveApprovalMode,
             seeds: buildOrchestrationSeeds(promptInfo),
@@ -964,163 +868,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         stopStreaming();
     };
-
-    /**
-     * Track the `@` token under the caret.
-     *
-     * Recomputed from the value and the caret on every change, rather than tracked
-     * incrementally, so editing in the middle of a line, pasting and undo all behave the
-     * same as typing.
-     */
-    const syncMention = (element: HTMLTextAreaElement) => {
-        if (!shared || !canPost) {
-            return;
-        }
-        const found = findMentionAtCaret(element.value, element.selectionStart ?? 0);
-        setMention(found);
-        setMentionIndex(0);
-    };
-
-    /* ---------------------------------------------------------------------- */
-    /* Context references                                                      */
-    /* ---------------------------------------------------------------------- */
-
-    const contextItems = options.contextItems;
-    const contextKeys = useMemo(
-        () => new Set(contextItems.map((item) => item.key)),
-        [contextItems],
-    );
-    const contextTokens = useMemo(
-        () => new Set(contextItems.filter(hasContextMention).map((item) => item.token)),
-        [contextItems],
-    );
-
-    /** Which workspaces the picker and the `#` menu may search. */
-    const searchScope: ContextSearchScope = useMemo(
-        () => ({
-            groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
-            publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
-            groupsEnabled: Boolean(features.enable_group_workspaces),
-            publicEnabled: Boolean(features.enable_public_workspaces),
-        }),
-        [bootstrap?.scope, features.enable_group_workspaces, features.enable_public_workspaces],
-    );
-
-    const { candidates: contextCandidates, loading: contextLoading } = useContextSuggestions(
-        canPost ? (contextQuery?.query ?? null) : null,
-        searchScope,
-    );
-
-    const syncContext = (element: HTMLTextAreaElement) => {
-        if (!canPost) {
-            return;
-        }
-        const found = readContextQuery(element.value, element.selectionStart ?? 0);
-        setContextQuery(found);
-        setContextIndex(0);
-    };
-
-    /** Text edits retire inline mentions, not independent workspace or picker selections. */
-    const applyText = (value: string) => {
-        setText(value);
-        setOptions((current) => {
-            const kept = reconcileContextItems(value, current.contextItems);
-            return kept.length === current.contextItems.length
-                && kept.every((item, index) => item === current.contextItems[index])
-                ? current
-                : { ...current, contextItems: kept };
-        });
-    };
-
-    const addContextCandidate = (candidate: ContextCandidate) => {
-        const item = candidateToContextItem(candidate, contextItems);
-        setOptions((current) => ({
-            ...current,
-            contextItems: addContextItem(current.contextItems, item),
-        }));
-    };
-
-    /** Pick from the `#` menu: the token replaces the query it was typed for. */
-    const applyContextCandidate = (candidate: ContextCandidate) => {
-        const element = textareaRef.current;
-        if (!element || !contextQuery) {
-            return;
-        }
-
-        const { start, end } = contextQuery;
-        setContextQuery(null);
-
-        const focusAt = (caret: number) => {
-            window.requestAnimationFrame(() => {
-                element.focus();
-                element.setSelectionRange(caret, caret);
-            });
-        };
-
-        const existing = contextItems.find((item) => item.key === candidate.key);
-        const item: ContextItem = existing
-            ? { ...existing, attachment: 'mention' }
-            : candidateToContextItem(candidate, contextItems, 'user', 'mention');
-        const next = insertContextToken(text, start, end, item.token);
-        setText(next.text);
-        setOptions((current) => ({
-            ...current,
-            contextItems: addContextItem(current.contextItems, item),
-        }));
-        focusAt(next.caret);
-    };
-
-    /**
-     * Take a reference off the row, and any owned inline text with it.
-     *
-     * The token is only stripped when no *other* remaining chip still uses it. Two chips can
-     * share one token when two documents share a title, and blanking the text while a second
-     * chip still points at it would orphan that chip: reconciliation drops it on the next
-     * keystroke, but a message sent before that keystroke would still carry its document id --
-     * grounding the answer in something the user had already removed.
-     */
-    const removeContextChip = (item: ContextItem) => {
-        const remaining = removeContextItem(contextItems, item.key);
-        if (hasContextMention(item)
-            && !remaining.some((entry) => hasContextMention(entry) && entry.token === item.token)) {
-            setText((value) => removeContextToken(value, item.token));
-        }
-        setOptions((current) => ({
-            ...current,
-            contextItems: removeContextItem(current.contextItems, item.key),
-        }));
-    };
-
-    const removeContextChips = (items: ContextItem[]) => {
-        const dropped = new Set(items.map((item) => item.key));
-        const remaining = contextItems.filter((entry) => !dropped.has(entry.key));
-        const stillReferenced = new Set(
-            remaining.filter(hasContextMention).map((entry) => entry.token),
-        );
-        const strip = [...new Set(items.filter(hasContextMention).map((item) => item.token))].filter(
-            (token) => !stillReferenced.has(token),
-        );
-
-        setText((value) =>
-            strip.reduce((carry, token) => removeContextToken(carry, token), value),
-        );
-        setOptions((current) => ({
-            ...current,
-            contextItems: current.contextItems.filter((entry) => !dropped.has(entry.key)),
-        }));
-    };
-
-    /** Used by the picker, where clicking a ticked row unticks it. */
-    const toggleContextCandidate = (candidate: ContextCandidate) => {
-        const existing = contextItems.find((item) => item.key === candidate.key);
-        if (existing) {
-            removeContextChip(existing);
-            return;
-        }
-        addContextCandidate(candidate);
-    };
-
-    const clearContextChips = () => removeContextChips(contextItems);
 
     /**
      * Adopt a selection handed over from the workspace.
@@ -1157,6 +904,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 setOptions((current) => ({
                     ...current,
                     documentSearch: items.length > 0 || current.documentSearch,
+                }));
+                setDraft((current) => ({
+                    ...current,
                     contextItems: items.reduce(
                         (carry, item) => addContextItem(carry, item),
                         current.contextItems,
@@ -1187,14 +937,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope]);
 
     const applySuggestion = (suggestion: MentionSuggestion) => {
-        const element = textareaRef.current;
-        if (!element || !mention) {
-            return;
-        }
-        const { value, caretIndex } = replaceMention(text, mention, suggestion.mention_text);
-        setText(value);
-        setMention(null);
-
         // An "Add to this conversation" row is an action, not just a completion. Inserting
         // the name without performing it left the row dead: the person was neither added nor
         // mentioned, because the mention list is resolved against existing participants only
@@ -1220,43 +962,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     );
                 });
         }
-
-        // Applied after the value change has been rendered, or the browser would put the
-        // caret back at the end of the new value.
-        window.requestAnimationFrame(() => {
-            element.focus();
-            element.setSelectionRange(caretIndex, caretIndex);
-        });
     };
 
     /* ---------------------------------------------------------------- Saved prompts */
-
-    /**
-     * Put text into the composer over a range, instead of replacing everything.
-     *
-     * Picking a prompt used to call `setText(prompt.content)`, which discarded whatever had
-     * already been written. That is the reason this exists: a prompt is something you reach for
-     * part-way through composing, and losing the half-sentence you reached for it from is the
-     * worst possible response to being asked for help.
-     */
-    const insertIntoComposer = (addition: string, range?: { start: number; end: number }) => {
-        const element = textareaRef.current;
-        const start = range?.start ?? element?.selectionStart ?? text.length;
-        const end = range?.end ?? element?.selectionEnd ?? start;
-
-        const result = insertPromptText(text, start, end, addition);
-        // Through applyText because a prompt inserted over a selection can overwrite a
-        // reference, and the chip for it has to go with the text it replaced.
-        applyText(result.text);
-        setSlash(null);
-        setMention(null);
-
-        // After React has written the new value back, or the browser puts the caret at the end.
-        window.requestAnimationFrame(() => {
-            element?.focus();
-            element?.setSelectionRange(result.caret, result.caret);
-        });
-    };
 
     /**
      * The conversation facts the built-in variables resolve from.
@@ -1268,8 +976,9 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * instruction without a deliberate act.
      */
     const promptContext = () => {
+        const ownMessages = messages.filter((message) => message.conversation_id === activeConversationId);
         const lastOfRole = (role: string) =>
-            [...messages].reverse().find((message) => message.role === role);
+            [...ownMessages].reverse().find((message) => message.role === role);
         const assistant = lastOfRole('assistant');
         const user = lastOfRole('user');
         const conversation = conversations.find((item) => item.id === activeConversationId);
@@ -1280,131 +989,16 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             lastAssistantMessage: assistant ? messageToPlainText(assistant) : '',
             lastUserMessage: user ? messageToPlainText(user) : '',
             composerText: text,
-            selectedDocuments: contextDocumentDescriptors(options.contextItems).map((document) => document.label),
+            selectedDocuments: contextItems.filter((item) => item.kind === 'document').map((item) => item.label),
         };
     };
 
-    /** The one-click values each variable field offers, beyond what is remembered. */
-    const promptFillSources = (): PromptFillSource[] => {
-        const context = promptContext();
-        return (
-            [
-                { label: 'Last reply', value: context.lastAssistantMessage },
-                { label: 'My last message', value: context.lastUserMessage },
-                { label: 'What I have typed', value: context.composerText },
-            ] as PromptFillSource[]
-        ).filter((source) => source.value.trim().length > 0);
-    };
-
-    /**
-     * The values behind the attached prompt's placeholders.
-     *
-     * Held here rather than inside the card because the send path needs them: the prompt is
-     * resolved when the message is sent, not when the prompt was picked, which is what makes
-     * `{{composer}}` mean the message written underneath it.
-     *
-     * Called unconditionally with empty strings when nothing is attached, as hooks require.
-     * An empty prompt parses to no variables and recalls nothing.
-     */
-    const promptVariables = usePromptVariableValues({
-        promptId: attachedPrompt?.id ?? '',
-        content: attachedPrompt ? attachedPromptContent(attachedPrompt) : '',
-        context: promptContext(),
-        shared,
-        instanceKey: String(promptInstance),
-    });
-
-    const knowledgeScopes = contextScopes(options.contextItems);
-    const knowledgeKinds = [...new Set(options.contextItems.map((item) => item.scope.kind))];
-    const knowledgeRequest: PromptKnowledgeRequest = {
-        prompt_content: attachedPrompt ? attachedPromptContent(attachedPrompt) : '',
-        composer_text: text,
-        conversation_id: activeConversationId ?? undefined,
-        conversation_kind: shared ? 'collaborative' : 'personal',
-        selected_document_ids: searchAllKnowledge ? [] : contextDocumentIds(options.contextItems),
-        tags: searchAllKnowledge ? [] : contextTags(options.contextItems),
-        doc_scope: searchAllKnowledge || knowledgeKinds.length > 1 ? 'all' : knowledgeKinds[0] ?? 'personal',
-        active_group_ids: searchAllKnowledge ? [] : knowledgeScopes.groupIds,
-        active_public_workspace_ids: searchAllKnowledge ? [] : knowledgeScopes.publicWorkspaceIds,
-        document_filter_mode: contextFilterMode(options.contextItems) ?? 'intersection',
-        search_all: searchAllKnowledge,
-        scope_selected: !searchAllKnowledge && options.contextItems.some((item) => item.kind === 'scope'),
-        context_items: searchAllKnowledge ? [] : options.contextItems.map((item) => ({
-            kind: item.kind,
-            id: item.id,
-            scope: { kind: item.scope.kind, id: item.scope.id },
-        })),
-        agent_info: buildSelectionFields({
-            agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
-            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-            agentSelection: options.agentSelection,
-        }).agent_info,
-    };
-    const knowledgeEnabled = canPost && Boolean(attachedPrompt)
-        && (searchAllKnowledge || options.contextItems.length > 0);
-    const promptKnowledge = usePromptKnowledgeFill({
-        request: knowledgeRequest,
-        variableState: promptVariables,
-        enabled: knowledgeEnabled,
-        draftKey: JSON.stringify([attachedPrompt?.id, promptInstance, options.contextItems]),
-    });
-
-    /**
-     * Attach a saved prompt to this turn.
-     *
-     * Not named `usePrompt`: React reserves the `use` prefix for hooks, and this is an event
-     * handler called conditionally.
-     *
-     * `range` is the `/weekly` token that summoned it, removed here so the token does not
-     * survive as literal text in the message. Nothing is inserted in its place -- the prompt
-     * lives in the card above the box, not in the box.
-     */
-    const attachPrompt = (prompt: PromptOption, range?: { start: number; end: number }) => {
-        const content = String(prompt.content ?? '');
-        if (!content) {
-            return;
-        }
-        if (range) {
-            insertIntoComposer('', range);
-        }
-        promptKnowledge.cancel();
-        setPromptInstance((current) => current + 1);
-        setSearchAllKnowledge(false);
+    const attachPrompt = (prompt: PromptOption) => {
+        editorActionsRef.current?.cancelKnowledge();
         setShowPromptWarning(false);
-        setPromptReviewRequest(0);
-        setAttachedPrompt({
-            id: String(prompt.id ?? ''),
-            name: String(prompt.name ?? 'Prompt'),
-            scopeType: prompt.scope_type ? String(prompt.scope_type) : undefined,
-            scopeName: prompt.scope_name ? String(prompt.scope_name) : undefined,
-            originalContent: content,
-            editedContent: null,
-        });
+        setPromptReview({ instance: 0, request: 0 });
+        setDraft((current) => attachPromptToDraft(current, prompt));
         window.requestAnimationFrame(() => textareaRef.current?.focus());
-    };
-
-    const pickSlashPrompt = (prompt: PromptOption) => {
-        if (!slash) {
-            return;
-        }
-        const range = { start: slash.start, end: slash.end };
-        setSlash(null);
-        setOptions((current) => ({ ...current, promptId: prompt.id }));
-        attachPrompt(prompt, range);
-    };
-
-    /**
-     * Track the `/` token under the caret.
-     *
-     * Recomputed from the value and the caret for the same reason `syncMention` is: editing in
-     * the middle of a line, pasting and undo should behave the way typing does.
-     */
-    const syncSlash = (element: HTMLTextAreaElement) => {
-        if (!canPost) {
-            return;
-        }
-        setSlash(readSlashQuery(element.value, element.selectionStart ?? 0));
-        setSlashIndex(0);
     };
 
     const saveWrittenTextAsPrompt = () => {
@@ -1451,140 +1045,20 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
     };
 
-    const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        // The context menu owns these keys first. A `#` token and a `/` or `@` token cannot
-        // both be under the caret, so the order between the three is arbitrary — but all
-        // three must be tested before the send, or Enter posts a message containing a
-        // half-typed reference instead of completing it.
-        if (contextQuery && contextCandidates.length > 0) {
-            if (event.key === 'ArrowDown') {
-                event.preventDefault();
-                setContextIndex((index) => (index + 1) % contextCandidates.length);
-                return;
-            }
-            if (event.key === 'ArrowUp') {
-                event.preventDefault();
-                setContextIndex(
-                    (index) => (index - 1 + contextCandidates.length) % contextCandidates.length,
-                );
-                return;
-            }
-            if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                applyContextCandidate(contextCandidates[contextIndex]);
-                return;
-            }
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                setContextQuery(null);
-                return;
-            }
-        }
-
-        // The slash menu owns these keys while it has something to offer, and is tested before
-        // the mention menu because a `/` token and an `@` token cannot both be under the caret.
-        if (slashResults.length > 0) {
-            if (event.key === 'ArrowDown') {
-                event.preventDefault();
-                setSlashIndex((index) => (index + 1) % slashResults.length);
-                return;
-            }
-            if (event.key === 'ArrowUp') {
-                event.preventDefault();
-                setSlashIndex(
-                    (index) => (index - 1 + slashResults.length) % slashResults.length,
-                );
-                return;
-            }
-            if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                pickSlashPrompt(slashResults[slashIndex]);
-                return;
-            }
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                setSlash(null);
-                return;
-            }
-        }
-
-        // The mention menu owns these keys while it is open, which is why it is handled
-        // before the send: Enter should complete the highlighted name, not send a message
-        // containing a half-typed one.
-        if (mention && suggestions.length > 0) {
-            if (event.key === 'ArrowDown') {
-                event.preventDefault();
-                setMentionIndex((index) => (index + 1) % suggestions.length);
-                return;
-            }
-            if (event.key === 'ArrowUp') {
-                event.preventDefault();
-                setMentionIndex(
-                    (index) => (index - 1 + suggestions.length) % suggestions.length,
-                );
-                return;
-            }
-            if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                applySuggestion(suggestions[mentionIndex]);
-                return;
-            }
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                setMention(null);
-                return;
-            }
-        }
-
-        // Escape also cancels a reply, which is otherwise easy to forget is armed.
-        if (event.key === 'Escape' && replyTo) {
-            event.preventDefault();
-            setReplyTo(null);
-            return;
-        }
-
-        // Enter sends; Shift+Enter inserts a newline. Matches the classic UI.
-        if (event.key === 'Enter' && !event.shiftKey) {
-            event.preventDefault();
-            submit();
-        }
-    };
-
     const onPickPrompt = (promptId: string | undefined) => {
-        setOptions((current) => ({ ...current, promptId }));
         const prompt = bootstrap?.catalogs?.prompts?.find((item) => item.id === promptId);
         if (prompt) {
             attachPrompt(prompt as PromptOption);
         } else if (promptId === undefined) {
-            promptKnowledge.cancel();
-            setAttachedPrompt(null);
-            setSearchAllKnowledge(false);
+            editorActionsRef.current?.cancelKnowledge();
+            setDraft((current) => ({
+                ...current, attachedPrompt: null, promptValues: {}, promptAiValues: {},
+                promptInstance: (current.promptInstance ?? 0) + 1,
+            }));
             setShowPromptWarning(false);
-            setPromptReviewRequest(0);
-        }
-    };
-
-    const onSelectFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-        const file = event.target.files?.[0];
-        if (!file) {
-            return;
-        }
-
-        setUploading(true);
-        setUploadNotice(null);
-        try {
-            const result = await uploadDocument(file, activeConversationId);
-            setUploadNotice(
-                result.error ? result.error : `Attached ${file.name}. Processing has started.`,
-            );
-        } catch (error) {
-            setUploadNotice(
-                error instanceof Error ? error.message : `Could not upload ${file.name}.`,
-            );
-        } finally {
-            setUploading(false);
-            // Reset so re-selecting the same file fires a change event.
-            event.target.value = '';
+            setPromptReview({ instance: 0, request: 0 });
+        } else {
+            toast.error('That prompt is no longer available.');
         }
     };
 
@@ -1595,7 +1069,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     estimate={largeRun.estimate}
                     onContinue={() => {
                         setLargeRun(null);
-                        if (streaming || !canPost) {
+                        if (streaming || !canPost || uploadsBlocked) {
                             return;
                         }
                         if (outgoingDraftKey() !== largeRun.draftKey) {
@@ -1608,60 +1082,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 />
             )}
             <div className={clsx('mx-auto w-full', chatWidthClass(chatWidth))}>
-                {uploadNotice && (
-                    <p className="mb-2 rounded-xl border border-edge bg-surface-1 px-3 py-2 text-xs text-text-2">
-                        {uploadNotice}
-                    </p>
-                )}
-
                 {/* Above the input, matching the classic interface: the warning belongs
                     next to the message it is about, not below the send button. */}
                 <WebSearchNotice active={options.webSearch} />
 
                 <div className="glass glass-edge relative rounded-2xl p-2">
-                    {mention && (
-                        <MentionMenu
-                            suggestions={suggestions}
-                            activeIndex={mentionIndex}
-                            onSelect={applySuggestion}
-                        />
-                    )}
-
-                    {slashResults.length > 0 && (
-                        <PromptSlashMenu
-                            prompts={slashResults}
-                            activeIndex={slashIndex}
-                            onSelect={pickSlashPrompt}
-                        />
-                    )}
-
-                    {contextQuery && !pickerOpen && (
-                        <ContextMenu
-                            candidates={contextCandidates}
-                            loading={contextLoading}
-                            activeIndex={contextIndex}
-                            selectedKeys={contextKeys}
-                            onSelect={applyContextCandidate}
-                        />
-                    )}
-
-                    {pickerOpen && (
-                        <DocumentPickerPopover
-                            scope={searchScope}
-                            searchAll={options.documentSearch}
-                            selectedKeys={contextKeys}
-                            onToggleSearchAll={() =>
-                                setOptions((current) => ({
-                                    ...current,
-                                    documentSearch: !current.documentSearch,
-                                }))
-                            }
-                            onToggle={toggleContextCandidate}
-                            onClear={clearContextChips}
-                            onClose={() => setPickerOpen(false)}
-                        />
-                    )}
-
                     {replyTo && (
                         <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
                             <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
@@ -1682,164 +1107,71 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         </div>
                     )}
 
-                    <label htmlFor="composer-input" className="sr-only">
-                        Message
-                    </label>
-
-                    <ContextChips
-                        items={contextItems}
-                        onRemove={removeContextChip}
-                        onRemoveAll={removeContextChips}
-                        onClear={clearContextChips}
+                    <ComposerEditor
+                        id="composer-input"
+                        label="Message"
+                        draft={draft}
+                        onChange={setDraft}
+                        conversationId={activeConversationId}
+                        disabled={!canPost}
+                        rows={1}
+                        promptContext={promptContext()}
+                        actionsRef={editorActionsRef}
+                        showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
+                        submitDisabled={streaming || uploadsBlocked}
+                        promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
+                        onSendWithUnfilled={() => submit(true)}
+                        knowledgeAgent={buildSelectionFields({
+                            agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                            agentSelection: options.agentSelection,
+                        }).agent_info}
+                        shared={shared}
+                        textareaRef={textareaRef}
+                        fileInputRef={fileInputRef}
+                        showTools={false}
+                        uploadsDisabled={gating.disabledByImageGeneration}
+                        pickerOpen={pickerOpen}
+                        onPickerOpenChange={setPickerOpen}
+                        searchAll={options.documentSearch}
+                        onToggleSearchAll={() => setOptions((current) => ({
+                            ...current,
+                            documentSearch: !current.documentSearch,
+                        }))}
+                        mentionsEnabled={shared && canPost}
+                        onMentionSelected={applySuggestion}
+                        onTyping={noteTyping}
+                        onBlur={stopTyping}
+                        onEscape={() => {
+                            if (!replyTo) {
+                                return false;
+                            }
+                            setReplyTo(null);
+                            return true;
+                        }}
+                        onSubmit={() => submit()}
+                        onUploadComplete={(response, ownerConversationId) => {
+                            if (useChatStore.getState().activeConversationId !== ownerConversationId) {
+                                return;
+                            }
+                            if (!ownerConversationId && response.conversation_id) {
+                                uploadConversationRef.current = response.conversation_id;
+                            } else if (ownerConversationId) {
+                                void useChatStore.getState().reloadMessages();
+                            }
+                        }}
+                        placeholder={
+                            checkingAccess
+                                ? 'Checking your access to this conversation…'
+                                : awaitingInvite
+                                  ? 'Join this conversation to reply'
+                                  : !canPost
+                                    ? 'You do not have permission to write in this conversation'
+                                    : shared
+                                      ? 'Message the group, or @mention a model or agent to ask the assistant…'
+                                      : 'Send a message, or type # to add a document…'
+                        }
                     />
-
-                    {attachedPrompt ? (
-                        <AttachedPromptCard
-                            key={promptInstance}
-                            name={attachedPrompt.name}
-                            scopeLabel={attachedPrompt.scopeName}
-                            content={attachedPromptContent(attachedPrompt)}
-                            edited={attachedPromptIsEdited(attachedPrompt)}
-                            variableState={promptVariables}
-                            // Nothing is pre-filled in a shared conversation, so the chips are
-                            // how a value gets in: offered, never applied.
-                            sources={promptFillSources()}
-                            disabled={!canPost}
-                            reviewRequest={promptReviewRequest}
-                            knowledge={promptKnowledge}
-                            knowledgeEnabled={knowledgeEnabled}
-                            knowledgeControls={
-                                <div className="space-y-1 rounded-lg bg-surface-sunken px-2.5 py-2 text-xs text-text-3">
-                                    <p className="break-words">
-                                        {searchAllKnowledge
-                                            ? 'AI fill searches all knowledge you can access.'
-                                            : options.contextItems.length > 0
-                                              ? `AI fill searches: ${options.contextItems.map((item) => item.label).join(', ')}`
-                                              : 'Choose documents, tags or a workspace to find values in knowledge.'}
-                                    </p>
-                                    <button type="button" disabled={!canPost}
-                                        onClick={() => setPickerOpen(true)}
-                                        className="rounded py-1 text-accent disabled:opacity-50">
-                                        Choose knowledge
-                                    </button>
-                                    <label className="flex items-start gap-2">
-                                        <input type="checkbox" checked={searchAllKnowledge}
-                                            disabled={!canPost}
-                                            onChange={(event) => {
-                                                promptKnowledge.cancel();
-                                                setSearchAllKnowledge(event.target.checked);
-                                            }}
-                                            className="mt-0.5 accent-accent" />
-                                        Search all accessible knowledge for AI fill
-                                    </label>
-                                    {searchAllKnowledge && <p>Only widens AI fill, not your message's document selection.</p>}
-                                    {shared && <p>Filled values will be visible to participants when you send.</p>}
-                                </div>
-                            }
-                            onContentChange={(value) => {
-                                promptKnowledge.cancel();
-                                setAttachedPrompt((current) =>
-                                    current ? { ...current, editedContent: value } : current,
-                                );
-                            }}
-                            onResetContent={() => {
-                                promptKnowledge.cancel();
-                                setAttachedPrompt((current) =>
-                                    current ? { ...current, editedContent: null } : current,
-                                );
-                            }}
-                            onRemove={() => {
-                                promptKnowledge.cancel();
-                                setAttachedPrompt(null);
-                                setSearchAllKnowledge(false);
-                                setShowPromptWarning(false);
-                                setPromptReviewRequest(0);
-                                setOptions((current) =>
-                                    current.promptId === undefined
-                                        ? current
-                                        : { ...current, promptId: undefined },
-                                );
-                                textareaRef.current?.focus();
-                            }}
-                        />
-                    ) : null}
-
-                    {attachedPrompt && showPromptWarning && promptVariables.unfilled.length > 0 && (
-                        <div role="alert" className="mb-2 rounded-xl border border-warn/40 bg-surface-1 px-3 py-2 text-xs text-text-2">
-                            <p className="font-medium">Some prompt variables are still unanswered.</p>
-                            <p className="mt-1 break-words">
-                                {promptVariables.unfilled.map((variable) => `{{${variable.name}}}`).join(', ')}
-                                {' '}will be sent as literal placeholders if you send anyway.
-                            </p>
-                            <div className="mt-2 flex flex-wrap gap-3">
-                                <button type="button" onClick={() => setPromptReviewRequest((current) => current + 1)}
-                                    className="text-accent">Review fields</button>
-                                <button type="button" disabled={!knowledgeEnabled || promptKnowledge.pendingKeys.length > 0
-                                    || !promptVariables.unfilled.some((variable) => !variable.builtIn)}
-                                    onClick={() => void promptKnowledge.fill()} className="text-accent disabled:opacity-50">
-                                    Fill missing fields
-                                </button>
-                                <button type="button" disabled={!canPost || streaming}
-                                    onClick={() => submit(true)} className="font-medium text-text-1 disabled:opacity-50">
-                                    Send anyway
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* The backdrop is positioned against this wrapper rather than the whole
-                        composer, so it lines up with the textarea and not with the toolbar
-                        below it. */}
-                    <div className="relative">
-                        <ComposerHighlight
-                            text={text}
-                            tokens={contextTokens}
-                            backdropRef={backdropRef}
-                        />
-                        <textarea
-                            id="composer-input"
-                            ref={textareaRef}
-                            rows={1}
-                            value={text}
-                            disabled={!canPost}
-                            onChange={(event) => {
-                                applyText(event.target.value);
-                                syncMention(event.target);
-                                syncSlash(event.target);
-                                syncContext(event.target);
-                                noteTyping(event.target.value);
-                            }}
-                            // The caret can move without the value changing — clicking, or an
-                            // arrow key — and the token under it changes with it.
-                            onSelect={(event) => {
-                                syncMention(event.currentTarget);
-                                syncSlash(event.currentTarget);
-                                syncContext(event.currentTarget);
-                            }}
-                            onBlur={stopTyping}
-                            onKeyDown={onKeyDown}
-                            placeholder={
-                                checkingAccess
-                                    ? 'Checking your access to this conversation…'
-                                    : awaitingInvite
-                                      ? 'Join this conversation to reply'
-                                      : !canPost
-                                        ? 'You do not have permission to write in this conversation'
-                                        : shared
-                                          ? 'Message the group, or @mention a model or agent to ask the assistant…'
-                                          : 'Send a message, or type # to add a document…'
-                            }
-                            // Metrics come from the shared constant so the backdrop cannot
-                            // drift out of step with the text it is drawing behind.
-                            className={clsx(
-                                COMPOSER_TEXT_CLASS,
-                                'relative resize-none bg-transparent',
-                                'placeholder:text-text-3 focus:outline-none',
-                                'selection:bg-accent-soft disabled:cursor-not-allowed',
-                            )}
-                            style={COMPOSER_TRANSPARENT_TEXT_STYLE}
-                        />
-                    </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1">
                         {orchestrationAvailable && (
@@ -1945,7 +1277,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 {promptOptions.length > 0 && (
                                     <Dropdown
                                         options={promptOptions}
-                                        value={options.promptId}
+                                        value={attachedPrompt?.id}
                                         placeholder="Prompt"
                                         clearable
                                         icon={<FileText size={15} />}
@@ -2065,13 +1397,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         )}
 
                         <div className="ml-auto flex items-center gap-1.5">
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                className="hidden"
-                                onChange={onSelectFile}
-                            />
-
                             {features.enable_speech_to_text_input && (
                                 <VoiceInput
                                     onTranscribed={(transcript) =>
@@ -2086,7 +1411,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 type="button"
                                 onClick={() => fileInputRef.current?.click()}
                                 disabled={
-                                    uploading ||
+                                    !canPost ||
                                     !gating.showFileUpload ||
                                     gating.disabledByImageGeneration
                                 }
@@ -2118,7 +1443,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

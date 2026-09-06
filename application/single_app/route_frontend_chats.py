@@ -1416,6 +1416,7 @@ def register_route_frontend_chats(bp):
                 'group_upload_target': group_upload_target,
                 'title': collaboration_conversation.get('title') if is_collaboration_upload else conversation_item.get('title', 'New Conversation'),
                 'workspace_document': workspace_document_info,
+                'file_message_id': file_message_id,
                 'workspace_document_id': workspace_document_info.get('document_id')
             }), 200
 
@@ -1760,6 +1761,7 @@ def register_route_frontend_chats(bp):
             'conversation_id': conversation_id,
             'title': conversation_item.get('title', 'New Conversation'),
             'workspace_document': workspace_document_info,
+            'file_message_id': file_message_id,
             'workspace_document_id': workspace_document_info.get('document_id') if workspace_document_info else None
         }), 200
     
