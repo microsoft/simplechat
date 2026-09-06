@@ -1,6 +1,6 @@
 # Orchestration Run History Hydration Fix
 
-Fixed in version: **0.261.096**
+Fixed in version: **0.261.098**
 
 ## Issue Description
 
@@ -42,7 +42,7 @@ The V2 interface simply never called them.
 
 ## Version Implemented
 
-- **0.261.096**
+- **0.261.098**
 
 ## Files Modified
 
@@ -73,13 +73,19 @@ The V2 interface simply never called them.
   another user is reported as not found rather than forbidden.
 - Introduced `_run_summary_row` and `_run_detail_row`, allowlist projections that decide
   what leaves the server. The run list now returns summaries rather than raw records, so
-  `user_id`, `approved_by`, `seeds`, Cosmos system fields and the full artifact payloads
-  stay on the server. The full record remains available behind `?include_plan=true` for
-  callers that already relied on it.
+  `user_id`, `approved_by`, `seeds`, `conversation_context`, `request_resolution`,
+  `user_message_fingerprint`, Cosmos system fields and the full artifact payloads stay on
+  the server. This replaces an earlier blocklist that stripped three of those fields by
+  name; an allowlist keeps excluding whatever the record gains later, until it is named.
+  `?include_plan=true` widens the projection to include the plan rather than bypassing it,
+  so no caller can reach a stored record as it is.
 - Stamped the persisted user message with `metadata.orchestration_turn_id`, so a client
   that has only the conversation can associate a stored run with the message that started
-  it. The added metadata carries no `thread_info`, so `/api/get_messages` continues to
-  include the message.
+  it. The stamp is applied in `_save_turn_message` for every orchestrated question. It was
+  previously written only when the turn happened to carry a selected prompt, which left the
+  key absent on ordinary questions even though `chatStore.ts` already read it. The added
+  metadata carries no `thread_info`, so `/api/get_messages` continues to include the
+  message.
 
 ### Client
 
@@ -127,8 +133,9 @@ The V2 interface simply never called them.
 - Conversations that predate the fix hydrate correctly, because their runs were persisted
   all along. Only the user-message turn-id stamp is new, and every code path that uses it
   falls back to `user_message_id`.
-- The run list response is smaller and no longer includes plans by default. Any caller
-  that needs the previous shape can pass `include_plan=true`.
+- The run list response is smaller and no longer includes plans by default, and no longer
+  returns a stored record verbatim on any path. A caller that needs plans can pass
+  `include_plan=true`, which returns the same projected shape plus `plan`.
 - Approving a restored plan is safe because the run route already refused a plan whose
   status is running or completed, and reads the plan, seeds and question from the stored
   record rather than from the request.
