@@ -69,3 +69,6 @@ local_storage_state.json
 .pytest_cache
 .playwright-mcp
 .impeccable
+
+# UI automation screenshots, traces, and recordings
+/ui_tests/artifacts/
