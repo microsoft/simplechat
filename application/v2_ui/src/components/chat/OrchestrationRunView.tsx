@@ -37,6 +37,7 @@ import type {
     CostClass,
     Json,
     OrchestrationPhase,
+    OrchestrationPlanAction,
     OrchestrationStep,
     StepStatus,
 } from '../../lib/orchestration';
@@ -75,6 +76,10 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
     const entries: Array<[string, string]> = [];
     const args = step.arguments as Json;
     for (const [key, value] of Object.entries(args)) {
+        // Action identity is named from validated inputs below, not from planner arguments.
+        if (step.capability_id === 'action_invoke' && (key !== 'task' || typeof value !== 'string')) {
+            continue;
+        }
         if (hidden.has(key)) {
             continue;
         }
@@ -136,6 +141,13 @@ export function OrchestrationRunView({
         }
         return byId;
     }, [plan]);
+
+    const planInputActions = useMemo(
+        () => new Map<string, OrchestrationPlanAction>(
+            (plan?.inputs?.actions ?? []).map((action) => [action.action_ref, action]),
+        ),
+        [plan],
+    );
 
     /**
      * Names for anything the plan did not describe.
@@ -223,6 +235,9 @@ export function OrchestrationRunView({
 
     const renderStep = (step: OrchestrationStep, displayNumber: number) => {
         const isTerminal = step.capability_id === TERMINAL_CAPABILITY_ID;
+        const isAction = step.capability_id === 'action_invoke';
+        const actionRef = (step.arguments as Record<string, unknown>).action_ref;
+        const selectedAction = typeof actionRef === 'string' ? planInputActions.get(actionRef) : undefined;
         const willRun = step.enabled && !disabledStepIds.has(step.step_id);
         const status = stepRuntime[step.step_id]?.status ?? step.status;
         const summary = stepRuntime[step.step_id]?.summary ?? '';
@@ -256,7 +271,7 @@ export function OrchestrationRunView({
                                 {step.title}
                             </span>
                             <span className="rounded-full bg-surface-3 px-1.5 py-0.5 font-mono text-[11px] text-text-3">
-                                {step.capability_id}
+                                {isAction ? 'Use an action' : step.capability_id}
                             </span>
                             <span className={clsx('text-[11px]', costTone[step.estimated_cost])}>
                                 {step.estimated_cost}
@@ -277,6 +292,18 @@ export function OrchestrationRunView({
 
                         {summary ? (
                             <p className="mt-1 text-xs text-text-2">{summary}</p>
+                        ) : null}
+
+                        {isAction ? (
+                            <dl className="mt-2 text-xs" data-testid="orchestration-action-input">
+                                <dt className="font-medium text-text-3">Action</dt>
+                                <dd className="mt-0.5 break-words text-text-2">
+                                    <span>{selectedAction?.display_name || 'Action details unavailable'}</span>
+                                    {selectedAction ? (
+                                        <span className="ml-2 text-text-3">({selectedAction.scope_label})</span>
+                                    ) : null}
+                                </dd>
+                            </dl>
                         ) : null}
 
                         {args.length > 0 ? (

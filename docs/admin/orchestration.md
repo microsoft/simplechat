@@ -30,8 +30,7 @@ setting on this page.
 
 ## Why it matters
 
-Two decisions on this page have real consequences and are worth thinking about before
-rollout.
+Consider approval, cost and action access before rollout.
 
 The first is **approval**. A plan can run the moment it is made, run after a countdown, or
 wait for the user to read it. Reviewing every plan is the most transparent and the
@@ -44,12 +43,17 @@ plan that analyses several documents costs considerably more than one that searc
 The limits below are what stop a vaguely worded request turning into an open-ended amount
 of work, and they are enforced regardless of what a plan asks for.
 
+**Action access** is a separate, default-off opt-in added in version **0.261.096**. It lets
+a plan use an existing action without loading a configured agent. Its focused function
+loop can still make model calls, and the action retains its existing behavior and
+governance; this is not a read-only mode.
+
 ## Before you change anything
 
 - Confirm which knowledge capabilities are already enabled. Orchestration can only plan
   around document search, document analysis, document comparison, spreadsheet analysis,
-  web search, reading linked pages, deep research and agents where those are separately
-  enabled.
+  web search, reading linked pages, deep research, agents and actions where those are
+  separately enabled.
 - Note that reading linked pages and deep research are additionally restricted by app role
   where your deployment requires it. A plan will not propose a capability the individual
   user could not reach by hand.
@@ -98,6 +102,10 @@ enabled". Clearing one keeps it out of plans even where it remains available to 
 working by hand, which is how a deployment can adopt orchestration for search while
 continuing to require deliberate action for document analysis.
 
+An empty selection also means all otherwise-enabled capabilities. **Use an action**
+(`action_invoke`) still requires **Enable Action Access**, even with an empty list or
+every capability selected. Selecting the capability alone never opts a deployment in.
+
 Answering is always available and cannot be cleared, because a plan has to end somewhere.
 
 #### How a plan is ordered
@@ -107,7 +115,7 @@ order:
 
 | Phase | What happens | Capabilities |
 | --- | --- | --- |
-| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, agents |
+| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, Ask an agent, Use an action |
 | Reasoning | Saying something about it | Answering |
 | Creating | Producing files and other artifacts | Not yet available |
 
@@ -136,7 +144,46 @@ does not get the capability, whether they ask by hand or a plan proposes it.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Enable Action Access | Lets the planner choose an existing action the user may already use, without loading a configured agent. | Off | `enable_chat_orchestration_actions`; requires Chat Orchestration and Semantic Kernel. |
 | Capabilities | Restricts which capabilities a plan may use. An empty selection means every capability the other settings already permit. | All | `chat_orchestration_enabled_capabilities` |
+
+### Actions and agents
+
+Use **Use an action** for a question that needs a particular integration, such as a ticket
+status lookup. The step selects one existing personal, group or global action and may call
+several of that action's functions. The planner receives descriptive metadata, not the
+action's manifest, credentials or connection settings. The plan's Run view identifies the
+selected action by its server-resolved display name and scope, alongside the step's task
+and status. The answer's existing Sources panel lists tool calls separately from web
+sources.
+
+Use **Ask an agent** when the work depends on that agent's configured instructions,
+knowledge or broader procedure. A user-selected agent is not silently replaced with direct
+actions, and the planner should not send the same work through both paths. **Call agent**
+actions remain on the existing agent path and are excluded from direct action selection.
+
+The opt-in adds no second action allowlist or approval system. Existing scope,
+ownership, group membership, enablement and governance rules still determine which actions
+are available, and access is checked again when work runs. An action removed or revoked
+after planning produces a visible failure rather than a substitute action or agent.
+
+Existing scope settings still apply:
+
+| Action scope | Required scope enablement |
+| --- | --- |
+| Personal | Personal actions (`allow_user_plugins`) and the personal workspace (`enable_user_workspace`) must be enabled. |
+| Group | Group actions (`allow_group_plugins`) and group workspaces (`enable_group_workspaces`) must be enabled; the caller must still be a current member of the group. |
+| Global | Global mode must be in use (`per_user_semantic_kernel` off), or **Add Global Agents and Actions to Workspaces** (`merge_global_semantic_kernel_with_workspace`) must include global actions in Workspace Mode. |
+
+These are the existing [Agents and actions settings]({{ '/admin/agents-actions/' | relative_url }}),
+not additional orchestration permissions. Global merging does not bypass action-type or
+global-item governance.
+
+Action steps gather findings before the normal answering step. This ordering describes
+the plan's intent, not a guarantee that an action cannot change data. Existing operation
+restrictions and confirmation behavior remain intact. The focused loop can make model
+calls and is bounded by the existing `max_auto_invoke_attempts` setting, step/run timeouts
+and cancellation. No output phase or composer action picker is added.
 
 ### Limits {#chat-orchestration-limits-section}
 
@@ -190,6 +237,12 @@ model, which means orchestration works as soon as it is switched on.
    in Capabilities. Outcome to verify: plans use document search and answering, and never
    propose analysing a whole document.
 
+4. **Allow direct use of an existing integration.** Confirm Semantic Kernel and the
+   action's existing scope/governance permissions, then enable Action Access. Include
+   **Use an action** if Capabilities is narrowed. Ask a question that needs the integration;
+   review its action name, scope and task in the plan before running it. Verify the step's
+   findings reach the answer without selecting a configured agent.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -201,6 +254,8 @@ model, which means orchestration works as soon as it is switched on.
 | A question is asked that was already answered | The ledger is disabled or too small to reach the earlier turn. | Raise Earlier runs shown to the planner, and confirm the summary size is not set to its minimum. |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
+| Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
+| An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
 | A plan proposed reading a link but found nothing | The link was produced by the model rather than pasted by the user. | Only links present in the user's own message are read. Ask the user to paste the URL into their message. |
 
 ## Related
@@ -208,4 +263,7 @@ model, which means orchestration works as soon as it is switched on.
 - [Administration settings overview]({{ '/admin/' | relative_url }})
 - [Chat settings]({{ '/admin/chat/' | relative_url }})
 - [Knowledge settings]({{ '/admin/knowledge/' | relative_url }})
+- [Agents and actions settings]({{ '/admin/agents-actions/' | relative_url }})
+- [Create an action]({{ '/guides/create-an-action/' | relative_url }})
+- [Actions reference]({{ '/reference/actions/' | relative_url }})
 - [Workflow settings]({{ '/admin/workflow/' | relative_url }})

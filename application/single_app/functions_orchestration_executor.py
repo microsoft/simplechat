@@ -181,6 +181,7 @@ class RunContext:
         user_roles=None,
         user_email=None,
         agent_catalog=None,
+        action_catalog=None,
         user_enable_agents=True,
         agent_execution_identity=None,
         delegation_budget=None,
@@ -235,6 +236,7 @@ class RunContext:
         # The agent adapter refuses any agent name absent from this list, so a plan can never
         # invoke an agent the catalog did not offer this user, even after a repair.
         self.agent_catalog = list(agent_catalog) if agent_catalog else None
+        self.action_catalog = list(action_catalog or [])
         # Semantic Kernel can be enabled deployment-wide while a user has agents switched off in
         # their own settings; carried so the agent adapter re-checks it without touching user
         # state it cannot reach from the worker thread.
