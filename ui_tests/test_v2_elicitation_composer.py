@@ -1,7 +1,7 @@
 # test_v2_elicitation_composer.py
 """
 Browser regressions for composer-aware inline clarification answers.
-Version: 0.261.099
+Version: 0.261.100
 Implemented in: 0.261.096
 
 Exercise the real cards, composer, stores, controller, and request builders.
@@ -96,6 +96,8 @@ class InlineApi:
         self.plan_calls = []
         self.upload_calls = []
         self.knowledge_calls = []
+        self.hydrated_runs = []
+        self.hydration_requests = 0
         self.documents = {item["id"]: copy.deepcopy(item) for item in DOCUMENTS}
         self.fail_next_plan = False
         self.fail_next_upload = False
@@ -141,6 +143,10 @@ class InlineApi:
                     return
             if path == "/api/user/settings":
                 route.fulfill(json={"settings": {}})
+                return
+            if path == "/api/v2/orchestration/runs":
+                self.hydration_requests += 1
+                route.fulfill(json={"runs": self.hydrated_runs})
                 return
 
         if request.method == "POST" and path == "/api/v2/orchestration/plan":
@@ -513,6 +519,59 @@ def test_paging_and_remount_preserve_separate_answers(inline_api):
     api.card.get_by_role("button", name="Back", exact=True).click()
     expect(api.card.get_by_role("textbox", name="Additional details for Audience (optional)")).to_have_value("First answer")
     expect(api.card.get_by_role("checkbox", name="Staff", exact=True)).to_be_checked()
+
+
+def test_history_hydration_does_not_replace_a_pending_inline_answer(inline_api):
+    api = inline_api
+    api.open()
+    api.card.get_by_role("checkbox", name=re.compile("Suggested report")).check()
+    editor = api.card.get_by_role("textbox", name="Additional details for Source files (optional)")
+    editor.fill("Still answering this question")
+    message_id = api.page.evaluate(
+        "() => window.OrchHarness.stores.chat.useChatStore.getState().messages.find(message => message.role === 'user').id"
+    )
+    api.hydrated_runs = [{
+        "run_id": "older-pending-run", "turn_id": "older-turn",
+        "conversation_id": CONVERSATION, "status": "awaiting_approval",
+        "created_at": "2026-09-06T12:00:00Z", "user_message_id": message_id,
+        "user_message": "An earlier request",
+        "plan_summary": {"plan_id": "older-plan", "turn_id": "older-turn", "intent_summary": "Earlier work"},
+    }]
+    api.page.evaluate(
+        "(conversationId) => window.OrchHarness.resume.resumeOrchestrationForConversation(conversationId)",
+        CONVERSATION,
+    )
+    assert api.hydration_requests == 1
+    expect(editor).to_have_value("Still answering this question")
+    expect(api.card.get_by_role("checkbox", name=re.compile("Suggested report"))).to_be_checked()
+    assert api.page.evaluate(
+        "(conversationId) => window.OrchHarness.stores.orchestration.useOrchestrationStore.getState().activeTurns[conversationId]",
+        CONVERSATION,
+    ) == api.turn_id
+    api.finish_and_wait()
+    assert api.reply["elicitation_context"]["files"]["text"] == "Still answering this question"
+
+
+def test_adopted_plans_retire_drafts_without_making_new_plans_read_only(inline_api):
+    api = inline_api
+    api.open()
+    plan = api.answer_frame({"turn_id": api.turn_id, "elicitation_revision": 0})["plan"]
+    result = api.page.evaluate(
+        """({conversationId, turnId, plan}) => {
+            const store = window.OrchHarness.stores.orchestration.useOrchestrationStore;
+            const key = conversationId + '\\u0000' + turnId;
+            store.getState().adoptPersistedPlan(conversationId, turnId, plan, []);
+            const retired = !store.getState().elicitations[key]
+                && !store.getState().elicitationDrafts[key]
+                && store.getState().readOnlyTurns[key] === true;
+            store.getState().setPlan(conversationId, turnId, {
+                ...plan, plan_id: 'replanned-plan', run_id: 'replanned-run', revision: 2,
+            });
+            return {retired, editable: !store.getState().readOnlyTurns[key]};
+        }""",
+        {"conversationId": CONVERSATION, "turnId": api.turn_id, "plan": plan},
+    )
+    assert result == {"retired": True, "editable": True}
 
 
 def test_main_and_inline_attached_prompts_have_separate_state_and_ids(inline_api):

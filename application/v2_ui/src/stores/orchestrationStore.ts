@@ -36,7 +36,10 @@ import type {
     Elicitation,
     OrchestrationPlan,
     OrchestrationStep,
+    PersistedRunStep,
+    PersistedRunSummary,
     PlanEdits,
+    PlanStatus,
     RunStreamEvent,
     StepStatus,
 } from '../lib/orchestration';
@@ -82,6 +85,21 @@ export type StepRuntimeMap = Record<string, StepRuntime>;
 export type RunOutcome = 'completed' | 'failed' | 'cancelled';
 
 /**
+ * How a run is shown in the map.
+ *
+ * `interrupted` is the state only stored runs can be in: a run whose record never reached a
+ * terminal status because the browser that started it went away. It is not `running`, because
+ * this page has no stream for it and must not claim to be watching it.
+ */
+export type RunDisplayStatus = RunOutcome | 'interrupted';
+
+/** Where a history entry came from, which decides what the drawer may offer for it. */
+export type RunOrigin = 'local' | 'server';
+
+/** Progress of a conversation's one-time hydration from the server. */
+export type HydrationStatus = 'idle' | 'loading' | 'loaded' | 'error';
+
+/**
  * A run that has started and not yet settled.
  *
  * This is the persisted half -- enough to recognise the run after a reload, and nothing that
@@ -99,18 +117,111 @@ export interface TrackedRun {
     resumed: boolean;
 }
 
-/** A settled run kept for the conversation's history. */
+/**
+ * A settled run kept for the conversation's history.
+ *
+ * Produced two ways, and the difference matters. A `local` entry is written by `endRun` when
+ * this page watched the run finish. A `server` entry is hydrated from the stored record, which
+ * is the only way a conversation opened on another device has any history at all -- and which
+ * carries the extra identifiers (`userMessageId`, `planStatus`) that a locally-observed run
+ * never needed because it still had its plan in memory.
+ */
 export interface RunHistoryEntry {
     runId: string;
     planId: string;
     turnId: string;
-    status: RunOutcome;
+    status: RunDisplayStatus;
     finishedAt: number;
     intentSummary: string;
+    origin: RunOrigin;
+    /** The stored question's message id, for scrolling a reloaded thread back to the turn. */
+    userMessageId?: string | null;
+    /** The persisted plan status, which decides whether an approval can still be resumed. */
+    planStatus?: PlanStatus | null;
+    stepCount?: number;
+    artifactCount?: number;
 }
 
 /** History is bounded per conversation; a long session should not grow one without limit. */
 const MAX_HISTORY_PER_CONVERSATION = 25;
+
+/** Plan statuses whose run never reached a terminal state; see `RunDisplayStatus`. */
+const NON_TERMINAL_PLAN_STATUSES: ReadonlySet<string> = new Set([
+    'draft',
+    'awaiting_approval',
+    'approved',
+    'running',
+]);
+
+/**
+ * Plan statuses whose approval can still be picked up on another device.
+ *
+ * Deliberately narrower than "not finished". An `approved` or `running` record has already been
+ * handed to the run endpoint, which answers a second attempt with 409, so offering its card
+ * would be offering a button that cannot work. Only a plan that was never approved is resumable.
+ */
+const RESUMABLE_PLAN_STATUSES: ReadonlySet<string> = new Set(['draft', 'awaiting_approval']);
+
+/** Whether a stored run is a plan the user could still approve. */
+export function isResumablePlanStatus(status: PlanStatus | null | undefined): boolean {
+    return typeof status === 'string' && RESUMABLE_PLAN_STATUSES.has(status);
+}
+
+/** Epoch milliseconds for an ISO timestamp, or 0 when it is missing or unparseable. */
+function epochMs(value: string | null | undefined): number {
+    if (!value) {
+        return 0;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Turn a stored run into a history entry.
+ *
+ * The mapping the map view is built on, and the one place the server's plan vocabulary is
+ * reduced to the four states a row can draw. `superseded` folds into `cancelled` because that is
+ * what it means to the reader -- the run was abandoned for another -- and every non-terminal
+ * status folds into `interrupted` rather than `running`, since a stored record is by definition
+ * not something this page is streaming.
+ */
+export function historyEntryFromPersistedRun(run: PersistedRunSummary): RunHistoryEntry | null {
+    const runId = run?.run_id;
+    const turnId = run?.turn_id || run?.plan_summary?.turn_id || '';
+    if (!runId || !turnId) {
+        // A run with no turn cannot be selected, scrolled to, or keyed in the plan map. Older
+        // records predating `turn_id` are skipped rather than shown as unreachable rows.
+        return null;
+    }
+
+    const planStatus = (run.status ?? run.plan_summary?.status ?? null) as PlanStatus | null;
+    let status: RunDisplayStatus;
+    if (planStatus === 'completed') {
+        status = 'completed';
+    } else if (planStatus === 'failed') {
+        status = 'failed';
+    } else if (planStatus === 'cancelled' || planStatus === 'superseded') {
+        status = 'cancelled';
+    } else if (planStatus && NON_TERMINAL_PLAN_STATUSES.has(planStatus)) {
+        status = 'interrupted';
+    } else {
+        status = 'interrupted';
+    }
+
+    return {
+        runId,
+        planId: run.plan_summary?.plan_id ?? '',
+        turnId,
+        status,
+        finishedAt: epochMs(run.completed_at) || epochMs(run.started_at) || epochMs(run.created_at),
+        intentSummary: run.plan_summary?.intent_summary || run.user_message || '',
+        origin: 'server',
+        userMessageId: run.user_message_id ?? null,
+        planStatus,
+        stepCount: run.plan_summary?.step_count ?? 0,
+        artifactCount: run.artifact_count ?? 0,
+    };
+}
 
 const EMPTY_EDITS: PlanEdits = { disabled_step_ids: [], removed_document_ids: {} };
 const EMPTY_STEP_RUNTIME: StepRuntimeMap = {};
@@ -129,8 +240,28 @@ interface OrchestrationState {
     stepRuntime: Record<string, StepRuntimeMap>;
     /** Runs still in flight, by run id. Persisted. */
     inFlight: Record<string, TrackedRun>;
-    /** Settled runs per conversation, newest first. */
+    /** Settled runs per conversation, newest first, as observed by this page. */
     history: Record<string, RunHistoryEntry[]>;
+    /**
+     * Settled runs per conversation, hydrated from the server's stored records.
+     *
+     * Kept apart from `history` rather than merged into it because the two have different
+     * authority: a locally-observed run is something this page watched happen, a hydrated one is
+     * a report. Re-hydrating must never overwrite the former, and separating them makes that
+     * structural instead of a rule someone has to remember.
+     */
+    hydratedHistory: Record<string, RunHistoryEntry[]>;
+    /** Per-conversation hydration progress, so the fetch happens once and can report itself. */
+    hydration: Record<string, HydrationStatus>;
+    /**
+     * Turns whose plan came from a stored record and must not be edited, keyed by `scopeKey`.
+     *
+     * A hydrated plan describes work that already ran, or that ran somewhere else. Narrowing it
+     * would silently diverge the card from the run it claims to show, so the controls are hidden
+     * -- and the flag lives here rather than as a component prop because the run view is reached
+     * from two places and both must agree.
+     */
+    readOnlyTurns: Record<string, true>;
     /** The run the drawer is pinned to, or null meaning "the current one". */
     pinnedRunId: string | null;
     /**
@@ -226,6 +357,25 @@ interface OrchestrationState {
     /** Adopt run records restored from storage after a reload. */
     restoreRuns: (records: TrackedRun[]) => void;
 
+    /** Record where a conversation's one-time hydration has got to. */
+    setHydrationStatus: (conversationId: string, status: HydrationStatus) => void;
+    /** Adopt a conversation's stored runs as history, without displacing observed ones. */
+    hydrateConversationRuns: (conversationId: string, runs: PersistedRunSummary[]) => void;
+    /**
+     * Adopt a stored plan for a turn, with its steps' real outcomes.
+     *
+     * Not `setPlan`: that seeds every step from the plan's own status, which for a stored plan is
+     * whatever it was when the plan was written, so a finished run would redraw as pending. The
+     * step records are the truth about what happened and are used instead.
+     */
+    adoptPersistedPlan: (
+        conversationId: string,
+        turnId: string,
+        plan: unknown,
+        steps: PersistedRunStep[],
+        options?: { readOnly?: boolean },
+    ) => void;
+
     /** Pin the drawer to a run, or pass null to follow the current one. */
     pinRun: (runId: string | null) => void;
 
@@ -259,6 +409,9 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     stepRuntime: {},
     inFlight: {},
     history: {},
+    hydratedHistory: {},
+    hydration: {},
+    readOnlyTurns: {},
     pinnedRunId: null,
     visibleConversationId: null,
     activeTurns: {},
@@ -291,6 +444,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             if (sameIdentity) {
                 return { plans: { ...state.plans, [key]: plan }, elicitations, elicitationDrafts };
             }
+            const readOnlyTurns = { ...state.readOnlyTurns };
+            delete readOnlyTurns[key];
 
             const runtime: StepRuntimeMap = {};
             for (const step of plan.steps) {
@@ -301,6 +456,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 plans: { ...state.plans, [key]: plan },
                 elicitations,
                 elicitationDrafts,
+                readOnlyTurns,
                 edits: { ...state.edits, [key]: emptyPlanEdits() },
                 stepRuntime: { ...state.stepRuntime, [key]: runtime },
             };
@@ -556,6 +712,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 status: outcome,
                 finishedAt: Date.now(),
                 intentSummary: summary,
+                origin: 'local',
             };
             const existing = state.history[run.conversationId] ?? [];
             const nextEntries = [entry, ...existing].slice(0, MAX_HISTORY_PER_CONVERSATION);
@@ -588,6 +745,127 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             }
             saveRuns(Object.values(inFlight));
             return { inFlight };
+        });
+    },
+
+    setHydrationStatus: (conversationId, status) => {
+        if (!conversationId || get().hydration[conversationId] === status) {
+            return;
+        }
+        set((state) => ({ hydration: { ...state.hydration, [conversationId]: status } }));
+    },
+
+    hydrateConversationRuns: (conversationId, runs) => {
+        if (!conversationId) {
+            return;
+        }
+        set((state) => {
+            const entries: RunHistoryEntry[] = [];
+            const seen = new Set<string>();
+            const persistedStatus = new Map<string, PlanStatus | null>();
+            for (const run of runs ?? []) {
+                const entry = historyEntryFromPersistedRun(run);
+                if (!entry || seen.has(entry.runId)) {
+                    continue;
+                }
+                seen.add(entry.runId);
+                persistedStatus.set(entry.runId, entry.planStatus ?? null);
+                entries.push(entry);
+            }
+            entries.sort((a, b) => b.finishedAt - a.finishedAt);
+
+            // Settle anything this page adopted from storage but never watched.
+            //
+            // A record read back from `sessionStorage` has no stream behind it, so without this it
+            // would draw a spinner for as long as the tab stayed open -- including for a run that
+            // finished, failed, or was never approved in the first place. The stored record is the
+            // authority on that, and this is the first moment it is known.
+            let inFlight = state.inFlight;
+            let changed = false;
+            for (const run of Object.values(state.inFlight)) {
+                if (run.conversationId !== conversationId || !run.resumed) {
+                    continue;
+                }
+                if (!persistedStatus.has(run.runId)) {
+                    continue;
+                }
+                const status = persistedStatus.get(run.runId);
+                if (status && NON_TERMINAL_PLAN_STATUSES.has(status)) {
+                    continue;
+                }
+                if (!changed) {
+                    inFlight = { ...state.inFlight };
+                    changed = true;
+                }
+                delete inFlight[run.runId];
+            }
+            if (changed) {
+                saveRuns(Object.values(inFlight));
+            }
+
+            return {
+                inFlight,
+                hydratedHistory: {
+                    ...state.hydratedHistory,
+                    [conversationId]: entries.slice(0, MAX_HISTORY_PER_CONVERSATION),
+                },
+                hydration: { ...state.hydration, [conversationId]: 'loaded' },
+            };
+        });
+    },
+
+    adoptPersistedPlan: (conversationId, turnId, rawPlan, steps, options) => {
+        if (!conversationId || !turnId) {
+            return;
+        }
+        const plan = normalizePlan(rawPlan);
+        if (!plan) {
+            return;
+        }
+
+        const key = scopeKey(conversationId, turnId);
+        const readOnly = options?.readOnly ?? true;
+
+        set((state) => {
+            // Seeded from the plan first so a step with no record still draws, then overwritten
+            // by whatever the executor actually persisted for it.
+            const runtime: StepRuntimeMap = {};
+            for (const step of plan.steps) {
+                runtime[step.step_id] = { status: step.status, summary: '' };
+            }
+            for (const record of steps ?? []) {
+                const stepId = record?.step_id;
+                if (!stepId) {
+                    continue;
+                }
+                const status = coerceStepStatus(record.status) ?? runtime[stepId]?.status ?? 'pending';
+                runtime[stepId] = {
+                    status,
+                    summary: typeof record.summary === 'string' ? record.summary : '',
+                };
+            }
+
+            const elicitations = { ...state.elicitations };
+            const elicitationDrafts = { ...state.elicitationDrafts };
+            delete elicitations[key];
+            delete elicitationDrafts[key];
+
+            const readOnlyTurns = { ...state.readOnlyTurns };
+            if (readOnly) {
+                readOnlyTurns[key] = true;
+            } else {
+                delete readOnlyTurns[key];
+            }
+
+            return {
+                plans: { ...state.plans, [key]: plan },
+                elicitations,
+                elicitationDrafts,
+                // A stored plan arrives unnarrowed; the edits are this device's to make.
+                edits: { ...state.edits, [key]: state.edits[key] ?? emptyPlanEdits() },
+                stepRuntime: { ...state.stepRuntime, [key]: runtime },
+                readOnlyTurns,
+            };
         });
     },
 
@@ -659,6 +937,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             const elicitationDrafts: Record<string, ElicitationDraft> = {};
             const edits: Record<string, PlanEdits> = {};
             const stepRuntime: Record<string, StepRuntimeMap> = {};
+            const readOnlyTurns: Record<string, true> = {};
 
             const keep = (map: Record<string, unknown>, into: Record<string, unknown>) => {
                 for (const [key, value] of Object.entries(map)) {
@@ -675,6 +954,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             keep(state.elicitationDrafts, elicitationDrafts as Record<string, unknown>);
             keep(state.edits, edits as Record<string, unknown>);
             keep(state.stepRuntime, stepRuntime as Record<string, unknown>);
+            keep(state.readOnlyTurns, readOnlyTurns as Record<string, unknown>);
 
             // `activeTurns` is keyed by conversation, not `scopeKey`, so it is pruned on the plain
             // id. Dropping it in step with the plan it points at stops MessageList holding a turn
@@ -688,8 +968,37 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 }
             }
 
+            // Hydration is dropped alongside the plans it fed, so returning to a swept
+            // conversation re-fetches rather than showing rows whose plans have gone.
+            const hydratedHistory: Record<string, RunHistoryEntry[]> = {};
+            const hydration: Record<string, HydrationStatus> = {};
+            for (const [conversationId, entries] of Object.entries(state.hydratedHistory)) {
+                if (busy.has(conversationId)) {
+                    hydratedHistory[conversationId] = entries;
+                } else {
+                    removed = true;
+                }
+            }
+            for (const [conversationId, status] of Object.entries(state.hydration)) {
+                if (busy.has(conversationId)) {
+                    hydration[conversationId] = status;
+                } else {
+                    removed = true;
+                }
+            }
+
             return removed
-                ? { plans, elicitations, elicitationDrafts, edits, stepRuntime, activeTurns }
+                ? {
+                      plans,
+                      elicitations,
+                      elicitationDrafts,
+                      edits,
+                      stepRuntime,
+                      readOnlyTurns,
+                      activeTurns,
+                      hydratedHistory,
+                      hydration,
+                  }
                 : {};
         });
     },
@@ -814,7 +1123,32 @@ export function selectInFlightCount(
     return count;
 }
 
-/** A conversation's run history, newest first. Stable empty array when there is none. */
+/**
+ * Memo for the history merge, keyed by conversation and by the identity of both inputs.
+ *
+ * `selectHistory` is used directly as a zustand selector, which compares results with `Object.is`.
+ * A merge that allocated a fresh array on every call would therefore report a change on every
+ * store update, re-rendering the map view continuously and tripping React's "getSnapshot should
+ * be cached" guard. Caching on the two input array references makes the result stable for as long
+ * as neither side has actually changed, which is exactly the condition under which it may be.
+ */
+const historyMergeCache = new Map<
+    string,
+    {
+        local: readonly RunHistoryEntry[] | undefined;
+        hydrated: readonly RunHistoryEntry[] | undefined;
+        merged: readonly RunHistoryEntry[];
+    }
+>();
+
+/**
+ * A conversation's run history, newest first, from both sources.
+ *
+ * Locally-observed runs win over their stored copies: this page watched them settle, and the
+ * stored record may not have caught up -- a run that completed seconds ago can still read
+ * `running` in Cosmos if the final write lost the race with the fetch. Stable empty array when
+ * there is neither.
+ */
 export function selectHistory(
     state: OrchestrationState,
     conversationId: string,
@@ -822,7 +1156,53 @@ export function selectHistory(
     if (!conversationId) {
         return EMPTY_HISTORY;
     }
-    return state.history[conversationId] ?? EMPTY_HISTORY;
+    const local = state.history[conversationId];
+    const hydrated = state.hydratedHistory[conversationId];
+
+    if (!hydrated || hydrated.length === 0) {
+        return local ?? EMPTY_HISTORY;
+    }
+    if (!local || local.length === 0) {
+        return hydrated;
+    }
+
+    const cached = historyMergeCache.get(conversationId);
+    if (cached && cached.local === local && cached.hydrated === hydrated) {
+        return cached.merged;
+    }
+
+    const seen = new Set(local.map((entry) => entry.runId));
+    const merged = [...local];
+    for (const entry of hydrated) {
+        if (!seen.has(entry.runId)) {
+            merged.push(entry);
+        }
+    }
+    merged.sort((a, b) => b.finishedAt - a.finishedAt);
+    const result = merged.slice(0, MAX_HISTORY_PER_CONVERSATION);
+
+    historyMergeCache.set(conversationId, { local, hydrated, merged: result });
+    return result;
+}
+
+/** How far a conversation's hydration has got. */
+export function selectHydrationStatus(
+    state: OrchestrationState,
+    conversationId: string,
+): HydrationStatus {
+    return (conversationId && state.hydration[conversationId]) || 'idle';
+}
+
+/** Whether a turn's plan came from a stored record and so cannot be narrowed. */
+export function selectIsReadOnly(
+    state: OrchestrationState,
+    conversationId: string,
+    turnId: string,
+): boolean {
+    if (!conversationId || !turnId) {
+        return false;
+    }
+    return state.readOnlyTurns[scopeKey(conversationId, turnId)] === true;
 }
 
 /**

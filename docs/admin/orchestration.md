@@ -128,9 +128,10 @@ later step found.
 Three capabilities cost noticeably more than the rest and are each limited to one use per
 plan:
 
-- **Deep research** reads and cross-checks multiple sources. It is for questions that need
-  several independent sources reconciled; web search is the cheaper choice for ordinary
-  factual questions.
+- **Deep research** discovers sources through a bounded set of web queries, then reads
+  and follows sources. It is useful when broader discovery, detailed reading, or
+  reconciling independent evidence would materially improve the answer. Web search is
+  still the cheaper choice for focused lookups, even when it returns several sources.
 - **Agents** load the agent's tools, connections and instructions before running. That
   setup is the expensive part of the turn, so a plan uses at most one agent.
 - **Reading linked pages** uses links the user pasted in the current request or an
@@ -141,6 +142,27 @@ plan:
 Reading linked pages and deep research also honour the `UrlAccessUser` and
 `DeepResearchUser` app roles where your deployment requires them. A user without the role
 does not get the capability, whether they ask by hand or a plan proposes it.
+
+#### How research depth is chosen
+
+The planner compares the expected benefit of additional gathering with its cost. It sees
+the request, available capabilities, selected context, and earlier-run summaries. There
+is no separate deep-research score or keyword rule that turns a subject into a research
+task. A long request, several preferences, or a need for current information does not by
+itself require deep research.
+
+A research step includes its own discovery, so a plan does not need a separate web-search
+step merely to give research its first sources. Distinct searches can still serve distinct
+parts of a request. The step's rationale explains why that depth of gathering is useful;
+choosing ordinary search does not start an automatic research-upgrade loop afterward.
+
+Discovery honours the existing Deep Research query limit and source-review limits in
+[Knowledge settings]({{ '/admin/knowledge/' | relative_url }}). It does not enable web
+search if that capability is disabled globally; permitted supplied sources can still be
+reviewed. A query-planning model that is unavailable or fails leaves the existing backup
+query generation available. Recovery is recorded in logs, without a user-facing fallback
+notice when useful evidence is obtained. If no usable evidence is found, the answer must
+not claim that research verified the requested details.
 
 #### Settings
 
@@ -240,6 +262,30 @@ First turns without history and simple acknowledgments skip that call.
 | Planner model endpoint id | Identifies the endpoint when planning through a configured model endpoint rather than the default deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
 | Planner model provider | Identifies the provider when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_provider` |
 
+## Run history and switching devices
+
+Every plan, every step and every result is stored against the conversation, not against
+the browser that produced it. There is nothing to configure here, but it changes what
+users can expect, so it is worth knowing when you answer questions about it.
+
+Opening a conversation on a second device rebuilds the orchestration panel from what the
+server holds. A user who plans on a laptop and then opens the same conversation on a
+phone sees the same list of runs, can expand any of them, and can read the steps and
+results of a run they were not present for. Runs opened this way are shown as a record:
+they can be read but not edited or run again, because they have already happened.
+
+A plan that was still waiting for approval when the user moved is the one case that stays
+actionable. It reappears as a plan the user can approve, edit or discard, so a plan is
+never stranded on a device the user has walked away from. Two things are deliberately
+adjusted when this happens. A plan that had a countdown is restored without one, so
+nothing starts running on a device where nobody was watching. And if the plan was in fact
+approved elsewhere in the meantime, approving it again is refused rather than run twice,
+and the conversation reloads to show the answer that already exists.
+
+A run that was interrupted — the browser closed, the device slept, the network dropped
+mid-run — is shown as interrupted rather than silently disappearing or appearing to still
+be working.
+
 ## Common tasks
 
 1. **Introduce orchestration to a pilot group.** Enable Chat Orchestration, leave the
@@ -276,6 +322,9 @@ First turns without history and simple acknowledgments skip that call.
 | Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
 | An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
 | A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
+| Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
+| A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
+| A run is shown as interrupted | The browser or device that started it went away before the run finished. | Ask the user to send the question again. An interrupted run is a record of what happened, not a run that can be continued. |
 
 ## Related
 

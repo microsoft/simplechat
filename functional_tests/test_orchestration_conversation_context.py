@@ -1,7 +1,7 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.096
+Version: 0.261.099
 Implemented in: 0.261.096
 
 Exercises the real history, resolution, triage, and adapter code with external
@@ -388,6 +388,8 @@ class AdapterTests(unittest.TestCase):
         source_review = fake_module(
             'functions_source_review', URL_ACCESS_CONTEXT_CHAT='chat',
             extract_urls_from_text=self.modules.context._extract_urls,
+            is_source_review_enabled_for_user=lambda *args, **kwargs: True,
+            build_source_review_system_message=lambda result: None,
             perform_source_review=lambda **kwargs: research_calls.append(kwargs) or {},
         )
         self.context.allowed_user_urls = ['https://winery.example/hours']
