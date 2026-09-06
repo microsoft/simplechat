@@ -18,14 +18,27 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     applyPromptVariables,
+    describeUnfilledVariables,
     isBuiltInPromptVariable,
     parsePromptVariables,
     resolveBuiltInPromptVariables,
+    resolvePromptVariableValues,
     type BuiltInPromptVariable,
     type PromptResolutionContext,
     type PromptVariable,
 } from './promptVariables';
 import { recallPromptValues, rememberPromptValues } from './promptVariableMemory';
+import type { PromptKnowledgeValue } from './promptKnowledge';
+
+export interface PromptAiValue extends PromptKnowledgeValue {
+    previousValue: string;
+    previouslyPrefilled: boolean;
+}
+
+function valueMap<T>(values?: Record<string, T>): Record<string, T> {
+    // Placeholder names such as "constructor" are data, not inherited object properties.
+    return Object.assign(Object.create(null), values);
+}
 
 export interface PromptVariableValues {
     /** The placeholders this content declares, in the order they first appear. */
@@ -40,7 +53,13 @@ export interface PromptVariableValues {
     unfilled: PromptVariable[];
     /** Previously used values per key, offered as chips. Empty in a shared conversation. */
     history: Record<string, string[]>;
+    aiValues: Record<string, PromptAiValue>;
     setValue: (key: string, value: string) => void;
+    getRevision: (key: string) => number;
+    applyAiValue: (key: string, value: PromptKnowledgeValue, revision: number) => boolean;
+    undoAiValue: (key: string) => void;
+    getUnfilled: (context?: PromptResolutionContext) => PromptVariable[];
+    getResolvedValues: (context?: PromptResolutionContext) => Record<string, string>;
     /**
      * The prompt with its placeholders substituted.
      *
@@ -72,6 +91,9 @@ export function usePromptVariableValues({
     shared = false,
     values: controlledValues,
     onValuesChange,
+    aiValues: controlledAiValues,
+    onAiValuesChange,
+    instanceKey = '',
 }: {
     promptId: string;
     content: string;
@@ -79,6 +101,9 @@ export function usePromptVariableValues({
     shared?: boolean;
     values?: Record<string, string>;
     onValuesChange?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    aiValues?: Record<string, PromptAiValue>;
+    onAiValuesChange?: React.Dispatch<React.SetStateAction<Record<string, PromptAiValue>>>;
+    instanceKey?: string;
 }): PromptVariableValues {
     const variables = useMemo(() => parsePromptVariables(content), [content]);
 
@@ -94,15 +119,28 @@ export function usePromptVariableValues({
 
     // Nothing is offered back in a shared conversation: a value remembered from a private chat
     // would become visible to every participant the moment the message is sent.
-    const history = useMemo(
+    const remembered = useMemo(
         () => (shared ? {} : recallPromptValues(promptId)),
         [promptId, shared],
     );
+    const history = useMemo(() => Object.fromEntries(variables.map((variable) => [
+        variable.key,
+        Array.isArray(remembered[variable.key]) ? remembered[variable.key] : [],
+    ])), [variables, remembered]);
 
-    const [localValues, setLocalValues] = useState<Record<string, string>>({});
-    const values = controlledValues ?? localValues;
+    const [localValues, setLocalValues] = useState<Record<string, string>>(() => valueMap());
+    const values = useMemo(() => valueMap(controlledValues ?? localValues), [controlledValues, localValues]);
     const setValues = onValuesChange ?? setLocalValues;
     const [prefilled, setPrefilled] = useState<Set<string>>(() => new Set());
+    const [localAiValues, setLocalAiValues] = useState<Record<string, PromptAiValue>>(() => valueMap());
+    const aiValues = useMemo(
+        () => valueMap(controlledAiValues ?? localAiValues),
+        [controlledAiValues, localAiValues],
+    );
+    const setAiValues = onAiValuesChange ?? setLocalAiValues;
+    const valuesRef = useRef(values);
+    valuesRef.current = values;
+    const revisions = useRef(new Map<string, number>());
 
     // Seeding runs once per variable, not once per render, and again only for a placeholder
     // that editing the wording has newly introduced. Tracked by key rather than inferred from
@@ -111,11 +149,19 @@ export function usePromptVariableValues({
     // they had deliberately emptied it.
     const seededFor = useRef<string | null>(null);
     const seeded = useRef<Set<string>>(new Set());
+    const previousShared = useRef(shared);
     useEffect(() => {
-        const restart = seededFor.current !== promptId;
-        seededFor.current = promptId;
+        const identity = `${promptId}\u0000${instanceKey}\u0000${shared}`;
+        const restart = seededFor.current !== identity;
+        const sharedChanged = previousShared.current !== shared;
+        previousShared.current = shared;
+        seededFor.current = identity;
         if (restart) {
             seeded.current = new Set();
+            revisions.current = new Map();
+            if (controlledAiValues === undefined || sharedChanged) {
+                setAiValues(valueMap());
+            }
         }
 
         const fresh = variables.filter((variable) => !seeded.current.has(variable.key));
@@ -127,15 +173,17 @@ export function usePromptVariableValues({
         }
 
         setValues((current) => {
-            // A controlled draft may be returning from another page of an answer. Keep its
-            // supplied (including deliberately cleared) values rather than seeding over it.
-            const next = restart && controlledValues === undefined ? {} : { ...current };
+            // Remounts keep the persisted answer, including cleared fields. A live switch
+            // between personal/shared mode must still honor the privacy reset.
+            const next = valueMap(sharedChanged || (restart && controlledValues === undefined) ? undefined : current);
             for (const variable of fresh) {
-                if (variable.builtIn || (controlledValues !== undefined && variable.key in next)) {
+                if (variable.builtIn || (controlledValues !== undefined
+                    && Object.prototype.hasOwnProperty.call(next, variable.key))) {
                     continue;
                 }
                 next[variable.key] = history[variable.key]?.[0] ?? variable.defaultValue;
             }
+            valuesRef.current = next;
             return next;
         });
 
@@ -148,7 +196,9 @@ export function usePromptVariableValues({
                     }
                     continue;
                 }
-                if ((history[variable.key]?.length ?? 0) > 0) {
+                if ((history[variable.key]?.length ?? 0) > 0
+                    && (controlledValues === undefined || sharedChanged
+                        || !Object.prototype.hasOwnProperty.call(controlledValues, variable.key))) {
                     next.add(variable.key);
                 }
             }
@@ -157,13 +207,20 @@ export function usePromptVariableValues({
         // `builtIns` is deliberately absent: a built-in resolving later must not re-badge a
         // field the reader has since edited.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [promptId, variables, history]);
+    }, [promptId, instanceKey, shared, variables, history]);
 
     const setValue = (variableKey: string, value: string) => {
         if (isBuiltInPromptVariable(variableKey)) {
             return;
         }
-        setValues((current) => ({ ...current, [variableKey]: value }));
+        revisions.current.set(variableKey, (revisions.current.get(variableKey) ?? 0) + 1);
+        valuesRef.current = Object.assign(valueMap(valuesRef.current), { [variableKey]: value });
+        setValues(valuesRef.current);
+        setAiValues((current) => {
+            const next = valueMap(current);
+            delete next[variableKey];
+            return next;
+        });
         // Edited, so it is no longer something that was filled in for you.
         setPrefilled((current) => {
             if (!current.has(variableKey)) {
@@ -175,25 +232,56 @@ export function usePromptVariableValues({
         });
     };
 
+    const effectiveValues = (override?: PromptResolutionContext) =>
+        resolvePromptVariableValues(variables, valuesRef.current, override ?? context);
     const resolve = (override?: PromptResolutionContext) =>
-        applyPromptVariables(content, {
-            ...resolveBuiltInPromptVariables(override ?? context),
-            ...values,
-        });
+        applyPromptVariables(content, effectiveValues(override));
+    const getUnfilled = (override?: PromptResolutionContext) =>
+        describeUnfilledVariables(variables, effectiveValues(override));
+    const unfilled = getUnfilled();
+    const getRevision = (key: string) => revisions.current.get(key) ?? 0;
 
-    const unfilled = variables.filter((variable) => {
-        if (variable.builtIn) {
-            return !builtIns[variable.key as BuiltInPromptVariable];
+    const applyAiValue = (key: string, value: PromptKnowledgeValue, revision: number) => {
+        const variable = variables.find((item) => item.key === key);
+        if (
+            !variable || variable.builtIn || !value.value.trim()
+            || revision !== getRevision(key)
+            || (valuesRef.current[key] ?? '').trim() || variable.defaultValue
+        ) {
+            return false;
         }
-        return !String(values[variable.key] ?? '').trim() && !variable.defaultValue;
-    });
+        const previousValue = valuesRef.current[key] ?? '';
+        revisions.current.set(key, revision + 1);
+        valuesRef.current = Object.assign(valueMap(valuesRef.current), { [key]: value.value });
+        setValues(valuesRef.current);
+        setAiValues((current) => Object.assign(valueMap(current), {
+            [key]: { ...value, previousValue, previouslyPrefilled: prefilled.has(key) },
+        }));
+        setPrefilled((current) => {
+            const next = new Set(current);
+            next.delete(key);
+            return next;
+        });
+        return true;
+    };
+
+    const undoAiValue = (key: string) => {
+        const previous = aiValues[key];
+        if (!previous) {
+            return;
+        }
+        setValue(key, previous.previousValue);
+        if (previous.previouslyPrefilled) {
+            setPrefilled((current) => new Set([...current, key]));
+        }
+    };
 
     const commit = () => {
         // Only what the reader actually supplied is remembered. Resolved built-ins are not
         // values they chose, and storing them would offer today's date back to them tomorrow.
-        const toRemember: Record<string, string> = {};
+        const toRemember = valueMap<string>();
         for (const variable of variables) {
-            if (variable.builtIn) {
+            if (variable.builtIn || aiValues[variable.key]) {
                 continue;
             }
             const value = values[variable.key];
@@ -204,5 +292,14 @@ export function usePromptVariableValues({
         rememberPromptValues(promptId, toRemember);
     };
 
-    return { variables, values, builtIns, prefilled, unfilled, history, setValue, resolve, commit };
+    const activeValues = Object.fromEntries(
+        variables.filter((variable) => !variable.builtIn)
+            .map((variable) => [variable.key, values[variable.key] ?? '']),
+    );
+
+    return {
+        variables, values: activeValues, builtIns, prefilled, unfilled, history,
+        aiValues, setValue, getRevision, applyAiValue, undoAiValue, getUnfilled, resolve, commit,
+        getResolvedValues: effectiveValues,
+    };
 }

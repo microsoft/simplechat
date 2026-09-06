@@ -12,6 +12,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   This applies to supported chat file types generally, not only tabular files. Existing upload and workspace permissions still apply.
     *   (Ref: `ComposerEditor.tsx`, `ElicitationCard.tsx`, `composerDraft.ts`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md))
 
+*   **Orchestration Can Use Existing Actions Directly**
+    *   Administrators can enable the default-off **Enable Action Access** setting to let knowledge-collection plans choose an accessible personal, group or global action without loading a configured agent and its unrelated actions.
+    *   Each step can make a bounded sequence of calls to its selected action's functions, preserving existing scope settings, governance, function restrictions and action behavior. **Call agent** remains under **Ask an agent**; no output-phase workflow or new read/write policy is introduced.
+    *   The plan shows the selected action's name and scope. Tool results appear under **Sources > Tool calls**, separately from web references.
+    *   (Ref: `functions_action_catalog.py`, `functions_orchestration_actions.py`, `functions_orchestration_registry.py`, `OrchestrationRunView.tsx`, [Chat Orchestration Action Access](features/CHAT_ORCHESTRATION_ACTIONS.md))
+
 #### User Interface Enhancements
 
 *   **Upload Progress And Independent Answer Drafts**
@@ -20,6 +26,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   The main composer remains separate, and inline questions do not duplicate its model, agent, web, or voice toolbar.
     *   (Ref: `chatUploads.ts`, `orchestrationStore.ts`, `AttachedPromptCard.tsx`, [Upload Documents In Chat](../guides/upload-documents-in-chat.md))
 
+*   **Full-Page Agent And Action Editors In My Workspace**
+    *   Configure personal agents and actions directly in V2, with section navigation instead of popup wizards. Agent authoring includes model connections, knowledge, instructions, capabilities, and templates; action authoring includes the existing connector-specific configuration and authentication workflows.
+    *   **Call agent is a normal action type**, appearing alongside other tools in the Actions collection and the agent's action picker. There is no separate personal delegation section.
+    *   Create an action from an unfinished agent and return to the retained draft. Saving the action does not save the agent prematurely; leaving an unfinished editor asks before discarding changes.
+    *   Provided resources remain read-only, and existing authorized actions can be attached independently of permission to create new actions. Group and administrator management retain their existing interfaces.
+    *   (Ref: `AgentEditorPage.tsx`, `ActionEditorPage.tsx`, `WorkspaceEditorFrame.tsx`, [V2 Workspace Agent And Action Authoring](features/V2_WORKSPACE_AGENTS_ACTIONS.md))
+
 #### Bug Fixes
 
 *   **Follow-Up Answers Reach The Resumed Task**
@@ -27,6 +40,16 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Accepted explanations, filled prompts, and real source references reach both replanning and execution, while original selections and document filters remain intact.
     *   Retries cannot apply the same answer twice, and declining or cancelling sends no draft answer context.
     *   (Ref: `orchestrationController.ts`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_runs.py`, `route_backend_orchestration.py`)
+
+*   **Orchestration Preserves Agent Choices And Tool Reporting**
+    *   Available agents now reach plan validation, and retries after an unrenderable clarification retain the caller's capability gates.
+    *   Tool citations use the existing tool-results channel instead of being treated as web sources. Saved usage includes both the answer model and action or agent steps rather than dropping one contribution.
+    *   (Ref: `functions_orchestration_planner.py`, `route_backend_orchestration.py`, `functions_orchestration_events.py`, `chatStore.ts`)
+
+*   **Workspace Edits Preserve Existing Configuration**
+    *   Per-record saves retain unedited nested settings, action references, and credentials. Stored secrets stay masked, explicit clearing is distinguished from keeping a value, and conflicting edits are reported rather than silently overwriting another session.
+    *   **Use in chat** refreshes the authorized agent catalogue before starting a new conversation with the chosen agent. Failed refreshes or unavailable agents do not retarget an existing conversation or substitute a manual model.
+    *   (Ref: `functions_workspace_authoring.py`, `workspaceAuthoring.ts`, `workspaceAuthoringApi.ts`, `workspaceEditorDrafts.ts`, `workspaceAgentLaunch.ts`)
 
 ### **(v0.261.095)**
 

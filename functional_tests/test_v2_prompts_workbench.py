@@ -2,9 +2,10 @@
 """
 Functional test for the V2 prompts workbench.
 
-Version: 0.261.096
+Version: 0.261.099
 Implemented in: 0.261.053
 Shared composer editor implemented in: 0.261.096
+Shared picker and prototype-key memory coverage expanded in: 0.261.096
 
 The behavioural half of the front end lives in ``test_v2_prompts_workbench_logic.ts``, run from
 here. This file covers the parts that are only observable in the source, plus the new
@@ -31,8 +32,8 @@ whatever had been typed. The composer must insert instead.
 **Nothing may be pre-filled in a shared conversation.** A value remembered from a private chat,
 auto-filled into a collaborative conversation, becomes visible to every participant on send.
 
-**Variable values must not reach the server.** The memory module is deliberately localStorage
-only; an import of the API client or a user-settings key would defeat that.
+**Remembered values must not be automatically synchronized.** The memory module is deliberately
+localStorage only; explicit AI lookups and message sends are separate, user-requested operations.
 
 **The section must be registered as full-bleed.** A three-pane layout inside the page's centred
 prose container gets a second scrollbar and a squeezed list.
@@ -75,6 +76,7 @@ EDITOR_TSX = V2_SRC / "components" / "prompts" / "PromptEditorDialog.tsx"
 # The fill-in dialog this replaced folded into the composer's attached-prompt card, so the
 # field and the values behind it now live in one component and one hook.
 VARIABLE_FIELD_TSX = V2_SRC / "components" / "prompts" / "PromptVariableField.tsx"
+VARIABLE_PICKER_TSX = V2_SRC / "components" / "prompts" / "PromptVariablePicker.tsx"
 VARIABLE_VALUES_TS = V2_SRC / "lib" / "usePromptVariableValues.ts"
 ATTACHED_CARD_TSX = V2_SRC / "components" / "chat" / "AttachedPromptCard.tsx"
 PRESENTATION_TSX = V2_SRC / "components" / "prompts" / "promptPresentation.tsx"
@@ -607,6 +609,15 @@ def test_shared_ui_is_not_duplicated():
         "raw HTML must stay disabled, so authored markdown cannot inject script"
     )
 
+    for path in (ATTACHED_CARD_TSX, EDITOR_TSX):
+        source = _read(path)
+        assert "<PromptVariablePicker" in source, (
+            f"{path.name} must use the shared variable catalog"
+        )
+        assert "usePromptVariableInsertion(" in source, (
+            f"{path.name} must preserve the caret through the shared insertion helper"
+        )
+
     print("  ok  the dialog shell and markdown renderer are shared, not copied")
     return True
 
@@ -656,7 +667,7 @@ def test_a_classic_save_does_not_wipe_the_new_fields():
 
 
 def test_the_prompt_handoff_has_a_single_url_writer():
-    """Two writers means the parameter one removes, the other restores."""
+    """Only ChatPage consumes the prompt parameter; context cleanup has its own handoff."""
     print("Testing prompt handoff URL ownership...")
 
     composer = _strip_comments(_read(COMPOSER_TSX))
@@ -671,6 +682,9 @@ def test_the_prompt_handoff_has_a_single_url_writer():
         "setSearchParams replaces the whole query from the caller's render snapshot, so a "
         "parameter deleted here is restored by ChatPage's effect in the same commit -- leaving "
         "a URL that re-inserts the prompt on every reload"
+    )
+    assert not re.search(r"\.delete\(['\"]prompt['\"]\)", composer), (
+        "the composer must not compete with ChatPage to consume the prompt parameter"
     )
     assert "useState(() => readPromptParam(searchParams))" in composer, (
         "the id must be captured during the first render, before the sync effect strips it"
@@ -759,6 +773,7 @@ def test_no_remote_asset_references():
         DETAILS_TSX,
         EDITOR_TSX,
         VARIABLE_FIELD_TSX,
+        VARIABLE_PICKER_TSX,
         VARIABLE_VALUES_TS,
         ATTACHED_CARD_TSX,
         PRESENTATION_TSX,
@@ -779,12 +794,12 @@ def test_no_remote_asset_references():
 
 
 def test_the_typescript_logic_checks_pass():
-    """Execute the behavioural half, skipping when the front-end toolchain is absent."""
+    """Execute the behavioural half; missing tooling is a validation failure, not a pass."""
     print("Testing prompt logic (TypeScript)...")
 
-    if not (V2_DIR / "node_modules").exists():
-        print("  skip  application/v2_ui/node_modules is absent; run npm install to include")
-        return True
+    assert (V2_DIR / "node_modules").is_dir(), (
+        "application/v2_ui/node_modules is missing; restore the existing frontend dependencies"
+    )
 
     assert LOGIC_CHECK_TS.exists(), "The TypeScript logic checks are missing"
 

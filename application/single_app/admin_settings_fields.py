@@ -3710,15 +3710,32 @@ ADMIN_SETTINGS_FIELDS = {
     ],
     "chat-orchestration-capabilities-section": [
         {
+            "key": "enable_chat_orchestration_actions",
+            "type": "switch",
+            "label": "Enable Action Access",
+            "help": (
+                "Lets plans use an existing personal, group or global action directly, "
+                "without loading a configured agent. Requires Chat Orchestration and "
+                "Semantic Kernel. Existing action access and governance still apply. "
+                "An action can call several of its functions within the run limits; "
+                "knowledge-phase placement does not make its operations read-only."
+            ),
+            "default": False,
+            "role": "capability",
+            "depends_on": [
+                {"key": "enable_chat_orchestration", "equals": True},
+                {"key": "enable_semantic_kernel", "equals": True},
+            ],
+        },
+        {
             "key": "chat_orchestration_enabled_capabilities",
             "type": "checkbox_set",
             "label": "Capabilities",
             "help": (
-                "Which kinds of work a plan may contain. Leaving every box ticked is the "
-                "normal state and means whatever the rest of this deployment already "
-                "permits; clearing one keeps it out of plans even where it remains "
-                "available to users working by hand. Answering is always available "
-                "because a plan has to end somewhere."
+                "Which kinds of work a plan may contain. An empty selection allows every "
+                "otherwise-enabled capability; a non-empty selection narrows plans to "
+                "those capabilities. Answering is always available. Use an action also "
+                "requires Enable Action Access, which is off by default."
             ),
             "default": [],
             "options": [
@@ -3730,6 +3747,7 @@ ADMIN_SETTINGS_FIELDS = {
                 {"value": "url_fetch", "label": "Read linked pages"},
                 {"value": "deep_research", "label": "Research in depth"},
                 {"value": "agent_invoke", "label": "Ask an agent"},
+                {"value": "action_invoke", "label": "Use an action"},
             ],
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

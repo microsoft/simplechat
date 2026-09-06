@@ -162,6 +162,16 @@ data.
 | Enforce Workspace Scope Lock | Keeps a conversation bound to the workspaces that produced its first search results. | On | `enforce_workspace_scope_lock` |
 | Enable Fact Memory | Lets standard chat recall a user's saved instruction and fact memories, and lets the assistant save, change, or remove them when the user asks. Works without agents or actions. | Off | `enable_fact_memory_plugin`; capability toggle |
 
+In V2 orchestration, **Conversation History Limit** also bounds the recent messages
+used to interpret follow-ups before searching. Orchestration rounds the count up to an
+even number and enforces additional ceilings of 50 messages and 16 KiB of serialized
+history. Zero disables historical messages; masked text and inactive attempts are
+excluded. Its run ledger is separate from this message window.
+
+The history/search summarization switches above apply to the standard chat path.
+They do not enable rolling summaries in orchestration, which uses a bounded
+request-resolution step instead. See [Orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
+
 ## Feedback & Alerts {#feedback-alerts}
 
 ### User Feedback {#user-feedback-section}

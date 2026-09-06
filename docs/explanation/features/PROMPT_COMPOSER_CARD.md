@@ -5,7 +5,8 @@ into the box.
 
 **Implemented in version:** 0.261.092
 **Inline answers implemented in version:** 0.261.096
-**Current feature version:** 0.261.096 (`application/single_app/config.py`)
+**Current feature version:** 0.261.099 (`application/single_app/config.py`)
+**Enhanced in version:** 0.261.096 (`application/single_app/config.py`)
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal prompts,
 `enable_group_workspaces` and `enable_public_workspaces` to reach those scopes.
@@ -32,19 +33,27 @@ message is actually sent.
 
 ## The card
 
-Collapsed, the card is one line: the prompt's name, the workspace it came from,
-and how many of its variables still need a value. That last part is what is worth
-knowing at a glance — an unfilled placeholder is the thing that would otherwise
-reach the model as a literal `{{customer}}`.
+The header shows the prompt's name, available workspace label, and variable
+status. Variable fields appear when a prompt is attached; their **Variables**
+disclosure is independent of the scrollable preview. Collapsing a long preview
+therefore does not hide the inputs needed to use it.
 
-Expanded, it shows a field for each variable and the prompt exactly as it will be
-sent. **Edit** turns the prompt text into an editable box and marks the card
+**Edit** turns the prompt text into an editable box and marks the card
 **Edited**; **Reset** puts the saved wording back. An edit applies to the one
 message and is never written back to the saved prompt, so adjusting the wording
 for a particular case does not change it for everyone else using it.
 
 **Remove** takes the prompt off. Nothing you have typed is disturbed, because the
 prompt was never in the message box to begin with.
+
+The picker includes **Tip: type / in your message to choose a prompt**, matching
+the Documents picker's `#` guidance. The shortcut is forward slash, not backslash.
+
+## Enhanced in version: **0.261.096**
+
+This release makes variables discoverable, adds knowledge-backed filling, and
+preserves prompt metadata on streaming, planned, and shared messages. The composer
+and sent message use the same card presentation.
 
 ## What gets sent
 
@@ -71,6 +80,10 @@ the following: `{{composer}}`". Such a prompt has already consumed what you type
 so it is not appended underneath as well. Without this it would be sent twice,
 once inside the instruction and once after it.
 
+The text typed in the composer is recorded separately for display. It remains
+visible outside the sent card even when the template places it inside the
+prompt; the model still receives it only once.
+
 ## Variables
 
 Variables use the syntax the V2 prompt workbench already parses, unchanged:
@@ -90,31 +103,107 @@ message as it is actually being sent rather than as it looked when the prompt wa
 picked. That is what makes `{{composer}}` work, and it means editing a variable
 after typing changes what is sent, not merely what the preview shows.
 
+**Insert variable** is available in both the turn-local editor and the saved-prompt
+editor. It explains the built-ins and creates custom fields with optional
+defaults at the cursor. An unavailable built-in shows a context hint rather
+than an editable field that cannot accept changes. `selected_documents` uses
+the names of the documents explicitly selected in the composer.
+
+### Find values in knowledge
+
+**Find in knowledge** fills an unanswered custom field. **Fill missing fields**
+looks up the unanswered custom fields together, without replacing populated
+fields or defaults. Lookup starts only when requested, never on every keystroke
+or automatically when a prompt is selected.
+
+By default, lookup uses the documents, tags, and workspaces selected in the
+composer. **Choose knowledge** opens the existing document/context picker.
+**Search all accessible knowledge for AI fill** explicitly widens the lookup,
+without changing the document selection for the subsequent chat message.
+
+A grounded value is applied immediately and marked **AI-filled**. **Sources**
+shows its supporting document excerpts; **Undo** restores the previous value.
+Conflicting findings offer choices. A missing result or service error leaves
+the field unanswered rather than inventing an answer from general model
+knowledge. Editing a field, changing the prompt or sources, cancelling, or
+sending prevents late lookup results from overwriting newer work.
+
+The helper uses `POST /api/v2/prompts/fill-variables`, existing document retrieval,
+and the configured default model connection, falling back to the existing
+planner/default-chat client resolution. It does not use the model or agent
+selected for the eventual answer. It does not start a chat turn, create
+an orchestration run, invoke an agent's tools, or search the public web.
+Chat orchestration does not have to be enabled.
+Stored underlying-model metadata determines supported token parameters, so a
+friendly deployment alias does not hide a reasoning model's requirements.
+
+Each context chip retains its workspace identity in the request. A tag selected
+from one workspace therefore does not include same-name tags elsewhere, and a
+whole-workspace chip expands only its own workspace. Current access, file-sharing,
+and applicable assigned-knowledge restrictions are still enforced.
+Composer and assigned-knowledge predicates are intersected before the search
+cutoff; unassigned hits cannot consume the result budget. Workspace unions
+accept an ownership or approved-share access path without being blocked by a
+pending share in a different selected group.
+
+Known values and defaults help identify the intended subject, such as a company
+whose contract date is missing. They are context, not evidence. Returned values
+must be spans from supporting source quotes, allowing whitespace/case differences;
+this helper does not invent or freely paraphrase a value.
+
+Lookup is bounded. Oversized requests and context that cannot fit the search
+budget produce a visible error instead of silently dropping the subject:
+
+| Limit | Value |
+| --- | --- |
+| Fields per lookup | 12 |
+| Request body | 64 KB |
+| Prompt / draft text | 20,000 / 8,000 characters |
+| Context chips | 128 |
+| Retrieval | At most 12 searches, 12 hits each |
+| Evidence sent for extraction | At most 18 excerpts / 20 KB |
+| Search query, including known subject context | 3,000 characters |
+| Model input / output budget | 48 KB / 4,096 tokens |
+| Model timeout / retries | 30 seconds / zero retries |
+
+### Sending with unanswered fields
+
+Sending reveals a warning with **Review fields**, **Fill missing fields**, and
+**Send anyway**. The last option deliberately retains unresolved placeholders
+as literal text; it does not silently remove them. Permission to send unresolved
+values applies only to that send. Filling variables never sends the message
+automatically.
+
 ### Values are remembered in this browser only
 
-Values you supply are stored in `localStorage`, keyed by prompt *and* variable, and
-are never sent to the server. "Name" means a customer in one prompt and a product
-in another, and a store keyed on the bare name would offer one back for the other.
+The remembered-values cache uses `localStorage`, keyed by prompt *and* variable;
+that cache is not synchronized to the server. Submitted values still travel
+in the resolved prompt and message metadata, and a requested AI lookup sends
+its prompt/draft context to the configured service. "Name" can mean a customer
+in one prompt and a product in another, so a cache keyed on the bare name would
+offer one back for the other.
 
 Three rules protect against a pre-filled value being sent without being read:
 
-1. Anything filled in for you is badged — **Reused** or **From this chat** — and
-   clearable in one click, so it never reads as something you typed.
+1. Defaults, reused values, built-ins, and AI-filled values are visibly identified.
+   Custom values can be cleared; AI fills can also be undone. Built-ins remain
+   read-only because they describe the current chat context.
 2. Values from the conversation, such as the last assistant reply, are offered as
    chips you click. Nothing takes them on its own: that reply can quote an
    uploaded document, and document text becoming part of your next instruction is
    how prompt injection gets a foothold.
-3. In a shared conversation nothing is pre-filled at all, because a value
-   remembered from a private chat would become visible to every participant the
-   moment the message is sent.
+3. Shared conversations do not reuse private remembered values. Defaults and
+   current-chat built-ins still work, and the sender may explicitly request AI
+   filling. Values included in a sent shared message are visible to participants.
 
 Values are remembered only once the message is on its way, so a prompt you filled
-in and then removed leaves nothing behind.
+in and then removed leaves nothing behind. AI-filled values are not automatically
+added to this cache.
 
 ## The sent message
 
-A message sent with a prompt shows the prompt as a collapsed **Prompt: <name>**
-row above your own words, expanding to the full text. Your question is the thing
+A message sent with a prompt shows a compact, named card above your own words,
+expanding to the full text in a bounded scroll area. Your question is the thing
 to read; the instructions above it are what you already knew when you sent it.
 
 The prompt stays visible rather than being dropped so the reply can still be
@@ -128,6 +217,10 @@ Messages sent before this existed render exactly as they did. So does a message
 that has been edited since, or one whose stored content does not begin with the
 prompt it claims: the split is only made when the pieces still add up, and is
 abandoned rather than guessed at otherwise.
+
+Streaming, orchestration, and collaboration preserve the same snapshot, including
+the prompt's turn-local wording and composer text. Reloading does not re-resolve
+dates, fetch a changed saved prompt, or flatten the card.
 
 ## Orchestration
 
@@ -154,7 +247,7 @@ has said what kind of work it is well before that point.
 ### Prompts in inline clarification answers
 
 An inline follow-up question accepts `/` saved prompts through the same attached card.
-Expand it to fill variables or edit its wording for that answer. `{{composer}}` means the
+Use its variable fields or edit its wording for that answer. `{{composer}}` means the
 text in that answer editor, not whatever is waiting in the main composer.
 
 Each answer has its own prompt and variable values, so moving between questions does not
@@ -170,8 +263,8 @@ Cancel send neither the prompt nor the draft answer. These boundaries are covere
 
 ### Prompts on ordinary messages
 
-`prompt_selection` on the user message keeps its original four fields and gains
-four more:
+`prompt_info` travels with the send request. A shared validator builds the
+compatible `metadata.prompt_selection` snapshot on the stored user message:
 
 | Field | What it holds |
 | --- | --- |
@@ -179,11 +272,15 @@ four more:
 | `original_prompt_text` | The prompt as saved |
 | `prompt_variables` | The values supplied, excluding empty ones |
 | `prompt_edited` | Whether the wording was changed for this message |
-| `user_text` | What was typed under the prompt |
+| `user_text` | The appended tail, empty when the template consumes the composer text |
+| `template_content` | The active template, including edits for this turn |
+| `composer_text` | The actual words typed in the message box |
+| `composer_embedded` | Whether the active template places those words itself |
+| `scope_type`, `scope_name` | Available prompt workspace descriptors |
 
-`user_text` is what allows a sent message to be drawn as a prompt plus your own
-words: the stored content is the two concatenated, and nothing else can tell them
-apart.
+`composer_text` and `composer_embedded` distinguish the display from the model
+composition without appending an embedded message twice. The renderer checks
+that the snapshot matches stored content before separating the two.
 
 A client that does not send these fields reads back exactly as it always did.
 
@@ -197,7 +294,13 @@ A client that does not send these fields reads back exactly as it always did.
 | `lib/promptRequest.ts` | Composition and the `prompt_info` contract |
 | `lib/messagePrompt.ts` | Splitting a sent message back apart |
 | `lib/promptVariables.ts` | The parser, unchanged |
-| `lib/promptVariableMemory.ts` | Remembered values, unchanged |
+| `lib/promptVariableMemory.ts` | Browser-local remembered values, treating prompt and variable names as data keys |
+| `components/chat/PromptCard.tsx` | Shared draft and sent-message presentation |
+| `components/prompts/PromptVariablePicker.tsx` | Built-in discovery and custom variable insertion |
+| `lib/usePromptKnowledgeFill.ts` | Lookup lifecycle, cancellation, and stale-result protection |
+| `lib/promptKnowledge.ts` | Typed knowledge-fill request and response |
+| `functions_prompt_variables.py` | Scoped, grounded variable extraction |
+| `functions_prompt_metadata.py` | Shared template-key parsing and side-effect-free snapshot validation |
 
 `PromptVariablesDialog.tsx` was retired. Its rules did not go with it: they live
 in `usePromptVariableValues.ts` and `PromptVariableField.tsx`, which the card
@@ -212,6 +315,11 @@ and not the other.
 | `functional_tests/test_v2_prompt_composer_card_logic.ts` | Behaviour: composition order, the `{{composer}}` exception, and every `readMessagePrompt` fallback |
 | `functional_tests/test_orchestration_prompt_instruction.py` | The planner sees capped wording, triage counts a prompt, plan inputs name it |
 | `functional_tests/test_v2_prompts_workbench.py` | The workbench, the slash menu, and the shared pre-fill rules |
+| `functional_tests/test_prompt_variable_knowledge_fill.py` | Grounding, authorization, scope, bounded requests, and failure behavior |
+| `functional_tests/test_v2_prompt_attachment_persistence.py` | Executed snapshot/persistence coverage across chat, streaming, document actions, orchestration, and collaboration |
+| `ui_tests/test_v2_prompt_composer_experience.py` | Real composer, editor, send, and AI-fill browser workflows |
+
+For a task-oriented walkthrough, see [Use prompts in chat]({{ '/guides/use-prompts-in-chat/' | relative_url }}).
 
 ## Known limitations
 
