@@ -1,8 +1,8 @@
 # test_orchestration_actions_admin.py
 """
 Functional coverage for the orchestration action admin opt-in.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.098
+Implemented in: 0.261.098
 
 Validate the declarative schema, template-form normalizer and generic V2 partial
 updates without initializing the application or contacting Azure.

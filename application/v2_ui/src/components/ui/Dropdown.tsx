@@ -44,6 +44,8 @@ interface DropdownProps {
     align?: 'left' | 'right';
     /** Renders the trigger as an icon-sized button with the label as a tooltip. */
     compact?: boolean;
+    /** Optional picker-specific guidance, outside the listbox options. */
+    hint?: React.ReactNode;
 }
 
 export function Dropdown({
@@ -58,6 +60,7 @@ export function Dropdown({
     title,
     align = 'left',
     compact = false,
+    hint,
 }: DropdownProps) {
     const [open, setOpen] = useState(false);
     // These pickers sit in the composer at the bottom of the viewport, where a menu that
@@ -160,75 +163,81 @@ export function Dropdown({
 
             {open && (
                 <div
-                    role="listbox"
                     style={{ maxHeight }}
                     className={clsx(
-                        'glass-modal absolute z-50 w-72 overflow-y-auto rounded-2xl p-1.5',
+                        'glass-modal absolute z-50 flex w-72 flex-col rounded-2xl p-1.5',
                         placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
                         align === 'right' ? 'right-0' : 'left-0',
                     )}
                 >
-                    {clearable && value !== undefined && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                                onChange(undefined);
-                                setOpen(false);
-                            }}
-                            className="w-full rounded-lg px-3 py-2 text-left text-sm text-text-3 hover:bg-surface-2"
-                        >
-                            Clear selection
-                        </button>
-                    )}
+                    <div role="listbox" aria-label={`${placeholder} options`} className="min-h-0 overflow-y-auto">
+                        {clearable && value !== undefined && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onChange(undefined);
+                                    setOpen(false);
+                                }}
+                                className="w-full rounded-lg px-3 py-2 text-left text-sm text-text-3 hover:bg-surface-2"
+                            >
+                                Clear selection
+                            </button>
+                        )}
 
-                    {options.length === 0 && (
-                        <p className="px-3 py-6 text-center text-sm text-text-3">
-                            Nothing available
-                        </p>
-                    )}
+                        {options.length === 0 && (
+                            <p className="px-3 py-6 text-center text-sm text-text-3">
+                                Nothing available
+                            </p>
+                        )}
 
-                    {options.map((option) => {
-                        const showGroupHeading = option.group && option.group !== lastGroup;
-                        lastGroup = option.group;
-                        const isSelected = option.value === value;
+                        {options.map((option) => {
+                            const showGroupHeading = option.group && option.group !== lastGroup;
+                            lastGroup = option.group;
+                            const isSelected = option.value === value;
 
-                        return (
-                            <div key={option.value}>
-                                {showGroupHeading && (
-                                    <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
-                                        {option.group}
-                                    </p>
-                                )}
-                                <button
-                                    type="button"
-                                    role="option"
-                                    aria-selected={isSelected}
-                                    onClick={() => {
-                                        onChange(option.value);
-                                        setOpen(false);
-                                    }}
-                                    className={clsx(
-                                        'flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left',
-                                        isSelected ? 'bg-accent-soft' : 'hover:bg-surface-2',
+                            return (
+                                <div key={option.value}>
+                                    {showGroupHeading && (
+                                        <p className="px-3 pt-3 pb-1 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
+                                            {option.group}
+                                        </p>
                                     )}
-                                >
-                                    <span className="min-w-0 flex-1">
-                                        <span className="block truncate text-sm text-text-1">
-                                            {option.label}
-                                        </span>
-                                        {option.description && (
-                                            <span className="mt-0.5 block line-clamp-2 text-xs text-text-3">
-                                                {option.description}
-                                            </span>
+                                    <button
+                                        type="button"
+                                        role="option"
+                                        aria-selected={isSelected}
+                                        onClick={() => {
+                                            onChange(option.value);
+                                            setOpen(false);
+                                        }}
+                                        className={clsx(
+                                            'flex w-full items-start gap-2 rounded-lg px-3 py-2 text-left',
+                                            isSelected ? 'bg-accent-soft' : 'hover:bg-surface-2',
                                         )}
-                                    </span>
-                                    {isSelected && (
-                                        <Check size={15} className="mt-0.5 shrink-0 text-accent" />
-                                    )}
-                                </button>
-                            </div>
-                        );
-                    })}
+                                    >
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate text-sm text-text-1">
+                                                {option.label}
+                                            </span>
+                                            {option.description && (
+                                                <span className="mt-0.5 block line-clamp-2 text-xs text-text-3">
+                                                    {option.description}
+                                                </span>
+                                            )}
+                                        </span>
+                                        {isSelected && (
+                                            <Check size={15} className="mt-0.5 shrink-0 text-accent" />
+                                        )}
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {hint && (
+                        <div className="mt-1 shrink-0 border-t border-edge px-3 py-2 text-[11px] text-text-3">
+                            {hint}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

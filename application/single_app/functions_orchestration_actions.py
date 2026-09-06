@@ -1,7 +1,7 @@
 # functions_orchestration_actions.py
 """Bounded knowledge collection with one governed action, without a configured agent.
 
-Version: 0.261.096
+Version: 0.261.098
 """
 
 import asyncio

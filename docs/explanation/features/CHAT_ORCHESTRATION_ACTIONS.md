@@ -1,8 +1,8 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.096**
+Version: **0.261.098**
 
-Implemented in version: **0.261.096**
+Implemented in version: **0.261.098**
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -57,6 +57,8 @@ direct action selection; agent delegation continues through **Ask an agent**.
 
 The top-level planner chooses the action and task; the focused loop chooses functions
 and binds their arguments. Avoiding agent setup does **not** mean avoiding model calls.
+Conversational follow-ups retain their resolved request and bounded, authorized
+conversation reference when handed to an action, including accepted clarification answers.
 
 The existing `/api/v2/orchestration/plan` and `/api/v2/orchestration/run` endpoints and
 plan approval/editing flow remain the entry points. There is no second action allowlist,

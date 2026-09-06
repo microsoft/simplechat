@@ -133,8 +133,10 @@ plan:
   factual questions.
 - **Agents** load the agent's tools, connections and instructions before running. That
   setup is the expensive part of the turn, so a plan uses at most one agent.
-- **Reading linked pages** only appears when the user's message actually contains a link,
-  and only reads links the user pasted — never one the model produced.
+- **Reading linked pages** uses links the user pasted in the current request or an
+  explicitly referenced recent user message, including links supplied in accepted
+  clarification answers. A rewritten request, a clarification question, or an earlier
+  assistant suggestion cannot authorize a new link.
 
 Reading linked pages and deep research also honour the `UrlAccessUser` and
 `DeepResearchUser` app roles where your deployment requires them. A user without the role
@@ -189,10 +191,21 @@ and cancellation. No output phase or composer action picker is added.
 
 Bounds on a single run.
 
-The two ledger settings decide how much of a conversation's earlier work the planner can
-see. This is what lets a follow-up question reuse what an earlier turn already found
-instead of searching for it again, and what stops the assistant asking a question the user
-has already answered. Setting the run count to zero makes every turn plan from scratch.
+The two ledger settings decide how much earlier orchestration activity the planner can
+see. They help it recognize previous searches and answered questions, but the ledger is
+not the conversation's actual text or a cache of verified source evidence. Setting the run
+count to zero disables that activity summary, not recent conversational context.
+
+Recent context uses **Conversation History Limit** from Chat settings. Orchestration
+loads eligible user/assistant messages on the server, rounds the count up to an even
+number, and applies hard ceilings of 50 messages and 16 KiB of serialized history.
+Zero disables historical messages. Masked text and inactive attempts are excluded.
+There are no orchestration rolling summaries or cross-chat memory.
+
+The contextualized request and its history are retained with each plan, so all approval
+modes interpret the same request. If a referenced message is edited or hidden before
+execution or synthesis, the user must create a new plan rather than run against stale
+context.
 
 #### Settings
 
@@ -202,7 +215,7 @@ has already answered. Setting the run count to zero makes every turn plan from s
 | Maximum re-plans per run | Limits how often a step may send the plan back to be reconsidered after discovering something. Supported range is 0-5. | 2 | `chat_orchestration_max_replans` |
 | Step timeout | How long a single step may run before it is abandoned. Supported range is 30-1800 seconds. | 180 | `chat_orchestration_step_timeout_seconds` |
 | Run timeout | How long a whole run may take before it is abandoned. Supported range is 60-7200 seconds. | 900 | `chat_orchestration_total_timeout_seconds` |
-| Earlier runs shown to the planner | How many of the conversation's previous runs the planner can see. Zero makes every turn plan from scratch. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
+| Earlier runs shown to the planner | How many previous run summaries the planner can see. Zero disables the activity ledger, not recent message history. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
 | Earlier-run summary size | Caps the size of that summary. Older runs lose their detail first when the budget is reached. Supported range is 1024-131072 bytes. | 16384 | `chat_orchestration_ledger_max_bytes` |
 
 ### Planner Model {#chat-orchestration-planner-model-section}
@@ -213,6 +226,10 @@ Planning is a short, structured task rather than a conversational one, so a smal
 faster deployment usually does it well and costs less per message than the model that
 writes the answer. Leaving the deployment blank plans with the deployment's default chat
 model, which means orchestration works as soon as it is switched on.
+
+The same deployment resolves substantive follow-ups before retrieval. This adds a small
+completion when usable conversation history or clarification answers are present.
+First turns without history and simple acknowledgments skip that call.
 
 #### Settings
 
@@ -251,12 +268,14 @@ model, which means orchestration works as soon as it is switched on.
 | Plans never mention documents | No workspace capability is enabled, or nothing in the user's documents matched the question. | Confirm at least one workspace type is enabled, and that the user has documents that have finished processing. |
 | Every plan is a single answering step | Capabilities are narrowed to answering only, or the retrieval capabilities are disabled elsewhere. | Review Capabilities on this page, then confirm document search and web search are enabled in their own settings groups. |
 | A plan is smaller than expected | The step cap trimmed it. | Raise Maximum steps in a plan, or ask a narrower question. |
-| A question is asked that was already answered | The ledger is disabled or too small to reach the earlier turn. | Raise Earlier runs shown to the planner, and confirm the summary size is not set to its minimum. |
+| A follow-up loses its subject | The relevant message is outside the history window, masked, inactive, or truncated. | Check Conversation History Limit in Chat settings and whether the earlier turn is still eligible. Repeat the missing detail if it is outside the retained context. |
+| A question is asked that was already answered | The earlier answer may be outside retained message history and the activity ledger. | Check the history window and ledger limits; the ledger alone does not contain the full earlier answer. |
+| A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
 | Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
 | An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
-| A plan proposed reading a link but found nothing | The link was produced by the model rather than pasted by the user. | Only links present in the user's own message are read. Ask the user to paste the URL into their message. |
+| A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
 
 ## Related
 

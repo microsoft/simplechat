@@ -18,6 +18,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupAgentDelegationPage } from './pages/GroupAgentDelegationPage';
+import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
 
 function BootScreen() {
     return (
@@ -72,6 +73,10 @@ export function App() {
         (state) => (state.settings.fontSizePreference as string) || 'm',
     );
     const location = useLocation();
+
+    useEffect(() => {
+        clearWorkspaceEditorDrafts();
+    }, [data?.user?.id, authExpired]);
 
     useEffect(() => {
         initializeTheme();
@@ -172,6 +177,7 @@ export function App() {
                 {/* Sections are real paths rather than a query parameter, so a link to one
                     reads as what it is and survives being shared. */}
                 <Route path="/workspace/:section" element={<WorkspacePage />} />
+                <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
                 <Route

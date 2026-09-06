@@ -1,8 +1,8 @@
 # test_orchestration_action_planning.py
 """Functional coverage for knowledge-phase action planning and opt-in.
 
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.098
+Implemented in: 0.261.098
 
 Exercises the real registry, planner and validator with model/storage seams mocked.
 """
@@ -175,14 +175,22 @@ def test_elicitation_retry_keeps_request_gates(modules, monkeypatch):
 
 def test_route_combines_answer_and_action_usage_without_dropping_either():
     tree = ast.parse((APP_ROOT / 'route_backend_orchestration.py').read_text(encoding='utf-8'))
-    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                    and node.name == '_combined_token_usage')
+    functions = [
+        node for node in tree.body if isinstance(node, ast.FunctionDef)
+        and node.name in ('_combined_token_usage', '_sum_token_usage')
+    ]
     namespace = {}
-    exec(compile(ast.Module(body=[function], type_ignores=[]), '<usage-helper>', 'exec'), namespace)
-    action_usage = {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), '<usage-helper>', 'exec'), namespace)
+    action_usage = {
+        'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15,
+        'agent_breakdown': [{'agent': 'specialist', 'usage': {'total_tokens': 15}}],
+    }
     assert namespace['_combined_token_usage'](
         {'prompt_tokens': 2, 'completion_tokens': 3, 'total_tokens': 5}, action_usage,
-    ) == {'prompt_tokens': 12, 'completion_tokens': 8, 'total_tokens': 20}
+    ) == {
+        'prompt_tokens': 12, 'completion_tokens': 8, 'total_tokens': 20,
+        'agent_breakdown': action_usage['agent_breakdown'],
+    }
     assert action_usage['total_tokens'] == 15
 
 

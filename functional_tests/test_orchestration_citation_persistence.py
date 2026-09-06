@@ -1,10 +1,10 @@
 # test_orchestration_citation_persistence.py
 """
 Functional test for orchestration citation persistence.
-Version: 0.261.096
+Version: 0.261.098
 Implemented in: 0.261.087
 
-Action tool-citation channel coverage added in: 0.261.096
+Action tool-citation channel coverage added in: 0.261.098
 
 An orchestrated answer searched documents, found the right material, and cited it in its
 prose -- and the Documents drawer still said "No documents used yet".

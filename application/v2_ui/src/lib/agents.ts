@@ -31,14 +31,14 @@ function text(value: unknown): string {
 /**
  * Stable key identifying an agent within the picker.
  *
- * Agent catalog records carry `id`; `name` is the fallback for a record without one, and is
- * what the server matches on when no id is supplied.
+ * Prefer the scope-qualified catalog key. Older records still use their id/name, and old
+ * selections remain readable so a catalogue refresh does not discard a user's choice.
  */
 export function agentSelectionKey(agent: AgentRecord | undefined): string {
     if (!agent) {
         return '';
     }
-    return text(agent.id) || text(agent.name);
+    return text(agent.catalog_key) || text(agent.id) || text(agent.name);
 }
 
 /** Find the catalog record a picker selection refers to. */
@@ -49,7 +49,8 @@ export function findAgent(
     if (!selection || !agents?.length) {
         return undefined;
     }
-    return agents.find((agent) => agentSelectionKey(agent) === selection);
+    return agents.find((agent) => agentSelectionKey(agent) === selection) ??
+        agents.find((agent) => text(agent.id) === selection || (!agent.id && text(agent.name) === selection));
 }
 
 /**
@@ -73,8 +74,8 @@ export function buildAgentInfo(agent: AgentRecord | undefined): AgentInfo | null
         id: id || null,
         name,
         display_name: text(agent.display_name) || name,
-        is_global: agent.is_global === true,
-        is_group: agent.is_group === true,
+        is_global: agent.is_global === true || agent.scope_type === 'global',
+        is_group: agent.is_group === true || agent.scope_type === 'group',
         group_id: text(agent.group_id) || null,
         group_name: text(agent.group_name) || null,
     };
