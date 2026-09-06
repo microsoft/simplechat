@@ -1,6 +1,6 @@
 {
-  "version": "0.261.096",
-  "implemented_in": "0.261.096",
+  "version": "0.261.099",
+  "implemented_in": "0.261.099",
   "purpose": "Public synthetic planner-selection evaluation; no real conversations or credentials.",
   "rubric": {
     "review_method": "Human semantic review of each proposed and validated plan, its task-specific rationale, available evidence, and cost. These annotations are not sent to the planner.",
@@ -112,6 +112,7 @@
       "acceptable_choices": ["respond"],
       "prior_messages": [
         {
+          "id": "synthetic-prior-assistant",
           "role": "assistant",
           "content": "Our completed comparison: fictional Museum A has more indoor exhibits; fictional Park B has more walking space. Both have picnic areas. We already checked the supplied activity descriptions. The remaining choice is indoor comfort versus outdoor time."
         }

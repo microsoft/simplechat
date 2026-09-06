@@ -1288,6 +1288,7 @@ def get_settings(use_cosmos=False, include_source=False):
         # This is the plan/approve/execute layer over chat, and an administrator reading
         # the settings document should not have to guess which is which.
         'enable_chat_orchestration': False,
+        'enable_chat_orchestration_actions': False,
         'chat_orchestration_default_approval_mode': 'manual',
         'chat_orchestration_timed_approval_seconds': 10,
         'chat_orchestration_allow_user_approval_override': True,

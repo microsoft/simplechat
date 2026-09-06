@@ -2,8 +2,8 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 Only production definitions are executed, never their application imports. In particular,
 config.py, the source-review browser stack, and Azure clients must not be imported here.
@@ -79,11 +79,18 @@ def planner_runtime():
     }))
     registry = _definitions(REGISTRY_FILE)
     schema = _definitions("functions_orchestration_schema.py", seed=registry)
-    planner = _definitions(PLANNER_FILE, seed={**registry, **schema})
-    context = _definitions("functions_orchestration_context.py", seed=registry, names={
-        "HISTORY_MAX_TURNS", "HISTORY_TURN_LENGTH", "SELECTED_PROMPT_LENGTH",
-        "_text", "_string_list", "_extract_urls", "_selected_prompt",
-        "build_conversation_signals", "build_planner_context",
+    delegation = _definitions("functions_agent_delegation.py", names={"AGENT_PLUGIN_TYPE"})
+    catalog = _definitions("functions_action_catalog.py", seed=delegation)
+    context = _definitions("functions_orchestration_context.py", seed={
+        **registry, "build_action_planner_projection": catalog["build_action_planner_projection"],
+    }, names={
+        "SELECTED_PROMPT_LENGTH", "_text", "_string_list", "_history_text",
+        "_extract_urls", "_selected_prompt", "build_conversation_signals",
+        "build_planner_context", "conversation_reference_messages",
+    })
+    planner = _definitions(PLANNER_FILE, seed={
+        **registry, **schema,
+        "conversation_reference_messages": context["conversation_reference_messages"],
     })
 
     def no_configured_client(settings):

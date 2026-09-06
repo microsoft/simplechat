@@ -39,7 +39,7 @@ export function ConversationBadges({
     );
     const categories = useBootstrapStore(
         (state) =>
-            (state.data?.settings?.document_classification_categories ?? []) as
+            state.data?.settings?.document_classification_categories as
                 | ClassificationCategory[]
                 | undefined,
     );

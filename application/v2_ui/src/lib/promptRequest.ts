@@ -92,15 +92,38 @@ export function buildOutgoingMessage(
  * rearranges itself, which reads as a glitch rather than as an update.
  */
 export function promptSelectionMetadata(promptInfo: Json): Json {
-    const info = (promptInfo ?? {}) as Record<string, unknown>;
+    const info = promptInfo && typeof promptInfo === 'object' && !Array.isArray(promptInfo)
+        ? promptInfo
+        : {};
+    const text = (value: unknown) => typeof value === 'string' ? value : null;
+    const template = text(info.template_content);
+    const activeKeys = template === null
+        ? null
+        : new Set(parsePromptVariables(template).map((variable) => variable.key));
+    const variables = info.variables && typeof info.variables === 'object' && !Array.isArray(info.variables)
+        ? info.variables as Record<string, unknown>
+        : {};
     return {
-        prompt_id: info.id ?? null,
-        prompt_name: info.name ?? null,
-        selected_prompt_text: info.content ?? '',
-        original_prompt_text: info.original_content ?? '',
-        prompt_variables: info.variables ?? {},
-        prompt_edited: Boolean(info.edited),
-        user_text: info.user_text ?? '',
+        selected_prompt_index: typeof info.index === 'string' || Number.isInteger(info.index)
+            ? info.index
+            : null,
+        prompt_id: text(info.id),
+        prompt_name: text(info.name),
+        selected_prompt_text: text(info.content),
+        original_prompt_text: text(info.original_content),
+        prompt_variables: Object.fromEntries(Object.entries(variables).filter(
+            ([key, value]) => typeof value === 'string' && value.trim()
+                && (activeKeys === null || activeKeys.has(key)),
+        )),
+        prompt_edited: info.edited === true,
+        user_text: text(info.user_text)?.trim() ?? null,
+        ...('template_content' in info ? { template_content: info.template_content } : {}),
+        ...('composer_text' in info ? {
+            composer_text: text(info.composer_text)?.trim() ?? info.composer_text,
+        } : {}),
+        ...('composer_embedded' in info ? { composer_embedded: info.composer_embedded } : {}),
+        ...('scope_type' in info ? { scope_type: text(info.scope_type) } : {}),
+        ...('scope_name' in info ? { scope_name: text(info.scope_name) } : {}),
     };
 }
 
@@ -108,31 +131,42 @@ export function promptSelectionMetadata(promptInfo: Json): Json {
  * What the server is told about the prompt behind a message.
  *
  * `content` is the resolved text that actually went to the model, `original_content` is the
- * prompt as saved, and `user_text` is what was typed under it. The last one is what lets the
- * sent message be drawn as a collapsed prompt plus your own words rather than one blob: the
- * stored message content is the two concatenated, and nothing else can tell them apart.
+ * prompt as saved, and `user_text` is the appended tail. `composer_text` keeps the actual
+ * words typed even when `{{composer}}` placed them inside the prompt instead.
  */
 export function buildPromptInfo({
     attached,
     promptText,
     userText,
+    composerText = userText,
     values,
 }: {
     attached: AttachedPrompt;
     promptText: string;
     userText: string;
+    composerText?: string;
     values: Record<string, string>;
 }): Json {
+    const template = attachedPromptContent(attached);
+    const activeKeys = new Set(parsePromptVariables(template).map((variable) => variable.key));
+    const composerEmbedded = activeKeys.has('composer');
     return {
         id: attached.id,
         name: attached.name,
         content: promptText,
         original_content: attached.originalContent,
-        // Only what was supplied. Empty entries would read as answered placeholders.
+        template_content: template,
+        composer_text: String(composerText ?? '').trim(),
+        composer_embedded: composerEmbedded,
+        scope_type: attached.scopeType ?? null,
+        scope_name: attached.scopeName ?? null,
+        // Removed fields and remembered values for other prompts are not part of this turn.
         variables: Object.fromEntries(
-            Object.entries(values ?? {}).filter(([, value]) => String(value ?? '').trim()),
+            Object.entries(values ?? {}).filter(
+                ([key, value]) => activeKeys.has(key) && typeof value === 'string' && value.trim(),
+            ),
         ),
         edited: attachedPromptIsEdited(attached),
-        user_text: String(userText ?? '').trim(),
+        user_text: composerEmbedded ? '' : String(userText ?? '').trim(),
     };
 }

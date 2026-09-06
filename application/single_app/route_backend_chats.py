@@ -111,6 +111,7 @@ from functions_service_health import (
     SemanticSearchQuotaExceededError,
 )
 from functions_content_safety import build_content_safety_violation_message
+from functions_prompt_metadata import build_prompt_selection_metadata
 from functions_settings import *
 from functions_assigned_knowledge import (
     ASSIGNED_KNOWLEDGE_USER_ACTION_ANALYZE,
@@ -15378,6 +15379,9 @@ def register_route_backend_chats(bp):
             assigned_knowledge_filters=assigned_knowledge_filters,
             streaming_enabled=callable(publish_background_event),
         )
+        prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), user_message)
+        if prompt_selection:
+            user_metadata['prompt_selection'] = prompt_selection
         if auto_linked_chat_upload_document_ids:
             user_metadata['workspace_search']['auto_linked_chat_upload_document_ids'] = auto_linked_chat_upload_document_ids
             user_metadata['workspace_search']['auto_linked_chat_upload_document_count'] = len(auto_linked_chat_upload_document_ids)
@@ -17361,25 +17365,9 @@ def register_route_backend_chats(bp):
                         'search_enabled': False
                     }
 
-                # Prompt selection (extract from message if available)
-                prompt_info = data.get('prompt_info')
-                if prompt_info:
-                    # The first four keys are the original contract and are unchanged. The rest
-                    # describe a prompt that was attached to the turn rather than pasted into
-                    # it: `user_text` is what was typed underneath, which is the only thing that
-                    # can tell the prompt and the message apart once they are concatenated into
-                    # the stored content. A client that does not send them is a client that
-                    # pasted, and it reads back exactly as it always did.
-                    user_metadata['prompt_selection'] = {
-                        'selected_prompt_index': prompt_info.get('index'),
-                        'selected_prompt_text': prompt_info.get('content'),
-                        'prompt_name': prompt_info.get('name'),
-                        'prompt_id': prompt_info.get('id'),
-                        'original_prompt_text': prompt_info.get('original_content'),
-                        'prompt_variables': prompt_info.get('variables') or {},
-                        'prompt_edited': bool(prompt_info.get('edited', False)),
-                        'user_text': prompt_info.get('user_text')
-                    }
+                prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), user_message)
+                if prompt_selection:
+                    user_metadata['prompt_selection'] = prompt_selection
 
                 # Agent selection (from frontend if available, override settings-based selection)
                 agent_selection_metadata = _build_agent_selection_metadata(
@@ -21626,6 +21614,9 @@ def register_route_backend_chats(bp):
                     user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
 
                     user_metadata = {}
+                    prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), user_message)
+                    if prompt_selection:
+                        user_metadata['prompt_selection'] = prompt_selection
                     current_user = get_current_user_info()
                     if current_user:
                         user_metadata['user_info'] = {

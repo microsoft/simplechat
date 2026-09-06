@@ -15,6 +15,9 @@ serve file sources and actions.
 
 **Implemented in version:** 0.261.042
 
+**Agent/action authoring expanded in version:** 0.261.096, recorded in
+`application/single_app/config.py`.
+
 ### Dependencies
 
 | Dependency | Purpose |
@@ -153,23 +156,23 @@ What each section supports in this release:
 | Documents | Upload, search, filter by tag, delete |
 | File sources | List, sync now, run history, delete |
 | Prompts | Full create, edit and delete |
-| Agents | List, create, edit name, description and instructions, delete |
-| Actions | List, delete |
+| Agents | Full-page authoring for all permitted agent types, models, knowledge, actions, instructions, and templates; use in chat |
+| Actions | Unified list and full-page create/edit/delete, with native type-specific configuration |
 | Workflows | List, run, cancel, run history, delete |
 | Identities | List, delete |
 | Endpoints | List, enable or disable, delete |
 
 ## Known limitations
 
-Authoring surfaces that are specific to a connector or a schedule are not rebuilt yet and
-remain in the classic workspace. Each section links to it rather than offering a control
-that does nothing.
+Personal agent and action authoring no longer requires the classic workspace.
+See [V2 Workspace Agent and Action Authoring](V2_WORKSPACE_AGENTS_ACTIONS.md) for
+editor navigation, draft handoff, and credential-preserving saves.
 
-- Action configuration, which differs across more than twenty connector types.
+The following separate management surfaces still use their existing editors:
+
 - The workflow designer: tasks, document actions and scheduling.
 - Model endpoint connection details: provider, API versions, authentication, model list.
 - File source configuration, and identity creation with its auth-type-specific fields.
-- Agent model binding, action attachment and assigned knowledge.
 
 ## Testing and validation
 

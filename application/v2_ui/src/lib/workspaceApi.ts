@@ -148,7 +148,7 @@ export async function generateAgentId(): Promise<string> {
 }
 
 export async function fetchAgents(signal?: AbortSignal): Promise<WorkspaceAgent[]> {
-    const response = await api.get<unknown>('/api/user/agents', signal);
+    const response = await api.get<unknown>('/api/user/agents?view=editor', signal);
     return asArray<WorkspaceAgent>(response, 'agents');
 }
 
@@ -167,7 +167,7 @@ export const deleteAgent = (agentId: string) =>
 /* -------------------------------------------------------------------------- Actions */
 
 export async function fetchActions(signal?: AbortSignal): Promise<WorkspaceAction[]> {
-    const response = await api.get<unknown>('/api/user/plugins', signal);
+    const response = await api.get<unknown>('/api/user/plugins?view=editor', signal);
     return asArray<WorkspaceAction>(response, 'plugins');
 }
 

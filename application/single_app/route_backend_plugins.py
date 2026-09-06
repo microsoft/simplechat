@@ -164,6 +164,15 @@ from functions_governance import (
     is_action_type_access_allowed,
     upsert_item_policy,
 )
+from functions_workspace_authoring import (
+    WorkspaceAuthoringValidation,
+    build_action_editor_types,
+    clear_editor_test_secrets,
+    editor_error_response,
+    ensure_editor_access,
+    personal_editor_response,
+    validate_editor_action_manifest,
+)
 
 
 ACTION_VALIDATION_ERROR_MESSAGE = "Invalid action configuration."
@@ -396,7 +405,7 @@ def get_plugin_types(allowed_type_filter=None):
                     # Special handling for OpenAPI plugin that requires spec path
                     if 'openapi' in module_name.lower():
                         display_name = "OpenAPI"
-                        description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
+                        description = "Connect to an API using OpenAPI JSON/YAML content and configurable authentication. Download hosted specifications before uploading them."
                         types.append({
                             'type': module_type,
                             'class': attr,
@@ -828,6 +837,154 @@ def _hydrate_sql_test_identity(data, existing_plugin, user_id):
     )
 
 
+def _flatten_editor_test_fields(data, field_names):
+    """Bridge complete editor manifests to the existing flat connector test inputs."""
+    additional_fields = data.get('additionalFields', {})
+    if not isinstance(additional_fields, dict):
+        raise ValueError('Additional fields must be an object.')
+    result = dict(data)
+    result.update({field: additional_fields[field] for field in field_names if field in additional_fields})
+    return result
+
+
+def _is_personal_editor_test_request(data):
+    scope = str(data.get('action_scope') or 'personal').strip().lower()
+    context = data.get('existing_plugin') or {}
+    context_scope = str(context.get('scope') or 'user').strip().lower() if isinstance(context, dict) else ''
+    return scope in {'personal', 'user'} and context_scope in {'personal', 'user'}
+
+
+def _assert_personal_editor_test_access(data, existing_plugin, user_id, action_type):
+    ensure_editor_access('actions', user_id, get_settings())
+    if not _is_personal_editor_test_request(data):
+        raise PermissionError('This editor test is available only in My Workspace.')
+    if existing_plugin:
+        if (
+            existing_plugin.get('user_id') != user_id or existing_plugin.get('is_global')
+            or existing_plugin.get('is_group') or existing_plugin.get('group_id')
+            or existing_plugin.get('scope') not in (None, '', 'personal', 'user')
+        ):
+            raise PermissionError('This action does not belong to the personal workspace.')
+        ensure_action_type_access('governance_user_actions', user_id, existing_plugin.get('type'), 'personal')
+    ensure_action_type_access('governance_user_actions', user_id, action_type, 'personal')
+
+
+def _prepare_editor_sql_test_data(data, existing_plugin, user_id):
+    action_type = data.get('type') or (existing_plugin or {}).get('type')
+    if action_type not in {'sql_query', 'sql_schema'}:
+        action_type = 'sql_query' if is_action_type_access_allowed(
+            'governance_user_actions', user_id, 'sql_query', 'personal',
+        ) else 'sql_schema'
+    _assert_personal_editor_test_access(data, existing_plugin, user_id, action_type)
+    result = _flatten_editor_test_fields(data, (
+        'database_type', 'connection_method', 'connection_string', 'server', 'database',
+        'port', 'driver', 'username', 'password', 'auth_type', 'timeout',
+    ))
+    auth = result.get('auth', {})
+    if not isinstance(auth, dict):
+        raise ValueError('Authentication must be an object.')
+    identity_manifest = _hydrate_sql_test_identity(result, existing_plugin, user_id)
+    if identity_manifest:
+        auth = identity_manifest.get('auth') or {}
+        fields = identity_manifest.get('additionalFields') or {}
+        for field in ('connection_string', 'username', 'password', 'auth_type', 'identity_auth_type'):
+            if field in fields:
+                result[field] = fields[field]
+
+    auth_type = str(auth.get('type') or result.get('auth_type') or '').strip()
+    declared_mode = '' if identity_manifest else str(result.get('auth_type') or result.get('identity_auth_type') or '').strip()
+    if auth_type.lower() in {'serviceprincipal', 'service_principal', 'client_secret'} or declared_mode.lower() in {
+        'serviceprincipal', 'service_principal', 'client_secret',
+    }:
+        # The shared SQL runtime has no SP credential path. A test-only token
+        # implementation would misleadingly validate an action the runtime cannot use.
+        raise WorkspaceAuthoringValidation(
+            'SQL service-principal fields are not supported by the SQL action runtime. '
+            'Use a supported SQL authentication mode or a complete connection string.'
+        )
+
+    stored_auth = (existing_plugin or {}).get('auth') or {}
+    scope_value, scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+    auth_key = None
+    target_field = 'connection_string' if auth_type == 'connection_string' else 'password'
+    if 'key' in auth and target_field not in result:
+        auth_key = auth['key'] if identity_manifest else _rehydrate_action_test_secret(
+            auth['key'], stored_auth.get('key'), 'SQL', 'auth.key',
+        )
+        if not identity_manifest:
+            auth_key = _resolve_secret_value_for_action_test(
+                auth_key, 'auth.key', 'SQL', scope_value, scope, ACTION_AUTH_SECRET_SOURCES,
+            )
+    if auth_type == 'connection_string':
+        if auth_key is not None:
+            result['connection_string'] = auth_key
+        result['connection_method'] = 'connection_string'
+        result['auth_type'] = 'connection_string_only'
+        if not result.get('connection_string'):
+            raise ValueError('A connection string is required.')
+    elif auth_type == 'identity' and auth.get('identity') == 'managed_identity':
+        result['auth_type'] = 'managed_identity'
+    elif auth_type in {'user', 'username_password', 'basic'}:
+        if identity_manifest or declared_mode not in {'integrated', 'none'}:
+            result['auth_type'] = 'username_password'
+        if auth.get('identity') and 'username' not in result:
+            result['username'] = auth['identity']
+        if auth_key is not None:
+            result['password'] = auth_key
+    return result
+
+
+def _prepare_editor_yamcs_test_data(data, existing_plugin, user_id):
+    _assert_personal_editor_test_access(data, existing_plugin, user_id, YAMCS_PLUGIN_TYPE)
+    result = _flatten_editor_test_fields(data, (
+        'server_url', 'instance', 'auth_method', 'username', 'tls_verify', 'timeout',
+    ))
+    auth = result.get('auth', {})
+    if not isinstance(auth, dict):
+        raise ValueError('Authentication must be an object.')
+    identity_id = str(result.get('identity_id') or '').strip()
+    fields = dict(result.get('additionalFields') or {})
+    fields.update({
+        field: result[field] for field in ('server_url', 'instance', 'auth_method', 'tls_verify', 'timeout')
+        if field in result
+    })
+    if not auth:
+        method = result.get('auth_method')
+        auth = {
+            'type': 'NoAuth' if method == YAMCS_AUTH_METHOD_NONE else (
+                'key' if method in {YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN} else 'username_password'
+            ),
+            'key': result.get('auth_key', ''),
+            'identity': result.get('username', ''),
+        }
+    manifest = {
+        'name': 'yamcs_connection_test', 'type': YAMCS_PLUGIN_TYPE,
+        'endpoint': result.get('endpoint') or result.get('server_url', ''),
+        'auth': dict(auth), 'additionalFields': fields,
+    }
+    if identity_id:
+        scope_type, scope_id = _resolve_action_identity_context(result, existing_plugin, user_id)
+        manifest['identity_id'] = identity_id
+        manifest['auth'] = {'type': 'identity', 'identity': identity_id}
+        manifest = hydrate_action_identity_reference(
+            manifest, scope_type, scope_id, return_type=SecretReturnType.VALUE,
+        )
+        auth = manifest['auth']
+        if not auth.get('key'):
+            raise ValueError('The selected identity does not provide a Yamcs credential.')
+        if auth.get('type') == 'username_password' and not auth.get('identity'):
+            raise ValueError('The selected identity does not provide a Yamcs username.')
+    _apply_plugin_runtime_defaults(manifest)
+    auth = manifest['auth']
+    result['auth_method'] = manifest['additionalFields']['auth_method']
+    result['server_url'] = manifest['endpoint']
+    if 'key' in auth:
+        result['auth_key'] = auth['key']
+    if 'identity' in auth:
+        result['username'] = auth['identity']
+    return result
+
+
 ACTION_CONNECTION_TEST_AUTH_SECRET_FIELDS = ('key', 'identity', 'tenantId')
 ACTION_CONNECTION_TEST_ADDITIONAL_SECRET_FIELDS = ('private_key_passphrase',)
 # Secret reference sources must match how keyvault_plugin_get_helper stored each field.
@@ -849,6 +1006,8 @@ def _resolve_secret_value_for_action_test(value, field_name, plugin_label, scope
     """
     if not isinstance(value, str) or not value:
         return value
+    if value == "***REDACTED***":
+        raise ValueError("A stored credential could not be resolved for testing. Re-enter its value.")
     if not validate_secret_name_dynamic(value):
         return value
 
@@ -881,9 +1040,9 @@ def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin, sc
     hydrated_headers = {}
     for header_name, header_value in custom_headers.items():
         resolved_header_value = header_value
-        if resolved_header_value in ('', None, ui_trigger_word):
+        if resolved_header_value in ('', None, ui_trigger_word, "***REDACTED***"):
             resolved_header_value = existing_headers.get(header_name)
-        if resolved_header_value == ui_trigger_word:
+        if resolved_header_value in (ui_trigger_word, "***REDACTED***"):
             raise ValueError(f"Stored MCP custom header '{header_name}' could not be resolved. Re-enter the header value.")
         if not resolved_header_value:
             continue
@@ -957,6 +1116,11 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
 @user_required
 def get_user_plugins():
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response(
+            'actions', user_id, _prepare_personal_action_for_editor,
+            migrate=ensure_migration_complete,
+        )
     # Ensure migration is complete (will migrate any remaining legacy data)
     ensure_migration_complete(user_id)
     
@@ -996,7 +1160,11 @@ def get_user_plugins():
     else:
         return jsonify(plugins)
 
-def _prepare_personal_action_payload(user_id, plugin):
+def _prepare_personal_action_for_editor(user_id, plugin, settings, existing):
+    return _prepare_personal_action_payload(user_id, plugin, editor=True)
+
+
+def _prepare_personal_action_payload(user_id, plugin, *, editor=False):
     """Clean, default and validate a single personal action.
 
     This is the per-action half of the bulk save, factored out so the per-item create and
@@ -1055,7 +1223,7 @@ def _prepare_personal_action_payload(user_id, plugin):
             plugin_to_save['type'] = 'unknown'  # Default type
 
     debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
-    validation_error = validate_plugin(plugin_to_save)
+    validation_error = validate_editor_action_manifest(plugin_to_save) if editor else validate_plugin(plugin_to_save)
     if validation_error:
         return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
     is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
@@ -1138,6 +1306,8 @@ def _create_personal_action(user_id, payload):
 def get_user_plugin(action_id):
     """Return one personal action, addressed by id or by name."""
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor, action_id)
     try:
         action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
     except PermissionError:
@@ -1160,6 +1330,8 @@ def update_user_plugin(action_id):
     that does not know about a field has to send it back verbatim or lose it.
     """
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor, action_id)
     updates = request.get_json(silent=True)
     if not isinstance(updates, dict):
         return jsonify({'error': 'Action payload must be an object.'}), 400
@@ -1211,6 +1383,8 @@ def set_user_plugins():
     and an omitted element is an unintended delete.
     """
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor)
     payload = request.get_json(silent=True)
 
     if isinstance(payload, dict):
@@ -1305,6 +1479,8 @@ def delete_user_plugin(action_id):
     Governance is still enforced, inside ``delete_personal_action``.
     """
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor, action_id)
 
     # Try to delete from personal_actions container
     try:
@@ -1622,6 +1798,19 @@ def delete_group_action_route(action_id):
 @user_required
 def get_user_plugin_types():
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        try:
+            ensure_editor_access('actions', user_id, get_settings(), operation='read')
+            discovered = get_plugin_types(
+                allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+                    'governance_user_actions', user_id, action_type, 'personal',
+                ),
+            )
+            response = jsonify(build_action_editor_types(discovered.get_json()))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except Exception as exc:
+            return editor_error_response(exc)
     return get_plugin_types(
         allowed_type_filter=lambda action_type: is_action_type_access_allowed(
             'governance_user_actions',
@@ -2150,6 +2339,8 @@ def discover_mcp_tools():
 
     try:
         existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
+        if payload.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, payload['clear_secret_paths'])
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
         plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
 
@@ -2188,7 +2379,7 @@ def discover_mcp_tools():
 
         auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
         existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
-        if auth.get('key') in ('', None, ui_trigger_word) and existing_auth.get('key'):
+        if auth.get('key') in ('', None, ui_trigger_word, "***REDACTED***") and existing_auth.get('key'):
             auth['key'] = existing_auth.get('key')
         if auth.get('identity') in ('', None) and existing_auth.get('identity'):
             auth['identity'] = existing_auth.get('identity')
@@ -2439,7 +2630,31 @@ def _merge_group_and_global_actions(group_actions, global_actions):
 def test_sql_connection():
     """Test a SQL database connection using provided configuration."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'SQL test configuration must be an object.'}), 400
+    editor_call = _is_personal_editor_test_request(data) and ('auth' in data or 'additionalFields' in data)
     user_id = get_current_user_id()
+
+    try:
+        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id)
+        if data.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
+        if editor_call:
+            data = _prepare_editor_sql_test_data(data, existing_plugin, user_id)
+    except PermissionError as exc:
+        if editor_call:
+            return jsonify({'success': False, 'error': 'You cannot use the selected SQL action or identity.'}), 403
+        return jsonify({'success': False, 'error': str(exc)}), 403
+    except LookupError as exc:
+        if editor_call:
+            return jsonify({'success': False, 'error': 'The selected SQL action or identity is unavailable.'}), 404
+        return jsonify({'success': False, 'error': str(exc)}), 404
+    except ValueError as exc:
+        if editor_call:
+            message = exc.public_message if isinstance(exc, WorkspaceAuthoringValidation) else 'Invalid SQL connection configuration or identity.'
+            return jsonify({'success': False, 'error': message}), 400
+        return jsonify({'success': False, 'error': str(exc)}), 400
+
     database_type = (data.get('database_type') or 'sqlserver').lower()
     connection_method = data.get('connection_method', 'parameters')
     connection_string = data.get('connection_string', '')
@@ -2450,33 +2665,29 @@ def test_sql_connection():
     username = data.get('username', '')
     password = data.get('password', '')
     auth_type = data.get('auth_type', 'username_password')
-    timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
-
     try:
-        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+        timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'SQL timeout must be an integer.'}), 400
 
     existing_additional_fields = {}
     if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict):
         existing_additional_fields = existing_plugin['additionalFields']
 
-    if connection_string == ui_trigger_word:
+    if connection_string in (ui_trigger_word, "***REDACTED***"):
         connection_string = existing_additional_fields.get('connection_string', '')
-    if password == ui_trigger_word:
+    if password in (ui_trigger_word, "***REDACTED***"):
         password = existing_additional_fields.get('password', '')
 
     try:
-        identity_manifest = _hydrate_sql_test_identity(data, existing_plugin, user_id)
+        identity_manifest = None if editor_call else _hydrate_sql_test_identity(data, existing_plugin, user_id)
     except PermissionError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 403
     except LookupError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 404
     except ValueError as exc:
+        if editor_call:
+            return jsonify({'success': False, 'error': 'A stored SQL credential could not be resolved.'}), 400
         return jsonify({'success': False, 'error': str(exc)}), 400
 
     if identity_manifest:
@@ -2495,9 +2706,9 @@ def test_sql_connection():
             auth_type = 'username_password'
 
     unresolved_fields = []
-    if connection_string == ui_trigger_word:
+    if connection_string in (ui_trigger_word, "***REDACTED***"):
         unresolved_fields.append('connection string')
-    if password == ui_trigger_word:
+    if password in (ui_trigger_word, "***REDACTED***"):
         unresolved_fields.append('password')
     if unresolved_fields:
         field_list = ', '.join(unresolved_fields)
@@ -2519,7 +2730,16 @@ def test_sql_connection():
             scope=plugin_scope,
         )
     except ValueError as exc:
+        if editor_call:
+            return jsonify({'success': False, 'error': 'A stored SQL credential could not be resolved.'}), 400
         return jsonify({'success': False, 'error': str(exc)}), 400
+
+    if (
+        editor_call and auth_type == 'username_password' and database_type != 'sqlite'
+        and not (connection_method == 'connection_string' and connection_string)
+        and (not username or not password)
+    ):
+        return jsonify({'success': False, 'error': 'SQL username and password are required for this authentication mode.'}), 400
 
     # Map azure_sql to sqlserver
     if database_type in ('azure_sql', 'azuresql'):
@@ -2617,6 +2837,8 @@ def test_sql_connection():
             return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
 
     except ImportError as e:
+        if editor_call:
+            return jsonify({'success': False, 'error': 'The required database driver is not available on the server.'}), 400
         if database_type == 'sqlserver' and 'libodbc' in str(e):
             return jsonify({
                 'success': False,
@@ -2624,6 +2846,13 @@ def test_sql_connection():
             }), 400
         return jsonify({'success': False, 'error': f'Database driver not installed: {str(e)}'}), 400
     except Exception as e:
+        if editor_call:
+            log_event(
+                '[PLUGINS] SQL editor connection test failed.',
+                level=logging.WARNING,
+                extra={'database_type': database_type, 'error_type': type(e).__name__},
+            )
+            return jsonify({'success': False, 'error': 'SQL connection failed. Verify the connection and authentication settings.'}), 400
         error_msg = str(e)
         if database_type == 'sqlserver' and "Can't open lib 'ODBC Driver 17 for SQL Server'" in error_msg:
             error_msg = 'The selected ODBC Driver 17 is not installed in this container image. Select ODBC Driver 18 for SQL Server or rebuild the image with Driver 17.'
@@ -2666,6 +2895,8 @@ def test_cosmos_connection():
 
     try:
         existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+        if data.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     except PermissionError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 403
     except LookupError as exc:
@@ -2678,10 +2909,10 @@ def test_cosmos_connection():
         existing_auth = existing_plugin['auth']
 
     if auth_type == 'key':
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             auth_key = existing_auth.get('key', '')
 
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             return jsonify({'success': False, 'error': 'Stored Cosmos DB account key could not be resolved for testing. Re-enter the account key.'}), 400
 
         try:
@@ -2799,7 +3030,25 @@ def test_cosmos_connection():
 def test_yamcs_connection():
     """Test a Yamcs mission control server connection using the configured credentials."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Yamcs test configuration must be an object.'}), 400
     user_id = get_current_user_id()
+    editor_call = _is_personal_editor_test_request(data) and (
+        'auth' in data or 'additionalFields' in data or bool(data.get('identity_id'))
+    )
+    existing_plugin = None
+    if editor_call:
+        try:
+            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+            if data.get('clear_secret_paths'):
+                existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
+            data = _prepare_editor_yamcs_test_data(data, existing_plugin, user_id)
+        except PermissionError:
+            return jsonify({'success': False, 'error': 'You cannot use the selected Yamcs action or identity.'}), 403
+        except LookupError:
+            return jsonify({'success': False, 'error': 'The selected Yamcs action or identity is unavailable.'}), 404
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid Yamcs connection configuration or identity.'}), 400
     server_url = normalize_yamcs_server_url(data.get('server_url') or data.get('endpoint') or '')
     instance = (data.get('instance') or '').strip()
     auth_method = (data.get('auth_method') or YAMCS_AUTH_METHOD_USERNAME_PASSWORD).strip().lower()
@@ -2825,23 +3074,26 @@ def test_yamcs_connection():
             'error': "Yamcs auth_method must be 'username_password', 'api_key', 'bearer_token', or 'none'."
         }), 400
 
-    try:
-        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    if not editor_call:
+        try:
+            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+            if data.get('clear_secret_paths'):
+                existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
+        except PermissionError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
 
     existing_auth = {}
     if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
         existing_auth = existing_plugin['auth']
 
     if auth_method != YAMCS_AUTH_METHOD_NONE:
-        if auth_key in ('', ui_trigger_word):
+        if auth_key in ('', ui_trigger_word, "***REDACTED***"):
             auth_key = existing_auth.get('key', '')
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             return jsonify({
                 'success': False,
                 'error': 'Stored Yamcs credential could not be resolved for testing. Re-enter the credential.'
@@ -2858,6 +3110,8 @@ def test_yamcs_connection():
                 ACTION_AUTH_SECRET_SOURCES,
             )
         except ValueError as exc:
+            if editor_call:
+                return jsonify({'success': False, 'error': 'The stored Yamcs credential could not be resolved.'}), 400
             return jsonify({'success': False, 'error': str(exc)}), 400
 
         if not auth_key:
@@ -3003,6 +3257,8 @@ def test_rocksdb_connection():
 
     try:
         existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+        if data.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     except PermissionError:
         return jsonify({'success': False, 'error': 'You do not have access to the selected action.'}), 403
     except LookupError:
@@ -3015,9 +3271,9 @@ def test_rocksdb_connection():
         if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
             existing_auth = existing_plugin['auth']
 
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             auth_key = existing_auth.get('key', '')
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             return jsonify({
                 'success': False,
                 'error': 'The stored RocksDB service token could not be resolved for testing. Re-enter the token.'
@@ -3126,9 +3382,9 @@ def test_rocksdb_connection():
 def _rehydrate_action_test_secret(current_value, stored_value, plugin_label, field_label):
     """Restore a masked action secret from the stored manifest for a transient test."""
     resolved_value = current_value
-    if resolved_value in ('', None, ui_trigger_word) and stored_value:
+    if resolved_value in ('', None, ui_trigger_word, "***REDACTED***") and stored_value:
         resolved_value = stored_value
-    if resolved_value == ui_trigger_word:
+    if resolved_value in (ui_trigger_word, "***REDACTED***"):
         raise ValueError(
             f"The stored {plugin_label} value for '{field_label}' could not be resolved for testing. Re-enter the credential."
         )
@@ -3142,6 +3398,8 @@ def _prepare_action_test_manifest(data, plugin_type, plugin_label):
 
     user_id = get_current_user_id()
     existing_plugin = _load_existing_plugin_for_test(data.get('plugin_context'), user_id)
+    if data.get('clear_secret_paths'):
+        existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     scope_type, scope_id = _resolve_action_identity_context(data, existing_plugin, user_id)
     # Secret references are resolved against the loaded action's own Key Vault scope, never
     # against a scope derived from the request body.

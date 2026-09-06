@@ -24,9 +24,12 @@ same as the workflow-run CRUD it sits beside.
 Version: 0.261.085
 """
 
+import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
+from azure.core import MatchConditions
 from azure.cosmos import exceptions
 
 from config import (
@@ -34,6 +37,7 @@ from config import (
     cosmos_orchestration_runs_container,
 )
 from functions_appinsights import log_event
+from functions_orchestration_context import ConversationContextError, LEDGER_MAX_ANSWERED_QUESTIONS
 from functions_orchestration_schema import (
     PLAN_STATUS_DRAFT,
     new_run_id,
@@ -42,6 +46,9 @@ from functions_orchestration_schema import (
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_RUNS]'
+PENDING_TURN_PREFIX = 'oturn_'
+PENDING_TURN_MAX_BYTES = 65536
+RUN_RECORD_FILTER = '(NOT IS_DEFINED(c.record_type) OR c.record_type = "run")'
 
 
 def _utc_now_iso():
@@ -61,6 +68,101 @@ def _coerce_int(value, default=0):
         return default
 
 
+def _pending_turn_id(conversation_id, user_id, turn_id):
+    if not conversation_id or not user_id or not turn_id:
+        raise ValueError('Conversation, user, and turn IDs are required.')
+    identity = json.dumps([conversation_id, user_id, turn_id], separators=(',', ':'))
+    return f'{PENDING_TURN_PREFIX}{uuid.uuid5(uuid.NAMESPACE_URL, identity).hex}'
+
+
+def get_pending_turn_context(conversation_id, user_id, turn_id):
+    """Read private clarification state without making it an executable or displayed run."""
+    item_id = _pending_turn_id(conversation_id, user_id, turn_id)
+    try:
+        item = cosmos_orchestration_runs_container.read_item(
+            item=item_id, partition_key=conversation_id
+        )
+    except exceptions.CosmosResourceNotFoundError:
+        return None
+    if (
+        item.get('record_type') != 'pending_turn'
+        or item.get('user_id') != user_id
+        or item.get('conversation_id') != conversation_id
+        or item.get('turn_id') != turn_id
+    ):
+        raise ConversationContextError('The pending clarification could not be opened.')
+    return item
+
+
+def save_pending_turn_context(
+    conversation_id, user_id, turn_id, *, user_message, snapshot,
+    answered_questions, elicitation, planning_token_usage, expected_pending=None,
+):
+    existing = get_pending_turn_context(conversation_id, user_id, turn_id)
+    if (
+        (existing is None) != (expected_pending is None)
+        or (
+            existing is not None
+            and (
+                existing['id'] != expected_pending.get('id')
+                or existing['_etag'] != expected_pending.get('_etag')
+            )
+        )
+    ):
+        raise ConversationContextError('The clarification changed while planning. Please retry.')
+    revision = _coerce_int(elicitation.get('revision'), 0)
+    if existing and revision < _coerce_int(existing.get('revision'), 0):
+        raise ConversationContextError('A newer clarification is already available.')
+    now = _utc_now_iso()
+    record = {
+        'id': _pending_turn_id(conversation_id, user_id, turn_id),
+        'record_type': 'pending_turn',
+        'conversation_id': conversation_id,
+        'user_id': user_id,
+        'turn_id': turn_id,
+        'revision': revision,
+        'user_message': user_message,
+        'conversation_context': snapshot,
+        'answered_questions': answered_questions,
+        'elicitation': elicitation,
+        'planning_token_usage': planning_token_usage,
+        'created_at': existing['created_at'] if existing else now,
+        'updated_at': now,
+    }
+    if (
+        len(answered_questions) > LEDGER_MAX_ANSWERED_QUESTIONS
+        or len(json.dumps(record, ensure_ascii=False).encode('utf-8')) > PENDING_TURN_MAX_BYTES
+    ):
+        raise ConversationContextError('The clarified request is too large. Start a new request.')
+    try:
+        if existing:
+            cosmos_orchestration_runs_container.replace_item(
+                item=existing['id'], body=record, etag=existing['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            cosmos_orchestration_runs_container.create_item(body=record)
+    except (exceptions.CosmosResourceExistsError, exceptions.CosmosAccessConditionFailedError) as exc:
+        raise ConversationContextError('The clarification changed. Please retry.') from exc
+
+
+def clear_pending_turn_context(record, user_id):
+    if not record or record.get('record_type') != 'pending_turn' or record.get('user_id') != user_id:
+        raise ConversationContextError('The pending clarification could not be cleared.')
+    try:
+        cosmos_orchestration_runs_container.delete_item(
+            item=record['id'], partition_key=record['conversation_id'],
+            etag=record['_etag'], match_condition=MatchConditions.IfNotModified,
+        )
+    except exceptions.CosmosResourceNotFoundError:
+        return
+    except exceptions.CosmosAccessConditionFailedError:
+        log_event(
+            f'{_LOG_PREFIX} Kept a newer pending clarification after a plan was saved.',
+            level=logging.INFO,
+        )
+
+
 # --------------------------------------------------------------------------------------
 # Runs
 # --------------------------------------------------------------------------------------
@@ -71,6 +173,7 @@ def create_orchestration_run(
     conversation_id=None,
     turn_index=None,
     request_fingerprint=None,
+    turn_context=None,
 ):
     """Persist a new run record for a validated plan.
 
@@ -87,6 +190,8 @@ def create_orchestration_run(
         raise ValueError('user_id is required to create an orchestration run')
 
     run_id = plan.get('run_id') or new_run_id()
+    if str(run_id).startswith(PENDING_TURN_PREFIX):
+        raise ValueError('The plan uses a reserved run ID.')
     if turn_index is None:
         turn_index = next_turn_index(conversation_id, user_id)
 
@@ -103,6 +208,7 @@ def create_orchestration_run(
 
     record = {
         'id': run_id,
+        'record_type': 'run',
         'run_id': run_id,
         'conversation_id': conversation_id,
         'user_id': user_id,
@@ -126,6 +232,13 @@ def create_orchestration_run(
         'unresolved': [],
         'answered_questions': [],
     }
+    for key in (
+        'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id', 'seeds',
+        'answered_questions', 'conversation_context', 'request_resolution',
+        'resolved_message', 'planning_token_usage',
+    ):
+        if isinstance(turn_context, dict) and key in turn_context:
+            record[key] = turn_context[key]
 
     try:
         cosmos_orchestration_runs_container.upsert_item(body=record)
@@ -176,7 +289,7 @@ def get_orchestration_run(run_id, user_id, conversation_id=None):
         )
         return None
 
-    if not item:
+    if not item or item.get('record_type', 'run') != 'run':
         return None
 
     if str(item.get('user_id')) != str(user_id):
@@ -192,6 +305,26 @@ def get_orchestration_run(run_id, user_id, conversation_id=None):
     return _strip_cosmos_metadata(item)
 
 
+def get_latest_turn_run(conversation_id, user_id, turn_id):
+    """Find an owned turn's last plan without conflating a read failure with a new turn."""
+    if not conversation_id or not user_id or not turn_id:
+        raise ValueError('Conversation, user, and turn IDs are required.')
+    rows = list(cosmos_orchestration_runs_container.query_items(
+        query=(
+            'SELECT TOP 1 * FROM c WHERE c.conversation_id = @conversation_id '
+            f'AND c.user_id = @user_id AND c.turn_id = @turn_id AND {RUN_RECORD_FILTER} '
+            'ORDER BY c.created_at DESC'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@user_id', 'value': user_id},
+            {'name': '@turn_id', 'value': turn_id},
+        ],
+        partition_key=conversation_id,
+    ))
+    return _strip_cosmos_metadata(rows[0]) if rows else None
+
+
 def update_orchestration_run(run_id, user_id, updates, conversation_id=None):
     """Apply a partial update to an owned run and persist it.
 
@@ -205,7 +338,7 @@ def update_orchestration_run(run_id, user_id, updates, conversation_id=None):
         return None
 
     updates = updates if isinstance(updates, dict) else {}
-    protected = {'id', 'run_id', 'conversation_id', 'user_id', 'created_at'}
+    protected = {'id', 'run_id', 'conversation_id', 'user_id', 'created_at', 'record_type'}
     for key, value in updates.items():
         if key in protected:
             continue
@@ -250,7 +383,10 @@ def list_conversation_runs(conversation_id, user_id, limit=10):
 
     try:
         items = list(cosmos_orchestration_runs_container.query_items(
-            query='SELECT * FROM c WHERE c.user_id = @user_id ORDER BY c.turn_index DESC',
+            query=(
+                f'SELECT TOP {limit} * FROM c WHERE c.user_id = @user_id AND {RUN_RECORD_FILTER} '
+                'ORDER BY c.turn_index DESC'
+            ),
             parameters=[{'name': '@user_id', 'value': user_id}],
             partition_key=conversation_id,
         ))
@@ -281,7 +417,7 @@ def next_turn_index(conversation_id, user_id):
 
     try:
         rows = list(cosmos_orchestration_runs_container.query_items(
-            query='SELECT VALUE MAX(c.turn_index) FROM c WHERE c.user_id = @user_id',
+            query=f'SELECT VALUE MAX(c.turn_index) FROM c WHERE c.user_id = @user_id AND {RUN_RECORD_FILTER}',
             parameters=[{'name': '@user_id', 'value': user_id}],
             partition_key=conversation_id,
         ))

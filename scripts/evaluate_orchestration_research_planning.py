@@ -2,8 +2,8 @@
 """
 Small, opt-in paired evaluation of research-selection guidance.
 
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 Default invocation lists synthetic cases without network access. Capture BEFORE changing
 planner guidance; capture never imports the application or constructs Azure/Cosmos clients:

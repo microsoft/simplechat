@@ -2,8 +2,8 @@
 """
 Functional contracts for balanced orchestration research selection and its opt-in evaluator.
 
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 Runs actual planner, capability projection, request gates and plan normalization with
 controlled completions. Azure-dependent imports are excluded through AST extraction.
@@ -117,7 +117,7 @@ class OfflineTestCase(unittest.TestCase):
 
 class ImplementationVersion(OfflineTestCase):
     def test_implementation_version(self):
-        assert_app_version_at_least("0.261.096")
+        assert_app_version_at_least("0.261.099")
 
 
 class ResearchSelectionContracts(OfflineTestCase):

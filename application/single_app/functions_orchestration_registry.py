@@ -28,7 +28,7 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.096
+Version: 0.261.099
 """
 
 import logging
@@ -103,6 +103,7 @@ CAPABILITY_WEB_SEARCH = 'web_search'
 CAPABILITY_URL_FETCH = 'url_fetch'
 CAPABILITY_DEEP_RESEARCH = 'deep_research'
 CAPABILITY_AGENT_INVOKE = 'agent_invoke'
+CAPABILITY_ACTION_INVOKE = 'action_invoke'
 CAPABILITY_RESPOND = 'respond'
 
 # Workspace scopes a capability may need at least one of.
@@ -211,6 +212,10 @@ def _agent_request_gate(settings, context):
     if not context.get('user_enable_agents', True):
         return False
     return bool(context.get('agent_catalog'))
+
+
+def _action_request_gate(settings, context):
+    return bool(context.get('action_catalog'))
 
 
 # The registry itself. Ordered as a plan tends to read: gather, then reason, then answer.
@@ -513,6 +518,49 @@ CAPABILITY_REGISTRY = (
         'terminal': False,
     },
     {
+        'id': CAPABILITY_ACTION_INVOKE,
+        'label': 'Use an action',
+        'phase': PHASE_KNOWLEDGE,
+        'request_gate': _action_request_gate,
+        'summary': "Gather knowledge using one of this user's accessible actions.",
+        'when_to_use': (
+            "An action in the list reaches the information needed for this task. Prefer "
+            "using it directly when no agent-specific instructions or knowledge are needed. "
+            "The step can use the selected action's functions within execution limits. "
+            "Do not duplicate work delegated to an agent or use this to plan output tasks."
+        ),
+        'settings_gates': (
+            'enable_chat_orchestration',
+            'enable_semantic_kernel',
+            'enable_chat_orchestration_actions',
+        ),
+        'settings_gates_any': (),
+        'gate': None,
+        'requires_scope': (),
+        'inputs': {
+            'type': 'object',
+            'properties': {
+                'action_ref': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'The exact scoped reference from the actions catalog.',
+                },
+                'task': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'description': 'The knowledge to gather with this action.',
+                },
+            },
+            'required': ['action_ref', 'task'],
+            'additionalProperties': False,
+        },
+        'produces': (PRODUCES_NOTES, PRODUCES_CITATIONS, PRODUCES_ARTIFACTS),
+        'cost_class': COST_CLASS_MEDIUM,
+        'max_per_plan': None,
+        'adapter': CAPABILITY_ACTION_INVOKE,
+        'terminal': False,
+    },
+    {
         'id': CAPABILITY_AGENT_INVOKE,
         'label': 'Ask an agent',
         'phase': PHASE_KNOWLEDGE,
@@ -671,7 +719,7 @@ def _request_gate_passes(capability, settings, request_context):
         return False
 
 
-def resolve_available_capabilities(settings, allowed_ids=None, request_context=None):
+def resolve_available_capabilities(settings, allowed_ids=None, request_context=None, candidate_ids=None):
     """The capabilities this deployment currently permits, in registry order.
 
     ``allowed_ids`` is the administrator's ``chat_orchestration_enabled_capabilities``
@@ -685,6 +733,9 @@ def resolve_available_capabilities(settings, allowed_ids=None, request_context=N
 
     The terminal capability is never removed by the narrowing. A plan cannot end without
     it, so allowing it to be configured away would only produce plans that fail validation.
+
+    ``candidate_ids`` limits an internal lookup to specific descriptors, avoiding unrelated
+    gates and their storage/import work when an executor checks one capability.
     """
     settings = settings if isinstance(settings, dict) else {}
 
@@ -696,6 +747,8 @@ def resolve_available_capabilities(settings, allowed_ids=None, request_context=N
 
     available = []
     for capability in CAPABILITY_REGISTRY:
+        if candidate_ids is not None and capability['id'] not in candidate_ids:
+            continue
         if narrowed is not None and capability['id'] not in narrowed:
             if capability['id'] != TERMINAL_CAPABILITY_ID:
                 continue
@@ -708,12 +761,13 @@ def resolve_available_capabilities(settings, allowed_ids=None, request_context=N
     return available
 
 
-def resolve_available_capability_ids(settings, allowed_ids=None, request_context=None):
+def resolve_available_capability_ids(settings, allowed_ids=None, request_context=None, candidate_ids=None):
     """Identifiers only, for the validator and for the bootstrap payload."""
     return [
         capability['id']
         for capability in resolve_available_capabilities(
-            settings, allowed_ids=allowed_ids, request_context=request_context
+            settings, allowed_ids=allowed_ids, request_context=request_context,
+            candidate_ids=candidate_ids,
         )
     ]
 

@@ -1,8 +1,8 @@
 # test_orchestration_deep_research.py
 """
 Functional tests for bounded multi-query research in orchestration.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 Exercise the real adapter, shared search loop, query generator, and result contracts
 with model/search/page-fetch seams replaced. No Azure services or web pages are called.
@@ -21,7 +21,7 @@ TEST_ROOT = Path(__file__).resolve().parent
 APP_ROOT = TEST_ROOT.parent / 'application' / 'single_app'
 sys.path.insert(0, str(TEST_ROOT))
 
-from test_support.app_stubs import stubbed_app_imports  # noqa: E402
+from test_support.app_stubs import stubbed_config  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -49,7 +49,9 @@ class DeepResearchTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(stubbed_app_imports())
+        self.stack.enter_context(stubbed_config(
+            cognitive_services_scope='https://cognitiveservices.azure.com/.default',
+        ))
         self.adapters = importlib.import_module('functions_orchestration_adapters')
         self.sources = importlib.import_module('functions_source_review')
         mixed = importlib.import_module('functions_mixed_source_orchestration')
@@ -213,6 +215,40 @@ class DeepResearchTests(unittest.TestCase):
         self.assertEqual(len(queries), 3)
         self.assertEqual(len({query.lower() for query in queries}), 3)
         self.assertNotIn('over the budget', queries)
+
+    def test_follow_up_discovery_uses_resolved_request_without_forwarding_history(self):
+        resolved = 'Find current roots artists with the stylistic range already requested.'
+        self.context.user_message = 'Find more like those.'
+        self.context.resolved_message = resolved
+        self.context.conversation_context = {
+            'messages': [{'id': 'earlier', 'role': 'user', 'content': 'PRIVATE_HISTORY'}],
+        }
+        self.step['arguments']['query'] = 'PRIVATE_STEP_OBJECTIVE'
+
+        result = self.run_research()
+
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(self.query_planner.call_args.kwargs['user_message'], resolved)
+        self.assertEqual(self.search_calls[0]['web_search_query_text'], resolved)
+        queries = ' '.join(call['web_search_query_text'] for call in self.search_calls)
+        self.assertNotIn('PRIVATE_HISTORY', queries)
+        self.assertNotIn('PRIVATE_STEP_OBJECTIVE', queries)
+
+    def test_review_uses_authorized_user_urls_not_urls_from_the_resolved_objective(self):
+        self.settings['enable_web_search'] = False
+        self.context.user_message = 'Review the earlier source.'
+        self.context.resolved_message = 'Review https://example.com/model-invented'
+        self.context.allowed_user_urls = ['https://example.com/user-provided']
+        self.step['arguments']['query'] = self.context.resolved_message
+
+        result = self.run_research()
+
+        self.assertEqual(result['status'], 'completed')
+        self.assertFalse(self.review_calls[0]['include_direct_user_urls'])
+        self.assertEqual(
+            self.review_calls[0]['additional_seed_urls'], ['https://example.com/user-provided'],
+        )
+        self.assertEqual(result['citations'][0]['url'], 'https://example.com/user-provided')
 
     def test_single_query_admin_limit_is_preserved(self):
         self.settings['deep_research_max_search_queries_per_turn'] = 1
@@ -427,7 +463,7 @@ class DeepResearchTests(unittest.TestCase):
 
 class ResearchPlannerRecoveryTests(unittest.TestCase):
     def test_expected_client_configuration_failure_keeps_backup_planning_available(self):
-        with stubbed_app_imports():
+        with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'):
             adapters = importlib.import_module('functions_orchestration_adapters')
             planner = types.ModuleType('functions_orchestration_planner')
             planner.PlannerError = type('PlannerError', (RuntimeError,), {})
@@ -443,5 +479,5 @@ class ResearchPlannerRecoveryTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.096')
+    assert_app_version_at_least('0.261.099')
     unittest.main()
