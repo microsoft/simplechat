@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for action connection test error sanitization.
-Version: 0.261.029
+Version: 0.261.096
 Implemented in: 0.250.217
 Updated in: 0.261.029
 

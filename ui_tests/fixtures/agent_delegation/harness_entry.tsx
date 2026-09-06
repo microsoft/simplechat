@@ -1,16 +1,14 @@
 // harness_entry.tsx
-// Version: 0.261.093. Real V2 components with API responses supplied by Playwright.
+// Version: 0.261.096. Group/admin wrappers; personal authoring uses the real-SPA suite.
 
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
-import { ActionsSection } from '../../../application/v2_ui/src/pages/workspace/ActionsSection';
-import { AgentsSection } from '../../../application/v2_ui/src/pages/workspace/AgentsSection';
 import { GroupAgentDelegationPage } from '../../../application/v2_ui/src/pages/GroupAgentDelegationPage';
 import { AdminSettingsPage } from '../../../application/v2_ui/src/pages/AdminSettingsPage';
 import { useBootstrapStore } from '../../../application/v2_ui/src/stores/bootstrapStore';
 import type { BootstrapPayload } from '../../../application/v2_ui/src/lib/types';
 
-type View = 'actions' | 'agents' | 'groups' | 'admin';
+type View = 'groups' | 'admin';
 
 declare global {
     interface Window {
@@ -28,8 +26,6 @@ window.AgentDelegationHarness = {
         // Only identity is read by the pages under test; all resource data crosses the real API client.
         useBootstrapStore.setState({ data: { user: { is_admin: admin } } as BootstrapPayload, loading: false });
         const pages = {
-            actions: <ActionsSection agentsEnabled />,
-            agents: <AgentsSection actionsEnabled />,
             groups: <GroupAgentDelegationPage />,
             admin: <AdminSettingsPage />,
         };
