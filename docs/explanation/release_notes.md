@@ -2,6 +2,37 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.099)**
+
+#### Bug Fixes
+
+*   **Orchestration Plans Are No Longer Trapped In One Browser**
+    *   Plans looked like they belonged to the device that made them. Opening the same conversation on a laptop after planning on a phone showed an empty orchestration panel, and simply reloading the page lost the run history too. The answer survived, because that is an ordinary chat message, but the plan behind it, its steps and its results appeared to be gone.
+    *   **Nothing was ever actually lost.** Every run has always been stored against the conversation on the server — the planner already reads earlier runs back to avoid repeating work. The V2 interface just never asked for them, so it could only ever show what the current tab happened to remember.
+    *   **The panel is now rebuilt from the server when you open a conversation.** Earlier runs are listed wherever you open them, and any one of them can be expanded to read the steps and results of work you were not present for. A run opened this way is shown as a record and marked as such: it can be read, but not edited or run again, because it has already happened.
+    *   **A plan still waiting for your approval follows you.** It reappears on the new device as a plan you can approve, edit or discard, rather than leaving you to ask the same question twice. A plan that had a countdown is deliberately restored without one, so nothing starts running on a device where nobody was watching. And if you approved it on the first device in the meantime, approving it again is refused rather than doing the work twice — the conversation reloads to show the answer that already exists.
+    *   **A run whose browser went away mid-flight is now shown as interrupted**, instead of vanishing or appearing to still be working.
+    *   The run listing was also tightened while this was added. It now returns only the fields the panel draws, so plan internals, request seeding and the conversation context are no longer sent to the browser as a side effect of listing a conversation's history.
+    *   (Ref: `route_backend_orchestration.py` run detail route and summary projection, `stores/orchestrationStore.ts` hydration, `lib/orchestrationResume.ts`, [Orchestration Run History Hydration Fix](fixes/ORCHESTRATION_RUN_HISTORY_HYDRATION_FIX.md))
+
+### **(v0.261.098)**
+
+#### New Features
+
+*   **Orchestration Can Use Existing Actions Directly**
+    *   Administrators can enable the default-off **Enable Action Access** setting to let knowledge-collection plans choose an accessible personal, group or global action without loading a configured agent and its unrelated actions.
+    *   Each step can make a bounded sequence of calls to its selected action's functions, preserving existing scope settings, governance, function restrictions and action behavior. **Call agent** remains under **Ask an agent**; no output-phase workflow or new read/write policy is introduced.
+    *   The plan shows the selected action's name and scope. Tool results appear under **Sources > Tool calls**, separately from web references.
+    *   Follow-up action tasks retain the resolved subject and authorized conversation references, alongside the conversation-history and prompt-snapshot improvements from the V2 integration branch.
+    *   (Ref: `functions_action_catalog.py`, `functions_orchestration_actions.py`, `functions_orchestration_registry.py`, `OrchestrationRunView.tsx`, [Chat Orchestration Action Access](features/CHAT_ORCHESTRATION_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Orchestration Preserves Agent Choices And Tool Reporting**
+    *   Available agents now reach plan validation, and retries after an unrenderable clarification retain the caller's capability gates.
+    *   Tool citations use the existing tool-results channel instead of being treated as web sources. Saved usage includes both the answer model and action or agent steps rather than dropping one contribution.
+    *   (Ref: `functions_orchestration_planner.py`, `route_backend_orchestration.py`, `functions_orchestration_events.py`, `chatStore.ts`)
+
 ### **(v0.261.096)**
 
 #### New Features
