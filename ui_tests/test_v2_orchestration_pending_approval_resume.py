@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 UI test for picking up an unanswered orchestration plan on another device.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 A plan that was proposed and never approved is stored as `awaiting_approval`, but until this change
 the only browser that could act on it was the one that closed the tab. Opening the conversation
@@ -36,7 +36,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.096"
+IMPLEMENTED_IN = "0.261.099"
 
 _PAGE = None
 

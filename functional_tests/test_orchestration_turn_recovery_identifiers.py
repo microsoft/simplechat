@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.096
-Implemented in: 0.261.096
+Version: 0.261.099
+Implemented in: 0.261.099
 
 A run is only recoverable if its question can be found in the thread. The live card stamps
 ``orchestration_turn_id`` on its optimistic user bubble, but the server saved the same message
@@ -34,7 +34,7 @@ sys.path.append(str(Path(__file__).resolve().parent))
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.096"
+IMPLEMENTED_IN = "0.261.099"
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 ROUTE_FILE = ROOT_DIR / "application" / "single_app" / "route_backend_orchestration.py"
