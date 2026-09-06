@@ -4,6 +4,7 @@ title: "Create an agent with actions"
 description: "Attach approved actions to an agent so it can use tools while answering."
 section: "Guides"
 audience: user
+version: "0.261.096"
 ---
 
 ## What this does
@@ -25,7 +26,19 @@ Binding an action to an agent turns a broad tool into a safer task assistant. Us
 - Create and test the action first.
 - Decide which capabilities the agent may use before attaching the action.
 
-## Steps
+## Personal agents in V2
+
+In the V2 agent editor, the **Actions** section uses one picker for ordinary
+connectors and Call agent actions. Review the selected action's capabilities in
+context. **New action** opens the normal action editor and returns to the
+retained agent draft after the action is saved; the attachment takes effect only
+when you save the agent.
+
+This workflow was implemented in **0.261.096**, recorded in
+`application/single_app/config.py`. See the [workspace guide]({{ '/guides/workspace-agents-and-actions/' | relative_url }})
+for navigation and unsaved-change behavior.
+
+## Classic interface steps
 
 1. Open the workspace that owns the agent.
 2. Open **Your Agents** or **Agents** and create or edit an agent.

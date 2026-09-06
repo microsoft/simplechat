@@ -30,8 +30,7 @@ setting on this page.
 
 ## Why it matters
 
-Two decisions on this page have real consequences and are worth thinking about before
-rollout.
+Consider approval, cost and action access before rollout.
 
 The first is **approval**. A plan can run the moment it is made, run after a countdown, or
 wait for the user to read it. Reviewing every plan is the most transparent and the
@@ -44,12 +43,17 @@ plan that analyses several documents costs considerably more than one that searc
 The limits below are what stop a vaguely worded request turning into an open-ended amount
 of work, and they are enforced regardless of what a plan asks for.
 
+**Action access** is a separate, default-off opt-in added in version **0.261.096**. It lets
+a plan use an existing action without loading a configured agent. Its focused function
+loop can still make model calls, and the action retains its existing behavior and
+governance; this is not a read-only mode.
+
 ## Before you change anything
 
 - Confirm which knowledge capabilities are already enabled. Orchestration can only plan
   around document search, document analysis, document comparison, spreadsheet analysis,
-  web search, reading linked pages, deep research and agents where those are separately
-  enabled.
+  web search, reading linked pages, deep research, agents and actions where those are
+  separately enabled.
 - Note that reading linked pages and deep research are additionally restricted by app role
   where your deployment requires it. A plan will not propose a capability the individual
   user could not reach by hand.
@@ -98,6 +102,10 @@ enabled". Clearing one keeps it out of plans even where it remains available to 
 working by hand, which is how a deployment can adopt orchestration for search while
 continuing to require deliberate action for document analysis.
 
+An empty selection also means all otherwise-enabled capabilities. **Use an action**
+(`action_invoke`) still requires **Enable Action Access**, even with an empty list or
+every capability selected. Selecting the capability alone never opts a deployment in.
+
 Answering is always available and cannot be cleared, because a plan has to end somewhere.
 
 #### How a plan is ordered
@@ -107,7 +115,7 @@ order:
 
 | Phase | What happens | Capabilities |
 | --- | --- | --- |
-| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, agents |
+| Gathering knowledge | Finding out what is true | Document search, document analysis, document comparison, spreadsheet analysis, web search, reading linked pages, deep research, Ask an agent, Use an action |
 | Reasoning | Saying something about it | Answering |
 | Creating | Producing files and other artifacts | Not yet available |
 
@@ -126,8 +134,10 @@ plan:
   still the cheaper choice for focused lookups, even when it returns several sources.
 - **Agents** load the agent's tools, connections and instructions before running. That
   setup is the expensive part of the turn, so a plan uses at most one agent.
-- **Reading linked pages** only appears when the user's message actually contains a link,
-  and only reads links the user pasted — never one the model produced.
+- **Reading linked pages** uses links the user pasted in the current request or an
+  explicitly referenced recent user message, including links supplied in accepted
+  clarification answers. A rewritten request, a clarification question, or an earlier
+  assistant suggestion cannot authorize a new link.
 
 Reading linked pages and deep research also honour the `UrlAccessUser` and
 `DeepResearchUser` app roles where your deployment requires them. A user without the role
@@ -158,16 +168,66 @@ not claim that research verified the requested details.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Enable Action Access | Lets the planner choose an existing action the user may already use, without loading a configured agent. | Off | `enable_chat_orchestration_actions`; requires Chat Orchestration and Semantic Kernel. |
 | Capabilities | Restricts which capabilities a plan may use. An empty selection means every capability the other settings already permit. | All | `chat_orchestration_enabled_capabilities` |
+
+### Actions and agents
+
+Use **Use an action** for a question that needs a particular integration, such as a ticket
+status lookup. The step selects one existing personal, group or global action and may call
+several of that action's functions. The planner receives descriptive metadata, not the
+action's manifest, credentials or connection settings. The plan's Run view identifies the
+selected action by its server-resolved display name and scope, alongside the step's task
+and status. The answer's existing Sources panel lists tool calls separately from web
+sources.
+
+Use **Ask an agent** when the work depends on that agent's configured instructions,
+knowledge or broader procedure. A user-selected agent is not silently replaced with direct
+actions, and the planner should not send the same work through both paths. **Call agent**
+actions remain on the existing agent path and are excluded from direct action selection.
+
+The opt-in adds no second action allowlist or approval system. Existing scope,
+ownership, group membership, enablement and governance rules still determine which actions
+are available, and access is checked again when work runs. An action removed or revoked
+after planning produces a visible failure rather than a substitute action or agent.
+
+Existing scope settings still apply:
+
+| Action scope | Required scope enablement |
+| --- | --- |
+| Personal | Personal actions (`allow_user_plugins`) and the personal workspace (`enable_user_workspace`) must be enabled. |
+| Group | Group actions (`allow_group_plugins`) and group workspaces (`enable_group_workspaces`) must be enabled; the caller must still be a current member of the group. |
+| Global | Global mode must be in use (`per_user_semantic_kernel` off), or **Add Global Agents and Actions to Workspaces** (`merge_global_semantic_kernel_with_workspace`) must include global actions in Workspace Mode. |
+
+These are the existing [Agents and actions settings]({{ '/admin/agents-actions/' | relative_url }}),
+not additional orchestration permissions. Global merging does not bypass action-type or
+global-item governance.
+
+Action steps gather findings before the normal answering step. This ordering describes
+the plan's intent, not a guarantee that an action cannot change data. Existing operation
+restrictions and confirmation behavior remain intact. The focused loop can make model
+calls and is bounded by the existing `max_auto_invoke_attempts` setting, step/run timeouts
+and cancellation. No output phase or composer action picker is added.
 
 ### Limits {#chat-orchestration-limits-section}
 
 Bounds on a single run.
 
-The two ledger settings decide how much of a conversation's earlier work the planner can
-see. This is what lets a follow-up question reuse what an earlier turn already found
-instead of searching for it again, and what stops the assistant asking a question the user
-has already answered. Setting the run count to zero makes every turn plan from scratch.
+The two ledger settings decide how much earlier orchestration activity the planner can
+see. They help it recognize previous searches and answered questions, but the ledger is
+not the conversation's actual text or a cache of verified source evidence. Setting the run
+count to zero disables that activity summary, not recent conversational context.
+
+Recent context uses **Conversation History Limit** from Chat settings. Orchestration
+loads eligible user/assistant messages on the server, rounds the count up to an even
+number, and applies hard ceilings of 50 messages and 16 KiB of serialized history.
+Zero disables historical messages. Masked text and inactive attempts are excluded.
+There are no orchestration rolling summaries or cross-chat memory.
+
+The contextualized request and its history are retained with each plan, so all approval
+modes interpret the same request. If a referenced message is edited or hidden before
+execution or synthesis, the user must create a new plan rather than run against stale
+context.
 
 #### Settings
 
@@ -177,7 +237,7 @@ has already answered. Setting the run count to zero makes every turn plan from s
 | Maximum re-plans per run | Limits how often a step may send the plan back to be reconsidered after discovering something. Supported range is 0-5. | 2 | `chat_orchestration_max_replans` |
 | Step timeout | How long a single step may run before it is abandoned. Supported range is 30-1800 seconds. | 180 | `chat_orchestration_step_timeout_seconds` |
 | Run timeout | How long a whole run may take before it is abandoned. Supported range is 60-7200 seconds. | 900 | `chat_orchestration_total_timeout_seconds` |
-| Earlier runs shown to the planner | How many of the conversation's previous runs the planner can see. Zero makes every turn plan from scratch. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
+| Earlier runs shown to the planner | How many previous run summaries the planner can see. Zero disables the activity ledger, not recent message history. Supported range is 0-50. | 10 | `chat_orchestration_ledger_max_runs` |
 | Earlier-run summary size | Caps the size of that summary. Older runs lose their detail first when the budget is reached. Supported range is 1024-131072 bytes. | 16384 | `chat_orchestration_ledger_max_bytes` |
 
 ### Planner Model {#chat-orchestration-planner-model-section}
@@ -188,6 +248,10 @@ Planning is a short, structured task rather than a conversational one, so a smal
 faster deployment usually does it well and costs less per message than the model that
 writes the answer. Leaving the deployment blank plans with the deployment's default chat
 model, which means orchestration works as soon as it is switched on.
+
+The same deployment resolves substantive follow-ups before retrieval. This adds a small
+completion when usable conversation history or clarification answers are present.
+First turns without history and simple acknowledgments skip that call.
 
 #### Settings
 
@@ -212,6 +276,12 @@ model, which means orchestration works as soon as it is switched on.
    in Capabilities. Outcome to verify: plans use document search and answering, and never
    propose analysing a whole document.
 
+4. **Allow direct use of an existing integration.** Confirm Semantic Kernel and the
+   action's existing scope/governance permissions, then enable Action Access. Include
+   **Use an action** if Capabilities is narrowed. Ask a question that needs the integration;
+   review its action name, scope and task in the plan before running it. Verify the step's
+   findings reach the answer without selecting a configured agent.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -220,14 +290,21 @@ model, which means orchestration works as soon as it is switched on.
 | Plans never mention documents | No workspace capability is enabled, or nothing in the user's documents matched the question. | Confirm at least one workspace type is enabled, and that the user has documents that have finished processing. |
 | Every plan is a single answering step | Capabilities are narrowed to answering only, or the retrieval capabilities are disabled elsewhere. | Review Capabilities on this page, then confirm document search and web search are enabled in their own settings groups. |
 | A plan is smaller than expected | The step cap trimmed it. | Raise Maximum steps in a plan, or ask a narrower question. |
-| A question is asked that was already answered | The ledger is disabled or too small to reach the earlier turn. | Raise Earlier runs shown to the planner, and confirm the summary size is not set to its minimum. |
+| A follow-up loses its subject | The relevant message is outside the history window, masked, inactive, or truncated. | Check Conversation History Limit in Chat settings and whether the earlier turn is still eligible. Repeat the missing detail if it is outside the retained context. |
+| A question is asked that was already answered | The earlier answer may be outside retained message history and the activity ledger. | Check the history window and ledger limits; the ledger alone does not contain the full earlier answer. |
+| A pending plan reports changed conversation context | A referenced message or its visibility changed after planning. | Create a new plan using the current conversation. |
 | Plans never propose deep research or reading a link | The user does not hold the required app role, or the capability is disabled in its own settings group. | Confirm the user holds `DeepResearchUser` or `UrlAccessUser` where your deployment requires them, and that the capability is enabled outside this page. |
 | Plans never propose an agent | Semantic Kernel is off, the user has turned agents off in their own settings, or the user has no agent they can reach. | Confirm Semantic Kernel is enabled, then check the user's own agent setting and that at least one agent is shared with them. |
-| A plan proposed reading a link but found nothing | The link was produced by the model rather than pasted by the user. | Only links present in the user's own message are read. Ask the user to paste the URL into their message. |
+| Plans never propose Use an action | Action Access is off, Semantic Kernel is off, the capability is excluded, or no eligible action is available to this user. | Check the opt-in and capability selection, then the existing action scope and governance. Call agent actions are not eligible for direct use. |
+| An action step fails after plan approval | The action or its access changed, or its model/tool connection could not run. | Check current action access and configuration. Review the visible step failure; the run does not silently switch to an agent or another action. |
+| A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
 
 ## Related
 
 - [Administration settings overview]({{ '/admin/' | relative_url }})
 - [Chat settings]({{ '/admin/chat/' | relative_url }})
 - [Knowledge settings]({{ '/admin/knowledge/' | relative_url }})
+- [Agents and actions settings]({{ '/admin/agents-actions/' | relative_url }})
+- [Create an action]({{ '/guides/create-an-action/' | relative_url }})
+- [Actions reference]({{ '/reference/actions/' | relative_url }})
 - [Workflow settings]({{ '/admin/workflow/' | relative_url }})

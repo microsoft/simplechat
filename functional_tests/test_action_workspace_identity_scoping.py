@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
 # test_action_workspace_identity_scoping.py
 """
 Functional test for action workspace identity scoping.
-Version: 0.241.095
-Implemented in: 0.241.095
+Version: 0.261.096
+Implemented in: 0.241.095; 0.261.096
 
 This test ensures reusable workspace identities can be referenced by personal,
 group, and global actions without copying secrets, while public identities and
@@ -14,6 +13,7 @@ import ast
 import json
 import sys
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -62,9 +62,33 @@ def test_workspace_identity_action_helpers():
 
     assert "ACTION_IDENTITY_AUTH_TYPES" in identity_text
     assert "Public workspace identities cannot be used by actions" in identity_text
-    assert 'allowed_usage_contexts = {"action"}' in identity_text
-    assert 'allowed_usage_contexts = {"file_sync", "action"}' in identity_text
-    assert 'allowed_usage_contexts = {"file_sync"}' in identity_text
+    namespace = {"Any": Any, "Dict": Dict, "List": List, "Optional": Optional, "Set": Set}
+    selected = [
+        node for node in parsed.body
+        if (
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id.startswith(("WORKSPACE_IDENTITY_", "ACTION_IDENTITY_"))
+                for target in node.targets
+            )
+        ) or (
+            isinstance(node, ast.FunctionDef)
+            and node.name in {"_normalize_text", "_normalize_list", "identity_supports_usage"}
+        )
+    ]
+    exec(compile(ast.Module(body=selected, type_ignores=[]), "functions_workspace_identities.py", "exec"), namespace)
+    supports = namespace["identity_supports_usage"]
+    identity = {
+        "usage_contexts": ["action"], "supported_source_types": ["action"],
+        "auth": {"auth_type": "api_key"},
+    }
+    assert supports(identity, "action", source_type="action", auth_types=namespace["ACTION_IDENTITY_YAMCS_AUTH_TYPES"])
+    assert not supports(identity, "file_sync")
+    assert not supports(identity, "action", source_type="action", auth_types=namespace["ACTION_IDENTITY_SQL_AUTH_TYPES"])
+    identity["auth"]["auth_type"] = "username_password"
+    assert supports(identity, "action", source_type="action", auth_types=namespace["ACTION_IDENTITY_SQL_AUTH_TYPES"])
+    identity["auth"]["auth_type"] = "client_secret"
+    assert not supports(identity, "action", source_type="action", auth_types=namespace["ACTION_IDENTITY_SQL_AUTH_TYPES"])
 
 
 def test_action_storage_validates_and_hydrates_identities():

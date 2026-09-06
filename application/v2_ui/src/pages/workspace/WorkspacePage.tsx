@@ -26,7 +26,8 @@ import type { WorkspaceSectionContext } from './sections';
 
 export function WorkspacePage() {
     const workspace = useBootstrapStore((state) => state.data?.workspace);
-    const { section: requestedSection } = useParams<{ section?: string }>();
+    const ownerId = useBootstrapStore((state) => state.data?.user?.id);
+    const { section: requestedSection, resourceId } = useParams<{ section?: string; resourceId?: string }>();
 
     const railCollapsed = useUserSettingsStore(
         (state) => state.settings.v2WorkspaceRailCollapsed === true,
@@ -43,10 +44,12 @@ export function WorkspacePage() {
 
     const context: WorkspaceSectionContext = useMemo(
         () => ({
+            resourceId,
+            ownerId,
             isEnabled: (sectionId: string) =>
                 resolved.some((entry) => entry.section.id === sectionId && entry.enabled),
         }),
-        [resolved],
+        [resolved, resourceId, ownerId],
     );
 
     // The whole page is gated on enable_user_workspace upstream, but the flag is reported
@@ -100,6 +103,9 @@ export function WorkspacePage() {
                 />
             );
         }
+        if (resourceId && !['agents', 'actions'].includes(activeEntry.section.id)) {
+            return <EmptyState title="Editor not found" description="That editor does not exist in this workspace section." />;
+        }
         return activeEntry.section.render(context);
     };
 
@@ -124,7 +130,7 @@ export function WorkspacePage() {
                     aria-label="Workspace sections"
                     className={clsx(
                         'flex shrink-0 flex-col gap-3 overflow-y-auto transition-[width]',
-                        railCollapsed ? 'w-12' : 'w-52',
+                        railCollapsed ? 'w-12' : 'w-12 md:w-52',
                     )}
                 >
                     <button
@@ -153,7 +159,7 @@ export function WorkspacePage() {
                         ) : (
                             <>
                                 <PanelLeftClose size={15} />
-                                <span>Collapse</span>
+                                <span className="hidden md:inline">Collapse</span>
                             </>
                         )}
                     </button>
@@ -168,7 +174,7 @@ export function WorkspacePage() {
                         {railCollapsed ? (
                             <span className="sr-only">Overview</span>
                         ) : (
-                            <span className="truncate">Overview</span>
+                            <span className="sr-only md:not-sr-only md:truncate">Overview</span>
                         )}
                     </NavLink>
 
@@ -182,7 +188,7 @@ export function WorkspacePage() {
                                     className="mx-2 my-1.5 border-t border-edge"
                                 />
                             ) : (
-                                <p className="px-2.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
+                                <p className="hidden px-2.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase md:block">
                                     {group.label}
                                 </p>
                             )}
@@ -203,7 +209,7 @@ export function WorkspacePage() {
                                         {railCollapsed ? (
                                             <span className="sr-only">{section.label}</span>
                                         ) : (
-                                            <span className="truncate">{section.label}</span>
+                                            <span className="sr-only md:not-sr-only md:truncate">{section.label}</span>
                                         )}
                                     </NavLink>
                                 );

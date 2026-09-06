@@ -1,160 +1,207 @@
 // ActionsSection.tsx
-// Personal actions: the tools an agent is allowed to call.
-//
-// Call agent authoring is native; unrelated connector editors remain in classic.
 
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Plug, Shield, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { LayoutGrid, List, Plug, Plus, RefreshCw, Shield, Trash2 } from 'lucide-react';
+import { EmptyState, GlassButton, GlassPanel } from '../../components/ui/primitives';
+import { ConfirmAction, Pill, SectionError, SectionIntro, SectionSearch, SectionSkeleton } from '../../components/workspace/primitives';
+import { errorMessage, useSectionResource } from '../../components/workspace/useSectionResource';
+import { ACTION_INPUT_CLASS } from '../../components/workspaceActions/ActionFields';
+import { deleteAuthoringAction, fetchAuthoringActions, fetchActionTypes } from '../../lib/workspaceAuthoringApi';
 import {
-    ConfirmAction,
-    Pill,
-    ResourceRow,
-    SectionIntro,
-    SectionList,
-    SectionSearch,
-} from '../../components/workspace/primitives';
-import {
-    errorMessage,
-    useSectionResource,
-} from '../../components/workspace/useSectionResource';
-import { deleteAction, fetchActions } from '../../lib/workspaceApi';
-import { PERSONAL_DELEGATION_SCOPE } from '../../lib/agentDelegation';
-import { AgentDelegationManager } from '../../components/agents/AgentDelegationManager';
-import type { WorkspaceAction } from '../../lib/types';
+    ACTION_AUTHORING_UNAVAILABLE, actionCanEdit, actionDetailPath, actionResourceKey, actionScope,
+    actionTypeLabel, filterAuthoringActions,
+} from '../../lib/workspaceActionLogic';
+import { fetchActionEditorHints } from '../../lib/workspaceActionServices';
+import type { ActionConfiguration, ActionTypeDefinition } from '../../lib/workspaceAuthoring';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 
-/** Render a connector type as something readable: `document_search` -> `Document search`. */
-export function actionTypeLabel(type: unknown): string {
-    const raw = String(type ?? '').trim();
-    if (!raw) {
-        return 'Unknown';
-    }
-    if (raw === 'agent') {
-        return 'Call agent';
-    }
-    const spaced = raw.replace(/[_-]+/g, ' ');
-    return spaced.charAt(0).toUpperCase() + spaced.slice(1);
-}
+export { actionTypeLabel } from '../../lib/workspaceActionLogic';
+
+let collectionState = { owner: '', query: '', type: '', scope: '', view: 'list', scrollTop: 0 };
 
 export function ActionsSection({ agentsEnabled }: { agentsEnabled: boolean }) {
-    const { items, loading, error, setItems, setError } = useSectionResource<WorkspaceAction>(
-        fetchActions,
-        'Failed to load actions.',
-    );
-
-    const [query, setQuery] = useState('');
+    const navigate = useNavigate();
+    const owner = useBootstrapStore((state) => state.data?.user?.id ?? '');
+    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
+    const { items, loading, error, refresh, setItems, setError } =
+        useSectionResource<ActionConfiguration>(fetchAuthoringActions, 'Failed to load actions.');
+    const [catalogue, setCatalogue] = useState<ActionTypeDefinition[]>([]);
+    const [catalogueError, setCatalogueError] = useState<string | null>(null);
+    const [catalogueVersion, setCatalogueVersion] = useState(0);
+    const [canAuthor, setCanAuthor] = useState<boolean | null>(null);
+    const [capabilityError, setCapabilityError] = useState<string | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
-    const hasOtherActions = items.some((action) => action.type !== 'agent');
+    const list = useRef<HTMLDivElement>(null);
+    const loadedOwner = useRef(owner);
+    const scrollRestored = useRef(false);
+    const [filters, setFilters] = useState(() => {
+        if (collectionState.owner !== owner) collectionState = { owner, query: '', type: '', scope: '', view: 'list', scrollTop: 0 };
+        return { ...collectionState };
+    });
 
-    const visible = useMemo(() => {
-        const needle = query.trim().toLowerCase();
-        if (!needle) {
-            return items.filter((action) => action.type !== 'agent');
+    useEffect(() => {
+        if (filters.owner !== owner) {
+            collectionState = { owner, query: '', type: '', scope: '', view: 'list', scrollTop: 0 };
+            setFilters(collectionState);
+            scrollRestored.current = false;
+        } else {
+            collectionState = { ...filters, scrollTop: collectionState.scrollTop };
         }
-        return items.filter((action) => action.type !== 'agent' &&
-            `${action.displayName ?? ''} ${action.name ?? ''} ${action.type ?? ''}`
-                .toLowerCase()
-                .includes(needle),
-        );
-    }, [items, query]);
-
-    const onDelete = async (action: WorkspaceAction) => {
-        const previous = items;
-        const identifier = action.id || String(action.name ?? '');
-        setBusyId(identifier);
-        setItems(items.filter((item) => (item.id || item.name) !== (action.id || action.name)));
-        try {
-            await deleteAction(identifier);
-        } catch (deleteError) {
-            setItems(previous);
-            setError(errorMessage(deleteError, 'Could not delete the action.'));
-        } finally {
+    }, [owner, filters]);
+    useEffect(() => {
+        if (loadedOwner.current !== owner) {
+            loadedOwner.current = owner;
+            setItems([]);
             setBusyId(null);
+            void refresh();
+        }
+    }, [owner, refresh, setItems]);
+    useEffect(() => {
+        const controller = new AbortController();
+        setCatalogueError(null);
+        setCanAuthor(null);
+        setCapabilityError(null);
+        void fetchActionTypes(controller.signal).then(setCatalogue).catch((cause: unknown) => {
+            if (!controller.signal.aborted) setCatalogueError(errorMessage(cause, 'Could not load action types.'));
+        });
+        void fetchActionEditorHints(controller.signal).then((hints) => {
+            if (!controller.signal.aborted) setCanAuthor(hints.canAuthor);
+        }).catch((cause: unknown) => {
+            if (!controller.signal.aborted) {
+                setCanAuthor(false);
+                setCapabilityError(errorMessage(cause, 'Could not load action authoring permissions.'));
+            }
+        });
+        return () => controller.abort();
+    }, [owner, catalogueVersion]);
+    useEffect(() => {
+        if (!loading && !error && !scrollRestored.current && list.current) {
+            list.current.scrollTop = collectionState.scrollTop;
+            scrollRestored.current = true;
+        }
+    }, [loading, error, items.length]);
+
+    const labels = useMemo(() => new Map(catalogue.map((type) => [type.type, type.display])), [catalogue]);
+    const types = useMemo(() => [...new Set([...catalogue.map(({ type }) => type), ...items.map(({ type }) => type)])]
+        .sort((left, right) => (labels.get(left) || actionTypeLabel(left)).localeCompare(labels.get(right) || actionTypeLabel(right))),
+    [catalogue, items, labels]);
+    const visible = useMemo(() => filterAuthoringActions(items, filters.query, filters.type, filters.scope, catalogue),
+        [items, filters, catalogue]);
+
+    const remove = async (action: ActionConfiguration) => {
+        if (actionScope(action) === 'provided' || !action.id) return;
+        const key = actionResourceKey(action);
+        setBusyId(key);
+        setError(null);
+        try {
+            await deleteAuthoringAction(action.id);
+            if (loadedOwner.current !== owner) return;
+            await Promise.all([refresh(), refreshBootstrap()]);
+        } catch (cause) {
+            if (loadedOwner.current === owner) setError(errorMessage(cause, 'Could not delete the action.'));
+        } finally {
+            if (loadedOwner.current === owner) setBusyId(null);
         }
     };
 
     return (
-        <div className="space-y-4">
-            <SectionIntro
-                title="Actions"
-                description="Tools an agent may call on your behalf, such as an API, a database or an MCP server. An action does nothing until an agent is given permission to use it."
-            />
-
-            <p className="text-xs text-text-3">
-                Create and edit Call agent actions below. Other connectors are configured in the{' '}
-                <a href="/workspace" className="text-accent hover:underline">
-                    classic workspace
-                </a>
-                .{' '}
-                {agentsEnabled ? (
-                    <>
-                        Attach them to an{' '}
-                        <Link to="/workspace/agents" className="text-accent hover:underline">
-                            agent
-                        </Link>{' '}
-                        to put them to use.
-                    </>
-                ) : null}
-            </p>
-
-            <AgentDelegationManager scope={PERSONAL_DELEGATION_SCOPE} mode="actions" />
-
-            <h2 className="text-base font-semibold text-text-1">Other actions</h2>
-            <SectionSearch value={query} onChange={setQuery} placeholder="Search actions" />
-
-            <SectionList
-                items={visible}
-                loading={loading}
-                error={error}
-                emptyIcon={<Plug size={28} />}
-                emptyTitle={
-                    !hasOtherActions ? 'No other actions yet' : 'No actions match your search'
-                }
-                emptyDescription={
-                    !hasOtherActions
-                        ? 'Actions let an agent reach a system outside this chat.'
-                        : undefined
-                }
-                getKey={(action, index) => String(action.id ?? action.name ?? index)}
-                renderItem={(action) => {
-                    const managed = Boolean(action.is_global);
-                    const identifier = action.id || String(action.name ?? '');
-                    return (
-                        <ResourceRow
-                            icon={<Plug size={17} />}
-                            title={String(action.displayName || action.name || 'Untitled action')}
-                            subtitle={
-                                String(action.description || '') ||
-                                String(action.endpoint || '')
-                            }
-                            meta={
-                                <>
-                                    <Pill>{actionTypeLabel(action.type)}</Pill>
-                                    {managed ? (
-                                        <Pill tone="accent">
-                                            <span className="flex items-center gap-1">
-                                                <Shield size={10} />
-                                                Provided
-                                            </span>
-                                        </Pill>
-                                    ) : null}
-                                </>
-                            }
-                            actions={
-                                managed ? undefined : (
-                                    <ConfirmAction
-                                        icon={<Trash2 size={15} />}
-                                        label={`Delete ${action.displayName ?? action.name ?? 'action'}`}
-                                        confirmLabel="Delete"
-                                        busy={busyId === identifier}
-                                        onConfirm={() => void onDelete(action)}
-                                    />
-                                )
-                            }
-                        />
-                    );
-                }}
-            />
+        <div className="flex h-full min-h-0 flex-col gap-4" data-testid="workspace-actions">
+            <SectionIntro title="Actions"
+                description="Tools an agent may call on your behalf. Configure an API, database, application, or another agent here, then decide which agents may use it."
+                actions={<GlassButton type="button" variant="primary" size="sm" disabled={canAuthor !== true}
+                    onClick={() => navigate('/workspace/actions/new')}>
+                    <Plus size={16} /> New action
+                </GlassButton>} />
+            {agentsEnabled ? <p className="text-xs text-text-3">
+                Actions run only when permitted by an <Link to="/workspace/agents" className="text-accent hover:underline">agent</Link>.
+            </p> : null}
+            {canAuthor === null ? <p role="status" className="text-xs text-text-3">Checking action authoring permissions…</p> : null}
+            {canAuthor === false && !capabilityError ? <p role="status" className="text-xs text-text-3">{ACTION_AUTHORING_UNAVAILABLE}</p> : null}
+            <div className="flex flex-wrap items-end gap-2">
+                <div className="min-w-44 flex-1">
+                    <SectionSearch value={filters.query} onChange={(query) => setFilters((current) => ({ ...current, query }))}
+                        placeholder="Search actions" />
+                </div>
+                <label className="min-w-36 flex-1 text-xs text-text-3 sm:max-w-52">
+                    Type
+                    <select aria-label="Action type filter" className={`${ACTION_INPUT_CLASS} mt-1`} value={filters.type}
+                        onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value }))}>
+                        <option value="">All types</option>
+                        {types.map((type) => <option key={type} value={type}>{labels.get(type) || actionTypeLabel(type)}</option>)}
+                    </select>
+                </label>
+                <label className="min-w-32 text-xs text-text-3">
+                    Scope
+                    <select aria-label="Action scope filter" className={`${ACTION_INPUT_CLASS} mt-1`} value={filters.scope}
+                        onChange={(event) => setFilters((current) => ({ ...current, scope: event.target.value }))}>
+                        <option value="">All scopes</option><option value="personal">My actions</option><option value="provided">Provided</option>
+                    </select>
+                </label>
+                <div className="flex items-center gap-1" role="group" aria-label="Action view">
+                    <GlassButton type="button" size="icon" title="List view" aria-label="List view" aria-pressed={filters.view === 'list'}
+                        onClick={() => setFilters((current) => ({ ...current, view: 'list' }))}><List size={17} /></GlassButton>
+                    <GlassButton type="button" size="icon" title="Card view" aria-label="Card view" aria-pressed={filters.view === 'cards'}
+                        onClick={() => setFilters((current) => ({ ...current, view: 'cards' }))}><LayoutGrid size={17} /></GlassButton>
+                    <GlassButton type="button" size="icon" title="Refresh actions" aria-label="Refresh actions" disabled={loading}
+                        onClick={() => { void refresh(); setCatalogueVersion((version) => version + 1); }}><RefreshCw size={16} /></GlassButton>
+                </div>
+            </div>
+            {error ? <SectionError message={error} /> : null}
+            {catalogueError ? <SectionError message={`${catalogueError} Existing actions are still listed; retry with Refresh actions.`} /> : null}
+            {capabilityError ? <SectionError message={`${capabilityError} Reading actions and permitted deletion remain available. Retry with Refresh actions.`} /> : null}
+            <div ref={list} className="min-h-0 flex-1 overflow-y-auto pb-3 pr-1"
+                onScroll={(event) => { collectionState.scrollTop = event.currentTarget.scrollTop; }}>
+                {loading ? <SectionSkeleton /> : !error && !visible.length ? (
+                    <EmptyState icon={<Plug size={28} />}
+                        title={items.length ? 'No actions match these filters' : 'No actions yet'}
+                        description={items.length ? 'Search by name, description, or connector type.' :
+                            canAuthor === true ? 'Create an action to make a tool available to your agents.' : 'No readable actions are available in this workspace.'}
+                        action={items.length ? <GlassButton type="button" onClick={() => setFilters((current) => ({ ...current, query: '', type: '', scope: '' }))}>
+                            Clear filters
+                        </GlassButton> : canAuthor === true ? <GlassButton type="button" variant="primary"
+                            onClick={() => navigate('/workspace/actions/new')}>New action</GlassButton> : undefined} />
+                ) : (
+                    <ul className={filters.view === 'cards' ? 'grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3' : 'space-y-2'}>
+                        {visible.map((action, index) => {
+                            const provided = actionScope(action) === 'provided';
+                            const editable = actionCanEdit(action, canAuthor === true);
+                            const label = action.displayName || action.name || 'Untitled action';
+                            return (
+                                <li key={action.id ? actionResourceKey(action) : `missing-${index}`} className="min-w-0"
+                                    data-testid="workspace-action" data-action-id={action.id}
+                                    data-action-scope={provided ? 'global' : 'personal'} data-action-type={action.type}>
+                                    <GlassPanel elevation="flat" className={`flex min-w-0 gap-3 p-4 ${filters.view === 'cards' ? 'h-full flex-col' : 'flex-wrap items-center'}`}>
+                                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                                            <Plug size={18} className="mt-0.5 shrink-0 text-text-3" />
+                                            <div className="min-w-0">
+                                                {action.id ? <Link to={actionDetailPath(action)} className="break-words text-sm font-semibold text-text-1 hover:text-accent hover:underline">{label}</Link>
+                                                    : <span className="text-sm font-semibold text-text-1">{label}</span>}
+                                                <p className="mt-1 line-clamp-2 break-words text-xs text-text-3">{action.description || 'No description.'}</p>
+                                                <p className="mt-1 break-all text-[11px] text-text-3">{action.id || 'Missing resource ID — reload before editing.'}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <Pill>{labels.get(action.type) || actionTypeLabel(action.type)}</Pill>
+                                            <Pill tone={provided ? 'accent' : 'neutral'}>{provided ? <span className="inline-flex items-center gap-1"><Shield size={11} />Provided · Read only</span> : 'Personal'}</Pill>
+                                            {!provided && !editable ? <Pill>Read only</Pill> : null}
+                                        </div>
+                                        <div className="flex items-center justify-end gap-2">
+                                            {action.id ? <Link to={actionDetailPath(action)} aria-label={`${editable ? 'Edit' : 'View'} ${label}`}
+                                                className="rounded-lg px-2 py-1.5 text-sm text-accent hover:bg-accent-soft">
+                                                {editable ? 'Edit' : 'View details'}
+                                            </Link> : null}
+                                            {!provided && action.id ? <ConfirmAction icon={<Trash2 size={15} />} label={`Delete ${label}`}
+                                                confirmLabel="Delete action" busy={busyId === actionResourceKey(action)} disabled={busyId !== null}
+                                                onConfirm={() => void remove(action)} /> : null}
+                                        </div>
+                                    </GlassPanel>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                )}
+            </div>
         </div>
     );
 }

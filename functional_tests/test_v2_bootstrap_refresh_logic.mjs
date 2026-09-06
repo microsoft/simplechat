@@ -1,8 +1,9 @@
 // test_v2_bootstrap_refresh_logic.mjs
 //
 // Runtime test for the V2 bootstrap store's refresh action.
-// Version: 0.261.046
+// Version: 0.261.096
 // Implemented in: 0.261.046
+// Required authoring selection refresh added in: 0.261.096
 //
 // The companion test, test_v2_admin_settings_live_shell_refresh.py, asserts that the pieces
 // are wired together. Those are source assertions: they prove the call exists, not that it
@@ -261,12 +262,54 @@ async function testAStaleRefreshCannotOverwriteANewerOne() {
     console.log('Refresh ordering test passed!');
 }
 
+async function testRequiredRefreshReturnsFreshDataWithoutBlanking() {
+    await loadWith(BANNER_OFF);
+    const fresh = payloadWithBanner(BANNER_ON);
+    fresh.catalogs = { agents: [{ id: 'authorized', scope_type: 'personal' }] };
+    fetchImpl = async () => jsonResponse(fresh);
+    let result;
+    const states = await recordStates(async () => {
+        result = await useBootstrapStore.getState().refreshRequired();
+    });
+    assert.equal(result, fresh);
+    assert.equal(useBootstrapStore.getState().data, fresh);
+    assert.ok(states.every((state) => !state.loading && !state.error));
+}
+
+async function testRequiredRefreshRejectsInsteadOfReturningCachedAgents() {
+    const previous = (await loadWith(BANNER_ON)).data;
+    fetchImpl = async () => jsonResponse({ error: 'Unavailable' }, 503);
+    await assert.rejects(useBootstrapStore.getState().refreshRequired(), /Unavailable/);
+    assert.equal(useBootstrapStore.getState().data, previous);
+    fetchImpl = async () => { throw new TypeError('Network unavailable'); };
+    await assert.rejects(useBootstrapStore.getState().refreshRequired(), /Network unavailable/);
+    assert.equal(useBootstrapStore.getState().data, previous);
+    assert.equal(useBootstrapStore.getState().error, null);
+}
+
+async function testSupersededRequiredRefreshCannotAuthorizeFromAnOlderResult() {
+    await loadWith(BANNER_OFF);
+    let release;
+    fetchImpl = () => new Promise((resolve) => { release = resolve; });
+    const requested = useBootstrapStore.getState().refreshRequired();
+    const latest = payloadWithBanner(BANNER_ON);
+    latest.catalogs = { agents: [] };
+    fetchImpl = async () => jsonResponse(latest);
+    await useBootstrapStore.getState().refresh();
+    release(jsonResponse(payloadWithBanner(BANNER_OFF)));
+    await assert.rejects(requested, /availability changed during refresh/);
+    assert.equal(useBootstrapStore.getState().data, latest);
+}
+
 const tests = [
     testRefreshAppliesTheNewPayload,
     testRefreshNeverBlanksTheInterface,
     testAFailedRefreshIsAdvisory,
     testARejectedRefreshDoesNotEscape,
     testAStaleRefreshCannotOverwriteANewerOne,
+    testRequiredRefreshReturnsFreshDataWithoutBlanking,
+    testRequiredRefreshRejectsInsteadOfReturningCachedAgents,
+    testSupersededRequiredRefreshCannotAuthorizeFromAnOlderResult,
 ];
 
 let passed = 0;

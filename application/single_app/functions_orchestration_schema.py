@@ -41,6 +41,7 @@ import uuid
 
 from functions_appinsights import log_event
 from functions_orchestration_registry import (
+    CAPABILITY_ACTION_INVOKE,
     PRODUCES_EVIDENCE,
     TERMINAL_CAPABILITY_ID,
     get_capability,
@@ -493,6 +494,7 @@ def validate_plan(
     authorized_document_ids=None,
     available_capability_ids=None,
     agent_names=None,
+    action_refs=None,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
@@ -528,6 +530,7 @@ def validate_plan(
         known_agents = {
             str(value).strip() for value in agent_names if str(value).strip()
         }
+    known_actions = set(_string_list(action_refs))
 
     authorized = None
     if authorized_document_ids is not None:
@@ -577,6 +580,13 @@ def validate_plan(
                 f"Step {index + 1} ({capability_id}): " + '; '.join(argument_errors)
             )
             continue
+
+        if capability_id == CAPABILITY_ACTION_INVOKE:
+            if arguments['action_ref'] not in known_actions:
+                errors.append(
+                    f"Step {index + 1} references an action unavailable to this request."
+                )
+                continue
 
         # An agent step may only name an agent the caller can actually reach. A planner
         # inventing a plausible-sounding agent is as likely as one inventing a capability,
@@ -763,7 +773,7 @@ def validate_plan(
     return plan
 
 
-def build_plan_inputs(plan, seeds=None, document_labels=None):
+def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     """Describe what the plan will actually act on, for the approval card.
 
     Derived from the validated steps rather than from what the planner claimed, because
@@ -778,6 +788,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None):
     labels = document_labels if isinstance(document_labels, dict) else {}
 
     document_ids = []
+    action_refs = []
     uses_web = False
     for step in (plan or {}).get('steps') or ():
         if not step.get('enabled', True):
@@ -785,6 +796,10 @@ def build_plan_inputs(plan, seeds=None, document_labels=None):
         if step.get('capability_id') == 'web_search':
             uses_web = True
         arguments = step.get('arguments') or {}
+        if step.get('capability_id') == CAPABILITY_ACTION_INVOKE:
+            action_ref = arguments.get('action_ref')
+            if action_ref and action_ref not in action_refs:
+                action_refs.append(action_ref)
         for field in ('document_ids', 'right_document_ids'):
             for value in arguments.get(field) or ():
                 if value not in document_ids:
@@ -813,6 +828,15 @@ def build_plan_inputs(plan, seeds=None, document_labels=None):
             for document_id in document_ids
         ],
         'web': uses_web,
+        'actions': [
+            {
+                'action_ref': action['action_ref'],
+                'display_name': _text(action.get('display_name') or action.get('name'), 200),
+                'scope_label': _text(action.get('scope_label'), 200),
+            }
+            for action in actions or ()
+            if isinstance(action, dict) and action.get('action_ref') in action_refs
+        ],
         'agent': seeds.get('agent'),
         'model': seeds.get('model'),
         'prompt': prompt,
@@ -843,6 +867,7 @@ def normalize_plan(
     seeds=None,
     document_labels=None,
     agent_names=None,
+    actions=None,
 ):
     """Turn raw planner output into a complete, validated plan document."""
     settings = settings if isinstance(settings, dict) else {}
@@ -897,9 +922,14 @@ def normalize_plan(
         authorized_document_ids=authorized_document_ids,
         available_capability_ids=available_capability_ids,
         agent_names=agent_names,
+        action_refs=[
+            action.get('action_ref') for action in actions or () if isinstance(action, dict)
+        ],
     )
 
-    plan['inputs'] = build_plan_inputs(plan, seeds=seeds, document_labels=document_labels)
+    plan['inputs'] = build_plan_inputs(
+        plan, seeds=seeds, document_labels=document_labels, actions=actions,
+    )
     plan['outputs'] = build_plan_outputs(plan)
 
     # A plan nobody has to look at is approved on arrival; everything else waits. Timed

@@ -21,6 +21,7 @@ import type {
     OrchestrationApproval,
     OrchestrationIntent,
     OrchestrationPlan,
+    OrchestrationPlanAction,
     OrchestrationPlanDocument,
     OrchestrationPlanInputs,
     OrchestrationStep,
@@ -259,8 +260,24 @@ function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
         });
     }
 
+    const rawActions: unknown[] = Array.isArray(source.actions) ? source.actions : [];
+    const actions: OrchestrationPlanAction[] = [];
+    for (const entry of rawActions) {
+        const record = asRecord(entry);
+        const actionRef = asString(record.action_ref);
+        if (!actionRef) {
+            continue;
+        }
+        actions.push({
+            action_ref: actionRef,
+            display_name: asString(record.display_name) || 'Unnamed action',
+            scope_label: asString(record.scope_label) || 'Unknown scope',
+        });
+    }
+
     return {
         documents,
+        actions: source.actions !== undefined ? actions : undefined,
         web: asBoolean(source.web, false),
         agent: source.agent !== undefined ? asRecord(source.agent) : undefined,
         model: source.model !== undefined ? asRecord(source.model) : undefined,

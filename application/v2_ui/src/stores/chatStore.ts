@@ -366,6 +366,7 @@ interface ChatState {
         text: string,
         addUserMessage?: boolean,
         turnId?: string,
+        promptInfo?: Json | null,
     ) => string;
     pushOrchestrationThought: (conversationId: string, event: RunStreamEvent) => void;
     pushOrchestrationContent: (conversationId: string, accumulated: string) => void;
@@ -2304,6 +2305,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     content: trimmed,
                     reply_to_message_id: replyTo?.message_id ?? null,
                     mentioned_participants: mentionedParticipants,
+                    ...(options.promptInfo ? { prompt_info: options.promptInfo } : {}),
                 });
                 useCollaborationStore.getState().setReplyTo(null);
                 if (result.conversation) {
@@ -2472,7 +2474,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    beginOrchestrationTurn: (conversationId, text, addUserMessage = true, turnId) => {
+    beginOrchestrationTurn: (conversationId, text, addUserMessage = true, turnId, promptInfo) => {
         const trimmed = text.trim();
         const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
         // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
@@ -2492,7 +2494,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
                               // Stamp the turn so the plan map can scroll back to the question a
                               // run belongs to; it survives the id reconciliation on completion,
                               // which only swaps the id and keeps every other field.
-                              metadata: turnId ? { orchestration_turn_id: turnId } : undefined,
+                              metadata: turnId || promptInfo
+                                  ? {
+                                        ...(turnId ? { orchestration_turn_id: turnId } : {}),
+                                        ...(promptInfo
+                                            ? { prompt_selection: promptSelectionMetadata(promptInfo) }
+                                            : {}),
+                                    }
+                                  : undefined,
                           },
                       ]
                     : state.messages,
@@ -2623,6 +2632,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             hybrid_citations: event.hybrid_citations as ChatMessage['hybrid_citations'],
             web_search_citations:
                 event.web_search_citations as ChatMessage['web_search_citations'],
+            agent_citations: event.agent_citations as ChatMessage['agent_citations'],
             metadata: event.metadata,
             thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
         };
