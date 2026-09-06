@@ -16,6 +16,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import * as orchestrationStore from '../../../application/v2_ui/src/stores/orchestrationStore';
 import * as chatStore from '../../../application/v2_ui/src/stores/chatStore';
 import * as bootstrapStore from '../../../application/v2_ui/src/stores/bootstrapStore';
+import * as collaborationStore from '../../../application/v2_ui/src/stores/collaborationStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
@@ -27,7 +28,17 @@ import { OrchestrationRunView } from '../../../application/v2_ui/src/components/
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
+import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
+
+function PromptExperience() {
+    return (
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden" style={{ height: '100dvh' }}>
+            <MessageList />
+            <Composer />
+        </div>
+    );
+}
 
 function ContextWorkflow() {
     const location = useLocation();
@@ -50,6 +61,7 @@ type ComponentName =
     | 'OrchestrationMapView'
     | 'MessageList'
     | 'Composer'
+    | 'PromptExperience'
     | 'ContextWorkflow';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -61,6 +73,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     OrchestrationMapView,
     MessageList,
     Composer,
+    PromptExperience,
     ContextWorkflow,
 };
 
@@ -154,6 +167,7 @@ const harness = {
         orchestration: orchestrationStore,
         chat: chatStore,
         bootstrap: bootstrapStore,
+        collaboration: collaborationStore,
     },
     controller,
     plan,

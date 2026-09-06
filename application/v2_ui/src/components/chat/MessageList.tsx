@@ -9,7 +9,6 @@ import {
     EyeOff,
     FileText,
     ImageOff,
-    Lightbulb,
     PenLine,
     RefreshCw,
     Reply,
@@ -62,6 +61,7 @@ import {
 } from '../../lib/sharedMessage';
 import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
 import { readMessagePrompt } from '../../lib/messagePrompt';
+import { PromptCard } from './PromptCard';
 import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
 
 function ThoughtsPanel({ thoughts, live = false }: { thoughts: ThoughtEntry[]; live?: boolean }) {
@@ -345,48 +345,30 @@ function PromptUsedBlock({
     name,
     text,
     onAccent,
+    scopeLabel,
+    edited,
+    variableCount,
 }: {
     name: string;
     text: string;
     onAccent: boolean;
+    scopeLabel?: string;
+    edited?: boolean;
+    variableCount?: number;
 }) {
     const [open, setOpen] = useState(false);
 
     return (
-        <div className="mb-2">
-            <button
-                type="button"
-                onClick={() => setOpen((isOpen) => !isOpen)}
-                aria-expanded={open}
-                className={clsx(
-                    'inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors',
-                    onAccent
-                        ? 'text-on-accent/80 hover:bg-on-accent/10 hover:text-on-accent'
-                        : 'text-text-3 hover:bg-surface-2 hover:text-text-2',
-                )}
-            >
-                <Lightbulb size={13} className="shrink-0" aria-hidden="true" />
-                <span className="truncate">Prompt: {name}</span>
-                <ChevronDown
-                    size={12}
-                    aria-hidden="true"
-                    className={clsx('shrink-0 transition-transform', open && 'rotate-180')}
-                />
-            </button>
-
-            {open && (
-                <pre
-                    className={clsx(
-                        'mt-1.5 max-h-64 overflow-y-auto rounded-lg border px-2.5 py-2 text-xs whitespace-pre-wrap',
-                        onAccent
-                            ? 'border-on-accent/20 bg-on-accent/10 text-on-accent/90'
-                            : 'border-edge bg-surface-sunken text-text-2',
-                    )}
-                >
-                    {text}
-                </pre>
-            )}
-        </div>
+        <PromptCard
+            name={name}
+            scopeLabel={scopeLabel}
+            edited={edited}
+            summary={variableCount ? `${variableCount} ${variableCount === 1 ? 'variable' : 'variables'}` : null}
+            content={text}
+            open={open}
+            onToggle={() => setOpen((isOpen) => !isOpen)}
+            onAccent={onAccent}
+        />
     );
 }
 
@@ -577,9 +559,12 @@ function MessageBubbleInner({
                                 name={promptUsed.name}
                                 text={promptUsed.promptText}
                                 onAccent={alignRight}
+                                scopeLabel={promptUsed.scopeLabel}
+                                edited={promptUsed.edited}
+                                variableCount={promptUsed.variableCount}
                             />
                             {promptUsed.userText && (
-                                <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                                <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                                     {promptUsed.userText}
                                 </p>
                             )}

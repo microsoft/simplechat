@@ -1,10 +1,11 @@
 # Chat Orchestration
 
-**Version: 0.261.096** (tracked in `application/single_app/config.py`)
+**Version: 0.261.098** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
-**Direct action access implemented in version: 0.261.096**
+**Direct action access implemented in version: 0.261.098**
+**Conversation continuity implemented in version: 0.261.096**
 
 ## Overview
 
@@ -57,19 +58,49 @@ enablement lives in a nested capability record rather than a flag.
 - **Candidate documents by relevance, not a catalogue.** Listing a user's workspace does
   not survive contact with a real deployment; a user with several hundred documents would
   spend the planner's whole context on file names. A cheap search probe using the user's
-  own message is aggregated to distinct documents instead. When the user has already
-  selected documents, no probe runs.
+  contextualized request is aggregated to distinct documents instead. When the user has
+  already selected documents, no probe runs.
 - **Seeds as constraints.** Anything chosen in the composer narrows the plan rather than
   suggesting to it.
 - **Accessible actions by description.** Where action access is enabled, the planner
   receives safe metadata for governed actions, not credentials, connection settings or
   every action's function schemas. Scoped references distinguish actions with the same
   name. A manually selected agent keeps direct action access out of that request.
-- **The run ledger.** A compact, byte-bounded summary of the conversation's earlier runs,
-  covering what was searched, what was produced and what the user has already been asked.
-  This is a planner input rather than a display artefact: it is what lets a follow-up
-  question reuse earlier findings instead of repeating them, and what stops an elicitation
-  asking the same question twice.
+- **Conversation history.** Eligible recent user and assistant messages are loaded from
+  the owned conversation on the server, not from whichever messages the browser has loaded.
+  This gives a follow-up its subject and preserves relevant earlier constraints.
+- **The run ledger.** A compact, byte-bounded activity summary covering earlier searches,
+  produced artifacts, and answered questions. It helps avoid unnecessary repeated work,
+  but does not replace message history or prove that source evidence is available.
+
+#### Conversational follow-ups
+
+Before candidate retrieval, a small completion interprets substantive requests against
+the recent conversation. "Which are open on Wednesdays" can therefore refer to the
+wineries just discussed near Grants Pass rather than become a generic opening-hours
+query. The original user message is preserved, and the resolved request is used for
+retrieval, planning, and delegated tasks.
+
+Explicit changes take precedence over earlier constraints. A new topic does not inherit
+the old topic's location or subject. Reformatting an available answer can use a
+respond-only plan, while new factual questions still need evidence. An earlier
+recommendation is not proof that a business is open.
+
+The history window uses **Conversation History Limit** from Chat settings, rounded up
+to an even count and capped at 50 messages and 16 KiB of serialized snapshot data.
+The normal setting default is 10; a missing setting falls back to six. Zero disables
+history. Older content is trimmed first, and truncation is identified explicitly rather
+than silently clipping every message to 300 characters.
+
+Masked text, inactive attempts, hidden generated artifacts, system/tool records, and
+binary payloads are excluded. Current block revisions are respected. The snapshot and
+its source fingerprints are saved with the plan, so a reload or a delayed approval uses
+the same context. Changes to the referenced messages or their visibility require a new
+plan; newly appended turns do not enter an older run.
+
+These rules apply to Auto, countdown, and manual approval. They do not introduce rolling
+summaries or cross-conversation memory. First turns without history and simple
+acknowledgments do not require a resolution completion.
 
 #### What the context picker contributes
 
@@ -326,12 +357,33 @@ server asking a question therefore renders through the identical card.
 Declining or cancelling carries no content, so a refusal cannot be used to smuggle answers
 past the user.
 
+The controller sends the matching elicitation alongside an accepted or declined response,
+before clearing the question from its store. Validated answers are saved with the turn
+and reach both re-planning and execution. Revisions reuse the original user-message ID.
+Cancelling abandons the request without starting another plan.
+
+If another question is necessary before a runnable plan exists, private pending-turn
+state retains the earlier answers and the original history snapshot. It uses the
+existing run container but is not listed or executable as a run. Version-conditional
+writes prevent a delayed response from replacing newer clarification state. The server
+validates replies against its saved schema.
+
+The pending chain is capped at 12 answers and 32 KiB of answer data, with a 64 KiB
+ceiling on the full pending record. Limits fail explicitly rather than dropping an
+earlier answer. Links supplied in accepted answers can be used as user-provided URLs;
+the wording of the question itself cannot authorize a link.
+
 ## Configuration
 
-All settings live under the Orchestration group in Admin Settings. The keys are prefixed
+Orchestration-specific settings live under the Orchestration group in Admin Settings. The keys are prefixed
 `chat_orchestration_` rather than `orchestration_`, because `orchestration_type` and
 `enable_multi_agent_orchestration` already exist and mean something entirely different —
 which Semantic Kernel multi-agent pattern runs a selected agent.
+
+Recent message history also uses `conversation_history_limit` from Chat settings.
+The classic chat summarization switches do not enable rolling summaries in orchestration.
+The two orchestration ledger settings bound activity summaries independently of message
+history; setting the ledger run count to zero does not erase conversational context.
 
 See [the Orchestration settings page](../../admin/orchestration.md) for the full table.
 
@@ -341,10 +393,10 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | --- | --- |
 | `functions_orchestration_registry.py` | Capability descriptors, gating, planner and client projections |
 | `functions_orchestration_schema.py` | Plan and elicitation contracts, validator, repair, step results |
-| `functions_orchestration_context.py` | Candidate documents, accessible agent/action metadata, seeds, signals, run ledger |
+| `functions_orchestration_context.py` | Candidate documents, accessible agent/action metadata, seeds, bounded history snapshots, signals, run ledger |
 | `functions_action_catalog.py` | Metadata-only action discovery, scoped references and fresh authorization |
 | `functions_orchestration_actions.py` | Isolated, bounded execution of one selected action |
-| `functions_orchestration_planner.py` | Triage, plan synthesis, elicitation, re-planning |
+| `functions_orchestration_planner.py` | Follow-up resolution, triage, plan synthesis, elicitation, re-planning |
 | `functions_orchestration_adapters.py` | Capability adapters over existing functions |
 | `functions_orchestration_executor.py` | Step engine, budgets, cancellation, re-authorization |
 | `functions_orchestration_runs.py` | Run and step persistence |
@@ -387,9 +439,14 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
+| `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, follow-up resolution, contextualized adapters, synthesis roles, and URL provenance |
+| `functional_tests/test_orchestration_conversation_context_routes.py` | Owned server history across HTTP/SSE planning and execution, all approval modes, clarification, retries, stale sources, and legacy cutoffs |
+| `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification transport, cancellation, original-turn continuity, all approval modes, and navigation |
 
 ## Known limitations
 
+- **Recent context only.** There is no orchestration rolling summary or cross-chat memory.
+  A reference outside the retained window may need clarification.
 - **Automatic per-step model routing is not implemented.** Planning uses its configured
   model. Direct action execution honors an explicitly selected, available chat model or
   the deployment defaults; it does not select models by task capability or cost.
@@ -413,4 +470,5 @@ to the front.
 
 - [Orchestration settings](../../admin/orchestration.md)
 - [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
+- [Conversation context fix](../fixes/ORCHESTRATION_CONVERSATION_CONTEXT_FIX.md)
 - `docs/explanation/release_notes.md`

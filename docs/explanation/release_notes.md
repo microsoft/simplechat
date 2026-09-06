@@ -19,6 +19,20 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Tool citations use the existing tool-results channel instead of being treated as web sources. Saved usage includes both the answer model and action or agent steps rather than dropping one contribution.
     *   (Ref: `functions_orchestration_planner.py`, `route_backend_orchestration.py`, `functions_orchestration_events.py`, `chatStore.ts`)
 
+*   **Workspace Edits Preserve Existing Configuration**
+    *   Per-record saves retain unedited nested settings, action references, and credentials. Stored secrets stay masked, explicit clearing is distinguished from keeping a value, and conflicting edits are reported rather than silently overwriting another session.
+    *   **Use in chat** refreshes the authorized agent catalogue before starting a new conversation with the chosen agent. Failed refreshes or unavailable agents do not retarget an existing conversation or substitute a manual model.
+    *   (Ref: `functions_workspace_authoring.py`, `workspaceAuthoring.ts`, `workspaceAuthoringApi.ts`, `workspaceEditorDrafts.ts`, `workspaceAgentLaunch.ts`)
+
+#### User Interface Enhancements
+
+*   **Full-Page Agent And Action Editors In My Workspace**
+    *   Configure personal agents and actions directly in V2, with section navigation instead of popup wizards. Agent authoring includes model connections, knowledge, instructions, capabilities, and templates; action authoring includes the existing connector-specific configuration and authentication workflows.
+    *   **Call agent is a normal action type**, appearing alongside other tools in the Actions collection and the agent's action picker. There is no separate personal delegation section.
+    *   Create an action from an unfinished agent and return to the retained draft. Saving the action does not save the agent prematurely; leaving an unfinished editor asks before discarding changes.
+    *   Provided resources remain read-only, and existing authorized actions can be attached independently of permission to create new actions. Group and administrator management retain their existing interfaces.
+    *   (Ref: `AgentEditorPage.tsx`, `ActionEditorPage.tsx`, `WorkspaceEditorFrame.tsx`, [V2 Workspace Agent And Action Authoring](features/V2_WORKSPACE_AGENTS_ACTIONS.md))
+
 ### **(v0.261.095)**
 
 #### New Features
