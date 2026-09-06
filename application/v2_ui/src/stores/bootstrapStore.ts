@@ -33,6 +33,8 @@ interface BootstrapState {
      * those has to reload the browser before the change is visible without this.
      */
     refresh: () => Promise<void>;
+    /** Refresh before an explicit selection; failures must not reuse cached authorization. */
+    refreshRequired: () => Promise<BootstrapPayload>;
     /**
      * Put a prompt into the catalog straight away, before a refresh has been round-tripped.
      *
@@ -84,6 +86,16 @@ export const useBootstrapStore = create<BootstrapState>((set) => ({
             // refetch the reader never asked for. The caller's own write already
             // succeeded, so a briefly stale shell is cosmetic and the next load fixes it.
         }
+    },
+
+    refreshRequired: async () => {
+        const sequence = ++refreshSequence;
+        const data = await fetchBootstrap();
+        if (sequence !== refreshSequence) {
+            throw new Error('Application availability changed during refresh. Try again.');
+        }
+        set({ data });
+        return data;
     },
 
     upsertPromptInCatalog: (prompt) =>
