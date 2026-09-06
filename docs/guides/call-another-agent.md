@@ -4,7 +4,7 @@ title: "Call another agent"
 description: "Connect a coordinating agent to approved specialists without sharing its whole conversation."
 section: "Guides"
 audience: user
-version: "0.261.093"
+version: "0.261.096"
 ---
 
 ## What this does
@@ -47,19 +47,24 @@ citations when the target supplies them.
 In the **classic interface**, use the normal action wizard and the agent's
 **Actions** step in the personal workspace, group workspace, or admin area.
 
-In **V2**, personal Actions and Agents include focused delegation controls.
-The Groups page provides group selection and delegation management without
-switching the active workspace. The admin Agents & Actions area provides the
-equivalent controls for global agents. Other connector configuration and
-unrelated group management remain in their existing interfaces.
+In **V2 My Workspace**, choose Call agent through the ordinary **New action**
+flow, then attach it in the agent editor's **Actions** section. It shares the
+same list and picker as other action types. Full-page personal authoring was
+implemented in **0.261.096**, recorded in `application/single_app/config.py`;
+see the [workspace guide]({{ '/guides/workspace-agents-and-actions/' | relative_url }}).
+
+The Groups page still provides focused delegation management without switching
+the active workspace. The admin Agents & Actions area retains the equivalent
+controls for global agents. Broader group/global authoring is unchanged.
 
 Owned Call agent actions can also be deleted in V2 after confirmation. Deleting
 an action stops future calls through that action; it does not rewrite agents or
 roll back work the target already performed.
 
-V2 binding updates change only the selected Call agent actions. They preserve
-other attached actions, model settings, instructions, and assigned knowledge.
-If someone changes the agent while it is open, reload before saving again.
+The personal editor saves the configuration you changed and preserves unedited
+settings and references. The focused group/global binding controls change only
+the selected Call agent actions. If someone changes the agent while it is open,
+review the current configuration before saving again.
 
 ## Decide what to share
 

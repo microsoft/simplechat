@@ -1,4 +1,3 @@
-
 # functions_personal_agents.py
 
 """
@@ -17,19 +16,20 @@ from flask import current_app
 import logging
 from config import cosmos_personal_agents_container
 from functions_settings import get_settings, get_user_settings, update_user_settings
-from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper, SecretReturnType
 from functions_agent_payload import sanitize_agent_payload
 from functions_agent_delegation import validate_agent_delegation_bindings
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
 
-def get_personal_agents(user_id):
+def get_personal_agents(user_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch all personal agents for a user.
     
     Args:
         user_id (str): The user's unique identifier
+        return_type (SecretReturnType): Use placeholders for UI reads or actual stored references for backend cleanup.
         
     Returns:
         list: List of agent dictionaries
@@ -48,7 +48,7 @@ def get_personal_agents(user_id):
         cleaned_agents = []
         for agent in agents:
             cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
-            cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user")
+            cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', ''), scope="user", return_type=return_type)
             if cleaned_agent.get('max_completion_tokens') is None:
                 cleaned_agent['max_completion_tokens'] = -1
             cleaned_agent.setdefault('is_global', False)
@@ -71,13 +71,14 @@ def get_personal_agents(user_id):
         debug_print(f"Error fetching personal agents for user {user_id}: {e}")
         return []
 
-def get_personal_agent(user_id, agent_id):
+def get_personal_agent(user_id, agent_id, return_type=SecretReturnType.TRIGGER):
     """
     Fetch a specific personal agent.
     
     Args:
         user_id (str): The user's unique identifier
         agent_id (str): The agent's unique identifier
+        return_type (SecretReturnType): Use placeholders for UI reads or actual stored references for backend cleanup.
         
     Returns:
         dict: Agent dictionary or None if not found
@@ -90,7 +91,7 @@ def get_personal_agent(user_id, agent_id):
         
         # Remove Cosmos metadata and retrieve secrets from Key Vault
         cleaned_agent = {k: v for k, v in agent.items() if not k.startswith('_')}
-        cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', agent_id), scope="user")
+        cleaned_agent = keyvault_agent_get_helper(cleaned_agent, cleaned_agent.get('id', agent_id), scope="user", return_type=return_type)
         # Ensure max_completion_tokens field exists
         if cleaned_agent.get('max_completion_tokens') is None:
             cleaned_agent['max_completion_tokens'] = -1
@@ -244,10 +245,11 @@ def delete_personal_agent(user_id, agent_id):
     try:
         # Try to find the agent first to get the correct ID
         # Check if agent_id is actually a name and we need to find the real ID
-        agent = get_personal_agent(user_id, agent_id)
+        # UI placeholders cannot reconstruct the fresh secret names used by editor saves.
+        agent = get_personal_agent(user_id, agent_id, return_type=SecretReturnType.NAME)
         if not agent:
             # Try to find by name if direct ID lookup failed
-            agents = get_personal_agents(user_id)
+            agents = get_personal_agents(user_id, return_type=SecretReturnType.NAME)
             agent = next((a for a in agents if a['name'] == agent_id), None)
         if not agent:
             return False

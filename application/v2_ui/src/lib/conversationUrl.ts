@@ -20,6 +20,9 @@ export const CONVERSATION_PARAM = 'conversationId';
  * so the later writer restores whatever the earlier one deleted.
  */
 export const PROMPT_PARAM = 'prompt';
+export const WORKSPACE_AGENT_PARAM = 'agent_id';
+export const AGENT_SCOPE_PARAM = 'agent_scope';
+export const NEW_CHAT_PARAM = 'new';
 
 /**
  * The prompt a set of query parameters names, or null when it names none.
@@ -85,14 +88,20 @@ export function syncedConversationParams(
     const current = params.get(CONVERSATION_PARAM);
     const hasLegacy = params.has(LEGACY_CONVERSATION_PARAM);
     const hasPrompt = params.has(PROMPT_PARAM);
+    const hasAgentLaunch = params.has(WORKSPACE_AGENT_PARAM) || params.has(AGENT_SCOPE_PARAM);
 
-    if (!hasLegacy && !hasPrompt && (current ?? null) === conversationId) {
+    if (!hasLegacy && !hasPrompt && !hasAgentLaunch && (current ?? null) === conversationId) {
         return null;
     }
 
     const next = new URLSearchParams(params);
     next.delete(LEGACY_CONVERSATION_PARAM);
     next.delete(PROMPT_PARAM);
+    if (hasAgentLaunch) {
+        next.delete(WORKSPACE_AGENT_PARAM);
+        next.delete(AGENT_SCOPE_PARAM);
+        next.delete(NEW_CHAT_PARAM);
+    }
     if (conversationId) {
         next.set(CONVERSATION_PARAM, conversationId);
     } else {

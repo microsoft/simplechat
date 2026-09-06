@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional regression for prompt attachments at actual message persistence boundaries.
-Version: 0.261.096
+Version: 0.261.097
 Implemented in: 0.261.096
+Turn-reuse integration coverage expanded in: 0.261.097
 
 Execute the shipping metadata helper, chat persistence statements, orchestration writer,
 and shared post/stream routes against in-memory Cosmos containers. Importing the full chat
@@ -37,6 +38,7 @@ import collaboration_models  # noqa: E402
 from functions_chat_stream_events import build_user_message_persisted_stream_event  # noqa: E402
 from functions_prompt_metadata import build_prompt_selection_metadata  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_orchestration_conversation_context import load_modules  # noqa: E402
 
 
 SEND_PATHS = ("chat", "chat-stream", "document-action", "orchestration", "shared-post", "shared-stream")
@@ -239,14 +241,21 @@ def _chat_boundary(path, info, content):
 
 def _orchestration_boundary(info, content):
     storage = MemoryContainer()
+    context = load_modules().context
+    authorize = Mock()
     namespace = {
         "data": {"prompt_info": deepcopy(info)}, "message": content,
         "resolved_conversation_id": "conversation-1", "turn_id": "turn-1",
+        "user_id": USER["user_id"], "previous": None,
+        "_authorize_context_conversation": authorize,
+        "normalize_history_message": context.normalize_history_message,
+        "ConversationContextError": context.ConversationContextError,
+        "CosmosResourceNotFoundError": KeyError,
         "build_prompt_selection_metadata": build_prompt_selection_metadata,
         "cosmos_messages_container": storage, "datetime": datetime,
         "timezone": timezone, "uuid": uuid, "logging": logging, "log_event": Mock(),
     }
-    _load_functions("route_backend_orchestration.py", namespace, "_now_iso", "_save_message")
+    _load_functions("route_backend_orchestration.py", namespace, "_now_iso", "_save_message", "_save_turn_message")
     function = _function("route_backend_orchestration.py", "orchestration_plan")
     generator = next(node for node in ast.walk(function)
                      if isinstance(node, ast.FunctionDef) and node.name == "generate")
@@ -256,6 +265,8 @@ def _orchestration_boundary(info, content):
     message_id = _execute_boundary(body[first:first + 2], namespace, "user_message_id", [])
     assert message_id
     stored = storage.read_item(message_id, "conversation-1")
+    authorize.assert_called_once_with("conversation-1", USER["user_id"])
+    assert stored["metadata"]["orchestration"]["turn_id"] == "turn-1"
     if build_prompt_selection_metadata(info, content):
         assert stored["metadata"]["orchestration_turn_id"] == "turn-1"
     return stored, deepcopy(stored)
@@ -397,7 +408,8 @@ def test_absent_or_unusable_metadata_does_not_change_messages(path, info):
     assert "prompt_selection" not in stored.get("metadata", {})
     assert "prompt_selection" not in echo.get("metadata", {})
     if path == "orchestration":
-        assert "metadata" not in stored
+        assert stored["metadata"] == {"orchestration": {"turn_id": "turn-1"}}
+        assert echo["metadata"] == stored["metadata"]
 
 
 def test_legacy_metadata_requires_a_complete_prompt_or_exact_delimiter():

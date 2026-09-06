@@ -30,10 +30,15 @@ would rightly conclude the control did nothing.
 Version: 0.261.087
 """
 
+import hashlib
 import json
 import logging
+import math
+from datetime import datetime, timezone
 
 from functions_appinsights import log_event
+from functions_message_block_revisions import resolve_block_sources_in_content
+from functions_message_masking import remove_masked_content
 from functions_orchestration_registry import build_agent_planner_projection
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
@@ -49,10 +54,12 @@ LEDGER_SUMMARY_LENGTH = 240
 LEDGER_MAX_DOCUMENTS_PER_RUN = 8
 LEDGER_MAX_ANSWERED_QUESTIONS = 12
 
-# Conversation history handed to the planner. The planner decides *what to do*, not what
-# to say, so it needs the shape of the conversation rather than its full text.
 HISTORY_MAX_TURNS = 6
-HISTORY_TURN_LENGTH = 300
+HISTORY_MAX_MESSAGES = 50
+HISTORY_MAX_BYTES = 16384
+HISTORY_SCAN_LIMIT = 200
+HISTORY_SCHEMA_VERSION = 1
+CLARIFICATION_MAX_BYTES = 32768
 
 # How much of a selected prompt the planner is shown.
 #
@@ -491,21 +498,243 @@ def collect_answered_questions(runs):
 # Conversation signals
 # --------------------------------------------------------------------------------------
 
-def build_conversation_signals(messages, user_message):
-    """The shape of the conversation so far, plus anything in the message itself."""
-    turns = []
-    for message in (messages or ())[-(HISTORY_MAX_TURNS * 2):]:
+class ConversationContextError(ValueError):
+    """Conversation context could not be safely prepared or reused."""
+
+
+def history_message_limit(settings=None):
+    """Honor the chat history setting, rounding up to an even, bounded message count."""
+    try:
+        limit = math.ceil(float((settings or {}).get(
+            'conversation_history_limit', HISTORY_MAX_TURNS
+        )))
+    except (TypeError, ValueError, OverflowError):
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Invalid history limit; using the default.',
+            level=logging.WARNING,
+        )
+        limit = HISTORY_MAX_TURNS
+    return max(0, min(HISTORY_MAX_MESSAGES, limit + limit % 2))
+
+
+def _history_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return '\n'.join(
+            block['text'] for block in content
+            if isinstance(block, dict)
+            and block.get('type') in ('text', 'input_text')
+            and isinstance(block.get('text'), str)
+        )
+    return ''
+
+
+def normalize_history_message(message):
+    """Project one eligible stored message, after masks and current block revisions."""
+    if not isinstance(message, dict) or message.get('role') not in ('user', 'assistant'):
+        return None
+    metadata = message.get('metadata') or {}
+    if not isinstance(metadata, dict):
+        raise ConversationContextError('The conversation contains invalid message metadata.')
+    thread = metadata.get('thread_info') or {}
+    if not isinstance(thread, dict):
+        raise ConversationContextError('The conversation contains invalid thread metadata.')
+    if (
+        metadata.get('masked')
+        or metadata.get('is_generated_chat_artifact')
+        or thread.get('active_thread') is False
+    ):
+        return None
+
+    content = _history_text(message.get('content'))
+    ranges = metadata.get('masked_ranges') or []
+    if not isinstance(ranges, list):
+        raise ConversationContextError('The conversation contains invalid message masks.')
+    content = remove_masked_content(content, ranges)
+    content = resolve_block_sources_in_content(message, content).strip()
+    if not content:
+        return None
+
+    projected = {
+        'id': _text(message.get('id')),
+        'role': message['role'],
+        'content': content,
+        'timestamp': _text(message.get('timestamp')),
+    }
+    projected['fingerprint'] = hashlib.sha256(
+        json.dumps(projected, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    return projected
+
+
+def _history_order(message):
+    timestamp = _text(message.get('timestamp'))
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError:
+        raise ConversationContextError('The conversation contains an invalid timestamp.') from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed, message['id']
+
+
+def conversation_snapshot_size(snapshot):
+    return len(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+
+
+def build_conversation_snapshot(messages, settings=None, *, turn_id=None, truncated=False):
+    """Keep the recent eligible conversation, bounded independently of the current request."""
+    eligible = []
+    for message in messages or ():
         if not isinstance(message, dict):
             continue
-        role = _text(message.get('role'))
-        if role not in ('user', 'assistant'):
+        metadata = message.get('metadata') or {}
+        orchestration = (metadata.get('orchestration') or {}) if isinstance(metadata, dict) else {}
+        if turn_id and isinstance(orchestration, dict) and orchestration.get('turn_id') == turn_id:
             continue
-        content = _text(message.get('content'), HISTORY_TURN_LENGTH)
-        if content:
-            turns.append({'role': role, 'content': content})
+        normalized = normalize_history_message(message)
+        if normalized is not None:
+            if not normalized['id']:
+                raise ConversationContextError('The conversation contains a message without an ID.')
+            eligible.append(normalized)
+    eligible.sort(key=_history_order)
+    limit = history_message_limit(settings)
+    retained = eligible[-limit:] if limit else []
+    snapshot = {
+        'schema_version': HISTORY_SCHEMA_VERSION,
+        'messages': retained,
+        'truncated': bool(truncated or len(eligible) > len(retained)),
+    }
+    while len(retained) > 1 and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        retained.pop(0)
+        snapshot['truncated'] = True
+    if retained and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        # Preserve both ends of an oversized turn; constraints often occur at the end.
+        newest = retained[0]
+        original = newest['content']
+        newest['truncated'] = True
+        snapshot['truncated'] = True
+        lower, upper = 0, len(original)
+        while lower < upper:
+            length = (lower + upper + 1) // 2
+            tail_length = length // 2
+            newest['content'] = (
+                original[:length - tail_length]
+                + '\n[Conversation message truncated.]\n'
+                + (original[-tail_length:] if tail_length else '')
+            )
+            if conversation_snapshot_size(snapshot) <= HISTORY_MAX_BYTES:
+                lower = length
+            else:
+                upper = length - 1
+        tail_length = lower // 2
+        newest['content'] = (
+            original[:lower - tail_length]
+            + '\n[Conversation message truncated.]\n'
+            + (original[-tail_length:] if tail_length else '')
+        )
+    if conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        raise ConversationContextError('The conversation context exceeds its size limit.')
+    return snapshot
+
+
+def validate_conversation_snapshot(snapshot, messages):
+    """Reject a saved context if a source was edited, hidden, or removed after planning."""
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get('schema_version') != HISTORY_SCHEMA_VERSION
+        or not isinstance(snapshot.get('messages'), list)
+        or len(snapshot['messages']) > HISTORY_MAX_MESSAGES
+        or conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES
+    ):
+        raise ConversationContextError('This plan needs to be created again.')
+    current = {}
+    sources = {}
+    for message in messages or ():
+        normalized = normalize_history_message(message)
+        if normalized is not None:
+            current[normalized['id']] = normalized
+            sources[normalized['id']] = message
+    seen = set()
+    for previous in snapshot['messages']:
+        if not isinstance(previous, dict):
+            raise ConversationContextError('This plan needs to be created again.')
+        message_id = previous.get('id')
+        if (
+            not message_id
+            or message_id in seen
+            or message_id not in current
+            or previous.get('fingerprint') != current[message_id]['fingerprint']
+        ):
+            raise ConversationContextError(
+                'Conversation context changed. Create a new plan before running this request.'
+            )
+        seen.add(message_id)
+    rebuilt = build_conversation_snapshot(
+        [sources[item['id']] for item in snapshot['messages']],
+        {'conversation_history_limit': len(snapshot['messages'])},
+        truncated=bool(snapshot.get('truncated')),
+    )
+    if rebuilt != snapshot:
+        raise ConversationContextError('This plan needs to be created again.')
+    return rebuilt
+
+
+def conversation_reference_messages(snapshot, message_ids=None):
+    """Return only role/content/ID fields, never stored metadata or citation payloads."""
+    allowed = set(message_ids) if message_ids is not None else None
+    return [
+        {'id': message['id'], 'role': message['role'], 'content': message['content']}
+        for message in (snapshot or {}).get('messages', [])
+        if allowed is None or message['id'] in allowed
+    ]
+
+
+def validate_clarification_answers(answers):
+    if (
+        len(answers) > LEDGER_MAX_ANSWERED_QUESTIONS
+        or len(json.dumps(answers, ensure_ascii=False).encode('utf-8')) > CLARIFICATION_MAX_BYTES
+    ):
+        raise ConversationContextError('The clarification limit was reached. Start a new request.')
+
+
+def conversation_user_urls(user_message, snapshot=None, message_ids=None, answered_questions=None):
+    """URL provenance comes from user text, not from a model's interpretation."""
+    urls = []
+    for answer in reversed(answered_questions or []):
+        if not isinstance(answer, dict) or answer.get('action', 'accept') != 'accept':
+            continue
+        content = answer.get('answer')
+        values = list(content.values()) if isinstance(content, dict) else [content]
+        for value in values:
+            texts = value if isinstance(value, list) else [value]
+            for text in texts:
+                if isinstance(text, str):
+                    urls.extend(_extract_urls(text))
+    urls.extend(_extract_urls(user_message))
+    allowed = set(message_ids or [])
+    for message in (snapshot or {}).get('messages', []):
+        if message['id'] in allowed and message['role'] == 'user' and not message.get('truncated'):
+            urls.extend(_extract_urls(message['content']))
+    return _string_list(urls, limit=8)
+
+
+def build_conversation_signals(messages, user_message, *, truncated=False, message_ids=None):
+    """Project already bounded history for the planner; the route owns loading it."""
+    allowed = set(message_ids) if message_ids is not None else None
+    turns = [
+        {'id': message.get('id'), 'role': message['role'], 'content': _history_text(message.get('content'))}
+        for message in messages or ()
+        if isinstance(message, dict)
+        and message.get('role') in ('user', 'assistant')
+        and (allowed is None or message.get('id') in allowed)
+        and _history_text(message.get('content'))
+    ]
 
     return {
-        'recent_turns': turns[-HISTORY_MAX_TURNS:],
+        'recent_turns': turns,
+        'truncated': bool(truncated),
         'urls': _extract_urls(user_message),
     }
 
@@ -548,6 +777,8 @@ def build_planner_context(
     signals=None,
     capabilities=None,
     agents=None,
+    original_message=None,
+    request_resolution=None,
 ):
     """Assemble everything the planner is shown, in one place.
 
@@ -564,6 +795,8 @@ def build_planner_context(
     seeds = seeds or {}
     return {
         'message': _text(user_message),
+        'original_message': _text(original_message) if original_message is not None else _text(user_message),
+        'request_resolution': request_resolution or {},
         'capabilities': capabilities or [],
         'agents': build_agent_planner_projection(agents),
         'candidate_documents': [
