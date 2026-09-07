@@ -5,8 +5,7 @@
 // time behind an explicit Save button. Here a change is applied to the store immediately and
 // the write is debounced, so a slider being dragged produces one request rather than thirty.
 // Pending keys are merged into a single payload because the route merges partial updates
-// server-side; sending them separately would race, and the last response would win rather
-// than the last change.
+// server-side. Writes are serialized so a slow earlier request cannot overwrite a later one.
 //
 // A failed save rolls the affected keys back to what the server last confirmed. Leaving a
 // control showing a value that was never stored is worse than showing the change being
@@ -64,19 +63,37 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => {
         set({ saving: true, saveError: null });
         try {
             await api.post<{ message?: string }>('/api/user/settings', { settings: payload });
+            for (const key of Object.keys(payload)) {
+                if (key in pending) {
+                    rollback[key] = payload[key];
+                }
+            }
             set({ saving: false });
         } catch (error) {
             // Only the keys this request carried are reverted; anything changed since is
-            // still pending and should not be disturbed.
+            // still pending. Its rollback target must also exclude this failed write.
+            const reverted: UserSettings = {};
+            for (const key of Object.keys(payload)) {
+                if (key in pending) {
+                    rollback[key] = previous[key];
+                } else {
+                    reverted[key] = previous[key];
+                }
+            }
             set((state) => ({
                 saving: false,
                 saveError:
                     error instanceof ApiError
                         ? error.message
                         : 'Your preference could not be saved.',
-                settings: { ...state.settings, ...previous },
+                settings: { ...state.settings, ...reverted },
             }));
         }
+    };
+
+    const queueWrite = (): Promise<void> => {
+        inFlight = (inFlight ?? Promise.resolve()).then(writePending);
+        return inFlight;
     };
 
     const scheduleWrite = () => {
@@ -85,7 +102,7 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => {
         }
         saveTimer = setTimeout(() => {
             saveTimer = null;
-            inFlight = writePending();
+            void queueWrite();
         }, SAVE_DEBOUNCE_MS);
     };
 
@@ -132,9 +149,8 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => {
             if (saveTimer !== null) {
                 clearTimeout(saveTimer);
                 saveTimer = null;
-                inFlight = writePending();
             }
-            await inFlight;
+            await queueWrite();
         },
     };
 });

@@ -160,6 +160,23 @@ The variable picker, knowledge fill, and persistent card enhancements were imple
 in **0.261.096**. See [Use prompts in chat]({{ '/guides/use-prompts-in-chat/' | relative_url }})
 for the complete workflow.
 
+## Orchestration approval (V2 interface)
+
+Account-level approval persistence was fixed in **0.261.101**. These controls appear
+while Orchestrate is active and the administrator allows users to change approval
+modes. The saved choice applies across chats and future visits; it does not alter
+plans that already exist. An administrator can enforce the deployment default
+without deleting your saved preference.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Approval mode | Saves **Auto**, **After Ns**, or **Review** to your account without requiring a message to be sent. Auto runs the plan when ready, After Ns allows the displayed countdown to expire, and Review waits for explicit approval. | Keep the amount of review you want instead of choosing it again each time you return to chat. | `enable_chat_orchestration` and `chat_orchestration_allow_user_approval_override` |
+| Retry loading approval preference | Loads your account preferences again after a failure, retaining the draft. Orchestration submission waits until the preference is known. | Recover without accidentally running a plan under a different approval mode. Ordinary chat remains available with Orchestrate off. | Same as Approval mode; shown after a preference-loading failure |
+
+The composer reports an unsuccessful save rather than claiming the new mode was
+remembered. Choose the mode again to retry. If no choice has been saved, the current
+deployment default applies. See [Orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
+
 ## Inline follow-up questions (V2 interface)
 
 Implemented in **0.261.096**. These controls appear when chat orchestration needs more
