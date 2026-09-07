@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.100** (tracked in `application/single_app/config.py`)
+**Version: 0.261.101** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -8,6 +8,7 @@
 **Research selection and multi-query execution updated in version: 0.261.099**
 **Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
+**Approval preference persistence fixed in version: 0.261.101**
 
 ## Overview
 
@@ -522,6 +523,22 @@ Anything selected inside the manual controls is passed as a seed and constrains 
 so a power user can still pin the work to a particular document or agent and let
 orchestration decide the rest.
 
+When the administrator allows approval overrides, choosing **Auto**, **After Ns**,
+or **Review** saves `orchestrationApprovalMode` to your account immediately, without
+sending a message. The choice follows you across chats and is restored from the
+server after a reload or a later sign-in on another device. The countdown duration
+still comes from administrator settings.
+
+Users without a saved choice receive the deployment default. An enforced deployment
+mode takes precedence without deleting a saved choice. If preferences cannot be
+loaded, the composer keeps the draft and offers **Retry loading approval preference**
+before orchestration can start. An unsuccessful save shows an error and rolls back
+to the last confirmed selection unless a newer choice is still pending. Choose the
+mode again to retry saving. Existing plans retain their own approval state.
+
+See [the approval persistence fix](../fixes/V2_ORCHESTRATION_APPROVAL_PERSISTENCE_FIX.md)
+for the persistence contract and failure handling.
+
 Administrators changing these settings from the classic Admin Settings page do not need to
 reload an open chat tab: the interface re-reads its configuration when the tab comes back
 to the front.
@@ -532,6 +549,8 @@ to the front.
 | --- | --- |
 | `functional_tests/test_orchestration_registry_contract.py` | Descriptor shape, gating, administrator narrowing, and that internal fields never reach the planner |
 | `functional_tests/test_orchestration_plan_schema.py` | Unknown and disabled capabilities, document authorization, argument coercion and bounds, cycles, step caps, narrowing-only edits, approval states |
+| `functional_tests/test_v2_orchestration_approval_persistence.py` | Current-user approval preference round-trips, enum validation, and runtime preference resolution and save ordering |
+| `ui_tests/test_v2_orchestration_approval_persistence.py` | Approval selection across navigation and fresh browser contexts, administrator precedence, loading/retry, save failures, and pending writes |
 | `functional_tests/test_orchestration_elicitation_schema.py` | The MCP flat-object restriction, paging staying outside the schema, response validation |
 | `functional_tests/test_orchestration_elicitation_context.py` | Authoritative pending questions, accepted context, and the real plan/answer/run handoff |
 | `functional_tests/test_v2_elicitation_answers.py` | Primitive answers, single/multiple files, alternate sources, readiness, and answer-local prompt resolution |
