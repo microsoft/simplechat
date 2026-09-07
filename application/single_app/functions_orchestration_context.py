@@ -1292,6 +1292,27 @@ def conversation_user_urls(user_message, snapshot=None, message_ids=None, answer
     return _string_list(urls, limit=8)
 
 
+def build_capability_request_context(
+    user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None,
+):
+    """Apply the same caller-specific capability gates to planning, revisions, and execution."""
+    identity = identity or {}
+    urls = (
+        list(allowed_user_urls) if allowed_user_urls is not None
+        else conversation_user_urls(user_message)
+    )
+    return {
+        'user_id': user_id,
+        'user_message': user_message or '',
+        'message_urls': urls,
+        'user_roles': identity.get('user_roles') or [],
+        'user_email': identity.get('user_email'),
+        'user_enable_agents': identity.get('user_enable_agents', True),
+        'agent_catalog': list(agent_catalog or ()),
+        'action_catalog': list(action_catalog or ()),
+    }
+
+
 def build_conversation_signals(messages, user_message, *, truncated=False, message_ids=None):
     """Project already bounded history for the planner; the route owns loading it."""
     allowed = set(message_ids) if message_ids is not None else None

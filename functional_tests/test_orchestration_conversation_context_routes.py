@@ -1,8 +1,11 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.096
+Version: 0.261.102
 Implemented in: 0.261.096
+Prompt attachment integration: 0.261.097
+Direct action integration: 0.261.098
+Atomic plan revision persistence: 0.261.102
 
 Uses Flask, the real planner/executor/adapters/run store, an in-memory Cosmos boundary,
 and deterministic model completions. Authentication is a signed-in test user; actual
@@ -12,7 +15,6 @@ conversation ownership checks remain active. No external service is contacted.
 import importlib
 import importlib.util
 import json
-import re
 import sys
 import unittest
 from copy import deepcopy
@@ -20,9 +22,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from azure.core.exceptions import AzureError
-from azure.cosmos.exceptions import (
-    CosmosAccessConditionFailedError, CosmosResourceExistsError, CosmosResourceNotFoundError,
-)
 from flask import Blueprint, Flask
 from werkzeug.test import Client
 from werkzeug.wrappers import Response
@@ -31,85 +30,11 @@ from test_orchestration_conversation_context import (
     LATEST, RESOLVED, fake_module, load_modules, message, winery_history,
 )
 from test_support.app_stubs import APP_ROOT, stubbed_config
+from test_support.orchestration_revisions import AtomicMemoryContainer
 from test_support.versioning import assert_app_version_at_least
 
 
-class MemoryContainer:
-    def __init__(self, partition_field):
-        self.partition_field = partition_field
-        self.items = {}
-        self.queries = []
-        self.fail_queries = False
-        self.fail_writes = False
-        self.sequence = 0
-
-    def upsert_item(self, body):
-        if self.fail_writes:
-            raise AzureError('Test storage failure')
-        key = (body[self.partition_field], body['id'])
-        self.sequence += 1
-        self.items[key] = {**deepcopy(body), '_etag': str(self.sequence)}
-        return deepcopy(self.items[key])
-
-    def create_item(self, body):
-        if (body[self.partition_field], body['id']) in self.items:
-            raise CosmosResourceExistsError(status_code=409, message='Test record exists')
-        return self.upsert_item(body)
-
-    def replace_item(self, item, body, **kwargs):
-        existing = self.read_item(item, body[self.partition_field])
-        if kwargs.get('etag') != existing['_etag']:
-            raise CosmosAccessConditionFailedError(status_code=412, message='Test version changed')
-        return self.upsert_item(body)
-
-    def delete_item(self, item, partition_key, **kwargs):
-        existing = self.read_item(item, partition_key)
-        if kwargs.get('etag') != existing['_etag']:
-            raise CosmosAccessConditionFailedError(status_code=412, message='Test version changed')
-        del self.items[(partition_key, item)]
-
-    def read_item(self, item, partition_key):
-        record = self.items.get((partition_key, item))
-        if record is None:
-            raise CosmosResourceNotFoundError(status_code=404, message='Test record not found')
-        return deepcopy(record)
-
-    def query_items(self, query, parameters=None, partition_key=None, **kwargs):
-        self.queries.append((query, deepcopy(parameters), partition_key))
-        if self.fail_queries:
-            raise AzureError('Test query failure')
-        params = {entry['name']: entry['value'] for entry in parameters or []}
-        rows = [
-            deepcopy(item) for (partition, _), item in self.items.items()
-            if partition_key is None or partition == partition_key
-        ]
-        for parameter, field in (
-            ('@conversation_id', 'conversation_id'), ('@user_id', 'user_id'),
-            ('@turn_id', 'turn_id'), ('@run_id', 'id'),
-        ):
-            if parameter in params:
-                rows = [row for row in rows if row.get(field) == params[parameter]]
-        if '@message_ids' in params:
-            rows = [row for row in rows if row['id'] in params['@message_ids']]
-        if '@before_timestamp' in params:
-            rows = [row for row in rows if row.get('timestamp', '') < params['@before_timestamp']]
-        if 'c.record_type' in query:
-            rows = [row for row in rows if row.get('record_type', 'run') == 'run']
-        if 'c.role IN' in query:
-            rows = [
-                row for row in rows
-                if row.get('role') in ('user', 'assistant')
-                and not (row.get('metadata') or {}).get('masked')
-                and not (row.get('metadata') or {}).get('is_generated_chat_artifact')
-                and (row.get('metadata') or {}).get('thread_info', {}).get('active_thread') is not False
-            ]
-        if 'SELECT VALUE MAX' in query:
-            return [max((row.get('turn_index', 0) for row in rows), default=None)]
-        for field in ('timestamp', 'created_at', 'turn_index'):
-            if f'ORDER BY c.{field} DESC' in query:
-                rows.sort(key=lambda row: row.get(field, ''), reverse=True)
-        top = re.search(r'SELECT TOP (\d+)', query)
-        return rows[:int(top.group(1))] if top else rows
+MemoryContainer = AtomicMemoryContainer
 
 
 class ModelBoundary:
@@ -117,6 +42,7 @@ class ModelBoundary:
         self.modules = modules
         self.calls = []
         self.resolution_override = None
+        self.plan_override = None
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs):
@@ -132,7 +58,7 @@ class ModelBoundary:
             })
         elif system == self.modules.planner.PLANNER_SYSTEM_PROMPT:
             request_text = json.loads(kwargs['messages'][1]['content'])['message']
-            text = json.dumps({
+            text = json.dumps(self.plan_override or {
                 'kind': 'plan',
                 'intent': {'summary': request_text, 'complexity': 'simple', 'confidence': 1.0},
                 'steps': [
@@ -263,6 +189,37 @@ class ConversationRouteTests(unittest.TestCase):
             'run_id': plan['run_id'], 'conversation_id': 'conv1',
         }, buffered=True)
 
+    def test_prompt_snapshot_and_fingerprint_survive_replanning_without_duplicate_messages(self):
+        prompt_text = "Use the winery context."
+        content = f"{prompt_text}\n\n{LATEST}"
+        prompt_info = {
+            "id": "winery-prompt", "name": "Winery hours",
+            "content": prompt_text, "template_content": prompt_text,
+            "original_content": prompt_text, "composer_text": LATEST,
+            "composer_embedded": False, "user_text": LATEST,
+        }
+        first = self.planned(message=content, prompt_info=prompt_info)
+        first_run = self.runs.read_item(first["run_id"], "conv1")
+        stored = self.messages.read_item(first_run["user_message_id"], "conv1")
+        expected = self.route.build_prompt_selection_metadata(prompt_info, content)
+        self.assertEqual(stored["metadata"]["prompt_selection"], expected)
+        self.assertEqual(stored["metadata"]["orchestration"], {"turn_id": "turn1"})
+        self.assertEqual(stored["metadata"]["orchestration_turn_id"], "turn1")
+        self.assertEqual(
+            first_run["user_message_fingerprint"],
+            self.modules.context.normalize_history_message(stored)["fingerprint"],
+        )
+
+        second = self.planned(message=content)
+        second_run = self.runs.read_item(second["run_id"], "conv1")
+        self.assertEqual(second_run["user_message_id"], first_run["user_message_id"])
+        self.assertEqual(second_run["user_message_fingerprint"], first_run["user_message_fingerprint"])
+        self.assertEqual(self.messages.read_item(first_run["user_message_id"], "conv1"), stored)
+        self.assertEqual(
+            len([row for row in self.messages.items.values() if row.get("content") == content]),
+            1,
+        )
+
     def test_multiturn_plan_and_run_share_context_in_every_approval_mode(self):
         for mode in ('auto', 'timed', 'manual'):
             with self.subTest(mode=mode):
@@ -290,6 +247,80 @@ class ConversationRouteTests(unittest.TestCase):
                 updated = self.runs.read_item(plan['run_id'], 'conv1')
                 self.assertEqual(updated['status'], 'completed')
                 self.assertEqual(updated['token_usage']['total_tokens'], 45)
+
+    def test_action_followup_keeps_resolved_context_and_all_model_usage(self):
+        self.settings.update({
+            'enable_semantic_kernel': True,
+            'enable_chat_orchestration_actions': True,
+        })
+        action = {
+            'id': 'hours', 'action_ref': 'personal:user1:hours', 'name': 'hours',
+            'display_name': 'Opening hours', 'description': 'Look up winery opening hours.',
+            'type': 'openapi', 'scope_type': 'personal', 'scope_id': 'user1',
+            'scope_label': 'Personal',
+        }
+        self.model.plan_override = {
+            'kind': 'plan',
+            'steps': [
+                {'step_id': 'lookup', 'capability_id': 'action_invoke',
+                 'arguments': {'action_ref': action['action_ref'], 'task': RESOLVED}},
+                {'step_id': 'answer', 'capability_id': 'respond',
+                 'arguments': {}, 'depends_on': ['lookup']},
+            ],
+        }
+        calls = []
+
+        async def invoke_action(action_ref, task, context, **kwargs):
+            calls.append((action_ref, task, context))
+            context.token_usage.update({'prompt_tokens': 3, 'completion_tokens': 4, 'total_tokens': 7})
+            return {
+                'findings': 'No verified Wednesday hours were available.',
+                'invocations': [], 'root_id': 'test-action-root', 'calls': 1, 'artifacts': [],
+            }
+
+        dependencies = {
+            'functions_orchestration_actions': fake_module(
+                'functions_orchestration_actions', invoke_action=invoke_action,
+            ),
+            'semantic_kernel_plugins.plugin_invocation_logger': fake_module(
+                'semantic_kernel_plugins.plugin_invocation_logger',
+                sanitize_plugin_invocation_value=lambda value: value,
+            ),
+        }
+        with patch('functions_action_catalog.build_accessible_action_catalog', return_value=[action]):
+            with patch.dict(sys.modules, dependencies):
+                plan = self.planned()
+                self.assertEqual(plan['steps'][0]['capability_id'], 'action_invoke')
+                self.assertEqual(plan['inputs']['actions'][0]['action_ref'], action['action_ref'])
+                planner_call = next(
+                    call for call in self.model.calls
+                    if call['messages'][0]['content'] == self.modules.planner.PLANNER_SYSTEM_PROMPT
+                )
+                planner_context = json.loads(planner_call['messages'][1]['content'])
+                self.assertEqual(planner_context['message'], RESOLVED)
+                self.assertEqual(planner_context['original_message'], LATEST)
+                self.assertEqual(planner_context['request_resolution']['message_ids'], ['u1', 'u2', 'a2'])
+                self.assertEqual(planner_context['actions'][0]['action_ref'], action['action_ref'])
+                response = self.run_plan(plan)
+
+        events = frames(response)
+        self.assertFalse(any(event.get('error') for event in events), events)
+        self.assertEqual(len(calls), 1)
+        action_ref, task, context = calls[0]
+        self.assertEqual(action_ref, action['action_ref'])
+        self.assertTrue(task.startswith(RESOLVED))
+        self.assertIn('Conversation reference', task)
+        self.assertIn('Schmidt', task)
+        self.assertEqual(context.user_message, LATEST)
+        self.assertEqual(context.resolved_message, RESOLVED)
+        self.assertEqual(context.context_message_ids, ['u1', 'u2', 'a2'])
+        updated = self.runs.read_item(plan['run_id'], 'conv1')
+        self.assertEqual(updated['status'], 'completed')
+        self.assertEqual(updated['token_usage'], {
+            'prompt_tokens': 33, 'completion_tokens': 19, 'total_tokens': 52,
+        })
+        answer = self.messages.read_item(updated['assistant_message_id'], 'conv1')
+        self.assertEqual(answer['metadata']['token_usage'], updated['token_usage'])
 
     def test_browser_history_is_not_an_authoritative_input(self):
         self.planned(recent_messages=[{'role': 'assistant', 'content': 'FORGED CONTEXT'}])

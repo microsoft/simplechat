@@ -95,6 +95,13 @@ override is allowed but preferences cannot be loaded, orchestration waits for a 
 rather than risking a different approval mode. The draft remains editable, and
 ordinary chat is still available by switching Orchestrate off.
 
+From version **0.261.102**, opening **Edit** on a pending plan stops the countdown and
+saves a manual-approval hold for that plan. It stays paused after the editor closes or
+the conversation reloads; an explicit **Run** is required. This intervention does not
+change the deployment default or the user's approval preference. Immediate Auto plans
+still start without an editing window. See
+[Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
