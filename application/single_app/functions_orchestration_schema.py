@@ -775,6 +775,22 @@ def validate_plan(
     return plan
 
 
+def plan_document_ids(plan, *, include_disabled=False):
+    """Read named sources before authorization, without treating their presence as access."""
+    document_ids = []
+    for step in (plan or {}).get('steps') or ():
+        if not isinstance(step, dict) or (
+            not include_disabled and not step.get('enabled', True)
+        ):
+            continue
+        arguments = step.get('arguments')
+        if not isinstance(arguments, dict):
+            continue
+        for field in ('document_ids', 'right_document_ids', 'left_document_id'):
+            document_ids.extend(_string_list(arguments.get(field)))
+    return list(dict.fromkeys(document_ids))
+
+
 def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     """Describe what the plan will actually act on, for the approval card.
 
@@ -789,7 +805,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     seeds = seeds if isinstance(seeds, dict) else {}
     labels = document_labels if isinstance(document_labels, dict) else {}
 
-    document_ids = []
+    document_ids = plan_document_ids(plan)
     action_refs = []
     uses_web = False
     for step in (plan or {}).get('steps') or ():
@@ -802,14 +818,6 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
             action_ref = arguments.get('action_ref')
             if action_ref and action_ref not in action_refs:
                 action_refs.append(action_ref)
-        for field in ('document_ids', 'right_document_ids'):
-            for value in arguments.get(field) or ():
-                if value not in document_ids:
-                    document_ids.append(value)
-        single = arguments.get('left_document_id')
-        if single and single not in document_ids:
-            document_ids.append(single)
-
     selected = set(seeds.get('document_ids') or ())
 
     # Named, not quoted. The plan document is stored and shown, and the prompt's full wording

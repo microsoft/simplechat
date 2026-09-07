@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+# test_v2_orchestration_plan_card.py
 """
 UI test for the V2 chat orchestration plan card: approve, cancel, review, and the timed countdown.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.101
+Implemented in: 0.261.085
 
 This test drives the REAL OrchestrationPlanCard component (bundled from application/v2_ui/src by
 fixtures/orchestration/harness_entry.tsx) in a headless browser. It seeds the real orchestration
@@ -32,7 +32,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 # The runner sets this to the live Playwright page for the duration of the browser session, so the
 # zero-argument checks below match the repository's TESTS-list convention.
@@ -168,7 +168,7 @@ def test_approve_runs_the_plan():
         assert "edits" in state["body"], "the run must carry the user's (empty) edit set"
         assert state["historyStatus"] == "completed", state["historyStatus"]
         # The settled card collapses to a single review line naming the outcome.
-        assert "view" in state["text"] and "done" in state["text"], state["text"]
+        assert state["text"] == "", "settled plans leave the inline thread; Review remains in the drawer"
         print("  ok  Approve posted the run with the plan and settled it as completed")
         return True
     except Exception as exc:  # noqa: BLE001
