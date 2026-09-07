@@ -62,7 +62,10 @@ import {
     resolveContextHandoff,
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
-import type { ApprovalMode } from '../../lib/orchestration';
+import {
+    isApprovalMode,
+    resolveOrchestrationApproval,
+} from '../../lib/orchestrationApproval';
 import {
     cancelOrchestration,
     hasActiveOrchestration,
@@ -293,24 +296,30 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const manualControlsVisible =
         !orchestrating || (manualControlsGovernable && manualControlsOpen);
 
-    // The approval mode the plan will carry. Seeded from the deployment default and only editable
-    // where the administrator allows an override; where they do not, the control is hidden and the
-    // default is what ships.
-    const [approvalMode, setApprovalMode] = useState<ApprovalMode>(
-        orchestrationConfig?.default_approval_mode ?? 'manual',
+    const approvalPreference = useUserSettingsStore(
+        (state) => state.settings.orchestrationApprovalMode,
     );
-    // The default arrives with the bootstrap, which can resolve after the first render, so adopt it
-    // when it lands. Keyed on the value itself, so a later refresh carrying the same default does
-    // not overwrite a choice the user has since made.
-    useEffect(() => {
-        if (orchestrationConfig?.default_approval_mode) {
-            setApprovalMode(orchestrationConfig.default_approval_mode);
-        }
-    }, [orchestrationConfig?.default_approval_mode]);
+    const preferencesSaving = useUserSettingsStore((state) => state.saving);
+    const preferenceSaveError = useUserSettingsStore((state) => state.saveError);
     const approvalOverridable = Boolean(orchestrationConfig?.allow_user_approval_override);
-    const effectiveApprovalMode: ApprovalMode = approvalOverridable
-        ? approvalMode
-        : (orchestrationConfig?.default_approval_mode ?? 'manual');
+    const { mode: effectiveApprovalMode, invalidPreference: invalidApprovalPreference } =
+        resolveOrchestrationApproval(orchestrationConfig, approvalPreference);
+    // Bootstrap may arrive before preferences. Do not run an administrator's automatic mode
+    // while the user's saved requirement to review is still unknown.
+    const approvalBlocked = approvalOverridable && (!settingsLoaded || invalidApprovalPreference);
+    const chooseApprovalMode = (value: string | undefined) => {
+        if (!settingsLoaded || !approvalOverridable) {
+            toast.error('Your approval preference is not currently editable.');
+            return;
+        }
+        if (!isApprovalMode(value)) {
+            toast.error('Choose a valid approval mode.');
+            return;
+        }
+        const preferences = useUserSettingsStore.getState();
+        preferences.update({ orchestrationApprovalMode: value });
+        void preferences.flush();
+    };
 
     // An agent supplies its own deployment and never receives a reasoning level, so a
     // selection the server can actually resolve is what puts the model picker into its
@@ -694,6 +703,16 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const submit = (allowUnfilled = false) => {
         if (streaming || !canPost || uploadsBlocked) {
+            return;
+        }
+        if (orchestrating && approvalBlocked) {
+            toast.error(
+                settingsFailed
+                    ? 'Retry loading your approval preference before sending.'
+                    : invalidApprovalPreference && settingsLoaded
+                      ? 'Choose a valid approval mode before sending.'
+                      : 'Your approval preference is still loading.',
+            );
             return;
         }
         // An attached prompt is a complete message on its own, so a turn carrying one may be
@@ -1086,6 +1105,39 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     next to the message it is about, not below the send button. */}
                 <WebSearchNotice active={options.webSearch} />
 
+                {orchestrating && approvalOverridable && (
+                    <div className="space-y-1 text-xs">
+                        {settingsLoading ? (
+                            <p role="status" className="mb-2 text-text-3">
+                                Loading your approval preference before orchestration can start...
+                            </p>
+                        ) : settingsFailed ? (
+                            <div role="alert" className="mb-2 rounded-xl bg-danger-soft px-3 py-2 text-danger">
+                                Your approval preference could not be loaded. Your draft is unchanged.
+                                <button
+                                    type="button"
+                                    onClick={() => void useUserSettingsStore.getState().load()}
+                                    className="ml-2 font-medium underline"
+                                >
+                                    Retry loading approval preference
+                                </button>
+                            </div>
+                        ) : invalidApprovalPreference ? (
+                            <p role="alert" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-warn">
+                                Your saved approval preference is invalid. Choose an approval mode before sending.
+                            </p>
+                        ) : null}
+                        {preferencesSaving && (
+                            <p role="status" className="mb-2 text-text-3">Saving preferences...</p>
+                        )}
+                        {preferenceSaveError && (
+                            <p role="alert" className="mb-2 rounded-xl bg-danger-soft px-3 py-2 text-danger">
+                                {preferenceSaveError} Try changing the preference again.
+                            </p>
+                        )}
+                    </div>
+                )}
+
                 <div className="glass glass-edge relative rounded-2xl p-2">
                     {replyTo && (
                         <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
@@ -1186,12 +1238,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         {orchestrating && approvalOverridable && (
                             <Dropdown
                                 options={approvalOptions}
-                                value={effectiveApprovalMode}
+                                value={settingsLoaded && !invalidApprovalPreference ? effectiveApprovalMode : undefined}
                                 placeholder="Approval"
                                 icon={<ShieldCheck size={15} />}
-                                onChange={(value) =>
-                                    value && setApprovalMode(value as ApprovalMode)
-                                }
+                                title="Approval mode"
+                                disabled={!settingsLoaded}
+                                onChange={chooseApprovalMode}
                             />
                         )}
 
@@ -1443,7 +1495,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && approvalBlocked)}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'

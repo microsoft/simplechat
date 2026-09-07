@@ -13,6 +13,7 @@
 // save had been lost. They get their own call when the workspace tabs are built.
 
 import type { SidebarMenuState } from './sidebarMenuState';
+import type { ApprovalMode } from './orchestration';
 import type { DocumentExplorerPrefs, DocumentSavedView } from './types';
 
 /** Text scale, matching the values the route normalises to. */
@@ -103,6 +104,9 @@ export interface UserSettings {
      */
     reasoningEffortSettings?: Record<string, string>;
 
+    /** Used when approval overrides are allowed; absent until the user chooses a mode. */
+    orchestrationApprovalMode?: ApprovalMode;
+
     chatCompletionAudioEnabled?: boolean;
     chatCompletionAudioMuted?: boolean;
     chatCompletionAudioSound?: string;
@@ -173,6 +177,7 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'preferredModelId',
     'preferredModelDeployment',
     'reasoningEffortSettings',
+    'orchestrationApprovalMode',
     'chatCompletionAudioEnabled',
     'chatCompletionAudioMuted',
     'chatCompletionAudioSound',
