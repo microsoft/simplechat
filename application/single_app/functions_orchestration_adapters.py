@@ -44,7 +44,7 @@ otherwise make this module unimportable without Azure and config -- and ``perfor
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.099
+Version: 0.261.101
 """
 
 import json
@@ -972,17 +972,14 @@ def _finalize_source_review(
     )
 
 
-def _resolve_source_review_planner(settings):
+def _resolve_source_review_planner(settings, context=None):
     """The optional client for research query and link-selection planning.
 
-    perform_source_review takes a planner client/model so it can decide which discovered links
-    are worth reading. The context's ``invoke_prompt`` closure has already resolved a client,
-    but it is a ``call(prompt) -> text`` seam by design and does not expose the client object,
-    so we resolve one the same way the planner does. ``resolve_planner_client`` handles APIM,
-    managed identity and key auth and returns the planner deployment -- the right model for an
-    internal planning call rather than for writing the final answer. Expected configuration
-    failures leave the existing backup query/link planning available.
+    A running orchestration supplies its already-authorized, protocol-aware client.
+    Standalone callers retain the legacy optional planner and backup planning behavior.
     """
+    if getattr(context, 'planner_client', None) is not None:
+        return context.planner_client, context.planner_deployment
     from functions_orchestration_planner import PlannerError, resolve_planner_client
 
     try:
@@ -1110,7 +1107,7 @@ def run_deep_research(step, context, *, settings, user_id, emit, cancel_requeste
             'Deep research is not enabled or permitted.',
         )
 
-    planner_client, planner_model = _resolve_source_review_planner(settings)
+    planner_client, planner_model = _resolve_source_review_planner(settings, context)
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before deep research.')
 

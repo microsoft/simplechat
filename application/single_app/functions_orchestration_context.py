@@ -27,7 +27,7 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.087
+Version: 0.261.101
 """
 
 import hashlib
@@ -171,6 +171,7 @@ def resolve_seeds(request_data):
         ),
         'agent': agent,
         'model': model or None,
+        'reasoning_effort': _text(request_data.get('reasoning_effort')),
         'prompt': prompt,
         # A user who switched web search on has said something about intent even in
         # orchestration mode, so it is carried through as a constraint rather than dropped.

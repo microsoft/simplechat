@@ -30,7 +30,7 @@ the same thing:
     plan card ticks specific steps by id, and reverse-engineering that from prose would be
     guesswork.
 
-Version: 0.261.085
+Version: 0.261.101
 """
 
 import json
@@ -283,6 +283,10 @@ def build_run_done_event(
     plan_summary=None,
     status='completed',
     agent_citations=None,
+    model_deployment_name=None,
+    model_provider=None,
+    model_endpoint_id=None,
+    model_id=None,
 ):
     """Terminal frame of the run endpoint.
 
@@ -307,6 +311,14 @@ def build_run_done_event(
         'generated_artifacts': list(artifacts or ()),
         'orchestration': plan_summary or {},
         'status': status,
+        **{
+            key: value for key, value in {
+                'model_deployment_name': model_deployment_name,
+                'model_provider': model_provider,
+                'model_endpoint_id': model_endpoint_id,
+                'model_id': model_id,
+            }.items() if value is not None
+        },
     })
 
 

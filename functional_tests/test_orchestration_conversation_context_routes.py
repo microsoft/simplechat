@@ -1,16 +1,19 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.098
+Version: 0.261.101
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
 Direct action integration: 0.261.098
+Resolver response compatibility and bounded recovery: 0.261.100
+Authorized model routing and completion metadata: 0.261.101
 
 Uses Flask, the real planner/executor/adapters/run store, an in-memory Cosmos boundary,
 and deterministic model completions. Authentication is a signed-in test user; actual
 conversation ownership checks remain active. No external service is contacted.
 """
 
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -18,22 +21,27 @@ import re
 import sys
 import unittest
 from copy import deepcopy
+from threading import Event
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import (
     CosmosAccessConditionFailedError, CosmosResourceExistsError, CosmosResourceNotFoundError,
 )
-from flask import Blueprint, Flask
+from flask import Blueprint, Flask, has_request_context
+from httpx import Request as HttpRequest, Response as HttpResponse
+from openai import BadRequestError
 from werkzeug.test import Client
 from werkzeug.wrappers import Response
 
 from test_orchestration_conversation_context import (
     LATEST, RESOLVED, fake_module, load_modules, message, winery_history,
 )
+from test_orchestration_model_selection import TERRA_SELECTION, endpoint_runtime, model_endpoint
 from test_support.app_stubs import APP_ROOT, stubbed_config
 from test_support.versioning import assert_app_version_at_least
+from test_unified_logging_entrypoint import _install_logging_stubs, _restore_modules
 
 
 class MemoryContainer:
@@ -119,14 +127,18 @@ class ModelBoundary:
         self.modules = modules
         self.calls = []
         self.resolution_override = None
+        self.resolution_responses = []
         self.plan_override = None
+        self.answer_response = None
+        self.answer_error = None
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs):
         self.calls.append(deepcopy(kwargs))
         system = kwargs['messages'][0]['content']
         if system == self.modules.planner.RESOLUTION_SYSTEM_PROMPT:
-            text = json.dumps(self.resolution_override or {
+            payload = self.resolution_responses.pop(0) if self.resolution_responses else self.resolution_override
+            text = json.dumps(payload if payload is not None else {
                 'relationship': 'follow_up',
                 'resolved_message': RESOLVED,
                 'message_ids': ['u1', 'u2', 'a2'],
@@ -151,9 +163,13 @@ class ModelBoundary:
                 ],
             })
         else:
+            if self.answer_error is not None:
+                raise self.answer_error
+            if self.answer_response is not None:
+                return self.answer_response
             text = 'You mean the wineries near Grants Pass. I do not have verified Wednesday hours.'
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=text))],
+            choices=[SimpleNamespace(finish_reason='stop', message=SimpleNamespace(content=text))],
             usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
         )
 
@@ -266,6 +282,264 @@ class ConversationRouteTests(unittest.TestCase):
             'run_id': plan['run_id'], 'conversation_id': 'conv1',
         }, buffered=True)
 
+    def use_modern_models(self):
+        self.endpoint = model_endpoint()
+        self.model_clients = []
+        self.model_runtime = endpoint_runtime(self.endpoint, None)
+
+        def build_client(*args, **kwargs):
+            self.assertTrue(has_request_context(), 'Model authorization must stay on the request thread.')
+            client = SimpleNamespace(chat=self.model.chat, close=Mock())
+            self.model_clients.append(client)
+            return client, 'azure_openai'
+
+        self.model_runtime.build_model_endpoint_sync_chat_client.side_effect = build_client
+        self.settings.update({
+            'enable_multi_model_endpoints': True,
+            'default_model_selection': {
+                'endpoint_id': 'selected-endpoint', 'model_id': 'terra-model', 'provider': 'aoai',
+            },
+            'gpt_model': {'selected': [{'deploymentName': 'gpt-4o'}]},
+        })
+        patcher = patch.dict(sys.modules, {'functions_model_endpoint_runtime': self.model_runtime})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return dict(TERRA_SELECTION)
+
+    def test_manual_model_is_used_for_resolution_planning_and_answer_in_all_approval_modes(self):
+        selection = self.use_modern_models()
+        self.settings['default_model_selection']['model_id'] = 'luna-model'
+        for mode in ('auto', 'timed', 'manual'):
+            with self.subTest(mode=mode):
+                self.messages.items.clear()
+                self.runs.items.clear()
+                self.model.calls.clear()
+                for row in winery_history():
+                    self.messages.upsert_item(row)
+                plan = self.planned(**selection, reasoning_effort='high', approval_mode=mode)
+                stored = self.runs.read_item(plan['run_id'], 'conv1')
+                self.assertEqual(stored['seeds']['model'], selection)
+                self.assertEqual(stored['seeds']['reasoning_effort'], 'high')
+                self.assertEqual(stored['plan']['planner_model'], 'gpt-5.6-terra')
+                events = frames(self.run_plan(plan))
+                self.assertFalse(any(event.get('error') for event in events), events)
+                self.assertEqual(len(self.model.calls), 3)
+                for call in self.model.calls:
+                    self.assertEqual(call['model'], 'gpt-5.6-terra')
+                    self.assertEqual(call['reasoning_effort'], 'high')
+                    self.assertIn('max_completion_tokens', call)
+                    self.assertNotIn('max_tokens', call)
+                    self.assertNotIn('temperature', call)
+                updated = self.runs.read_item(plan['run_id'], 'conv1')
+                answer = self.messages.read_item(updated['assistant_message_id'], 'conv1')
+                terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+                for key, value in {
+                    'model_deployment_name': 'gpt-5.6-terra', 'model_provider': 'aoai',
+                    'model_endpoint_id': 'selected-endpoint', 'model_id': 'terra-model',
+                }.items():
+                    self.assertEqual(answer[key], value)
+                    self.assertEqual(terminal[key], value)
+                self.assertEqual(updated['token_usage']['total_tokens'], 45)
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_admin_default_is_pinned_to_the_plan_and_cannot_be_retargeted_at_run_time(self):
+        self.use_modern_models()
+        plan = self.planned()
+        self.settings['default_model_selection']['model_id'] = 'luna-model'
+        response = self.client.post('/api/v2/orchestration/run', json={
+            'run_id': plan['run_id'], 'conversation_id': 'conv1',
+            'model_id': 'luna-model', 'model_deployment': 'gpt-5.6-luna',
+        }, buffered=True)
+        self.assertFalse(any(event.get('error') for event in frames(response)))
+        self.assertEqual({call['model'] for call in self.model.calls}, {'gpt-5.6-terra'})
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], TERRA_SELECTION)
+
+    def test_planner_override_does_not_change_the_selected_answer_or_research_binding(self):
+        selection = self.use_modern_models()
+        self.settings['chat_orchestration_planner_deployment'] = 'small-planner'
+        contexts = []
+        run_context = self.route.RunContext
+
+        def capture_context(**kwargs):
+            context = run_context(**kwargs)
+            contexts.append(context)
+            return context
+
+        with patch.object(
+            self.modules.planner, 'resolve_planner_client',
+            side_effect=lambda settings: (self.model, settings['chat_orchestration_planner_deployment']),
+        ), patch.object(self.route, 'RunContext', side_effect=capture_context):
+            plan = self.planned(**selection)
+            events = frames(self.run_plan(plan))
+        self.assertFalse(any(event.get('error') for event in events), events)
+        self.assertEqual([call['model'] for call in self.model.calls], [
+            'small-planner', 'small-planner', 'gpt-5.6-terra',
+        ])
+        self.assertEqual(contexts[0].gpt_model, 'gpt-5.6-terra')
+        self.assertEqual(contexts[0].planner_deployment, 'small-planner')
+        client, deployment = self.modules.adapters._resolve_source_review_planner(self.settings, contexts[0])
+        self.assertIs(client, contexts[0].planner_client)
+        self.assertEqual(deployment, 'small-planner')
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], selection)
+
+    def test_revoked_model_access_stops_an_approved_run_instead_of_falling_back(self):
+        selection = self.use_modern_models()
+        plan = self.planned(**selection)
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = None
+        self.settings['default_model_selection']['model_id'] = 'luna-model'
+        response = self.run_plan(plan)
+        self.assertEqual(response.status_code, 403)
+        self.assertIn('selected model is unavailable', response.get_json()['error'])
+        self.assertEqual(len(self.model.calls), 2)
+        self.assertTrue(all(call['model'] == 'gpt-5.6-terra' for call in self.model.calls))
+        self.assertEqual(self.model_runtime.resolve_model_endpoint_from_context.call_count, 2)
+        self.assertTrue(self.model_runtime.resolve_model_endpoint_from_context.call_args.kwargs['authorize'])
+        self.assertEqual(self.model_runtime.build_model_endpoint_sync_chat_client.call_count, 1)
+
+    def test_model_id_only_planner_override_also_reaches_research_execution(self):
+        self.use_modern_models()
+        self.settings.update({
+            'chat_orchestration_planner_model_endpoint_id': 'selected-endpoint',
+            'chat_orchestration_planner_model_id': 'luna-model',
+        })
+        contexts = []
+        run_context = self.route.RunContext
+
+        def capture_context(**kwargs):
+            context = run_context(**kwargs)
+            contexts.append(context)
+            return context
+
+        with patch.object(self.route, 'RunContext', side_effect=capture_context):
+            plan = self.planned()
+            events = frames(self.run_plan(plan))
+        self.assertFalse(any(event.get('error') for event in events), events)
+        self.assertEqual([call['model'] for call in self.model.calls], [
+            'gpt-5.6-luna', 'gpt-5.6-luna', 'gpt-5.6-terra',
+        ])
+        self.assertEqual(contexts[0].planner_deployment, 'gpt-5.6-luna')
+        self.assertEqual(contexts[0].gpt_model, 'gpt-5.6-terra')
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], TERRA_SELECTION)
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_research_model_initialization_failure_closes_the_created_answer_client(self):
+        self.use_modern_models()
+        plan = self.planned()
+        self.settings['chat_orchestration_planner_deployment'] = 'small-planner'
+        self.model_runtime.resolve_model_endpoint_from_context.side_effect = [self.endpoint, None]
+        response = self.run_plan(plan)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(self.model_clients), 2)
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_unstarted_streams_close_their_model_clients(self):
+        self.use_modern_models()
+        with self.app.test_request_context('/api/v2/orchestration/plan', method='POST', json={
+            'message': LATEST, 'conversation_id': 'conv1', 'turn_id': 'abandoned',
+        }):
+            response = self.app.view_functions['context_test.orchestration_plan']()
+        response.close()
+        self.assertEqual(self.model.calls, [])
+        self.assertEqual(self.runs.items, {})
+        self.model_clients[-1].close.assert_called_once_with()
+
+        plan = self.planned()
+        with self.app.test_request_context('/api/v2/orchestration/run', method='POST', json={
+            'run_id': plan['run_id'], 'conversation_id': 'conv1',
+        }):
+            response = self.app.view_functions['context_test.orchestration_run']()
+        response.close()
+        self.assertEqual(len(self.model.calls), 2)
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_disconnecting_does_not_close_a_model_still_used_by_the_worker(self):
+        self.use_modern_models()
+        plan = self.planned()
+        searching, resume, closed = Event(), Event(), Event()
+
+        def pause_search():
+            searching.set()
+            self.assertTrue(resume.wait(timeout=10))
+
+        self.after_search = pause_search
+        response = self.client.post('/api/v2/orchestration/run', json={
+            'run_id': plan['run_id'], 'conversation_id': 'conv1',
+        }, buffered=False)
+        self.model_clients[-1].close.side_effect = closed.set
+        try:
+            self.assertTrue(searching.wait(timeout=10))
+            response.close()
+            self.model_clients[-1].close.assert_not_called()
+        finally:
+            resume.set()
+            self.assertTrue(closed.wait(timeout=10))
+        self.model_clients[-1].close.assert_called_once_with()
+
+    def test_unavailable_default_fails_planning_without_creating_a_run(self):
+        self.use_modern_models()
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = None
+        _, events = self.plan()
+        self.assertTrue(any('selected model is unavailable' in event.get('error', '') for event in events))
+        self.assertEqual(self.model.calls, [])
+        self.assertEqual(self.runs.items, {})
+        self.assertEqual(len(self.messages.items), 4)
+
+    def test_failed_or_empty_answer_is_not_reported_as_a_completed_turn(self):
+        self.use_modern_models()
+        usage = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        for response in (
+            SimpleNamespace(choices=[], usage=usage),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason='length', message=SimpleNamespace(content='', refusal=None),
+            )], usage=usage),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason='content_filter',
+                message=SimpleNamespace(content='PRIVATE_PROVIDER_RESPONSE', refusal=None),
+            )], usage=usage),
+            SimpleNamespace(choices=[SimpleNamespace(
+                finish_reason='stop',
+                message=SimpleNamespace(content='', refusal='PRIVATE_PROVIDER_RESPONSE'),
+            )], usage=usage),
+        ):
+            with self.subTest(response=response):
+                self.messages.items.clear()
+                self.runs.items.clear()
+                for row in winery_history():
+                    self.messages.upsert_item(row)
+                self.model.answer_response = response
+                plan = self.planned()
+                events = frames(self.run_plan(plan))
+                self.assertTrue(any(event.get('error') for event in events), events)
+                self.assertFalse(any(event.get('type') == 'orchestration_done' for event in events))
+                self.assertNotIn('PRIVATE_PROVIDER_RESPONSE', json.dumps(events))
+                stored = self.runs.read_item(plan['run_id'], 'conv1')
+                self.assertEqual(stored['status'], 'failed')
+                self.assertFalse(stored.get('assistant_message_id'))
+                self.assertEqual(stored['token_usage']['total_tokens'], 45)
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_provider_answer_error_is_safe_and_closes_the_bound_client(self):
+        self.use_modern_models()
+        self.model.answer_error = BadRequestError(
+            'PRIVATE_PROVIDER_RESPONSE',
+            response=HttpResponse(400, request=HttpRequest('POST', 'https://selected.example.test')),
+            body={'error': 'PRIVATE_PROVIDER_RESPONSE'},
+        )
+        plan = self.planned()
+        with patch.object(self.route, 'log_event') as log:
+            events = frames(self.run_plan(plan))
+        self.assertTrue(any(event.get('error') for event in events))
+        self.assertNotIn('PRIVATE_PROVIDER_RESPONSE', json.dumps(events))
+        self.assertNotIn('PRIVATE_PROVIDER_RESPONSE', repr(log.call_args_list))
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['status'], 'failed')
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
     def test_prompt_snapshot_and_fingerprint_survive_replanning_without_duplicate_messages(self):
         prompt_text = "Use the winery context."
         content = f"{prompt_text}\n\n{LATEST}"
@@ -298,6 +572,10 @@ class ConversationRouteTests(unittest.TestCase):
         )
 
     def test_multiturn_plan_and_run_share_context_in_every_approval_mode(self):
+        self.model.resolution_override = {
+            'relationship': 'follow_up', 'resolved_message': RESOLVED,
+            'message_ids': ['u1', 'u2', 'a2'], 'requires_retrieval': True, 'clarification': None,
+        }
         for mode in ('auto', 'timed', 'manual'):
             with self.subTest(mode=mode):
                 self.messages.items.clear()
@@ -311,6 +589,7 @@ class ConversationRouteTests(unittest.TestCase):
                 stored = self.runs.read_item(plan['run_id'], 'conv1')
                 self.assertEqual(stored['user_message'], LATEST)
                 self.assertEqual(stored['resolved_message'], RESOLVED)
+                self.assertEqual(stored['request_resolution']['clarification'], '')
                 self.assertEqual(len(stored['conversation_context']['messages']), 4)
                 self.assertEqual(stored['planning_token_usage']['total_tokens'], 30)
                 response = self.run_plan(plan)
@@ -325,7 +604,92 @@ class ConversationRouteTests(unittest.TestCase):
                 self.assertEqual(updated['status'], 'completed')
                 self.assertEqual(updated['token_usage']['total_tokens'], 45)
 
+    def test_new_conversation_second_question_accepts_an_unused_null_clarification(self):
+        self.use_modern_models()
+        self.messages.items.clear()
+        first = self.planned(message='Find tide pools near Crescent City.', turn_id='first-turn')
+        self.assertFalse(any(event.get('error') for event in frames(self.run_plan(first))))
+        first_run = self.runs.read_item(first['run_id'], 'conv1')
+        question = 'Find wineries open Wednesday on Route 199 from Medford to Crescent City after 1 PM.'
+        self.model.resolution_override = {
+            'relationship': 'new_topic', 'resolved_message': question,
+            'message_ids': [], 'requires_retrieval': True, 'clarification': None,
+        }
+        second = self.planned(message=question, turn_id='second-turn')
+        second_run = self.runs.read_item(second['run_id'], 'conv1')
+        self.assertEqual(
+            {item['id'] for item in second_run['conversation_context']['messages']},
+            {first_run['user_message_id'], first_run['assistant_message_id']},
+        )
+        self.assertEqual(second_run['resolved_message'], question)
+        self.assertEqual(second_run['request_resolution']['message_ids'], [])
+        self.assertEqual(second_run['request_resolution']['clarification'], '')
+        self.assertFalse(any(event.get('error') for event in frames(self.run_plan(second))))
+        self.assertEqual(self.runs.read_item(second['run_id'], 'conv1')['status'], 'completed')
+        self.assertEqual(len(self.messages.items), 4)
+        resolution_calls = [
+            call for call in self.model.calls
+            if call['messages'][0]['content'] == self.modules.planner.RESOLUTION_SYSTEM_PROMPT
+        ]
+        self.assertEqual(len(resolution_calls), 1)
+        self.assertEqual({call['model'] for call in self.model.calls}, {'gpt-5.6-terra'})
+
+    def test_repaired_resolution_keeps_context_usage_and_single_turn_persistence(self):
+        valid = {
+            'relationship': 'follow_up', 'resolved_message': RESOLVED,
+            'message_ids': ['u1', 'u2', 'a2'], 'requires_retrieval': True, 'clarification': '',
+        }
+        self.model.resolution_responses = [
+            {**valid, 'message_ids': ['foreign-message']}, valid,
+        ]
+        plan = self.planned()
+        stored = self.runs.read_item(plan['run_id'], 'conv1')
+        self.assertEqual(stored['request_resolution']['message_ids'], valid['message_ids'])
+        self.assertEqual(len(stored['conversation_context']['messages']), 4)
+        self.assertEqual(stored['planning_token_usage']['total_tokens'], 45)
+        self.assertFalse(any(event.get('error') for event in frames(self.run_plan(plan))))
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['token_usage']['total_tokens'], 60)
+        self.assertEqual(self.search_queries, [RESOLVED, RESOLVED])
+        self.assertEqual(sum(row.get('content') == LATEST for row in self.messages.items.values()), 1)
+        self.assertEqual(len(self.runs.items), 1)
+
+    def test_persistent_resolution_failure_has_safe_searchable_diagnostics_and_no_writes(self):
+        self.model.resolution_override = {
+            'relationship': 'follow_up', 'resolved_message': 'PRIVATE_MODEL_TEXT',
+            'message_ids': ['u1'], 'requires_retrieval': 'false', 'clarification': '',
+        }
+        with patch.object(self.route, 'log_event') as route_log, \
+                patch.object(self.modules.planner, 'log_event') as planner_log:
+            response, events = self.plan()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([event['error'] for event in events if event.get('error')], [
+            'The conversation could not be interpreted. Please retry your request.',
+        ])
+        self.assertEqual(len(self.model.calls), 2)
+        self.assertEqual(len(self.messages.items), 4)
+        self.assertEqual(self.runs.items, {})
+        self.assertEqual(self.search_queries, [])
+        properties = route_log.call_args.kwargs['extra']
+        resource = f"conversation:{hashlib.sha256(b'conv1').hexdigest()}"
+        self.assertEqual(properties['resource'], resource)
+        self.assertEqual(properties['reason'], 'invalid_retrieval_flag')
+        self.assertEqual(properties['attempt'], 2)
+        logged = repr(route_log.call_args_list) + repr(planner_log.call_args_list)
+        for private in ('PRIVATE_MODEL_TEXT', LATEST, 'Schmidt', 'conv1'):
+            self.assertNotIn(private, logged)
+
+        saved_modules = _install_logging_stubs(debug_enabled=False)
+        try:
+            logger = importlib.import_module('functions_appinsights')
+            forwarded = logger._build_logger_extra(route_log.call_args.args[0], properties)
+            self.assertEqual(forwarded['sc_resource'], resource)
+            self.assertEqual(forwarded['sc_reason'], 'invalid_retrieval_flag')
+            self.assertEqual(forwarded['sc_attempt'], 2)
+        finally:
+            _restore_modules(saved_modules)
+
     def test_action_followup_keeps_resolved_context_and_all_model_usage(self):
+        self.use_modern_models()
         self.settings.update({
             'enable_semantic_kernel': True,
             'enable_chat_orchestration_actions': True,
@@ -391,6 +755,12 @@ class ConversationRouteTests(unittest.TestCase):
         self.assertEqual(context.user_message, LATEST)
         self.assertEqual(context.resolved_message, RESOLVED)
         self.assertEqual(context.context_message_ids, ['u1', 'u2', 'a2'])
+        self.assertEqual(context.gpt_model, 'gpt-5.6-terra')
+        self.assertEqual(context.model_context, {
+            'model_id': 'terra-model', 'endpoint_id': 'selected-endpoint', 'provider': 'aoai',
+            'model_deployment': 'gpt-5.6-terra', 'user_id': 'user1', 'active_group_ids': [],
+        })
+        self.assertEqual(context.planner_deployment, 'gpt-5.6-terra')
         updated = self.runs.read_item(plan['run_id'], 'conv1')
         self.assertEqual(updated['status'], 'completed')
         self.assertEqual(updated['token_usage'], {
@@ -691,5 +1061,5 @@ class ConversationRouteTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.096')
+    assert_app_version_at_least('0.261.101')
     unittest.main()

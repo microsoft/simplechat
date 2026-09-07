@@ -246,8 +246,20 @@ Selects the model that writes plans.
 
 Planning is a short, structured task rather than a conversational one, so a smaller and
 faster deployment usually does it well and costs less per message than the model that
-writes the answer. Leaving the deployment blank plans with the deployment's default chat
-model, which means orchestration works as soon as it is switched on.
+writes the answer. Since **0.261.101**, leaving all planner fields blank uses the model
+chosen in **Manual controls** first, then the administrator's default model connection,
+rather than an unrelated legacy GPT deployment. Classic chat/APIM settings remain the
+fallback when no model-connection selection or default applies.
+
+A dedicated planner remains independent of the model that writes the answer. For a
+configured model connection, supply its endpoint and model IDs; the deployment and
+provider, when supplied, must agree with that selection. Model access is checked for
+the requesting user. A deployment-only override uses the classic chat/APIM connection.
+
+The answer choice is saved with the plan and checked again when it runs. Changing the
+admin default during approval does not switch that answer to a different model.
+If the saved model is no longer available to the user, execution stops with a model
+availability error rather than silently falling back to GPT-4o.
 
 The same deployment resolves substantive follow-ups before retrieval. This adds a small
 completion when usable conversation history or clarification answers are present.
@@ -257,7 +269,7 @@ First turns without history and simple acknowledgments skip that call.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Planner deployment name | Names the deployment used for planning. Blank uses the default chat model. | Empty | `chat_orchestration_planner_deployment` |
+| Planner deployment name | Names a separate planning deployment without changing the answer model. When all planner fields are blank, planning uses the manual selection or admin default. | Empty | `chat_orchestration_planner_deployment` |
 | Planner model id | Identifies the model when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_id` |
 | Planner model endpoint id | Identifies the endpoint when planning through a configured model endpoint rather than the default deployment. | Empty | `chat_orchestration_planner_model_endpoint_id` |
 | Planner model provider | Identifies the provider when planning through a configured model endpoint. | Empty | `chat_orchestration_planner_model_provider` |

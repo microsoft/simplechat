@@ -1,12 +1,14 @@
 # Chat Orchestration
 
-**Version: 0.261.099** (tracked in `application/single_app/config.py`)
+**Version: 0.261.101** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
 **Research selection and multi-query execution updated in version: 0.261.099**
 **Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
+**Follow-up resolver compatibility fixed in version: 0.261.100**
+**Selected/default model routing fixed in version: 0.261.101**
 
 ## Overview
 
@@ -102,6 +104,58 @@ plan; newly appended turns do not enter an older run.
 These rules apply to Auto, countdown, and manual approval. They do not introduce rolling
 summaries or cross-conversation memory. First turns without history and simple
 acknowledgments do not require a resolution completion.
+
+Since **0.261.100**, an unused `clarification: null` in the resolver's JSON is
+accepted as "no clarification needed", just like an empty string. It does not
+discard the rest of a valid follow-up or require another model call. A request
+whose relationship is `clarification` still needs a nonempty question.
+
+Other malformed resolver output gets at most one corrective completion using
+the same bounded history, original request, and clarification answers. Both
+completions count toward the successful turn's token usage. Unknown message IDs,
+invalid required field types, and inconsistent relationships remain invalid:
+the application never drops history or starts a new topic merely to make a
+response pass validation. Persistent failure produces an interpretation error,
+distinct from an inaccessible or changed conversation.
+
+Refused, filtered, absent, or incomplete completions are not retried as malformed
+JSON. The resolver does not mistake provider failures for unsupported JSON formatting; only
+an explicit unsupported-response-format error uses the existing no-format
+compatibility fallback. The separate plan generator retains its existing retry
+behavior. No new model setting or API version is required.
+
+#### Model selection
+
+The answer model comes from **Manual controls** when one is selected, otherwise from
+the administrator's default model connection. Classic single-endpoint or APIM settings
+remain the fallback only when no connection-based selection or default applies.
+The selected deployment, provider, endpoint ID and model ID are resolved together:
+changing only the deployment on a legacy client could send it to the wrong endpoint.
+
+The authorized answer choice is saved with the plan, including a resolved admin default.
+Changing the default while approval is pending does not retarget that run. The model is
+authorized again at execution, so a disabled, removed or inaccessible selection produces
+an error instead of silently switching to another model.
+
+Without a dedicated planner override, the same selection handles conversational
+resolution, plan generation and research review as well as the answer. A configured
+planner deployment or endpoint remains separate and does not override the answer model.
+Planner endpoint selections use the existing planner model/endpoint/provider settings and
+the caller's normal model access checks. A deployment-only planner override retains the
+classic single-endpoint/APIM connection.
+
+Clients are prepared on the request thread with captured caller identity. The worker
+uses those bindings, and direct actions receive the actual answer model identity.
+GPT-5-family completions use `max_completion_tokens`, omit unsupported temperature,
+and retain compatible manual reasoning effort. A positive configured model response
+length governs answer calls; otherwise reasoning completions have an 8192-token budget
+floor so reasoning does not consume the entire smaller visible-output allowance.
+Anthropic completion flags are normalized at the protocol boundary, so successful
+Claude follow-ups pass the same strict checks while truncation and refusal remain failures.
+
+The saved assistant message and terminal stream identify the model that actually answered.
+The existing V2 renderer displays that name. Empty, refused, filtered or failed answer
+completions produce an error rather than a success-shaped empty turn.
 
 #### What the context picker contributes
 
@@ -449,6 +503,7 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_orchestration_executor.py` | Step engine, budgets, cancellation, re-authorization |
 | `functions_orchestration_runs.py` | Run and step persistence |
 | `functions_orchestration_events.py` | Stream event builders |
+| `functions_orchestration_models.py` | Authorized model selection, endpoint clients, completion parameters and safe model metadata |
 | `route_backend_orchestration.py` | The V2 endpoints, conversation and message persistence |
 | `route_backend_chats.py` | Shared ordinary and multi-query web-search helpers |
 | `functions_source_review.py` | Shared bounded query generation, backup planning, and source review |
@@ -481,6 +536,7 @@ to the front.
 | `functional_tests/test_orchestration_elicitation_schema.py` | The MCP flat-object restriction, paging staying outside the schema, response validation |
 | `functional_tests/test_orchestration_run_ledger.py` | Run and byte bounds, oldest-first compaction, honest truncation, answered questions carrying forward |
 | `functional_tests/test_orchestration_invoke_prompt_contract.py` | The model-call convention: the route's closure must accept what the adapters and the document functions actually pass, and must count token usage |
+| `functional_tests/test_orchestration_model_selection.py` | Manual/default precedence, independent planner connections, authorization, unavailable models, legacy/APIM compatibility, protocol parameters and client ownership |
 | `functional_tests/test_orchestration_executor.py` | Step ordering, dependency skipping, cancellation, budget caps, re-authorization |
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
@@ -491,9 +547,9 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
-| `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, follow-up resolution, contextualized adapters, synthesis roles, and URL provenance |
-| `functional_tests/test_orchestration_conversation_context_routes.py` | Owned server history across HTTP/SSE planning and execution, all approval modes, clarification, retries, stale sources, and legacy cutoffs |
-| `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification transport, cancellation, original-turn continuity, all approval modes, and navigation |
+| `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
+| `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
+| `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification/model transport, cancellation, original-turn continuity, all approval modes, visible answer model names and navigation |
 
 Research-selection evaluation distinguishes contract coverage from model behaviour. A
 mocked plan proves that the application preserves an allowed choice; it does not prove
@@ -506,9 +562,10 @@ research-selection rate is not itself a quality improvement.
 
 - **Recent context only.** There is no orchestration rolling summary or cross-chat memory.
   A reference outside the retained window may need clarification.
-- **Automatic per-step model routing is not implemented.** Planning uses its configured
-  model. Direct action execution honors an explicitly selected, available chat model or
-  the deployment defaults; it does not select models by task capability or cost.
+- **Automatic per-step model routing is not implemented.** Planning and research use the
+  selected/default answer model unless a dedicated planner override is configured.
+  Direct action execution receives the answer selection. Models are not selected
+  dynamically by task capability or cost; configured agents retain their own model behavior.
 - **No output-phase workflow.** Existing MCP, OpenAPI and other action types can now
   gather knowledge directly, but the `output` phase remains empty. There are no dedicated
   output scheduling, workspace placement or delivery steps. Actions retain their existing
@@ -530,5 +587,6 @@ research-selection rate is not itself a quality improvement.
 - [Orchestration settings](../../admin/orchestration.md)
 - [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
 - [Conversation context fix](../fixes/ORCHESTRATION_CONVERSATION_CONTEXT_FIX.md)
+- [Model selection fix](../fixes/ORCHESTRATION_MODEL_SELECTION_FIX.md)
 - `docs/explanation/release_notes.md`
 - [Deep research selection and execution fix](../fixes/ORCHESTRATION_DEEP_RESEARCH_SELECTION_FIX.md)
