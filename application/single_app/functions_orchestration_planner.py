@@ -27,14 +27,14 @@ tries several strategies before giving up, and a total failure degrades to a sin
 answering step rather than to an error -- a user who asked a question should get an
 answer even when the planning layer had a bad day.
 
-Version: 0.261.102
+Version: 0.261.103
 """
 
 import json
 import logging
 import re
 
-from openai import APIError, AzureOpenAI
+from openai import APIError, AzureOpenAI, BadRequestError
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import cognitive_services_scope
@@ -58,6 +58,7 @@ from functions_orchestration_schema import (
 PLANNER_MAX_TOKENS = 2000
 PLANNER_TEMPERATURE = 0.1
 RESOLUTION_MAX_TOKENS = 1200
+RESOLUTION_MAX_ATTEMPTS = 2
 RESOLVED_REQUEST_MAX_LENGTH = 6000
 ACKNOWLEDGMENT_PATTERN = re.compile(
     r'(?:hi|hello|hey|thanks|thank you|ok|okay|got it|understood|great|sounds good)[.! ]*',
@@ -91,12 +92,32 @@ class PlannerError(RuntimeError):
     """Raised when the planner could not be reached or configured."""
 
 
+class PlannerResponseError(PlannerError):
+    """A completion was refused, absent, or incomplete rather than malformed JSON."""
+
+    def __init__(self, reason):
+        super().__init__('The model did not return a complete response.')
+        self.reason = reason
+
+
 class ConversationResolutionError(PlannerError):
     """A follow-up could not be interpreted safely."""
 
+    def __init__(
+        self, message='The conversation could not be interpreted. Please retry your request.',
+        *, reason='invalid_resolution', attempts=0,
+    ):
+        super().__init__(message)
+        self.reason = reason
+        self.attempts = attempts
+
 
 def resolve_planner_client(settings):
-    """Create the chat client that writes plans, and return it with its deployment name.
+    """Create a legacy chat client and return it with its deployment name.
+
+    Orchestration HTTP requests supply an authorized model binding instead when using
+    manual selections or configured model endpoints. This helper retains the classic
+    single-endpoint/APIM contract for those bindings and standalone planner callers.
 
     Falls back to the deployment's ordinary chat configuration when no planner deployment
     is configured, so orchestration works the moment it is switched on rather than
@@ -469,10 +490,26 @@ def extract_planner_json(reply):
     return None
 
 
+def _unsupported_json_format(error):
+    body = error.body if isinstance(error.body, dict) else {}
+    body = body.get('error') if isinstance(body.get('error'), dict) else body
+    parameter = str(body.get('param') or '')
+    message = str(body.get('message') or '').lower()
+    return (
+        (parameter.startswith('response_format') or 'response_format' in message)
+        and (
+            body.get('code') in ('unsupported_parameter', 'unsupported_value')
+            or 'not supported' in message
+            or 'unsupported' in message
+        )
+    )
+
+
 def _call_planner(
-    client, deployment, messages, *, max_tokens=PLANNER_MAX_TOKENS, temperature=PLANNER_TEMPERATURE
+    client, deployment, messages, *, max_tokens=PLANNER_MAX_TOKENS,
+    temperature=PLANNER_TEMPERATURE, require_complete_response=False,
 ):
-    """One planner completion, asking for JSON where the deployment supports it."""
+    """Ask for JSON, with strict completion and retry handling for the resolver."""
     try:
         response = client.chat.completions.create(
             model=deployment,
@@ -482,12 +519,18 @@ def _call_planner(
             response_format={'type': 'json_object'},
         )
     except Exception as exc:
+        # Preserve the planner's fallback, but never repair a resolver's provider failure.
+        if require_complete_response and not (
+            isinstance(exc, BadRequestError) and _unsupported_json_format(exc)
+        ):
+            raise
         # Not every deployment or API version accepts response_format, and a refusal here
         # is a configuration difference rather than a failure. The prompt already asks for
         # one JSON object, and the extractor copes with a reply that merely contains one.
         log_event(
-            f"[ORCHESTRATION_PLANNER] Retrying without a JSON response format: {exc}",
+            '[ORCHESTRATION_PLANNER] Retrying without a JSON response format.',
             level=logging.INFO,
+            extra={'reason': 'json_format_retry', 'error_type': type(exc).__name__},
         )
         response = client.chat.completions.create(
             model=deployment,
@@ -497,10 +540,22 @@ def _call_planner(
         )
 
     if not response or not response.choices:
+        if require_complete_response:
+            raise PlannerResponseError('empty_completion')
         return '', None
 
+    choice = response.choices[0]
+    if require_complete_response:
+        finish_reason = getattr(choice, 'finish_reason', None)
+        if finish_reason == 'content_filter' or getattr(choice.message, 'refusal', None):
+            raise PlannerResponseError('model_refusal')
+        if finish_reason not in (None, 'stop'):
+            raise PlannerResponseError('incomplete_completion')
+        if not choice.message.content:
+            raise PlannerResponseError('empty_completion')
+
     usage = getattr(response, 'usage', None)
-    return (response.choices[0].message.content or ''), usage
+    return (choice.message.content or ''), usage
 
 
 RESOLUTION_SYSTEM_PROMPT = """Interpret the user's latest request within this conversation.
@@ -512,6 +567,12 @@ Do not answer the request, call tools, or add outside facts. Return one JSON obj
   "requires_retrieval": true | false,
   "clarification": "<one focused question only when the reference really is unresolved>"
 }
+
+Include all five fields. Use an empty string "" for clarification when no question is
+needed; a nonempty clarification is required only for relationship "clarification".
+requires_retrieval must be a JSON boolean, and message_ids must be an array of exact
+supplied IDs. A follow_up needs at least one historical ID unless clarification answers
+supply the missing context.
 
 Resolve pronouns, "which", "those", omitted subjects, and follow-ups against both the user's
 earlier requests and the assistant's actual answers. Preserve relevant constraints such as
@@ -537,8 +598,51 @@ If the user declined a clarification, do not ask it again or invent the missing 
 If history is truncated, do not pretend to know what was omitted."""
 
 
-def resolve_conversation_request(user_message, snapshot, settings=None, answered_questions=None):
-    """Resolve context before candidate retrieval, using the existing planner deployment."""
+def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
+    """Validate model-owned fields before any can influence retrieval or execution."""
+    if not isinstance(parsed, dict):
+        raise ConversationResolutionError(reason='invalid_json')
+    relationship = parsed.get('relationship')
+    if relationship not in ('follow_up', 'new_topic', 'clarification'):
+        raise ConversationResolutionError(reason='invalid_relationship')
+    resolved = parsed.get('resolved_message')
+    if not isinstance(resolved, str) or not resolved.strip() or len(resolved) > RESOLVED_REQUEST_MAX_LENGTH:
+        raise ConversationResolutionError(reason='invalid_resolved_message')
+    message_ids = parsed.get('message_ids')
+    if not isinstance(message_ids, list) or any(not isinstance(value, str) for value in message_ids):
+        raise ConversationResolutionError(reason='invalid_message_ids')
+    if any(value not in valid_ids for value in message_ids):
+        raise ConversationResolutionError(reason='unknown_message_ids')
+    if len(message_ids) != len(set(message_ids)):
+        raise ConversationResolutionError(reason='duplicate_message_ids')
+    if not isinstance(parsed.get('requires_retrieval'), bool):
+        raise ConversationResolutionError(reason='invalid_retrieval_flag')
+
+    clarification = parsed.get('clarification', '')
+    # JSON null also means "no question", but cannot satisfy a requested clarification.
+    if clarification is None and relationship != 'clarification':
+        clarification = ''
+    if not isinstance(clarification, str) or len(clarification) > 1000:
+        raise ConversationResolutionError(reason='invalid_clarification')
+    if relationship == 'follow_up' and not message_ids and not has_answers:
+        raise ConversationResolutionError(reason='missing_follow_up_context')
+    if relationship == 'clarification' and not clarification.strip():
+        raise ConversationResolutionError(reason='missing_clarification')
+    if relationship == 'new_topic' and message_ids:
+        raise ConversationResolutionError(reason='unexpected_new_topic_context')
+    return {
+        'relationship': relationship,
+        'resolved_message': resolved.strip(),
+        'message_ids': message_ids,
+        'requires_retrieval': parsed['requires_retrieval'],
+        'clarification': clarification.strip(),
+    }
+
+
+def resolve_conversation_request(
+    user_message, snapshot, settings=None, answered_questions=None, planner_model=None,
+):
+    """Resolve context before retrieval, using the captured model binding when supplied."""
     message = str(user_message or '').strip()
     history = conversation_reference_messages(snapshot)
     default = {
@@ -561,77 +665,93 @@ def resolve_conversation_request(user_message, snapshot, settings=None, answered
         'answered_questions': answered_questions or [],
     }
     try:
-        client, deployment = resolve_planner_client(settings)
-        reply, usage = _call_planner(
-            client, deployment,
-            [
-                {'role': 'system', 'content': RESOLUTION_SYSTEM_PROMPT},
-                {'role': 'user', 'content': json.dumps(
-                    payload, ensure_ascii=False, separators=(',', ':')
-                )},
-            ],
-            max_tokens=RESOLUTION_MAX_TOKENS,
-            temperature=0,
-        )
+        if planner_model is not None:
+            client, deployment = planner_model.as_planner_client(), planner_model.deployment
+        else:
+            client, deployment = resolve_planner_client(settings)
     except (APIError, PlannerError) as exc:
         log_event(
-            '[ORCHESTRATION_PLANNER] Conversation request resolution failed.',
+            '[ORCHESTRATION_PLANNER] Conversation resolver could not be configured.',
             level=logging.ERROR,
             extra={'stage': 'request_resolution', 'error_type': type(exc).__name__},
         )
-        raise ConversationResolutionError(
-            'The conversation could not be interpreted. Please retry your request.'
-        ) from exc
+        raise ConversationResolutionError(reason='planner_unavailable') from exc
 
-    parsed = extract_planner_json(reply)
+    messages = [
+        {'role': 'system', 'content': RESOLUTION_SYSTEM_PROMPT},
+        {'role': 'user', 'content': json.dumps(
+            payload, ensure_ascii=False, separators=(',', ':')
+        )},
+    ]
     valid_ids = {entry['id'] for entry in history}
-    if not isinstance(parsed, dict):
-        raise ConversationResolutionError('The conversation could not be interpreted. Please retry.')
-    relationship = parsed.get('relationship')
-    resolved = parsed.get('resolved_message')
-    message_ids = parsed.get('message_ids')
-    clarification = parsed.get('clarification', '')
-    if (
-        relationship not in ('follow_up', 'new_topic', 'clarification')
-        or not isinstance(resolved, str)
-        or not resolved.strip()
-        or len(resolved) > RESOLVED_REQUEST_MAX_LENGTH
-        or not isinstance(message_ids, list)
-        or any(not isinstance(value, str) or value not in valid_ids for value in message_ids)
-        or len(message_ids) != len(set(message_ids))
-        or not isinstance(parsed.get('requires_retrieval'), bool)
-        or not isinstance(clarification, str)
-        or len(clarification) > 1000
-        or (relationship == 'follow_up' and not message_ids and not answered_questions)
-        or (relationship == 'clarification' and not clarification.strip())
-        or (relationship == 'new_topic' and message_ids)
-    ):
-        raise ConversationResolutionError('The conversation could not be interpreted. Please retry.')
-    token_usage = {
-        field: getattr(usage, field)
-        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens')
-        if isinstance(getattr(usage, field, None), int)
-    }
+    token_usage = {}
+    for attempt in range(1, RESOLUTION_MAX_ATTEMPTS + 1):
+        try:
+            reply, usage = _call_planner(
+                client, deployment, messages,
+                max_tokens=RESOLUTION_MAX_TOKENS, temperature=0,
+                require_complete_response=True,
+            )
+        except (APIError, PlannerError) as exc:
+            reason = exc.reason if isinstance(exc, PlannerResponseError) else 'model_request_failed'
+            log_event(
+                '[ORCHESTRATION_PLANNER] Conversation request resolution failed.',
+                level=logging.ERROR,
+                extra={
+                    'stage': 'request_resolution', 'reason': reason,
+                    'attempt': attempt, 'error_type': type(exc).__name__,
+                },
+            )
+            raise ConversationResolutionError(reason=reason, attempts=attempt) from exc
+
+        for field in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+            value = getattr(usage, field, None)
+            if isinstance(value, int):
+                token_usage[field] = token_usage.get(field, 0) + value
+        try:
+            resolution = _normalize_request_resolution(
+                extract_planner_json(reply), valid_ids, has_answers=bool(answered_questions),
+            )
+            break
+        except ConversationResolutionError as exc:
+            log_event(
+                '[ORCHESTRATION_PLANNER] Rejected a conversation resolution response.',
+                level=logging.WARNING,
+                extra={
+                    'stage': 'request_resolution', 'reason': exc.reason, 'attempt': attempt,
+                    'history_message_count': len(history), 'response_length': len(reply),
+                },
+            )
+            if attempt == RESOLUTION_MAX_ATTEMPTS:
+                raise ConversationResolutionError(reason=exc.reason, attempts=attempt) from exc
+            messages = [
+                *messages,
+                {
+                    'role': 'user',
+                    'content': (
+                        'The previous response did not satisfy the JSON contract. '
+                        f'Validation reason: {exc.reason}. Return a corrected JSON object '
+                        'for the unchanged request and conversation above. Use only supplied '
+                        'historical IDs and do not invent or discard context to satisfy the schema.'
+                    ),
+                },
+            ]
+
+    if resolution['relationship'] == 'new_topic' and not answered_questions:
+        resolution['resolved_message'] = message
+    resolution['token_usage'] = token_usage
     log_event(
         '[ORCHESTRATION_PLANNER] Resolved the conversational request.',
         debug_only=True,
         extra={
             'stage': 'request_resolution',
-            'relationship': relationship,
+            'relationship': resolution['relationship'],
+            'attempt': attempt,
             'history_message_count': len(history),
-            'selected_message_count': len(message_ids),
+            'selected_message_count': len(resolution['message_ids']),
         },
     )
-    return {
-        'relationship': relationship,
-        'resolved_message': (
-            message if relationship == 'new_topic' and not answered_questions else resolved.strip()
-        ),
-        'message_ids': message_ids,
-        'requires_retrieval': parsed['requires_retrieval'],
-        'clarification': clarification.strip(),
-        'token_usage': token_usage,
-    }
+    return resolution
 
 
 # --------------------------------------------------------------------------------------
@@ -653,6 +773,7 @@ def plan_request(
     seeds=None,
     document_labels=None,
     request_context=None,
+    planner_model=None,
     edit_context=None,
 ):
     """Produce a validated plan, or a question set, for one request.
@@ -722,7 +843,10 @@ def plan_request(
         return 'plan', plan
 
     try:
-        client, deployment = resolve_planner_client(settings)
+        if planner_model is not None:
+            client, deployment = planner_model.as_planner_client(), planner_model.deployment
+        else:
+            client, deployment = resolve_planner_client(settings)
     except PlannerError as exc:
         return _fallback(str(exc))
 
@@ -809,6 +933,7 @@ def plan_request(
                 seeds=seeds,
                 document_labels=document_labels,
                 request_context=request_context,
+                planner_model=planner_model,
                 edit_context=edit_context,
             )
 

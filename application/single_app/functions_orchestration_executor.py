@@ -13,10 +13,10 @@ safely when the world has changed underneath it.
 Two properties are worth stating because they are the reason this is an engine and not a
 loop:
 
-**A plan always produces an answer.** A gather step can fail, be skipped because its
+**A plan always attempts an answer.** A gather step can fail, be skipped because its
 dependency failed, or be cut off by a budget, and the run still reaches ``respond`` and
 answers with whatever evidence survived. The terminal step is therefore exempt from every
-skip rule; the only thing that stops it is an explicit cancellation.
+skip rule except an explicit cancellation. A failed answer completion still fails the run.
 
 **Access is re-checked at answer time, not trusted from plan time.** Between the planner
 naming a document and the executor answering from it, the user's access to that document can
@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.099
+Version: 0.261.102
 """
 
 import logging
@@ -169,6 +169,8 @@ class RunContext:
         user_id=None,
         turn_index=0,
         invoke_prompt=None,
+        planner_client=None,
+        planner_deployment=None,
         user_message='',
         user_message_id=None,
         answered_questions=None,
@@ -209,6 +211,8 @@ class RunContext:
         self.turn_index = turn_index
 
         self.invoke_prompt = invoke_prompt
+        self.planner_client = planner_client
+        self.planner_deployment = planner_deployment
         self.user_message = user_message
         self.answered_questions = deepcopy(answered_questions or [])
         self.resolved_message = resolved_message if resolved_message is not None else user_message
