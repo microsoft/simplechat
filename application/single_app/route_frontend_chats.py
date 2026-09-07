@@ -66,10 +66,53 @@ CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
 
 GROUP_CHAT_UPLOAD_ROLES = ('Owner', 'Admin', 'DocumentManager')
 GROUP_WORKFLOW_ACTIVITY_ROLES = ('Owner', 'Admin', 'DocumentManager', 'User')
+XSD_CHAT_UPLOAD_ERROR_RESPONSES = {
+    'xsd_requires_enhanced_citations': (
+        'XSD uploads require Enhanced Citations to preserve the complete schema file.',
+        409,
+    ),
+    'xsd_exact_source_storage_unavailable': (
+        'XSD uploads require available Enhanced Citations storage. Please try again later.',
+        503,
+    ),
+    'xsd_source_required': (
+        'The XSD source file must be available before the upload can be accepted.',
+        400,
+    ),
+    'xsd_file_too_large': (
+        'The XSD file exceeds the maximum allowed size.',
+        413,
+    ),
+    'xsd_exact_source_verification_failed': (
+        'The XSD source could not be verified after storage.',
+        503,
+    ),
+}
+XSD_CHAT_UPLOAD_DEFAULT_ERROR = (
+    'The XSD workspace upload could not be completed.',
+    503,
+)
 
 
 def _is_setting_enabled(value):
     return value is True or str(value).strip().lower() == 'true'
+
+
+def _build_xsd_chat_upload_error_response(error):
+    error_code = str(getattr(error, 'code', '') or '').strip()
+    public_message, http_status = XSD_CHAT_UPLOAD_ERROR_RESPONSES.get(
+        error_code,
+        XSD_CHAT_UPLOAD_DEFAULT_ERROR,
+    )
+    public_code = (
+        error_code
+        if error_code in XSD_CHAT_UPLOAD_ERROR_RESPONSES
+        else 'xsd_upload_failed'
+    )
+    return {
+        'error': public_message,
+        'code': public_code,
+    }, http_status
 
 
 def _normalize_workflow_activity_scope(value):
@@ -1200,10 +1243,10 @@ def register_route_frontend_chats(bp):
                         os.remove(temp_file_path)
                     except Exception as cleanup_error:
                         debug_print(f"Unable to clean up XSD chat upload temp file: {cleanup_error}")
-                return jsonify({
-                    'error': str(workspace_error),
-                    'code': workspace_error.code,
-                }), workspace_error.http_status
+                error_payload, http_status = _build_xsd_chat_upload_error_response(
+                    workspace_error
+                )
+                return jsonify(error_payload), http_status
             except Exception as workspace_error:
                 log_event(
                     f"[CHAT_UPLOAD] Failed to queue workspace document for {filename}: {workspace_error}",

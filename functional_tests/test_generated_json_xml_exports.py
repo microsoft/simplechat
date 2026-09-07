@@ -2,8 +2,8 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.261.022
-Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156; ordered artifact intent in 0.250.172; schema-bound XML guardrails in 0.261.022
+Version: 0.261.023
+Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156; ordered artifact intent in 0.250.172; schema-bound XML guardrails in 0.261.023
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML

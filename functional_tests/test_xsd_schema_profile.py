@@ -2,8 +2,8 @@
 # test_xsd_schema_profile.py
 """
 Functional test for the pure XSD 1.0 application-profile core.
-Version: 0.261.022
-Implemented in: 0.261.022
+Version: 0.261.023
+Implemented in: 0.261.023
 
 This test exercises `functions_xsd_schema.py` end-to-end using real lxml
 (no mocking of the validator). It covers: valid schema/valid XML;

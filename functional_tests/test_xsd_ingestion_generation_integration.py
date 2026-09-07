@@ -1,8 +1,8 @@
 # test_xsd_ingestion_generation_integration.py
 """
 Functional tests for XSD ingestion and schema-bound XML publication.
-Version: 0.261.022
-Implemented in: 0.261.022
+Version: 0.261.023
+Implemented in: 0.261.023
 
 These tests exercise the application integration boundaries without loading
 Azure-backed application configuration. They verify current-revision lookup,
@@ -1362,6 +1362,48 @@ def test_workflow_tabular_publishers_are_suppressed_in_xsd_mode():
         )
 
 
+def test_chat_xsd_upload_errors_use_allowlisted_public_responses():
+    """Chat upload errors cannot expose arbitrary exception text to the browser."""
+    source = _read_text(CHAT_FRONTEND_ROUTE_FILE)
+    tree = ast.parse(source, filename=str(CHAT_FRONTEND_ROUTE_FILE))
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_build_xsd_chat_upload_error_response"
+    )
+    namespace = {
+        "XSD_CHAT_UPLOAD_ERROR_RESPONSES": {
+            "known": ("Known public message.", 409),
+        },
+        "XSD_CHAT_UPLOAD_DEFAULT_ERROR": (
+            "Safe default message.",
+            503,
+        ),
+    }
+    exec(
+        compile(
+            ast.Module(body=[helper], type_ignores=[]),
+            str(CHAT_FRONTEND_ROUTE_FILE),
+            "exec",
+        ),
+        namespace,
+    )
+
+    known_error = type("KnownError", (), {"code": "known"})()
+    unknown_error = type("UnknownError", (), {"code": "provider-secret"})()
+
+    assert namespace["_build_xsd_chat_upload_error_response"](known_error) == (
+        {"error": "Known public message.", "code": "known"},
+        409,
+    )
+    assert namespace["_build_xsd_chat_upload_error_response"](unknown_error) == (
+        {"error": "Safe default message.", "code": "xsd_upload_failed"},
+        503,
+    )
+    assert "'error': str(workspace_error)" not in source
+
+
 def test_suppressed_streams_never_persist_or_return_partial_file_content():
     """Canceled/interrupted XSD streams expose only neutral status messages."""
     tree = ast.parse(_read_text(CHAT_ROUTE_FILE), filename=str(CHAT_ROUTE_FILE))
@@ -1418,7 +1460,7 @@ def test_schema_contract_is_not_counted_as_source_evidence():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.022")
+    assert_app_version_at_least("0.261.023")
     tests = [
         test_current_xsd_query_excludes_archived_revisions,
         test_shared_personal_xsd_dependencies_use_owner_workspace_and_individual_access,
@@ -1441,6 +1483,7 @@ if __name__ == "__main__":
         test_chat_modes_each_build_one_schema_summary_evidence_envelope,
         test_legacy_tabular_xml_publishers_are_suppressed_in_xsd_mode,
         test_workflow_tabular_publishers_are_suppressed_in_xsd_mode,
+        test_chat_xsd_upload_errors_use_allowlisted_public_responses,
         test_suppressed_streams_never_persist_or_return_partial_file_content,
         test_xsd_chat_upload_ui_is_capability_gated,
         test_schema_contract_is_not_counted_as_source_evidence,

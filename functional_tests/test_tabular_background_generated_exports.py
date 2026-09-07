@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.261.022
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.022
+Version: 0.261.023
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.023
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
