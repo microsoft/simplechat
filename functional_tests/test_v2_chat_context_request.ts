@@ -1,9 +1,10 @@
 // test_v2_chat_context_request.ts
 //
 // Runtime test for how the V2 composer's context chips become a chat request.
-// Version: 0.261.094
+// Version: 0.261.096
 // Implemented in: 0.261.089
 // Independent context selection implemented in: 0.261.094
+// Shared editor implemented in: 0.261.096
 //
 // These are the decisions that turn "the user picked a document" into fields the server acts
 // on, and each one fails as a wrong answer rather than an error:
@@ -43,13 +44,31 @@ import {
 } from '../application/v2_ui/src/lib/chatContext';
 import { reconcileContextItems } from '../application/v2_ui/src/lib/chatContextTokens';
 import { resolveDocumentScope } from '../application/v2_ui/src/lib/documentScope';
+import {
+    composerDraftContextItems,
+    composerDraftHasContent,
+    composerDraftHasPendingUploads,
+    composerDraftReferences,
+    createComposerDraft,
+    interruptComposerDraftUploads,
+} from '../application/v2_ui/src/lib/composerDraft';
+import {
+    chatUploadDocumentStatus,
+    chatUploadTargets,
+    chatUploadValidationError,
+    conversationAttachmentReferences,
+    normalizeChatUpload,
+    pollChatUpload,
+} from '../application/v2_ui/src/lib/chatUploads';
+import { ApiError } from '../application/v2_ui/src/lib/apiClient';
+import { uploadDocument } from '../application/v2_ui/src/lib/endpoints';
 
 const MARKETING = groupScope({ id: 'grp-1', name: 'Marketing' });
 const LEGAL = groupScope({ id: 'grp-2', name: 'Legal' });
 const HANDBOOK = publicScope({ id: 'pub-1', name: 'Handbook' });
 
-const checks: Array<[string, () => void]> = [];
-function check(name: string, run: () => void) {
+const checks: Array<[string, () => void | Promise<void>]> = [];
+function check(name: string, run: () => void | Promise<void>) {
     checks.push([name, run]);
 }
 
@@ -292,12 +311,190 @@ check('a document with no extracted title falls back to its file name', () => {
     assert.equal(item.token, '#[MSA_v2_FINAL(3).docx]');
 });
 
+check('only selected context and ready real uploads become references', () => {
+    const draft = createComposerDraft();
+    draft.contextItems = [doc('existing', 'Brief'), tagContextItem('urgent', MARKETING)];
+    draft.uploads = [
+        { id: 'duplicate', fileName: 'brief.pdf', state: 'ready', reference: {
+            kind: 'document', id: 'existing', scope: { kind: 'personal', id: null },
+        } },
+        { id: 'processing', fileName: 'queued.pdf', state: 'processing', reference: {
+            kind: 'document', id: 'queued', scope: { kind: 'personal', id: null },
+        } },
+        { id: 'failed', fileName: 'failed.pdf', state: 'failed' },
+        { id: 'legacy', fileName: 'notes.txt', state: 'ready', reference: {
+            kind: 'chat_attachment', id: 'chat-file-message', scope: { kind: 'chat', id: 'conversation-a' },
+        } },
+    ];
+    assert.equal(composerDraftHasPendingUploads(draft), true);
+    assert.deepEqual(composerDraftReferences(draft).map((reference) => reference.id),
+        ['existing', 'urgent', 'chat-file-message']);
+    assert.deepEqual(contextDocumentIds(composerDraftContextItems(draft)), ['existing']);
+    assert.equal(composerDraftHasContent(draft), true);
+    const pendingOnly = { ...createComposerDraft(), uploads: [draft.uploads[1]] };
+    assert.equal(composerDraftHasContent(pendingOnly), false);
+    const detached = composerDraftReferences(draft);
+    detached[2].scope.id = 'different-conversation';
+    assert.equal(draft.uploads[3].reference?.scope.id, 'conversation-a');
+});
+
+check('unmount interrupts only owned pending uploads without stranding or losing draft data', () => {
+    const draft = createComposerDraft();
+    draft.text = 'Keep this answer.';
+    draft.promptValues = { topic: 'contracts', intentionally_cleared: '' };
+    draft.uploads = [
+        { id: 'transfer', fileName: 'notes.txt', state: 'uploading', conversationId: 'conversation-a' },
+        { id: 'processing', fileName: 'report.pdf', state: 'processing', progress: 35, reference: {
+            kind: 'document', id: 'workspace-document', scope: { kind: 'personal', id: null },
+        } },
+        { id: 'ready', fileName: 'ready.txt', state: 'ready', reference: {
+            kind: 'chat_attachment', id: 'file-message', scope: { kind: 'chat', id: 'conversation-a' },
+        } },
+    ];
+    const interrupted = interruptComposerDraftUploads(draft, new Set(['transfer', 'processing', 'ready']));
+    assert.equal(composerDraftHasPendingUploads(interrupted), false);
+    assert.equal(interrupted.uploads[0].state, 'failed');
+    assert.equal(interrupted.uploads[0].interrupted, 'uploading');
+    assert.match(interrupted.uploads[0].error!, /Retry/);
+    assert.equal(interrupted.uploads[1].state, 'failed');
+    assert.equal(interrupted.uploads[1].interrupted, 'processing');
+    assert.equal(interrupted.uploads[1].reference, draft.uploads[1].reference);
+    assert.equal(interrupted.uploads[1].progress, 35);
+    assert.equal(interrupted.uploads[2], draft.uploads[2]);
+    assert.equal(interrupted.promptValues, draft.promptValues);
+    assert.equal(interrupted.text, draft.text);
+    assert.equal(draft.uploads[0].state, 'uploading');
+    assert.equal(draft.uploads[1].state, 'processing');
+    assert.deepEqual(composerDraftReferences(interrupted).map((reference) => reference.id), ['file-message']);
+    assert.equal(interruptComposerDraftUploads(interrupted, new Set(['transfer'])), interrupted);
+    assert.equal(interruptComposerDraftUploads(draft, new Set(['another-editor-upload'])), draft);
+});
+
+check('workspace uploads use their workspace identity and real processing status', () => {
+    const normalized = normalizeChatUpload({
+        conversation_id: 'chat-a',
+        file_message_id: 'chat-a_file_1',
+        workspace_document_id: 'workspace-id',
+        workspace_scope: 'group',
+        workspace_document: { document_id: 'workspace-id', file_name: 'report.pdf', group_id: 'grp-1',
+            status: 'Queued for processing', percentage_complete: 0 },
+        group_upload_target: { id: 'grp-1', name: 'Marketing', can_upload: true },
+    }, 'report.pdf');
+    assert.equal(normalized.reference?.id, 'workspace-id');
+    assert.equal(normalized.reference?.kind, 'document');
+    assert.equal(normalized.reference?.scope.id, 'grp-1');
+    assert.equal(normalized.state, 'processing');
+    assert.equal(normalized.progress, 0);
+    assert.equal(chatUploadDocumentStatus({ status: 'Queued for processing' }).state, 'processing');
+    assert.equal(chatUploadDocumentStatus({ status: 'completed' }).state, 'ready');
+    assert.equal(chatUploadDocumentStatus({ percentage_complete: 100 }).state, 'ready');
+    assert.equal(chatUploadDocumentStatus({ status: 'Error processing', percentage_complete: 100 }).state, 'failed');
+    assert.equal(chatUploadDocumentStatus({ percentage_complete: NaN }).state, 'processing');
+});
+
+check('legacy uploads require actual conversation and file-message identities', () => {
+    const normalized = normalizeChatUpload({
+        conversation_id: 'chat-a', file_message_id: 'chat-a_file_1',
+    }, 'notes.txt');
+    assert.equal(normalized.state, 'ready');
+    assert.deepEqual(normalized.reference, {
+        kind: 'chat_attachment', id: 'chat-a_file_1', label: 'notes.txt',
+        scope: { kind: 'chat', id: 'chat-a', name: 'This conversation' },
+    });
+    assert.throws(() => normalizeChatUpload({ conversation_id: 'chat-a' }, 'notes.txt'), /identity/);
+    assert.throws(() => normalizeChatUpload({ file_message_id: 'file-id' }, 'notes.txt'), /identity/);
+    assert.throws(() => normalizeChatUpload({ workspace_document_id: 'real-id' }, 'notes.txt'), /destination/);
+    assert.throws(() => normalizeChatUpload({
+        workspace_document_id: 'real-id', workspace_scope: 'group',
+    }, 'notes.txt'), /group workspace/);
+});
+
+check('upload validation preserves chat format, account and size gates', () => {
+    const text = new File(['source'], 'notes.txt');
+    assert.equal(chatUploadValidationError(text, true, 10), null);
+    assert.match(chatUploadValidationError(text, false, 10)!, /account/);
+    assert.match(chatUploadValidationError(new File(['x'], 'code.exe'), true, 10)!, /file type/);
+    assert.match(chatUploadValidationError(new File(['x'.repeat(1025)], 'brief.pdf'), true, 0.0009)!, /limit/);
+    assert.equal(chatUploadValidationError(new File(['data'], 'REPORT.XLSX'), true, 10), null);
+});
+
+check('group target errors retain eligible and ineligible destinations', () => {
+    const targets = [
+        { id: 'a', name: 'Marketing', can_upload: true },
+        { id: 'b', name: 'Legal', can_upload: false, reason: 'Your role cannot upload' },
+    ];
+    assert.deepEqual(chatUploadTargets(new ApiError('Choose a group', 400, {
+        requires_group_upload_target: true, group_upload_targets: targets,
+    })), targets);
+    assert.equal(chatUploadTargets(new ApiError('Forbidden', 403, { error: 'Forbidden' })), null);
+});
+
+check('conversation attachment lookup never picks another conversation or workspace surrogate', () => {
+    const references = conversationAttachmentReferences([
+        { id: 'a_file_1', conversation_id: 'a', role: 'file', filename: 'notes.txt', content: 'source' },
+        { id: 'b_file_1', conversation_id: 'b', role: 'file', filename: 'other.txt', content: 'private' },
+        { id: 'a_file_2', conversation_id: 'a', role: 'file', filename: 'workspace.pdf',
+            workspace_document_id: 'workspace-id', content: '' },
+        { id: 'assistant-1', conversation_id: 'a', role: 'assistant', content: 'Use fake.pdf' },
+    ], 'a');
+    assert.deepEqual(references.map((reference) => reference.id), ['a_file_1']);
+    assert.equal(references[0].scope.id, 'a');
+});
+
+check('multipart upload passes captured group destination and cancellation signal', async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    globalThis.fetch = async (url, init) => {
+        assert.equal(String(url), '/upload');
+        assert.equal(init?.signal, controller.signal);
+        const form = init!.body as FormData;
+        assert.equal(form.get('conversation_id'), 'conversation-a');
+        assert.equal(form.get('group_upload_target_id'), 'grp-1');
+        assert.deepEqual(form.getAll('upload_scope_group_ids'), ['grp-1', 'grp-2']);
+        return new Response(JSON.stringify({ conversation_id: 'conversation-a', file_message_id: 'file-message' }), {
+            headers: { 'Content-Type': 'application/json' },
+        });
+    };
+    try {
+        const uploaded = await uploadDocument(new File(['source'], 'notes.txt'), 'conversation-a',
+            controller.signal, { groupUploadTargetId: 'grp-1', uploadScopeGroupIds: ['grp-1', 'grp-2'] });
+        assert.equal(uploaded.file_message_id, 'file-message');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+check('processing polls the authorized document endpoint until ready and honors cancellation', async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async (url) => {
+        assert.equal(String(url), '/api/group_documents/workspace-id');
+        calls += 1;
+        return new Response(JSON.stringify({ status: calls === 1 ? 'Processing' : 'Complete',
+            percentage_complete: calls === 1 ? 20 : 100 }), { headers: { 'Content-Type': 'application/json' } });
+    };
+    const reference = { kind: 'document' as const, id: 'workspace-id',
+        scope: { kind: 'group' as const, id: 'grp-1' } };
+    try {
+        const states: string[] = [];
+        await pollChatUpload(reference, new AbortController().signal, (status) => states.push(status.state));
+        assert.deepEqual(states, ['processing', 'ready']);
+        calls = 0;
+        const controller = new AbortController();
+        await assert.rejects(pollChatUpload(reference, controller.signal, () => controller.abort()),
+            (error: Error) => error.name === 'AbortError');
+        assert.equal(calls, 1);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 /* -------------------------------------------------------------------------- */
 
 let failed = 0;
 for (const [name, run] of checks) {
     try {
-        run();
+        await run();
         console.log(`  ok  ${name}`);
     } catch (error) {
         failed += 1;

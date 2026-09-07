@@ -30,7 +30,7 @@ the same thing:
     plan card ticks specific steps by id, and reverse-engineering that from prose would be
     guesswork.
 
-Version: 0.261.101
+Version: 0.261.102
 """
 
 import json

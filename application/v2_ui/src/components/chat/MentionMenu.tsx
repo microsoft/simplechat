@@ -114,10 +114,12 @@ export function MentionMenu({
     suggestions,
     activeIndex,
     onSelect,
+    placement = 'up',
 }: {
     suggestions: MentionSuggestion[];
     activeIndex: number;
     onSelect: (suggestion: MentionSuggestion) => void;
+    placement?: 'up' | 'down';
 }) {
     if (suggestions.length === 0) {
         return null;
@@ -127,7 +129,10 @@ export function MentionMenu({
         <div
             role="listbox"
             aria-label="Mention suggestions"
-            className="glass-modal absolute bottom-full left-2 z-50 mb-2 max-h-64 w-72 overflow-y-auto rounded-xl p-1"
+            className={clsx(
+                'glass-modal absolute left-2 z-50 max-h-64 w-72 max-w-[calc(100vw-3rem)] overflow-y-auto rounded-xl p-1',
+                placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+            )}
         >
             {suggestions.map((suggestion, index) => (
                 <button

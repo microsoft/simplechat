@@ -42,9 +42,9 @@ export function PromptVariableField({
     history = [],
     sources = [],
     onChange,
+    disabled = false,
     /** Distinguishes ids when more than one card is on the page. */
     idPrefix = 'prompt-var',
-    disabled = false,
     aiValue,
     unresolved,
     finding = false,
@@ -59,8 +59,8 @@ export function PromptVariableField({
     history?: string[];
     sources?: PromptFillSource[];
     onChange: (value: string) => void;
-    idPrefix?: string;
     disabled?: boolean;
+    idPrefix?: string;
     aiValue?: PromptKnowledgeValue;
     unresolved?: PromptKnowledgeUnresolved;
     finding?: boolean;

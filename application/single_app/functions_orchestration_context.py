@@ -27,13 +27,14 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.101
+Version: 0.261.102
 """
 
 import hashlib
 import json
 import logging
 import math
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from functions_appinsights import log_event
@@ -42,9 +43,12 @@ from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_message_masking import remove_masked_content
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
+    WORKSPACE_SCOPE_SETTINGS,
     build_agent_planner_projection,
     resolve_available_capability_ids,
 )
+from functions_orchestration_schema import validate_elicitation_response
+from functions_prompt_metadata import build_prompt_selection_metadata
 
 # Relevance probe bounds. Deliberately small: this runs before planning on every
 # non-trivial message, so it is on the latency path of the whole feature.
@@ -76,6 +80,10 @@ CLARIFICATION_MAX_BYTES = 32768
 # budget does. A prompt long enough to be truncated here has said what kind of work it is well
 # before this point.
 SELECTED_PROMPT_LENGTH = 2000
+ELICITATION_TEXT_LIMIT = 16000
+ELICITATION_CONTEXT_BYTE_LIMIT = 131072
+ELICITATION_REFERENCE_LIMIT = 100
+ELICITATION_IDENTIFIER_LIMIT = 512
 
 
 def _text(value, limit=None):
@@ -143,6 +151,11 @@ def resolve_seeds(request_data):
 
     prompt = request_data.get('prompt_info')
     prompt = prompt if isinstance(prompt, dict) else None
+    filter_mode = _text(request_data.get('document_filter_mode')).lower()
+    if filter_mode in ('union', 'or', 'additive'):
+        filter_mode = 'union'
+    elif filter_mode != 'intersection':
+        filter_mode = ''
 
     # Display names for the picked documents, sent by the composer because it already knows
     # them. Used for labels only -- what the user may actually read is decided from the ids
@@ -164,11 +177,7 @@ def resolve_seeds(request_data):
         # from document_ids and are treated differently: a picked document replaces the
         # candidate probe, a picked tag scopes it.
         'tags': _string_list(request_data.get('tags')),
-        'document_filter_mode': (
-            'union'
-            if _text(request_data.get('document_filter_mode')).lower() in ('union', 'or', 'additive')
-            else ''
-        ),
+        'document_filter_mode': filter_mode,
         'agent': agent,
         'model': model or None,
         'reasoning_effort': _text(request_data.get('reasoning_effort')),
@@ -195,6 +204,529 @@ def seeds_are_explicit(seeds):
     planner every document carrying it, which is the opposite of narrowing.
     """
     return bool((seeds or {}).get('document_ids'))
+
+
+# --------------------------------------------------------------------------------------
+# Accepted clarification context
+# --------------------------------------------------------------------------------------
+
+class ElicitationContextError(ValueError):
+    """User-safe, field-addressable validation failure for supplemental context."""
+
+    def __init__(self, message, field=None):
+        super().__init__(message)
+        self.message = message
+        self.field = field
+
+
+def _bounded_answer_text(value, limit=ELICITATION_TEXT_LIMIT):
+    if not isinstance(value, str) or len(value) > limit:
+        raise ElicitationContextError(f'Use text of at most {limit} characters.')
+    return value.strip()
+
+
+def normalize_elicitation_reference(reference):
+    """Validate only shape here. Labels and scope claims are never authorization."""
+    if not isinstance(reference, dict) or set(reference) - {'kind', 'id', 'label', 'scope'}:
+        raise ElicitationContextError('Choose a file, tag, or workspace from the context picker.')
+    kind = reference.get('kind')
+    scope = reference.get('scope')
+    if kind not in ('document', 'tag', 'scope', 'chat_attachment') or not isinstance(scope, dict):
+        raise ElicitationContextError('The context reference is invalid.')
+    if set(scope) - {'kind', 'id', 'name'} or scope.get('kind') not in ('personal', 'group', 'public', 'chat'):
+        raise ElicitationContextError('The context scope is invalid.')
+    reference_id = _bounded_answer_text(reference.get('id'), ELICITATION_IDENTIFIER_LIMIT)
+    scope_kind = scope['kind']
+    scope_id = scope.get('id')
+    if scope_id is not None:
+        scope_id = _bounded_answer_text(scope_id, ELICITATION_IDENTIFIER_LIMIT)
+    if not reference_id and not (kind == 'scope' and scope_kind == 'personal'):
+        raise ElicitationContextError('The context reference has no identity.')
+    if scope_kind != 'personal' and not scope_id:
+        raise ElicitationContextError('Select the workspace or conversation that owns this reference.')
+    if (kind == 'chat_attachment') != (scope_kind == 'chat'):
+        raise ElicitationContextError('Conversation attachments must use their owning conversation.')
+    return {
+        'kind': kind, 'id': reference_id,
+        'scope': {'kind': scope_kind, 'id': scope_id},
+    }
+
+
+def _owned_elicitation_conversation(user_id, conversation_id):
+    # The import is lazy because config initializes Azure clients at module import time.
+    from config import cosmos_conversations_container
+
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id, partition_key=conversation_id,
+        )
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Could not authorize clarification conversation.',
+            extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        raise ElicitationContextError('That conversation is no longer available.') from exc
+    if conversation.get('user_id') != user_id:
+        raise ElicitationContextError('That conversation is no longer available.')
+    return conversation
+
+
+def _authorize_elicitation_scope(scope, user_id, conversation, settings):
+    kind, scope_id = scope['kind'], scope['id']
+    if kind == 'chat':
+        if scope_id != conversation['id']:
+            raise ElicitationContextError('Select an attachment from this conversation.')
+        return {'kind': 'chat', 'id': conversation['id'], 'name': 'This conversation'}
+
+    if not settings.get(WORKSPACE_SCOPE_SETTINGS[kind], False):
+        raise ElicitationContextError('That workspace capability is currently disabled.')
+    if kind == 'personal' and scope_id not in (None, '', user_id):
+        raise ElicitationContextError('That personal workspace is not available.')
+
+    if conversation.get('scope_locked'):
+        locked = conversation.get('locked_contexts') or conversation.get('context') or []
+        if not any(
+            item.get('scope') == kind
+            and (item.get('id') == (user_id if kind == 'personal' else scope_id))
+            for item in locked if isinstance(item, dict)
+        ):
+            raise ElicitationContextError('This conversation is locked to different workspaces.')
+
+    if kind == 'personal':
+        return {'kind': kind, 'id': None, 'name': 'My workspace'}
+    if kind == 'group':
+        # Membership must be rechecked at this boundary, not inferred from an active ID.
+        from functions_group import assert_group_role, find_group_by_id
+
+        assert_group_role(user_id, scope_id, allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'))
+        workspace = find_group_by_id(scope_id)
+    else:
+        from functions_public_workspaces import (
+            find_public_workspace_by_id,
+            get_user_visible_public_workspace_ids_from_settings,
+        )
+
+        if scope_id not in get_user_visible_public_workspace_ids_from_settings(user_id):
+            raise ElicitationContextError('That public workspace is not available.')
+        workspace = find_public_workspace_by_id(scope_id)
+    if not workspace:
+        raise ElicitationContextError('That workspace is no longer available.')
+    return {'kind': kind, 'id': scope_id, 'name': _text(workspace.get('name'), 200)}
+
+
+def _elicitation_document_ready(document):
+    status = _text(document.get('status')).lower()
+    if any(value in status for value in ('error', 'failed', 'cancelled', 'canceled')):
+        return False
+    if 'complete' not in status and any(
+        value in status for value in ('queued', 'pending', 'uploading', 'processing')
+    ):
+        return False
+    percentage = document.get('percentage_complete')
+    if percentage is not None:
+        try:
+            return math.isfinite(float(percentage)) and float(percentage) >= 100
+        except (TypeError, ValueError):
+            return False
+    # Historical documents have no progress field; explicit in-flight states were checked.
+    return True
+
+
+def resolve_elicitation_references(references, user_id, conversation_id, settings=None):
+    """Reauthorize exact source identities and readiness, without a silent-drop path."""
+    settings = settings or {}
+    if not isinstance(references, list) or len(references) > ELICITATION_REFERENCE_LIMIT:
+        raise ElicitationContextError(f'Select at most {ELICITATION_REFERENCE_LIMIT} context references.')
+    if not references:
+        return []
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    normalized = []
+    seen = set()
+    scopes = {}
+    for raw in references:
+        reference = normalize_elicitation_reference(raw)
+        key = (reference['kind'], reference['id'], reference['scope']['kind'], reference['scope']['id'])
+        if key in seen:
+            continue
+        seen.add(key)
+        scope_key = (reference['scope']['kind'], reference['scope']['id'])
+        if scope_key not in scopes:
+            try:
+                scopes[scope_key] = _authorize_elicitation_scope(reference['scope'], user_id, conversation, settings)
+            except ElicitationContextError:
+                raise
+            except Exception as exc:
+                log_event(
+                    '[ORCHESTRATION_CONTEXT] Clarification workspace authorization failed.',
+                    extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+                )
+                raise ElicitationContextError('That workspace is not available. Select another reference.') from exc
+        reference['scope'] = scopes[scope_key]
+        normalized.append(reference)
+
+    documents = [item for item in normalized if item['kind'] in ('document', 'chat_attachment')]
+    if documents:
+        # Reuse the same document-context and manifest boundaries as mixed-source reads.
+        # Keeping metadata locally lets us check processing without exposing storage URLs.
+        from functions_mixed_source_orchestration import resolve_authorized_source_manifest
+        from functions_search_service import resolve_document_contexts
+
+        batches = {}
+        for reference in documents:
+            scope = reference['scope']
+            batches.setdefault((scope['kind'], scope['id']), []).append(reference['id'])
+        contexts_by_reference = {}
+        sources_by_reference = {}
+        try:
+            # A shared document can resolve in more than one authorized workspace.
+            # Batch by the selected scope so the first accessible group cannot change
+            # another reference's identity or make acceptance depend on selection order.
+            for (scope_kind, scope_id), document_ids in batches.items():
+                ids = _string_list(document_ids)
+                lookup_scope = 'all' if scope_kind == 'chat' else scope_kind
+                group_ids = [scope_id] if scope_kind == 'group' else []
+                public_ids = [scope_id] if scope_kind == 'public' else []
+                contexts = resolve_document_contexts(
+                    ids, user_id, doc_scope=lookup_scope, active_group_ids=group_ids,
+                    active_public_workspace_id=public_ids, conversation_id=conversation_id,
+                    include_content=False,
+                )
+                if not isinstance(contexts, list) or len(contexts) != len(ids):
+                    raise ElicitationContextError('The selected files could not be verified. Please retry.')
+                by_id = dict(zip(ids, contexts))
+                manifest = resolve_authorized_source_manifest(
+                    ids, user_id, conversation_id=conversation_id, doc_scope=lookup_scope,
+                    active_group_ids=group_ids, active_public_workspace_ids=public_ids,
+                    context_resolver=lambda document_id, resolved=by_id, **kwargs: resolved.get(document_id),
+                )
+                for document_id, document_context in by_id.items():
+                    contexts_by_reference[(scope_kind, scope_id, document_id)] = document_context
+                for source in manifest:
+                    sources_by_reference[(scope_kind, scope_id, source['document_id'])] = source
+        except ElicitationContextError:
+            raise
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] Clarification source resolution failed.',
+                extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+            )
+            raise ElicitationContextError('The selected files could not be verified. Please retry.') from exc
+        for reference in documents:
+            scope = reference['scope']
+            key = (scope['kind'], scope['id'], reference['id'])
+            source = sources_by_reference.get(key) or {}
+            if (
+                source.get('authorization_status') != 'authorized'
+                or source.get('scope') != scope['kind']
+                or (scope['kind'] != 'personal' and source.get('scope_id') != scope['id'])
+            ):
+                raise ElicitationContextError('A selected file is unavailable or no longer authorized. Select another file.')
+            document = (contexts_by_reference.get(key) or {}).get('document') or {}
+            if scope['kind'] == 'chat':
+                # The manifest proved ownership of this conversation and file message.
+                # Workspace upload wrapper messages are not synchronous chat attachments;
+                # accepting one would bypass the workspace document's processing gate.
+                from config import cosmos_messages_container
+
+                try:
+                    rows = list(cosmos_messages_container.query_items(
+                        query=(
+                            'SELECT c.id, c.workspace_document_id, c.file_content_source, '
+                            'c.status, c.percentage_complete FROM c WHERE c.id = @document_id'
+                        ),
+                        parameters=[{'name': '@document_id', 'value': reference['id']}],
+                        partition_key=conversation_id,
+                    ))
+                except Exception as exc:
+                    log_event(
+                        '[ORCHESTRATION_CONTEXT] Clarification attachment readiness could not be checked.',
+                        extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+                    )
+                    raise ElicitationContextError('That attachment could not be checked. Please retry.') from exc
+                if not rows:
+                    raise ElicitationContextError('That attachment is no longer available.')
+                document = rows[0]
+                if document.get('workspace_document_id') or document.get('file_content_source') == 'workspace':
+                    raise ElicitationContextError('Select the workspace document for this upload and wait for its processing to finish.')
+            if not _elicitation_document_ready(document):
+                raise ElicitationContextError('A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.')
+            reference['label'] = _text(source.get('display_name') or source.get('file_name'), 200) or reference['id']
+
+    for reference in normalized:
+        scope = reference['scope']
+        if reference['kind'] == 'scope':
+            allowed_ids = ('', 'personal', user_id) if scope['kind'] == 'personal' else (scope['id'],)
+            if reference['id'] not in allowed_ids:
+                raise ElicitationContextError('The workspace identity does not match its scope.')
+            reference['id'] = scope['id'] or 'personal'
+            reference['label'] = scope['name']
+        elif reference['kind'] == 'tag':
+            from functions_documents import get_workspace_tags
+
+            tags = get_workspace_tags(
+                user_id,
+                group_id=scope['id'] if scope['kind'] == 'group' else None,
+                public_workspace_id=scope['id'] if scope['kind'] == 'public' else None,
+            )
+            tag = next((item for item in tags or [] if item.get('name') == reference['id']), None)
+            if not tag:
+                raise ElicitationContextError('That tag is no longer available in the selected workspace.')
+            reference['label'] = tag['name']
+    return normalized
+
+
+def resolve_elicitation_candidates(candidates, user_id, conversation_id, seeds=None, settings=None):
+    """Enrich only actual candidate IDs. Unavailable suggestions are never an allowlist."""
+    seeds = seeds or {}
+    ids = _string_list([item.get('document_id') for item in candidates or []], CANDIDATE_DOCUMENT_LIMIT)
+    if not ids:
+        return []
+    # Lazy: the search service imports config and its live clients.
+    from functions_search_service import resolve_document_contexts
+    contexts = resolve_document_contexts(
+        ids, user_id, doc_scope=seeds.get('doc_scope') or 'all',
+        active_group_ids=seeds.get('active_group_ids') or None,
+        active_public_workspace_id=seeds.get('active_public_workspace_ids') or None,
+        conversation_id=conversation_id, include_content=False,
+    )
+    references = []
+    for document_id, context in zip(ids, contexts or []):
+        if not isinstance(context, dict):
+            continue
+        scope_kind = context.get('scope')
+        if scope_kind not in ('personal', 'group', 'public', 'chat'):
+            continue
+        scope_id = {
+            'personal': None,
+            'group': context.get('group_id'),
+            'public': context.get('public_workspace_id'),
+            'chat': context.get('conversation_id'),
+        }[scope_kind]
+        try:
+            references.extend(resolve_elicitation_references([{
+                'kind': 'chat_attachment' if scope_kind == 'chat' else 'document',
+                'id': document_id, 'scope': {'kind': scope_kind, 'id': scope_id},
+            }], user_id, conversation_id, settings=settings))
+        except ElicitationContextError:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] Omitted an unavailable clarification suggestion.',
+                level=logging.INFO, debug_only=True,
+            )
+    return references
+
+
+def _normalize_answer_prompt(prompt):
+    if not isinstance(prompt, dict) or set(prompt) - {
+        'id', 'name', 'content', 'original_content', 'variables', 'edited', 'user_text',
+        'template_content', 'composer_text', 'composer_embedded', 'scope_type', 'scope_name', 'index',
+    }:
+        raise ElicitationContextError('The attached prompt metadata is invalid.')
+    clean = {}
+    for key in (
+        'id', 'name', 'content', 'original_content', 'user_text',
+        'template_content', 'composer_text', 'scope_type', 'scope_name',
+    ):
+        if key in prompt:
+            if prompt[key] is None and key in ('id', 'name', 'scope_type', 'scope_name'):
+                clean[key] = None
+            else:
+                _bounded_answer_text(prompt[key])
+                clean[key] = prompt[key]
+    for key in ('edited', 'composer_embedded'):
+        if key in prompt:
+            if not isinstance(prompt[key], bool):
+                raise ElicitationContextError('The attached prompt metadata is invalid.')
+            clean[key] = prompt[key]
+    if 'index' in prompt:
+        if prompt['index'] is not None and type(prompt['index']) not in (str, int):
+            raise ElicitationContextError('The attached prompt metadata is invalid.')
+        clean['index'] = prompt['index']
+    if 'variables' in prompt:
+        variables = prompt['variables']
+        if not isinstance(variables, dict) or len(variables) > 50:
+            raise ElicitationContextError('The attached prompt has too many variables.')
+        clean['variables'] = {}
+        for key, value in variables.items():
+            _bounded_answer_text(key, 128)
+            _bounded_answer_text(value, 4000)
+            clean['variables'][key] = value
+    return clean
+
+
+def normalize_elicitation_answer(question, response, answer_context, user_id, conversation_id, settings=None):
+    """Validate primitive answers plus optional rich context against a stored question."""
+    if isinstance(response, dict) and response.get('action') in ('decline', 'cancel'):
+        return {'action': response['action'], 'content': {}}, {}
+    if not isinstance(response, dict) or response.get('action') != 'accept':
+        raise ElicitationContextError('Choose Finish, Decline, or Cancel for this question.')
+    answer_context = {} if answer_context is None else answer_context
+    if not isinstance(answer_context, dict) or _byte_length(answer_context) > ELICITATION_CONTEXT_BYTE_LIMIT:
+        raise ElicitationContextError('The answer context is too large or invalid.')
+    properties = question['requested_schema']['properties']
+    if set(answer_context) - set(properties):
+        raise ElicitationContextError('Answer context names an unknown question field.')
+    content = response.get('content', {})
+    if not isinstance(content, dict) or set(content) - set(properties):
+        raise ElicitationContextError('Answer content names an unknown question field.')
+    content = deepcopy(content)
+    fields = (question.get('ui_hints') or {}).get('fields') or {}
+    normalized_context = {}
+    reference_count = 0
+    for name, rules in properties.items():
+        try:
+            raw = answer_context.get(name, {})
+            if not isinstance(raw, dict) or set(raw) - {'text', 'prompt_info', 'references'}:
+                raise ElicitationContextError('Use text, a prompt, or context references for this answer.')
+            context = {}
+            if 'text' in raw:
+                context['text'] = _bounded_answer_text(raw['text'])
+            if 'prompt_info' in raw:
+                context['prompt_info'] = _normalize_answer_prompt(raw['prompt_info'])
+                if not context.get('text'):
+                    context['text'] = context['prompt_info'].get('content', '')
+                if any(key in context['prompt_info'] for key in (
+                    'template_content', 'composer_text', 'composer_embedded',
+                )) and build_prompt_selection_metadata(
+                    context['prompt_info'], _elicitation_answer_text(context),
+                ) is None:
+                    raise ElicitationContextError('The attached prompt snapshot does not match this answer.')
+            references = raw.get('references', [])
+            if not isinstance(references, list):
+                raise ElicitationContextError('Context references must be a list.')
+            references = list(references)
+            hint = fields.get(name) or {}
+            if hint.get('input') == 'files':
+                offered = {item['id']: item for item in hint.get('candidates') or []}
+                supplied = {
+                    item.get('id') for item in references
+                    if isinstance(item, dict) and item.get('kind') in ('document', 'chat_attachment')
+                }
+                chosen = content.get(name)
+                chosen = [] if chosen in (None, '') else chosen if isinstance(chosen, list) else [chosen]
+                for document_id in chosen:
+                    if not isinstance(document_id, str):
+                        raise ElicitationContextError('Select a real file rather than entering a filename.')
+                    if document_id not in supplied:
+                        if document_id not in offered:
+                            raise ElicitationContextError('Select that file from the context picker or upload it first.')
+                        references.append(offered[document_id])
+                        supplied.add(document_id)
+            references = resolve_elicitation_references(references, user_id, conversation_id, settings)
+            reference_count += len(references)
+            if reference_count > ELICITATION_REFERENCE_LIMIT:
+                raise ElicitationContextError(f'Select at most {ELICITATION_REFERENCE_LIMIT} context references.')
+            if references:
+                context['references'] = references
+            if hint.get('input') == 'files':
+                file_ids = _string_list([
+                    item['id'] for item in references if item['kind'] in ('document', 'chat_attachment')
+                ])
+                if not file_ids and name in question['requested_schema'].get('required', []):
+                    raise ElicitationContextError('Select or upload a file to answer this question. Tags and workspaces alone are not files.')
+                if rules['type'] == 'array':
+                    content[name] = file_ids
+                elif len(file_ids) > 1:
+                    raise ElicitationContextError('This question accepts one file. Remove the extra files.')
+                elif file_ids:
+                    content[name] = file_ids[0]
+                else:
+                    content.pop(name, None)
+            if context:
+                normalized_context[name] = context
+        except ElicitationContextError as exc:
+            exc.field = name
+            raise
+    validated, errors = validate_elicitation_response(question, {'action': 'accept', 'content': content})
+    if errors:
+        raise ElicitationContextError(' '.join(errors))
+    return validated, normalized_context
+
+
+def merge_elicitation_context(seeds, answer_context):
+    """Add accepted resources without replacing the original prompt/agent/model settings."""
+    merged = deepcopy(seeds or {})
+    references = [
+        reference for context in (answer_context or {}).values()
+        for reference in context.get('references') or []
+    ]
+    if not references:
+        return merged
+    had_selection = bool(
+        merged.get('document_ids') or merged.get('tags')
+        or merged.get('active_group_ids') or merged.get('active_public_workspace_ids')
+    )
+    had_document_tag_filter = bool(merged.get('document_ids') and merged.get('tags'))
+    existing = merged.setdefault('elicitation_references', [])
+    keys = {(item['kind'], item['id'], item['scope']['kind'], item['scope']['id']) for item in existing}
+    for reference in references:
+        key = (reference['kind'], reference['id'], reference['scope']['kind'], reference['scope']['id'])
+        if key not in keys:
+            existing.append(deepcopy(reference))
+            keys.add(key)
+        kind = reference['kind']
+        if kind in ('document', 'chat_attachment'):
+            merged['document_ids'] = _string_list((merged.get('document_ids') or []) + [reference['id']])
+            merged.setdefault('document_labels', {})[reference['id']] = reference.get('label', '')
+        elif kind == 'tag':
+            merged['tags'] = _string_list((merged.get('tags') or []) + [reference['id']])
+        scope = reference['scope']
+        if scope['kind'] == 'group':
+            merged['active_group_ids'] = _string_list((merged.get('active_group_ids') or []) + [scope['id']])
+        elif scope['kind'] == 'public':
+            merged['active_public_workspace_ids'] = _string_list((merged.get('active_public_workspace_ids') or []) + [scope['id']])
+    if references:
+        kinds = {item['scope']['kind'] for item in references}
+        original_scope = merged.get('doc_scope') or 'all'
+        if original_scope != 'all':
+            kinds.add(original_scope)
+        merged['doc_scope'] = (
+            next(iter(kinds))
+            if len(kinds) == 1 and 'chat' not in kinds and not (had_selection and original_scope == 'all')
+            else 'all'
+        )
+    if (
+        merged.get('document_ids') and merged.get('tags')
+        and not merged.get('document_filter_mode') and not had_document_tag_filter
+    ):
+        # New complementary selections use the composer's additive default. An existing
+        # explicit mode, or an existing implicit intersection, remains a constraint.
+        merged['document_filter_mode'] = 'union'
+    return merged
+
+
+def _elicitation_answer_text(context):
+    """Support separate prompt/text fields and the V2 prompt-first combined text."""
+    text = _text(context.get('text'))
+    prompt = context.get('prompt_info') if isinstance(context.get('prompt_info'), dict) else {}
+    prompt_text = _text(prompt.get('content'))
+    if not prompt_text or text == prompt_text or text.startswith(f'{prompt_text}\n\n'):
+        return text
+    return f'{prompt_text}\n\n{text}' if text else prompt_text
+
+
+def build_elicitation_user_request(user_message, answered_questions):
+    accepted = []
+    for answer in answered_questions or []:
+        if answer.get('action', 'accept') != 'accept':
+            continue
+        accepted.append({
+            'question': answer.get('question', ''),
+            'answer': answer.get('answer', {}),
+            'context': {
+                name: {
+                    'text': _elicitation_answer_text(context),
+                    'references': context.get('references', []),
+                }
+                for name, context in (answer.get('context') or {}).items()
+            },
+        })
+    if not accepted:
+        return _text(user_message)
+    return (
+        f'{_text(user_message)}\n\nAccepted clarification answers (supplemental to the original request; '
+        'reference labels identify sources, not file contents):\n'
+        + json.dumps(accepted, ensure_ascii=False, sort_keys=True)
+    )
 
 
 # --------------------------------------------------------------------------------------
@@ -236,6 +768,9 @@ def _aggregate_candidates(results):
             'file_name': file_name,
             'title': _text(result.get('title'), CANDIDATE_TITLE_LENGTH) or file_name,
             'scope': scope,
+            'scope_id': result.get('group_id') or result.get('public_workspace_id'),
+            'group_id': result.get('group_id'),
+            'public_workspace_id': result.get('public_workspace_id'),
             'classification': _text(result.get('document_classification')),
             'tags': _string_list(result.get('document_tags'), limit=6),
             'score': score,
@@ -271,12 +806,14 @@ def resolve_candidate_documents(
         # approval card, whose whole purpose is letting someone check the planner picked the
         # right document, would show a row of identifiers.
         labels = seeds.get('document_labels') or {}
+        references = {item['id']: item for item in seeds.get('elicitation_references') or []}
         return [
             {
                 'document_id': document_id,
                 'file_name': labels.get(document_id, ''),
                 'title': labels.get(document_id, ''),
-                'scope': seeds.get('doc_scope') or 'all',
+                'scope': (references.get(document_id, {}).get('scope') or {}).get('kind') or seeds.get('doc_scope') or 'all',
+                'reference': references.get(document_id),
                 'classification': '',
                 'tags': [],
                 'score': None,
@@ -298,9 +835,7 @@ def resolve_candidate_documents(
             top_n=CANDIDATE_PROBE_TOP_N,
             doc_scope=seeds.get('doc_scope') or 'all',
             active_group_ids=seeds.get('active_group_ids') or None,
-            active_public_workspace_id=(
-                (seeds.get('active_public_workspace_ids') or [None])[0]
-            ),
+            active_public_workspace_id=seeds.get('active_public_workspace_ids') or None,
             # A picked tag is part of the question. Probing without it would offer the
             # planner documents the user has already excluded, and the plan would then be
             # built around a candidate they did not want considered.
@@ -435,11 +970,13 @@ def build_run_ledger(runs, settings=None, answered_questions=None):
         max_bytes = LEDGER_DEFAULT_MAX_BYTES
     max_bytes = max(1024, min(max_bytes, 131072))
 
+    ordered = [
+        run for run in (runs or ())
+        if isinstance(run, dict) and run.get('record_type') in (None, 'run', 'orchestration_run')
+    ]
     # Zero runs is a real configuration: it makes every turn plan from scratch.
     if max_runs == 0:
-        return {'runs': [], 'answered_questions': [], 'truncated': bool(runs)}
-
-    ordered = [run for run in (runs or ()) if isinstance(run, dict)]
+        return {'runs': [], 'answered_questions': [], 'truncated': bool(ordered)}
     truncated = len(ordered) > max_runs
     ordered = ordered[-max_runs:]
 
@@ -513,7 +1050,7 @@ def collect_answered_questions(runs):
     """
     answered = []
     for run in runs or ():
-        if not isinstance(run, dict):
+        if not isinstance(run, dict) or run.get('record_type') not in (None, 'run', 'orchestration_run'):
             continue
         for item in run.get('answered_questions') or ():
             if isinstance(item, dict) and _text(item.get('question')):
@@ -719,9 +1256,15 @@ def conversation_reference_messages(snapshot, message_ids=None):
 
 
 def validate_clarification_answers(answers):
+    primitive_answers = [
+        {key: value for key, value in answer.items() if key != 'context'}
+        if isinstance(answer, dict) else answer
+        for answer in answers
+    ]
     if (
         len(answers) > LEDGER_MAX_ANSWERED_QUESTIONS
-        or len(json.dumps(answers, ensure_ascii=False).encode('utf-8')) > CLARIFICATION_MAX_BYTES
+        or len(json.dumps(primitive_answers, ensure_ascii=False).encode('utf-8')) > CLARIFICATION_MAX_BYTES
+        or len(json.dumps(answers, ensure_ascii=False).encode('utf-8')) > ELICITATION_CONTEXT_BYTE_LIMIT
     ):
         raise ConversationContextError('The clarification limit was reached. Start a new request.')
 
@@ -739,6 +1282,9 @@ def conversation_user_urls(user_message, snapshot=None, message_ids=None, answer
             for text in texts:
                 if isinstance(text, str):
                     urls.extend(_extract_urls(text))
+        for context in (answer.get('context') or {}).values():
+            if isinstance(context, dict):
+                urls.extend(_extract_urls(_elicitation_answer_text(context)))
     urls.extend(_extract_urls(user_message))
     allowed = set(message_ids or [])
     for message in (snapshot or {}).get('messages', []):
@@ -804,6 +1350,7 @@ def build_planner_context(
     signals=None,
     capabilities=None,
     agents=None,
+    answered_questions=None,
     actions=None,
     original_message=None,
     request_resolution=None,
@@ -823,6 +1370,8 @@ def build_planner_context(
     seeds = seeds or {}
     return {
         'message': _text(user_message),
+        'user_request': build_elicitation_user_request(user_message, answered_questions),
+        'clarifications': deepcopy(answered_questions or []),
         'original_message': _text(original_message) if original_message is not None else _text(user_message),
         'request_resolution': request_resolution or {},
         'capabilities': capabilities or [],
@@ -834,6 +1383,7 @@ def build_planner_context(
         ],
         'user_selected': {
             'documents': seeds.get('document_ids') or [],
+            'context_references': deepcopy(seeds.get('elicitation_references') or []),
             'agent': (seeds.get('agent') or {}).get('name') if seeds.get('agent') else None,
             'prompt': _selected_prompt(seeds),
             'web_search': bool(seeds.get('web_search')),

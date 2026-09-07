@@ -115,6 +115,7 @@ export function ContextMenu({
     activeIndex,
     selectedKeys,
     onSelect,
+    placement = 'up',
 }: {
     candidates: ContextCandidate[];
     loading: boolean;
@@ -122,6 +123,7 @@ export function ContextMenu({
     /** Keys already on the chip row, so a second pick reads as already-added. */
     selectedKeys: ReadonlySet<string>;
     onSelect: (candidate: ContextCandidate) => void;
+    placement?: 'up' | 'down';
 }) {
     if (!loading && candidates.length === 0) {
         return null;
@@ -133,7 +135,10 @@ export function ContextMenu({
         <div
             role="listbox"
             aria-label="Context suggestions"
-            className="glass-modal absolute bottom-full left-2 z-50 mb-2 max-h-72 w-80 overflow-y-auto rounded-xl p-1"
+            className={clsx(
+                'glass-modal absolute left-2 z-50 max-h-72 w-80 max-w-[calc(100vw-3rem)] overflow-y-auto rounded-xl p-1',
+                placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+            )}
         >
             {loading && candidates.length === 0 && (
                 <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-text-3">

@@ -2,9 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.261.101
+Version: 0.261.102
 Implemented in: 0.241.179; updated in 0.250.109
-Anthropic completion reason normalization: 0.261.101
+Anthropic completion reason normalization: 0.261.102
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and

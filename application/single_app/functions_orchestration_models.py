@@ -1,7 +1,7 @@
 # functions_orchestration_models.py
 """Authorized model bindings for orchestration planning and execution.
 
-Version: 0.261.101
+Version: 0.261.102
 """
 
 from dataclasses import dataclass, field

@@ -20,10 +20,12 @@ export function PromptSlashMenu({
     prompts,
     activeIndex,
     onSelect,
+    placement = 'up',
 }: {
     prompts: PromptOption[];
     activeIndex: number;
     onSelect: (prompt: PromptOption) => void;
+    placement?: 'up' | 'down';
 }) {
     if (prompts.length === 0) {
         return null;
@@ -33,7 +35,10 @@ export function PromptSlashMenu({
         <div
             role="listbox"
             aria-label="Prompt suggestions"
-            className="glass-modal absolute bottom-full left-2 z-50 mb-2 max-h-64 w-80 overflow-y-auto rounded-xl p-1"
+            className={clsx(
+                'glass-modal absolute left-2 z-50 max-h-64 w-80 max-w-[calc(100vw-3rem)] overflow-y-auto rounded-xl p-1',
+                placement === 'up' ? 'bottom-full mb-2' : 'top-full mt-2',
+            )}
         >
             {prompts.map((prompt, index) => (
                 <button

@@ -1,9 +1,10 @@
-#!/usr/bin/env python3
+# test_v2_settings_and_workspace_tags.py
 """
 Functional test for the V2 personal settings page and conversation workspace tags.
 
-Version: 0.261.023
+Version: 0.261.101
 Implemented in: 0.261.020
+Pending-write rollback coverage updated in: 0.261.101
 
 Two things are pinned here.
 
@@ -162,8 +163,11 @@ def test_settings_saves_are_debounced_and_recoverable():
         "A failed save must revert the control, otherwise the user sees a value the "
         "server never stored and has no way to find out"
     )
-    assert re.search(r"catch \(error\)(.|\n)*?\.\.\.previous", store), (
-        "The rollback must be applied in the failure branch"
+    assert re.search(r"catch \(error\)(.|\n)*?\.\.\.reverted", store), (
+        "The failure branch must roll back only keys without a newer pending change"
+    )
+    assert "rollback[key] = previous[key]" in store, (
+        "A pending newer change must not retain a failed write as its rollback target"
     )
 
     print("Settings save behaviour test passed!")

@@ -1,14 +1,16 @@
 # Chat Orchestration
 
-**Version: 0.261.101** (tracked in `application/single_app/config.py`)
+**Version: 0.261.102** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
+**Inline composer answers implemented in version: 0.261.096**
 **Research selection and multi-query execution updated in version: 0.261.099**
 **Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
-**Follow-up resolver compatibility fixed in version: 0.261.100**
-**Selected/default model routing fixed in version: 0.261.101**
+**Follow-up resolver compatibility fixed in version: 0.261.102**
+**Selected/default model routing fixed in version: 0.261.102**
+**Approval preference persistence fixed in version: 0.261.101**
 
 ## Overview
 
@@ -105,7 +107,7 @@ These rules apply to Auto, countdown, and manual approval. They do not introduce
 summaries or cross-conversation memory. First turns without history and simple
 acknowledgments do not require a resolution completion.
 
-Since **0.261.100**, an unused `clarification: null` in the resolver's JSON is
+Since **0.261.102**, an unused `clarification: null` in the resolver's JSON is
 accepted as "no clarification needed", just like an empty string. It does not
 discard the rest of a valid follow-up or require another model call. A request
 whose relationship is `clarification` still needs a nonempty question.
@@ -144,8 +146,10 @@ Planner endpoint selections use the existing planner model/endpoint/provider set
 the caller's normal model access checks. A deployment-only planner override retains the
 classic single-endpoint/APIM connection.
 
-Clients are prepared on the request thread with captured caller identity. The worker
-uses those bindings, and direct actions receive the actual answer model identity.
+Planning resolves its client on the request thread after restoring canonical turn state,
+with authenticated streaming context retained for endpoint authorization. Execution
+captures bindings before starting its worker, and direct actions receive the actual
+answer model identity.
 GPT-5-family completions use `max_completion_tokens`, omit unsupported temperature,
 and retain compatible manual reasoning effort. A positive configured model response
 length governs answer calls; otherwise reasoning completions have an 8192-token budget
@@ -447,28 +451,77 @@ Three event types are genuinely new, because nothing existing meant the same thi
 ## Clarifying questions
 
 When the orchestrator cannot plan without more information it asks in an inline card rather
-than in the chat thread, and the card is driven by a JSON Schema.
+than asking you to start a new chat message. The card can ask for a single choice, several
+choices, text, or files. It uses the same reference and saved-prompt editing layer as the
+main composer, without duplicating the model, agent, web, or voice toolbar.
+
+### Answer with context
+
+Type `#` to choose an accessible file, tag, or workspace. Choose an actual suggestion from
+the menu: typing a filename alone does not establish a file reference. Use `/` to attach a
+saved prompt, fill its variables, or edit its wording for this answer only. The main
+composer's draft and attached prompt are not changed.
+
+Choice questions keep their radio buttons or checkboxes and provide an **Additional
+details** editor beside that choice. You can select the intended options and add a
+qualification, a reference, or a prepared prompt without having to choose between the two.
+
+File questions offer suggested sources when the planner has suitable candidates. These
+are suggestions, not the only permitted files. If they are wrong, use `#` or **Attach a
+file** to supply a different source; no suggested option has to be selected. A single-file
+question accepts one file across the selected suggestions, references, and uploads.
+Multiple-file questions accept a set of files. A tag or workspace can narrow the task but
+does not substitute for a file when the question explicitly requires one.
+
+Uploads use the existing chat upload and processing services, including their file-type,
+size, role, and workspace restrictions. Each upload shows its progress, and **Finish**
+stays unavailable until selected uploads are ready. A failed upload must be retried or
+removed rather than being silently omitted. Removing a reference or declining an answer
+does not delete a file that has already been uploaded; its normal retention rules apply.
+
+**Back** and **Next** retain each answer's text, choices, prompt variables, and references.
+A failed submission leaves the card editable with the draft intact. Finish continues the
+original request, using the supplied sources and instructions during both planning and
+execution.
+
+### Contract and persistence
 
 That schema is deliberately shaped to the MCP elicitation specification: a flat object whose
 properties are primitives or arrays of primitives, so any client can render it without a
 general JSON Schema implementation. Our own paging lives in a sibling `ui_hints` field so
-the schema itself stays MCP-clean, and the response is MCP's shape verbatim,
-`{action, content}` with `action` one of `accept`, `decline` or `cancel`. A future MCP
-server asking a question therefore renders through the identical card.
+the schema itself stays MCP-clean. Resource hints and non-exhaustive candidate references
+live in `ui_hints.fields`, not in a closed `enum`. Genuine fixed-choice fields continue to
+enforce their enums.
 
-Declining or cancelling carries no content, so a refusal cannot be used to smuggle answers
-past the user.
+The primitive `elicitation_response` retains `{action, content}`, with `action` one of
+`accept`, `decline`, or `cancel`. Answer-local text, scoped reference identities, and
+resolved prompt metadata travel in the separate `elicitation_context`, keyed by question
+field. Files are identified by workspace document or conversation attachment identity,
+never authorized by a display label or a browser-supplied storage URL.
 
-The controller sends the matching elicitation alongside an accepted or declined response,
-before clearing the question from its store. Validated answers are saved with the turn
-and reach both re-planning and execution. Revisions reuse the original user-message ID.
-Cancelling abandons the request without starting another plan.
+The server stores the normalized pending question and binds answers to its owner,
+conversation, turn, elicitation ID, and revision. Pending questions are separate from
+runnable plan records and do not appear as empty runs in the map. Submission identities
+protect retries from applying the same answer twice.
 
-If another question is necessary before a runnable plan exists, private pending-turn
-state retains the earlier answers and the original history snapshot. It uses the
-existing run container but is not listed or executable as a run. Version-conditional
-writes prevent a delayed response from replacing newer clarification state. The server
-validates replies against its saved schema.
+This also corrects the earlier client/server handoff: the route previously expected the
+browser to send the original schema while the controller sent only the answer. Replies
+are now validated against the stored question, rather than being ignored when that
+browser-supplied schema is missing. Accepted answers are accumulated for later questions
+and persisted with the eventual run.
+
+Declining or cancelling carries neither primitive content nor draft text, reference
+selections, or prompt metadata. Primitive-only questions and clients remain supported;
+the added context is optional.
+
+The controller also sends the matching elicitation as legacy metadata with an accepted or
+declined response; the stored schema remains authoritative. The question and draft are
+cleared only after a successful continuation. Revisions reuse the original user-message
+ID, and cancelling abandons the request without starting another plan.
+
+If another question is necessary before a runnable plan exists, the private pending-turn
+state also retains the original authorized history snapshot. Version-conditional writes
+prevent a delayed response from replacing newer clarification state.
 
 The pending chain is capped at 12 answers and 32 KiB of answer data, with a 64 KiB
 ceiling on the full pending record. Limits fail explicitly rather than dropping an
@@ -505,6 +558,9 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_orchestration_events.py` | Stream event builders |
 | `functions_orchestration_models.py` | Authorized model selection, endpoint clients, completion parameters and safe model metadata |
 | `route_backend_orchestration.py` | The V2 endpoints, conversation and message persistence |
+| `application/v2_ui/src/components/chat/ComposerEditor.tsx` | Shared context-aware editing for messages and inline answers |
+| `application/v2_ui/src/lib/elicitationAnswers.ts` | Primitive answer construction, required-field validation, and answer-local context |
+| `application/v2_ui/src/components/chat/ElicitationCard.tsx` | Paged questions, suggestions, and recoverable answer submission |
 | `route_backend_chats.py` | Shared ordinary and multi-query web-search helpers |
 | `functions_source_review.py` | Shared bounded query generation, backup planning, and source review |
 
@@ -516,12 +572,29 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
    capability toggles and the model, agent and reasoning pickers folded behind **Manual
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
    turns it off again for anyone who wants the classic composer.
-4. Ask a question. A plan appears; approve, adjust or cancel it.
-5. Watch progress in the Plan panel of the right-hand drawer.
+4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
+5. Review the resulting plan; approve, adjust, or cancel it.
+6. Watch progress in the Plan panel of the right-hand drawer.
 
 Anything selected inside the manual controls is passed as a seed and constrains the plan,
 so a power user can still pin the work to a particular document or agent and let
 orchestration decide the rest.
+
+When the administrator allows approval overrides, choosing **Auto**, **After Ns**,
+or **Review** saves `orchestrationApprovalMode` to your account immediately, without
+sending a message. The choice follows you across chats and is restored from the
+server after a reload or a later sign-in on another device. The countdown duration
+still comes from administrator settings.
+
+Users without a saved choice receive the deployment default. An enforced deployment
+mode takes precedence without deleting a saved choice. If preferences cannot be
+loaded, the composer keeps the draft and offers **Retry loading approval preference**
+before orchestration can start. An unsuccessful save shows an error and rolls back
+to the last confirmed selection unless a newer choice is still pending. Choose the
+mode again to retry saving. Existing plans retain their own approval state.
+
+See [the approval persistence fix](../fixes/V2_ORCHESTRATION_APPROVAL_PERSISTENCE_FIX.md)
+for the persistence contract and failure handling.
 
 Administrators changing these settings from the classic Admin Settings page do not need to
 reload an open chat tab: the interface re-reads its configuration when the tab comes back
@@ -533,7 +606,12 @@ to the front.
 | --- | --- |
 | `functional_tests/test_orchestration_registry_contract.py` | Descriptor shape, gating, administrator narrowing, and that internal fields never reach the planner |
 | `functional_tests/test_orchestration_plan_schema.py` | Unknown and disabled capabilities, document authorization, argument coercion and bounds, cycles, step caps, narrowing-only edits, approval states |
+| `functional_tests/test_v2_orchestration_approval_persistence.py` | Current-user approval preference round-trips, enum validation, and runtime preference resolution and save ordering |
+| `ui_tests/test_v2_orchestration_approval_persistence.py` | Approval selection across navigation and fresh browser contexts, administrator precedence, loading/retry, save failures, and pending writes |
 | `functional_tests/test_orchestration_elicitation_schema.py` | The MCP flat-object restriction, paging staying outside the schema, response validation |
+| `functional_tests/test_orchestration_elicitation_context.py` | Authoritative pending questions, accepted context, and the real plan/answer/run handoff |
+| `functional_tests/test_v2_elicitation_answers.py` | Primitive answers, single/multiple files, alternate sources, readiness, and answer-local prompt resolution |
+| `ui_tests/test_v2_elicitation_composer.py` | Real editor interactions, choices with context, uploads, retries, draft isolation, and responsive rendering |
 | `functional_tests/test_orchestration_run_ledger.py` | Run and byte bounds, oldest-first compaction, honest truncation, answered questions carrying forward |
 | `functional_tests/test_orchestration_invoke_prompt_contract.py` | The model-call convention: the route's closure must accept what the adapters and the document functions actually pass, and must count token usage |
 | `functional_tests/test_orchestration_model_selection.py` | Manual/default precedence, independent planner connections, authorization, unavailable models, legacy/APIM compatibility, protocol parameters and client ownership |
@@ -560,6 +638,9 @@ research-selection rate is not itself a quality improvement.
 
 ## Known limitations
 
+- **A full page reload does not automatically restore the inline interview.** Drafts survive
+  paging and navigation within the current browser session; reload recovery is a separate
+  capability.
 - **Recent context only.** There is no orchestration rolling summary or cross-chat memory.
   A reference outside the retained window may need clarification.
 - **Automatic per-step model routing is not implemented.** Planning and research use the

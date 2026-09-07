@@ -4,7 +4,8 @@ Choosing which documents a message is grounded in, and seeing that choice before
 you send it.
 
 **Implemented in version:** 0.261.089
-**Updated in version:** 0.261.094 (`application/single_app/config.py`)
+**Updated in version:** 0.261.100 (`application/single_app/config.py`)
+**Inline answers implemented in version:** 0.261.096
 **Interface:** V2 only. The classic interface is unchanged.
 **Dependencies:** `enable_user_workspace` for personal documents,
 `enable_group_workspaces` and `enable_public_workspaces` to reach those scopes.
@@ -154,6 +155,26 @@ and decides what you may read from the ids, so a renamed document is still exact
 the document it was.
 
 See [Chat Orchestration](CHAT_ORCHESTRATION.md) for the planner side.
+
+### References in inline answers
+
+When the planner asks a follow-up question, its answer editor supports the same `#`
+references and selection/mention distinction as the main composer. References belong to
+that answer, not to an unsent message in the main composer or another question.
+
+For a file question, you can choose the planner's suggestions or supply a different
+accessible file. An uploaded file becomes a reference only after the upload succeeds and
+processing finishes. Workspace-backed uploads retain their document identity;
+conversation-only attachments retain their conversation/file identity instead of being
+treated as workspace documents.
+
+The accepted references are carried through replanning and execution. An optional note
+beside a choice can also have references, but a tag or workspace alone does not answer a
+question that requires a particular file. Access is resolved again on the server, so a
+visible chip is never itself proof of permission.
+
+Covered by `functional_tests/test_v2_elicitation_answers.py` and
+`ui_tests/test_v2_elicitation_composer.py`.
 
 ## Files
 

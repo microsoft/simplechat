@@ -84,11 +84,22 @@ Countdown mode is a middle position worth understanding: the plan appears with a
 doing nothing runs it. It suits users who mostly agree with the plan but want the chance to
 stop an obviously wrong one, without a confirmation on every message.
 
+From version **0.261.101**, a user's approval selection is saved to their account.
+When overrides are allowed, that selection survives chat navigation, reloads, and
+future visits from another device. The deployment default applies to users who have
+not chosen a mode. Changing that default does not replace an existing user choice.
+
+Disabling user overrides enforces the deployment default without erasing saved
+preferences; those preferences apply again if overrides are re-enabled. When an
+override is allowed but preferences cannot be loaded, orchestration waits for a retry
+rather than risking a different approval mode. The draft remains editable, and
+ordinary chat is still available by switching Orchestrate off.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Default approval mode | Selects whether a plan waits for the user, runs after a countdown, or runs immediately. | Review before running | `chat_orchestration_default_approval_mode` |
+| Default approval mode | Determines whether a plan waits for review, runs after a countdown, or runs immediately when the user has no saved choice or overrides are disabled. | Review before running | `chat_orchestration_default_approval_mode` |
 | Countdown before running | How long the user has to intervene in countdown mode. Supported range is 3-120 seconds. | 10 | `chat_orchestration_timed_approval_seconds` |
 | Let users change their own approval mode | When off, everyone stays on the deployment default and the control is hidden from the composer. | On | `chat_orchestration_allow_user_approval_override` |
 | Keep the manual composer controls available | Keeps the document, web, model and agent pickers reachable behind a disclosure. Anything chosen there constrains the plan rather than being ignored. | On | `chat_orchestration_show_manual_controls` |
@@ -246,7 +257,7 @@ Selects the model that writes plans.
 
 Planning is a short, structured task rather than a conversational one, so a smaller and
 faster deployment usually does it well and costs less per message than the model that
-writes the answer. Since **0.261.101**, leaving all planner fields blank uses the model
+writes the answer. Since **0.261.102**, leaving all planner fields blank uses the model
 chosen in **Manual controls** first, then the administrator's default model connection,
 rather than an unrelated legacy GPT deployment. Classic chat/APIM settings remain the
 fallback when no model-connection selection or default applies.

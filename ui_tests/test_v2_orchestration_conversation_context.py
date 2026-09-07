@@ -1,9 +1,9 @@
 # test_v2_orchestration_conversation_context.py
 """
 Browser regressions for orchestration follow-up and clarification transport.
-Version: 0.261.101
+Version: 0.261.102
 Implemented in: 0.261.096
-Model selection transport and live answer attribution: 0.261.101
+Model selection transport and live answer attribution: 0.261.102
 
 Runs the shipped controller, stores, elicitation card, and approval card in the
 existing local Playwright harness. HTTP/SSE is stubbed here; the companion
@@ -135,7 +135,7 @@ class ConversationTransportTests(unittest.TestCase):
 
     def test_accept_sends_matching_question_answer_and_stable_turn(self):
         conversation_id, turn_id = self.start()
-        self.page.locator('#elicitation-location').fill('Grants Pass')
+        self.page.get_by_role('textbox', name='Location', exact=True).fill('Grants Pass')
         self.page.get_by_role('button', name='Finish', exact=True).click()
         first, second = self.wait_for_reply()
         self.assertEqual(first['message'], second['message'])
@@ -147,6 +147,10 @@ class ConversationTransportTests(unittest.TestCase):
             self.assertEqual(second[key], first[key])
         self.assertEqual(second['elicitation']['elicitation_id'], 'question-1')
         self.assertEqual(second['elicitation']['turn_id'], turn_id)
+        self.assertEqual(second['elicitation_id'], 'question-1')
+        self.assertEqual(second['elicitation_revision'], 0)
+        self.assertTrue(second['elicitation_submission_id'])
+        self.assertEqual(second['elicitation_context']['location']['text'], 'Grants Pass')
         self.assertEqual(second['elicitation_response'], {
             'action': 'accept', 'content': {'location': 'Grants Pass'},
         })
@@ -157,11 +161,12 @@ class ConversationTransportTests(unittest.TestCase):
 
     def test_decline_carries_question_but_not_unsubmitted_answers(self):
         self.start()
-        self.page.locator('#elicitation-location').fill('DO NOT FORWARD')
+        self.page.get_by_role('textbox', name='Location', exact=True).fill('DO NOT FORWARD')
         self.page.get_by_role('button', name='Decline to answer').click()
         _, second = self.wait_for_reply()
         self.assertEqual(second['elicitation']['elicitation_id'], 'question-1')
         self.assertEqual(second['elicitation_response'], {'action': 'decline', 'content': {}})
+        self.assertNotIn('elicitation_context', second)
         self.assertNotIn('DO NOT FORWARD', str(second))
 
     def test_cancel_does_not_start_another_plan_or_run(self):
@@ -217,5 +222,5 @@ class ConversationTransportTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.101')
+    assert_app_version_at_least('0.261.102')
     unittest.main()

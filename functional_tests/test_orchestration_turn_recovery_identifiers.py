@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_turn_recovery_identifiers.py
 """
 Functional test for the identifiers that let an orchestration turn be found again.
-Version: 0.261.099
+Version: 0.261.100
 Implemented in: 0.261.099
 
 A run is only recoverable if its question can be found in the thread. The live card stamps
@@ -90,8 +90,9 @@ def test_user_message_is_saved_with_its_turn_id():
 
         # And the plan route must still route through that helper.
         plan_body = _function_source("orchestration_plan")
-        assert "_save_turn_message(" in plan_body, (
-            "the plan route must save the user's question through the stamping helper"
+        persistence_body = _function_source("_persist_planned_turn")
+        assert "_persist_planned_turn(" in plan_body and "_save_turn_message(" in persistence_body, (
+            "the plan route must reach the stamping helper through its persistence boundary"
         )
         print("  ok  the question is saved with its turn id")
         return True
@@ -130,26 +131,35 @@ def test_run_record_keeps_the_turn_and_question_ids():
     """The stored run keeps turn_id and user_message_id, so old runs recover without migration."""
     print("Testing the run record keeps its turn and question ids...")
     try:
-        body = _function_source("orchestration_plan")
-        assert "'turn_id': turn_id" in body or '"turn_id": turn_id' in body, (
-            "the run record must keep the turn id"
-        )
-        assert "user_message_id" in body, "the run record must keep the question's message id"
-        # The ids go in when the record is created rather than in a follow-up write, so a
-        # run is never briefly stored without the identifiers a reload needs to find it.
-        turn_context = re.search(
-            r"create_orchestration_run\(.*?turn_context\s*=\s*\{(.*?)\n\s*\},",
-            body,
-            flags=re.DOTALL,
-        )
-        assert turn_context, (
-            "the run must be created with the turn context carrying its identifiers"
-        )
-        context_block = turn_context.group(1)
-        for field in ("turn_id", "user_message_id", "user_message"):
-            assert field in context_block, (
-                f"{field!r} must be on the run record at creation:\n{context_block}"
-            )
+        saved_messages = []
+        created_runs = []
+        turn_context = {'turn_id': 'turn-1', 'user_message': 'The original question'}
+
+        def save_message(conversation_id, user_id, turn_id, message, **kwargs):
+            saved_messages.append((conversation_id, user_id, turn_id, message))
+            assert kwargs['previous'] is turn_context
+            return 'saved-question', 'question-fingerprint'
+
+        def create_run(plan, user_id, **kwargs):
+            created_runs.append((plan, user_id, {**kwargs, 'turn_context': dict(kwargs['turn_context'])}))
+
+        namespace = {'_save_turn_message': save_message, 'create_orchestration_run': create_run}
+        exec(compile(_function_source('_persist_planned_turn'), str(ROUTE_FILE), 'exec'), namespace)
+        plan = {'run_id': 'run-1'}
+        namespace['_persist_planned_turn'](plan, turn_context, 'user-1', 'conversation-1')
+
+        assert saved_messages == [('conversation-1', 'user-1', 'turn-1', 'The original question')]
+        assert len(created_runs) == 1, 'the turn must be persisted once'
+        stored_plan, stored_user, arguments = created_runs[0]
+        assert stored_plan == plan and stored_user == 'user-1'
+        assert arguments['conversation_id'] == 'conversation-1'
+        assert arguments['idempotent'] is True
+        assert arguments['turn_context'] == {
+            'turn_id': 'turn-1',
+            'user_message': 'The original question',
+            'user_message_id': 'saved-question',
+            'user_message_fingerprint': 'question-fingerprint',
+        }, 'identifiers must already be present when the run is created'
         print("  ok  the run record keeps both identifiers")
         return True
     except Exception as exc:  # noqa: BLE001

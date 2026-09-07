@@ -1,12 +1,12 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.101
+Version: 0.261.102
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
 Direct action integration: 0.261.098
-Resolver response compatibility and bounded recovery: 0.261.100
-Authorized model routing and completion metadata: 0.261.101
+Resolver response compatibility and bounded recovery: 0.261.102
+Authorized model routing and completion metadata: 0.261.102
 
 Uses Flask, the real planner/executor/adapters/run store, an in-memory Cosmos boundary,
 and deterministic model completions. Authentication is a signed-in test user; actual
@@ -355,6 +355,16 @@ class ConversationRouteTests(unittest.TestCase):
         self.assertEqual({call['model'] for call in self.model.calls}, {'gpt-5.6-terra'})
         self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], TERRA_SELECTION)
 
+    def test_replanning_uses_the_original_model_not_replacement_answer_controls(self):
+        self.use_modern_models()
+        self.planned()
+        self.settings['default_model_selection']['model_id'] = 'luna-model'
+        plan = self.planned(**{
+            **TERRA_SELECTION, 'model_id': 'luna-model', 'model_deployment': 'gpt-5.6-luna',
+        })
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], TERRA_SELECTION)
+        self.assertEqual({call['model'] for call in self.model.calls}, {'gpt-5.6-terra'})
+
     def test_planner_override_does_not_change_the_selected_answer_or_research_binding(self):
         selection = self.use_modern_models()
         self.settings['chat_orchestration_planner_deployment'] = 'small-planner'
@@ -444,7 +454,7 @@ class ConversationRouteTests(unittest.TestCase):
         response.close()
         self.assertEqual(self.model.calls, [])
         self.assertEqual(self.runs.items, {})
-        self.model_clients[-1].close.assert_called_once_with()
+        self.assertEqual(self.model_clients, [])
 
         plan = self.planned()
         with self.app.test_request_context('/api/v2/orchestration/run', method='POST', json={
@@ -487,6 +497,27 @@ class ConversationRouteTests(unittest.TestCase):
         self.assertEqual(self.model.calls, [])
         self.assertEqual(self.runs.items, {})
         self.assertEqual(len(self.messages.items), 4)
+
+    def test_model_failure_releases_clarification_submission_for_retry(self):
+        self.use_modern_models()
+        self.model.resolution_override = {
+            'relationship': 'clarification', 'resolved_message': LATEST,
+            'message_ids': ['u1'], 'requires_retrieval': True,
+            'clarification': 'Which location do you mean?',
+        }
+        _, events = self.plan()
+        question = next(event['elicitation'] for event in events if event.get('elicitation'))
+        reply = {
+            'elicitation': question,
+            'elicitation_response': {'action': 'accept', 'content': {'clarification': 'Grants Pass'}},
+        }
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = None
+        _, events = self.plan(**reply)
+        self.assertTrue(any('selected model is unavailable' in event.get('error', '') for event in events))
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = self.endpoint
+        self.model.resolution_override = None
+        plan = self.planned(**reply)
+        self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], TERRA_SELECTION)
 
     def test_failed_or_empty_answer_is_not_reported_as_a_completed_turn(self):
         self.use_modern_models()
@@ -1061,5 +1092,5 @@ class ConversationRouteTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.101')
+    assert_app_version_at_least('0.261.102')
     unittest.main()
