@@ -6,6 +6,7 @@ import subprocess
 import time
 import traceback
 import zipfile
+import hashlib
 from io import BytesIO
 from flask import make_response
 from azure.core.exceptions import ResourceExistsError
@@ -37,6 +38,25 @@ from functions_debug import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_model_endpoint_runtime import MODEL_ENDPOINT_PROVIDER_ALLOWLIST, build_model_endpoint_sync_chat_client
+from functions_xsd_schema import (
+    ERR_COMPILE_FAILED,
+    ERR_DEPENDENCY_LOCATIONLESS_IMPORT,
+    ERR_DEPENDENCY_MISSING,
+    ERR_DEPENDENCY_MISSING_LOCATION,
+    ERR_DEPENDENCY_NAMESPACE_MISMATCH,
+    ERR_DEPENDENCY_UNUSED_SOURCE,
+    XSD_DIALECT_ID,
+    XSD_PROFILE_ID,
+    XSD_VALIDATOR_ID,
+    XsdSchemaError,
+    build_xsd_generation_guidance,
+    compile_xsd_graph,
+    inspect_xsd_bytes,
+    normalize_xsd_logical_path,
+    resolve_xsd_dependency_path,
+    summarize_xsd_inspection,
+    validate_xml_bytes,
+)
 from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
@@ -49,6 +69,15 @@ _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
 
 class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+class XsdIngestionCapabilityError(RuntimeError):
+    """Raised when an XSD cannot be accepted without exact-source storage."""
+
+    def __init__(self, public_message, *, code, http_status):
+        super().__init__(public_message)
+        self.code = code
+        self.http_status = http_status
 
 
 MARKDOWN_ORDERED_DICT_MUTATION_MESSAGE = "OrderedDict mutated during iteration"
@@ -726,7 +755,13 @@ def _get_document_scope_id(document_item=None, user_id=None, group_id=None, publ
     return public_workspace_id or group_id or user_id
 
 
-def build_current_blob_path(blob_filename, user_id=None, group_id=None, public_workspace_id=None):
+def build_current_blob_path(
+    blob_filename,
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+    xsd_logical_path=None,
+):
     scope_id = _get_document_scope_id(
         user_id=user_id,
         group_id=group_id,
@@ -734,6 +769,17 @@ def build_current_blob_path(blob_filename, user_id=None, group_id=None, public_w
     )
     if not scope_id or not blob_filename:
         return None
+
+    if xsd_logical_path:
+        logical_path_digest = hashlib.sha256(
+            str(xsd_logical_path).encode("utf-8")
+        ).hexdigest()[:24]
+        safe_blob_filename = secure_filename(
+            str(blob_filename).replace("\\", "/").split("/")[-1]
+        )
+        if not safe_blob_filename:
+            safe_blob_filename = "schema.xsd"
+        return f"{scope_id}/xsd/{logical_path_digest}/{safe_blob_filename}"
 
     return f"{scope_id}/{blob_filename}"
 
@@ -776,6 +822,7 @@ def get_document_blob_storage_info(document_item, user_id=None, group_id=None, p
         user_id=user_id or document_item.get("user_id"),
         group_id=group_id or document_item.get("group_id"),
         public_workspace_id=public_workspace_id or document_item.get("public_workspace_id"),
+        xsd_logical_path=document_item.get("xsd_logical_path"),
     )
 
 
@@ -957,6 +1004,286 @@ def _ensure_blob_container_ready(blob_service_client, container_name):
     return container_client
 
 
+def require_xsd_ingestion_capability(
+    file_name,
+    *,
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+    xsd_logical_path=None,
+    settings=None,
+):
+    """Validate the mandatory exact-source storage boundary for an XSD upload."""
+    extension = os.path.splitext(str(file_name or ""))[1].lower().lstrip(".")
+    if extension not in SCHEMA_EXTENSIONS:
+        return None
+
+    normalized_user_id = str(user_id or "").strip()
+    normalized_group_id = str(group_id or "").strip() or None
+    normalized_public_workspace_id = str(public_workspace_id or "").strip() or None
+    if normalized_group_id and normalized_public_workspace_id:
+        raise ValueError("An XSD upload must target exactly one workspace")
+    if not normalized_user_id:
+        raise ValueError("user_id is required for an XSD upload")
+
+    effective_settings = settings if isinstance(settings, dict) else get_settings()
+    if not effective_settings.get("enable_enhanced_citations", False):
+        raise XsdIngestionCapabilityError(
+            "XSD uploads require Enhanced Citations to preserve the complete schema file.",
+            code="xsd_requires_enhanced_citations",
+            http_status=409,
+        )
+
+    container_name = _get_blob_container_name(
+        group_id=normalized_group_id,
+        public_workspace_id=normalized_public_workspace_id,
+    )
+    try:
+        blob_service_client = _get_blob_service_client()
+        _ensure_blob_container_ready(blob_service_client, container_name)
+    except Exception as exc:
+        log_event(
+            "[XSD_INGESTION] Exact-source storage readiness failed.",
+            extra={
+                "error_type": type(exc).__name__,
+                "group_scope": normalized_group_id is not None,
+                "public_workspace_scope": normalized_public_workspace_id is not None,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        raise XsdIngestionCapabilityError(
+            "XSD uploads require available Enhanced Citations storage. Please try again later.",
+            code="xsd_exact_source_storage_unavailable",
+            http_status=503,
+        ) from None
+
+    return {
+        "container_name": container_name,
+        "logical_path": normalize_xsd_logical_path(
+            str(file_name or ""),
+            xsd_logical_path,
+        ),
+        "max_file_size_bytes": int(
+            effective_settings.get("max_file_size_mb", 16) or 16
+        ) * 1024 * 1024,
+    }
+
+
+def _build_immutable_xsd_blob_path(
+    file_name,
+    document_id,
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+    logical_path=None,
+):
+    scope_id = _get_document_scope_id(
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not scope_id or not document_id:
+        raise ValueError("An XSD source requires a workspace scope and document ID.")
+    normalized_path = normalize_xsd_logical_path(file_name, logical_path)
+    logical_path_digest = hashlib.sha256(normalized_path.encode("utf-8")).hexdigest()[:24]
+    safe_file_name = secure_filename(normalized_path.split("/")[-1]) or "schema.xsd"
+    return f"{scope_id}/xsd/{logical_path_digest}/{document_id}/{safe_file_name}"
+
+
+def _persist_xsd_source_before_create(
+    source_file_path,
+    file_name,
+    document_id,
+    capability,
+    user_id=None,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Validate and persist exact XSD bytes before creating document metadata."""
+    if not source_file_path or not os.path.isfile(source_file_path):
+        raise XsdIngestionCapabilityError(
+            "The XSD source file must be available before the upload can be accepted.",
+            code="xsd_source_required",
+            http_status=400,
+        )
+
+    max_file_size_bytes = int(capability.get("max_file_size_bytes") or 0)
+    if max_file_size_bytes and os.path.getsize(source_file_path) > max_file_size_bytes:
+        raise XsdIngestionCapabilityError(
+            f"XSD file exceeds the maximum allowed size ({max_file_size_bytes / (1024 * 1024):.1f} MB).",
+            code="xsd_file_too_large",
+            http_status=413,
+        )
+
+    with open(source_file_path, "rb") as source_file:
+        source_bytes = source_file.read()
+    inspection = inspect_xsd_bytes(source_bytes, capability["logical_path"])
+    blob_path = _build_immutable_xsd_blob_path(
+        file_name,
+        document_id,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        logical_path=capability["logical_path"],
+    )
+    blob_service_client = _get_blob_service_client()
+    container_client = _ensure_blob_container_ready(
+        blob_service_client,
+        capability["container_name"],
+    )
+    blob_client = container_client.get_blob_client(blob_path)
+    created = False
+    try:
+        blob_client.upload_blob(
+            source_bytes,
+            overwrite=False,
+            metadata={
+                "document_id": str(document_id),
+                "xsd_sha256": inspection["sha256"],
+                "xsd_profile": XSD_PROFILE_ID,
+            },
+        )
+        created = True
+    except ResourceExistsError:
+        created = False
+    try:
+        persisted_bytes = bytes(blob_client.download_blob().readall())
+        persisted_sha256 = hashlib.sha256(persisted_bytes).hexdigest()
+        if (
+            persisted_sha256 != inspection["sha256"]
+            or len(persisted_bytes) != len(source_bytes)
+        ):
+            raise XsdIngestionCapabilityError(
+                "The XSD source could not be verified after storage.",
+                code="xsd_exact_source_verification_failed",
+                http_status=503,
+            )
+        properties = blob_client.get_blob_properties()
+    except Exception as exc:
+        if created:
+            try:
+                blob_client.delete_blob()
+            except Exception:
+                log_event(
+                    "[XSD_INGESTION] Failed to clean up an unverified XSD source blob.",
+                    extra={"document_id": document_id},
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+        if isinstance(exc, XsdIngestionCapabilityError):
+            raise
+        raise XsdIngestionCapabilityError(
+            "The XSD source could not be verified after storage.",
+            code="xsd_exact_source_verification_failed",
+            http_status=503,
+        ) from exc
+
+    return {
+        "blob_container": capability["container_name"],
+        "blob_path": blob_path,
+        "blob_etag": str(getattr(properties, "etag", "") or ""),
+        "inspection": inspection,
+        "created": created,
+    }
+
+
+def _delete_staged_xsd_source(staged_source, document_id):
+    if not staged_source or not staged_source.get("created"):
+        return
+    try:
+        _get_blob_service_client().get_blob_client(
+            container=staged_source["blob_container"],
+            blob=staged_source["blob_path"],
+        ).delete_blob()
+    except Exception:
+        log_event(
+            "[XSD_INGESTION] Failed to clean up a staged XSD source after metadata creation failed.",
+            extra={"document_id": document_id},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+
+
+def persist_xsd_source_for_existing_document(
+    document_id,
+    user_id,
+    source_file_path,
+    file_name,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Attach a verified immutable XSD source to an authorized document shell."""
+    capability = require_xsd_ingestion_capability(
+        file_name,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not capability:
+        return None
+
+    document_item = get_document_metadata(
+        document_id=document_id,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not document_item:
+        raise FileNotFoundError("The XSD document metadata could not be loaded.")
+
+    logical_path = normalize_xsd_logical_path(
+        file_name,
+        document_item.get("xsd_logical_path"),
+    )
+    capability = dict(capability)
+    capability["logical_path"] = logical_path
+    staged_source = _persist_xsd_source_before_create(
+        source_file_path,
+        file_name,
+        document_id,
+        capability,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    inspection = staged_source["inspection"]
+    try:
+        update_document(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            source_kind="xml_schema",
+            document_kind="xml_schema",
+            xsd_logical_path=logical_path,
+            xsd_revision_identity=document_item.get("xsd_revision_identity") or logical_path,
+            xsd_schema_status="validating",
+            xsd_profile=XSD_PROFILE_ID,
+            xsd_validator_id=XSD_VALIDATOR_ID,
+            xsd_dialect=XSD_DIALECT_ID,
+            xsd_effective_dialect=XSD_DIALECT_ID,
+            xsd_target_namespace=inspection.get("target_namespace"),
+            xsd_sha256=inspection.get("sha256"),
+            xsd_byte_size=inspection.get("byte_size"),
+            xsd_blob_etag=staged_source.get("blob_etag"),
+            xsd_author_version=inspection.get("schema_author_version"),
+            xsd_global_elements=(inspection.get("global_elements") or [])[:100],
+            xsd_global_types=(inspection.get("global_types") or [])[:100],
+            xsd_dependencies=(inspection.get("dependencies") or [])[:100],
+            xsd_dependency_count=len(inspection.get("dependencies") or []),
+            blob_container=staged_source["blob_container"],
+            blob_path=staged_source["blob_path"],
+            blob_path_mode="xsd_immutable_source_v1",
+            source_file_available=True,
+            enhanced_citations=True,
+        )
+    except Exception:
+        _delete_staged_xsd_source(staged_source, document_id)
+        raise
+    return staged_source
+
+
 def _blob_exists(container_name, blob_path):
     if not container_name or not blob_path:
         return False
@@ -1054,6 +1381,11 @@ def _archive_previous_document_blob(previous_document, user_id=None, group_id=No
 def _promote_document_blob_to_current_alias(promoted_document, user_id=None, group_id=None, public_workspace_id=None):
     if not promoted_document:
         return None
+    if (
+        promoted_document.get("source_kind") == "xml_schema"
+        or promoted_document.get("blob_path_mode") == "xsd_immutable_source_v1"
+    ):
+        return promoted_document.get("blob_path")
 
     container_name = promoted_document.get("blob_container") or _get_blob_container_name(
         group_id=group_id or promoted_document.get("group_id"),
@@ -1064,6 +1396,7 @@ def _promote_document_blob_to_current_alias(promoted_document, user_id=None, gro
         user_id=user_id or promoted_document.get("user_id"),
         group_id=group_id or promoted_document.get("group_id"),
         public_workspace_id=public_workspace_id or promoted_document.get("public_workspace_id"),
+        xsd_logical_path=promoted_document.get("xsd_logical_path"),
     )
     source_blob_path = promoted_document.get("archived_blob_path") or promoted_document.get("blob_path")
 
@@ -1121,8 +1454,12 @@ def _get_document_family_key(document_item):
         or document_item.get("user_id")
         or "unknown"
     )
-    file_name = document_item.get("file_name", "")
-    return f"legacy::{scope_value}::{file_name}"
+    document_identity = (
+        document_item.get("xsd_revision_identity")
+        if document_item.get("document_kind") == "xml_schema"
+        else document_item.get("file_name", "")
+    )
+    return f"legacy::{scope_value}::{document_identity}"
 
 
 def _document_revision_sort_key(document_item):
@@ -1340,8 +1677,24 @@ def normalize_document_revision_families(user_id, group_id=None, public_workspac
 def _get_document_family_items_from_document(document_item, user_id, group_id=None, public_workspace_id=None):
     cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
     file_name = document_item.get("file_name")
+    xsd_revision_identity = (
+        document_item.get("xsd_revision_identity")
+        if document_item.get("document_kind") == "xml_schema"
+        else None
+    )
 
-    if public_workspace_id is not None:
+    if public_workspace_id is not None and xsd_revision_identity:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.xsd_revision_identity = @xsd_revision_identity
+                AND c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@xsd_revision_identity", "value": xsd_revision_identity},
+            {"name": "@public_workspace_id", "value": public_workspace_id},
+        ]
+    elif public_workspace_id is not None:
         query = """
             SELECT *
             FROM c
@@ -1351,6 +1704,18 @@ def _get_document_family_items_from_document(document_item, user_id, group_id=No
         parameters = [
             {"name": "@file_name", "value": file_name},
             {"name": "@public_workspace_id", "value": public_workspace_id},
+        ]
+    elif group_id is not None and xsd_revision_identity:
+        owner_group_id = document_item.get("group_id") or group_id
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.xsd_revision_identity = @xsd_revision_identity
+                AND c.group_id = @group_id
+        """
+        parameters = [
+            {"name": "@xsd_revision_identity", "value": xsd_revision_identity},
+            {"name": "@group_id", "value": owner_group_id},
         ]
     elif group_id is not None:
         owner_group_id = document_item.get("group_id") or group_id
@@ -1363,6 +1728,18 @@ def _get_document_family_items_from_document(document_item, user_id, group_id=No
         parameters = [
             {"name": "@file_name", "value": file_name},
             {"name": "@group_id", "value": owner_group_id},
+        ]
+    elif xsd_revision_identity:
+        owner_user_id = document_item.get("user_id") or user_id
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.xsd_revision_identity = @xsd_revision_identity
+                AND c.user_id = @owner_user_id
+        """
+        parameters = [
+            {"name": "@xsd_revision_identity", "value": xsd_revision_identity},
+            {"name": "@owner_user_id", "value": owner_user_id},
         ]
     else:
         owner_user_id = document_item.get("user_id") or user_id
@@ -1404,10 +1781,42 @@ def _build_carried_forward_metadata(document_item, is_group=False):
 
     return carried_forward
 
-def create_document(file_name, user_id, document_id, num_file_chunks, status, group_id=None, public_workspace_id=None):
+def create_document(
+    file_name,
+    user_id,
+    document_id,
+    num_file_chunks,
+    status,
+    group_id=None,
+    public_workspace_id=None,
+    xsd_logical_path=None,
+    xsd_family_namespace=None,
+    source_file_path=None,
+    allow_deferred_xsd_source=False,
+):
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
+    xsd_capability = require_xsd_ingestion_capability(
+        file_name,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        xsd_logical_path=xsd_logical_path,
+    )
+    normalized_xsd_logical_path = (
+        xsd_capability.get("logical_path")
+        if xsd_capability
+        else None
+    )
+    normalized_xsd_family_namespace = str(xsd_family_namespace or "").strip()
+    xsd_revision_identity = None
+    if normalized_xsd_logical_path:
+        xsd_revision_identity = (
+            f"{normalized_xsd_family_namespace}:{normalized_xsd_logical_path}"
+            if normalized_xsd_family_namespace
+            else normalized_xsd_logical_path
+        )
 
     # Choose the correct cosmos_container and query parameters
     if is_public_workspace:
@@ -1417,7 +1826,18 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
     else:
         cosmos_container = cosmos_user_documents_container
 
-    if is_public_workspace:
+    if is_public_workspace and xsd_revision_identity:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.xsd_revision_identity = @xsd_revision_identity
+                AND c.public_workspace_id = @public_workspace_id
+        """
+        parameters = [
+            {"name": "@xsd_revision_identity", "value": xsd_revision_identity},
+            {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_public_workspace:
         query = """
             SELECT *
             FROM c
@@ -1427,6 +1847,17 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
         parameters = [
             {"name": "@file_name", "value": file_name},
             {"name": "@public_workspace_id", "value": public_workspace_id}
+        ]
+    elif is_group and xsd_revision_identity:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.xsd_revision_identity = @xsd_revision_identity
+                AND c.group_id = @group_id
+        """
+        parameters = [
+            {"name": "@xsd_revision_identity", "value": xsd_revision_identity},
+            {"name": "@group_id", "value": group_id}
         ]
     elif is_group:
         query = """
@@ -1438,6 +1869,17 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
         parameters = [
             {"name": "@file_name", "value": file_name},
             {"name": "@group_id", "value": group_id}
+        ]
+    elif xsd_revision_identity:
+        query = """
+            SELECT *
+            FROM c
+            WHERE c.xsd_revision_identity = @xsd_revision_identity
+                AND c.user_id = @user_id
+        """
+        parameters = [
+            {"name": "@xsd_revision_identity", "value": xsd_revision_identity},
+            {"name": "@user_id", "value": user_id}
         ]
     else:
         query = """
@@ -1451,7 +1893,20 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
             {"name": "@user_id", "value": user_id}
         ]
 
+    staged_xsd_source = None
+    document_persisted = False
     try:
+        if xsd_capability and not allow_deferred_xsd_source:
+            staged_xsd_source = _persist_xsd_source_before_create(
+                source_file_path,
+                file_name,
+                document_id,
+                xsd_capability,
+                user_id=user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+
         existing_documents = list(
             cosmos_container.query_items(
                 query=query,
@@ -1484,6 +1939,7 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 'shared_user_ids': [] if not is_group else None,
             }
 
+        deferred_xsd_archives = []
         for existing_document in existing_documents:
             update_existing_document = False
 
@@ -1496,11 +1952,14 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 update_existing_document = True
 
             if existing_document.get('search_visibility_state') != 'archived':
-                set_document_chunk_visibility(existing_document, active=False)
+                if not xsd_revision_identity:
+                    set_document_chunk_visibility(existing_document, active=False)
                 existing_document['search_visibility_state'] = 'archived'
                 update_existing_document = True
 
-            if update_existing_document:
+            if update_existing_document and xsd_revision_identity:
+                deferred_xsd_archives.append(existing_document)
+            elif update_existing_document:
                 _upsert_document_and_sync_access_index(
                     cosmos_container,
                     existing_document,
@@ -1606,11 +2065,67 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "tags": carried_forward.get("tags", [])
             }
 
+        if xsd_revision_identity:
+            xsd_inspection = (
+                staged_xsd_source.get("inspection")
+                if staged_xsd_source
+                else {}
+            )
+            document_metadata.update({
+                "document_kind": "xml_schema",
+                "source_kind": "xml_schema",
+                "xsd_logical_path": normalized_xsd_logical_path,
+                "xsd_revision_identity": xsd_revision_identity,
+                "xsd_schema_status": "validating",
+                "xsd_requested_dialect": "1.0",
+                "xsd_effective_dialect": None,
+                "xsd_profile": XSD_PROFILE_ID,
+                "xsd_validator_id": XSD_VALIDATOR_ID,
+                "xsd_dialect": XSD_DIALECT_ID,
+                "xsd_target_namespace": xsd_inspection.get("target_namespace"),
+                "xsd_sha256": xsd_inspection.get("sha256"),
+                "xsd_byte_size": xsd_inspection.get("byte_size"),
+                "xsd_author_version": xsd_inspection.get("schema_author_version"),
+                "xsd_global_elements": (xsd_inspection.get("global_elements") or [])[:100],
+                "xsd_global_types": (xsd_inspection.get("global_types") or [])[:100],
+                "xsd_dependencies": (xsd_inspection.get("dependencies") or [])[:100],
+                "xsd_dependency_count": len(xsd_inspection.get("dependencies") or []),
+            })
+            if staged_xsd_source:
+                document_metadata.update({
+                    "blob_container": staged_xsd_source["blob_container"],
+                    "blob_path": staged_xsd_source["blob_path"],
+                    "blob_path_mode": "xsd_immutable_source_v1",
+                    "source_file_available": True,
+                    "enhanced_citations": True,
+                    "xsd_blob_etag": staged_xsd_source.get("blob_etag"),
+                })
+
         _upsert_document_and_sync_access_index(
             cosmos_container,
             document_metadata,
             operation='document_created',
         )
+        document_persisted = True
+
+        for existing_document in deferred_xsd_archives:
+            try:
+                set_document_chunk_visibility(existing_document, active=False)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container,
+                    existing_document,
+                    operation='document_revision_archived',
+                )
+            except Exception:
+                log_event(
+                    "[XSD_INGESTION] The new revision was accepted, but an older revision requires reconciliation.",
+                    extra={
+                        "document_id": document_id,
+                        "previous_document_id": existing_document.get("id"),
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
 
         add_file_task_to_file_processing_log(
             document_id,
@@ -1619,6 +2134,8 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
         )
 
     except Exception as e:
+        if staged_xsd_source and not document_persisted:
+            _delete_staged_xsd_source(staged_xsd_source, document_id)
         print(f"Error creating document: {e}")
         raise
 
@@ -3886,25 +4403,27 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
 def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_workspace_id=None):
     """Delete a document from Azure Blob Storage."""
 
-    # Check if enhanced citations are enabled and blob client is available
-    settings = get_settings()
-    enable_enhanced_citations = settings.get("enable_enhanced_citations", False)
-
-    if not enable_enhanced_citations:
-        return  # No need to proceed if enhanced citations are disabled
-
     try:
-        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        if not blob_service_client:
-            print("Warning: Enhanced citations enabled but blob service client not configured.")
-            return
-
         delete_targets = get_document_blob_delete_targets(
             document_item,
             user_id=user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+        if not delete_targets:
+            return
+
+        blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+        if not blob_service_client:
+            log_event(
+                "[DOCUMENT_BLOB_DELETE] Persisted document source could not be deleted because Blob Storage is unavailable.",
+                extra={
+                    "document_id": document_item.get("id"),
+                    "target_count": len(delete_targets),
+                },
+                level=logging.WARNING,
+            )
+            return
 
         for container_name, blob_path in delete_targets:
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
@@ -4007,6 +4526,20 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             document_item,
             operation='document_deleted',
         )
+        if (
+            document_item.get("source_kind") == "xml_schema"
+            and document_item.get("is_current_version") is not False
+        ):
+            _revalidate_xsd_workspace_dependents(
+                normalize_xsd_logical_path(
+                    document_item.get("file_name"),
+                    document_item.get("xsd_logical_path"),
+                ),
+                user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+                exclude_document_id=document_id,
+            )
 
     except CosmosResourceNotFoundError:
         raise Exception("Document not found")
@@ -4085,6 +4618,44 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
                 operation='document_revision_promoted',
             )
             promoted_document_id = promoted_document.get('id')
+            if promoted_document.get("source_kind") == "xml_schema":
+                try:
+                    _refresh_xsd_document_schema_state(
+                        promoted_document,
+                        user_id,
+                        group_id=group_id,
+                        public_workspace_id=public_workspace_id,
+                    )
+                except Exception as exc:
+                    update_document(
+                        document_id=promoted_document_id,
+                        user_id=user_id,
+                        group_id=group_id,
+                        public_workspace_id=public_workspace_id,
+                        xsd_schema_status="validation_blocked",
+                        xsd_diagnostics=[
+                            "The promoted XSD revision could not be revalidated. "
+                            "XML generation remains disabled."
+                        ],
+                    )
+                    log_event(
+                        "[XSD_INGESTION] Failed to refresh promoted revision.",
+                        extra={
+                            "document_id": promoted_document_id,
+                            "error": str(exc),
+                        },
+                        level="ERROR",
+                    )
+                _revalidate_xsd_workspace_dependents(
+                    normalize_xsd_logical_path(
+                        promoted_document.get("file_name"),
+                        promoted_document.get("xsd_logical_path"),
+                    ),
+                    user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    exclude_document_id=promoted_document_id,
+                )
 
     return {
         'deleted_mode': 'current_only',
@@ -5490,6 +6061,7 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
             user_id=user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id,
+            xsd_logical_path=current_document.get("xsd_logical_path"),
         )
 
         previous_family_documents = [
@@ -5565,6 +6137,940 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
             exceptionTraceback=True,
         )
         raise RuntimeError(f"Error uploading {blob_filename} to Blob Storage.") from e
+
+
+def _query_current_xsd_documents(
+    owner_user_id,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Return current XSD records in the owning workspace only."""
+    cosmos_container = _get_documents_container(
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    scope_field = "public_workspace_id" if public_workspace_id is not None else (
+        "group_id" if group_id is not None else "user_id"
+    )
+    scope_value = public_workspace_id or group_id or owner_user_id
+    query = f"""
+        SELECT *
+        FROM c
+        WHERE c.{scope_field} = @scope_value
+          AND c.source_kind = @source_kind
+          AND (NOT IS_DEFINED(c.is_current_version) OR c.is_current_version = true)
+    """
+    return list(
+        cosmos_container.query_items(
+            query=query,
+            parameters=[
+                {"name": "@scope_value", "value": scope_value},
+                {"name": "@source_kind", "value": "xml_schema"},
+            ],
+            enable_cross_partition_query=True,
+        )
+    )
+
+
+def _read_verified_xsd_blob(document_item, user_id, group_id=None, public_workspace_id=None):
+    """Read one exact XSD source and verify its persisted digest when available."""
+    container_name, blob_path = get_document_blob_storage_info(
+        document_item,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not container_name or not blob_path:
+        raise FileNotFoundError("The exact XSD source file is unavailable.")
+
+    blob_service_client = _get_blob_service_client()
+    blob_client = blob_service_client.get_blob_client(
+        container=container_name,
+        blob=blob_path,
+    )
+    blob_bytes = bytes(blob_client.download_blob().readall())
+    blob_sha256 = hashlib.sha256(blob_bytes).hexdigest()
+    expected_sha256 = str(document_item.get("xsd_sha256") or "").strip().lower()
+    if expected_sha256 and expected_sha256 != blob_sha256:
+        raise RuntimeError("The persisted XSD source digest does not match its document metadata.")
+
+    properties = blob_client.get_blob_properties()
+    blob_etag = str(getattr(properties, "etag", "") or "")
+    return {
+        "bytes": blob_bytes,
+        "sha256": blob_sha256,
+        "byte_size": len(blob_bytes),
+        "blob_container": container_name,
+        "blob_path": blob_path,
+        "blob_etag": blob_etag,
+    }
+
+
+def _xsd_document_has_approved_scope_access(
+    document_item,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Return whether one document is owned by or approved for the active scope."""
+    if public_workspace_id is not None:
+        return str(document_item.get("public_workspace_id") or "") == str(
+            public_workspace_id
+        )
+    if group_id is not None:
+        normalized_group_id = str(group_id)
+        if str(document_item.get("group_id") or "") == normalized_group_id:
+            return True
+        return f"{normalized_group_id},approved" in {
+            str(entry or "").strip()
+            for entry in document_item.get("shared_group_ids", []) or []
+        }
+
+    normalized_user_id = str(user_id)
+    if str(document_item.get("user_id") or "") == normalized_user_id:
+        return True
+    return f"{normalized_user_id},approved" in {
+        str(entry or "").strip()
+        for entry in document_item.get("shared_user_ids", []) or []
+    }
+
+
+def _require_xsd_request_scope_access(
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Recheck that the requester can still enter the selected workspace."""
+    if group_id is not None:
+        from functions_group import get_user_groups
+
+        if not any(
+            str(group.get("id") or "") == str(group_id)
+            for group in get_user_groups(user_id) or []
+            if isinstance(group, dict)
+        ):
+            raise PermissionError(
+                "The selected group workspace is no longer authorized."
+            )
+    elif public_workspace_id is not None:
+        from functions_public_workspaces import (
+            find_public_workspace_by_id,
+            is_user_in_public_workspace,
+        )
+
+        workspace = find_public_workspace_by_id(public_workspace_id)
+        if not workspace or not is_user_in_public_workspace(
+            workspace,
+            user_id,
+        ):
+            raise PermissionError(
+                "The selected public workspace is no longer authorized."
+            )
+
+
+def _get_authorized_xsd_dependency_document(
+    document_item,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Resolve one dependency through the requester's active access scope."""
+    authorized_document = get_document_metadata(
+        document_id=document_item.get("id"),
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not authorized_document:
+        return None
+    if str(authorized_document.get("id") or "") != str(
+        document_item.get("id") or ""
+    ):
+        return None
+    if authorized_document.get("source_kind") != "xml_schema":
+        return None
+    if authorized_document.get("is_current_version") is False:
+        return None
+    if not _xsd_document_has_approved_scope_access(
+        authorized_document,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    ):
+        return None
+    return authorized_document
+
+
+def _build_xsd_graph_source_record(document_item, logical_path, source_bytes):
+    """Build stable, non-secret identity metadata for one compiled graph source."""
+    return {
+        "document_id": str(document_item.get("id") or ""),
+        "logical_path": str(logical_path or ""),
+        "sha256": hashlib.sha256(bytes(source_bytes)).hexdigest(),
+        "version": str(document_item.get("version") or ""),
+        "user_id": str(document_item.get("user_id") or ""),
+        "group_id": str(document_item.get("group_id") or ""),
+        "public_workspace_id": str(
+            document_item.get("public_workspace_id") or ""
+        ),
+        "is_current_version": document_item.get("is_current_version") is not False,
+    }
+
+
+def _xsd_graph_source_identity(source_records):
+    """Return a deterministic identity tuple for a resolved schema graph."""
+    identity = []
+    for record in source_records or []:
+        identity.append((
+            str(record.get("logical_path") or ""),
+            str(record.get("document_id") or ""),
+            str(record.get("sha256") or ""),
+            str(record.get("version") or ""),
+            str(record.get("user_id") or ""),
+            str(record.get("group_id") or ""),
+            str(record.get("public_workspace_id") or ""),
+            bool(record.get("is_current_version")),
+        ))
+    return tuple(sorted(identity))
+
+
+def _compile_xsd_workspace_graph(
+    root_document,
+    root_bytes,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    include_source_manifest=False,
+):
+    """Resolve a root XSD against exact current sources in the same workspace."""
+    root_logical_path = normalize_xsd_logical_path(
+        root_document.get("file_name"),
+        root_document.get("xsd_logical_path"),
+    )
+    owner_group_id = (
+        root_document.get("group_id") or group_id
+        if group_id is not None
+        else None
+    )
+    owner_public_workspace_id = (
+        root_document.get("public_workspace_id") or public_workspace_id
+        if public_workspace_id is not None
+        else None
+    )
+    owner_user_id = (
+        root_document.get("user_id")
+        if owner_group_id is None and owner_public_workspace_id is None
+        else user_id
+    ) or user_id
+    workspace_documents = _query_current_xsd_documents(
+        owner_user_id,
+        group_id=owner_group_id,
+        public_workspace_id=owner_public_workspace_id,
+    )
+    root_is_shared = (
+        (
+            owner_group_id is not None
+            and str(owner_group_id) != str(group_id)
+        )
+        or (
+            owner_public_workspace_id is not None
+            and str(owner_public_workspace_id) != str(public_workspace_id)
+        )
+        or (
+            owner_group_id is None
+            and owner_public_workspace_id is None
+            and str(owner_user_id) != str(user_id)
+        )
+    )
+    documents_by_path = {}
+    for document_item in workspace_documents:
+        logical_path = normalize_xsd_logical_path(
+            document_item.get("file_name"),
+            document_item.get("xsd_logical_path"),
+        )
+        documents_by_path.setdefault(logical_path, []).append(document_item)
+    documents_by_path.setdefault(root_logical_path, [])
+    if not any(
+        str(item.get("id") or "") == str(root_document.get("id") or "")
+        for item in documents_by_path[root_logical_path]
+    ):
+        documents_by_path[root_logical_path].append(root_document)
+
+    sources = {root_logical_path: bytes(root_bytes)}
+    source_records = {
+        root_logical_path: _build_xsd_graph_source_record(
+            root_document,
+            root_logical_path,
+            root_bytes,
+        )
+    }
+    inspections = {
+        root_logical_path: inspect_xsd_bytes(root_bytes, root_logical_path)
+    }
+    pending = [root_logical_path]
+    while pending:
+        logical_path = pending.pop()
+        inspection = inspections[logical_path]
+        for dependency in inspection.get("dependencies") or []:
+            schema_location = dependency.get("schema_location")
+            if not schema_location:
+                continue
+            dependency_path = resolve_xsd_dependency_path(
+                logical_path,
+                schema_location,
+            )
+            if dependency_path in sources:
+                continue
+            matching_documents = documents_by_path.get(dependency_path) or []
+            if len(matching_documents) != 1:
+                if root_is_shared:
+                    message = (
+                        "A declared XSD dependency is unavailable or ambiguous "
+                        "for this request."
+                    )
+                else:
+                    message = (
+                        "A declared XSD dependency is ambiguous in this workspace."
+                        if len(matching_documents) > 1
+                        else "A declared XSD dependency is missing from this workspace."
+                    )
+                raise XsdSchemaError(
+                    ERR_DEPENDENCY_MISSING,
+                    message,
+                    diagnostics=[dependency_path],
+                )
+            dependency_document = _get_authorized_xsd_dependency_document(
+                matching_documents[0],
+                user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            if not dependency_document:
+                raise XsdSchemaError(
+                    ERR_DEPENDENCY_MISSING,
+                    (
+                        "A declared XSD dependency is unavailable or ambiguous "
+                        "for this request."
+                    ),
+                    diagnostics=[dependency_path],
+                )
+            dependency_blob = _read_verified_xsd_blob(
+                dependency_document,
+                dependency_document.get("user_id") or user_id,
+                group_id=owner_group_id,
+                public_workspace_id=owner_public_workspace_id,
+            )
+            sources[dependency_path] = dependency_blob["bytes"]
+            source_records[dependency_path] = _build_xsd_graph_source_record(
+                dependency_document,
+                dependency_path,
+                dependency_blob["bytes"],
+            )
+            inspections[dependency_path] = inspect_xsd_bytes(
+                dependency_blob["bytes"],
+                dependency_path,
+            )
+            pending.append(dependency_path)
+
+    compiled_graph = compile_xsd_graph(root_logical_path, sources)
+    if not include_source_manifest:
+        return compiled_graph
+    return compiled_graph, [
+        source_records[path]
+        for path in sorted(source_records)
+    ]
+
+
+def _get_xsd_schema_status(error):
+    """Map a profile error to a durable, non-success XSD readiness state."""
+    if error.code == ERR_DEPENDENCY_MISSING:
+        return "dependencies_unresolved"
+    if error.code in {
+        ERR_COMPILE_FAILED,
+        ERR_DEPENDENCY_LOCATIONLESS_IMPORT,
+        ERR_DEPENDENCY_MISSING_LOCATION,
+        ERR_DEPENDENCY_NAMESPACE_MISMATCH,
+        ERR_DEPENDENCY_UNUSED_SOURCE,
+    }:
+        return "schema_invalid"
+    return "schema_invalid"
+
+
+def _evaluate_xsd_document_schema(
+    document_item,
+    source_bytes,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Inspect and compile one current XSD document against its workspace graph."""
+    logical_path = normalize_xsd_logical_path(
+        document_item.get("file_name"),
+        document_item.get("xsd_logical_path"),
+    )
+    inspection = inspect_xsd_bytes(source_bytes, logical_path)
+    schema_status = "ready"
+    diagnostics = []
+    try:
+        _compile_xsd_workspace_graph(
+            document_item,
+            source_bytes,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+    except XsdSchemaError as exc:
+        schema_status = _get_xsd_schema_status(exc)
+        diagnostics = [exc.message, *exc.diagnostics]
+    except Exception as exc:
+        schema_status = "validation_blocked"
+        diagnostics = [
+            "Schema validation could not complete because an application dependency was unavailable."
+        ]
+        log_event(
+            "[XSD_INGESTION] Workspace graph validation was blocked.",
+            extra={
+                "document_id": document_item.get("id"),
+                "error_type": type(exc).__name__,
+            },
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+
+    inspection = dict(inspection)
+    inspection["status"] = schema_status
+    inspection["diagnostics"] = diagnostics[:20]
+    return inspection
+
+
+def _store_xsd_document_schema_state(
+    document_item,
+    inspection,
+    persisted_source,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    mark_processing_complete=False,
+):
+    """Persist XSD readiness metadata and replace its one searchable summary chunk."""
+    document_id = document_item.get("id")
+    original_filename = document_item.get("file_name")
+    schema_status = inspection["status"]
+    diagnostics = list(inspection.get("diagnostics") or [])[:20]
+
+    update_fields = {
+        "source_kind": "xml_schema",
+        "document_kind": "xml_schema",
+        "xsd_logical_path": inspection.get("logical_path"),
+        "xsd_schema_status": schema_status,
+        "xsd_profile": XSD_PROFILE_ID,
+        "xsd_validator_id": XSD_VALIDATOR_ID,
+        "xsd_dialect": XSD_DIALECT_ID,
+        "xsd_effective_dialect": XSD_DIALECT_ID,
+        "xsd_target_namespace": inspection.get("target_namespace"),
+        "xsd_sha256": inspection.get("sha256"),
+        "xsd_byte_size": inspection.get("byte_size"),
+        "xsd_blob_etag": persisted_source.get("blob_etag"),
+        "xsd_author_version": inspection.get("schema_author_version"),
+        "xsd_global_elements": (inspection.get("global_elements") or [])[:100],
+        "xsd_global_types": (inspection.get("global_types") or [])[:100],
+        "xsd_dependencies": (inspection.get("dependencies") or [])[:100],
+        "xsd_dependency_count": len(inspection.get("dependencies") or []),
+        "xsd_diagnostics": diagnostics,
+        "xsd_summary_version": 1,
+        "num_file_chunks": 1,
+    }
+    if mark_processing_complete:
+        update_fields.update({
+            "status": "Indexing XML schema summary...",
+            "percentage_complete": 80,
+        })
+    update_document(
+        document_id=document_id,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        **update_fields,
+    )
+    save_chunks(
+        summarize_xsd_inspection(inspection),
+        1,
+        original_filename,
+        user_id,
+        document_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if mark_processing_complete:
+        update_document(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            status="Complete",
+            percentage_complete=100,
+            num_file_chunks=1,
+            xsd_schema_status=schema_status,
+        )
+    return schema_status
+
+
+def _refresh_xsd_document_schema_state(
+    document_item,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Re-evaluate one stored XSD against the workspace's current graph."""
+    persisted_source = _read_verified_xsd_blob(
+        document_item,
+        document_item.get("user_id") or user_id,
+        group_id=(
+            document_item.get("group_id")
+            if group_id is not None
+            else None
+        ),
+        public_workspace_id=(
+            document_item.get("public_workspace_id")
+            if public_workspace_id is not None
+            else None
+        ),
+    )
+    inspection = _evaluate_xsd_document_schema(
+        document_item,
+        persisted_source["bytes"],
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    return _store_xsd_document_schema_state(
+        document_item,
+        inspection,
+        persisted_source,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+
+
+def _revalidate_xsd_workspace_dependents(
+    changed_logical_path,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    exclude_document_id=None,
+):
+    """Recompile current schemas whose dependency graph reaches a changed path."""
+    try:
+        normalized_changed_path = normalize_xsd_logical_path(changed_logical_path)
+        workspace_documents = _query_current_xsd_documents(
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+    except Exception as exc:
+        log_event(
+            "[XSD_INGESTION] Dependent schema discovery failed.",
+            extra={"error_type": type(exc).__name__},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return
+    affected_paths = {normalized_changed_path}
+    processed_document_ids = (
+        {str(exclude_document_id)}
+        if exclude_document_id
+        else set()
+    )
+
+    made_progress = True
+    while made_progress:
+        made_progress = False
+        for document_item in workspace_documents:
+            document_id = str(document_item.get("id") or "")
+            if not document_id or document_id in processed_document_ids:
+                continue
+            try:
+                logical_path = normalize_xsd_logical_path(
+                    document_item.get("file_name"),
+                    document_item.get("xsd_logical_path"),
+                )
+                stored_dependencies = list(
+                    document_item.get("xsd_dependencies") or []
+                )
+                dependency_count = _safe_int(
+                    document_item.get("xsd_dependency_count")
+                )
+                if dependency_count > len(stored_dependencies):
+                    dependency_source = _read_verified_xsd_blob(
+                        document_item,
+                        user_id,
+                        group_id=group_id,
+                        public_workspace_id=public_workspace_id,
+                    )
+                    dependency_inspection = inspect_xsd_bytes(
+                        dependency_source["bytes"],
+                        logical_path,
+                    )
+                    stored_dependencies = list(
+                        dependency_inspection.get("dependencies") or []
+                    )
+                dependency_paths = set()
+                for dependency in stored_dependencies:
+                    schema_location = (
+                        dependency.get("schema_location")
+                        if isinstance(dependency, dict)
+                        else None
+                    )
+                    if not schema_location:
+                        continue
+                    dependency_paths.add(
+                        resolve_xsd_dependency_path(logical_path, schema_location)
+                    )
+            except Exception as exc:
+                processed_document_ids.add(document_id)
+                try:
+                    update_document(
+                        document_id=document_id,
+                        user_id=user_id,
+                        group_id=group_id,
+                        public_workspace_id=public_workspace_id,
+                        xsd_schema_status="validation_blocked",
+                        xsd_diagnostics=[
+                            "XSD dependency discovery could not complete. "
+                            "XML generation remains disabled."
+                        ],
+                    )
+                except Exception as update_exc:
+                    log_event(
+                        "[XSD_INGESTION] Failed to persist blocked dependency state.",
+                        extra={
+                            "document_id": document_id,
+                            "error_type": type(update_exc).__name__,
+                        },
+                        level=logging.ERROR,
+                        exceptionTraceback=True,
+                    )
+                log_event(
+                    "[XSD_INGESTION] Dependent schema edge discovery failed.",
+                    extra={
+                        "document_id": document_id,
+                        "error_type": type(exc).__name__,
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                continue
+            if not dependency_paths.intersection(affected_paths):
+                continue
+
+            processed_document_ids.add(document_id)
+            affected_paths.add(logical_path)
+            made_progress = True
+            try:
+                _refresh_xsd_document_schema_state(
+                    document_item,
+                    user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                )
+            except Exception as exc:
+                log_event(
+                    "[XSD_INGESTION] Dependent schema revalidation failed.",
+                    extra={
+                        "document_id": document_id,
+                        "error_type": type(exc).__name__,
+                    },
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+
+
+def process_xsd(
+    document_id,
+    user_id,
+    temp_file_path,
+    original_filename,
+    update_callback,
+    group_id=None,
+    public_workspace_id=None,
+):
+    """Preserve one exact XSD source and index one bounded metadata summary."""
+    require_xsd_ingestion_capability(
+        original_filename,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    update_callback(status="Inspecting XML schema...")
+
+    with open(temp_file_path, "rb") as schema_file:
+        source_bytes = schema_file.read()
+
+    document_item = get_document_metadata(
+        document_id=document_id,
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not document_item:
+        raise FileNotFoundError("The XSD document metadata could not be loaded.")
+
+    logical_path = normalize_xsd_logical_path(
+        original_filename,
+        document_item.get("xsd_logical_path"),
+    )
+    inspection = inspect_xsd_bytes(source_bytes, logical_path)
+
+    if not document_item.get("source_file_available") or not document_item.get("blob_path"):
+        upload_to_blob(
+            temp_file_path=temp_file_path,
+            user_id=user_id,
+            document_id=document_id,
+            blob_filename=original_filename,
+            update_callback=update_callback,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            mark_enhanced_citations=True,
+        )
+        document_item = get_document_metadata(
+            document_id=document_id,
+            user_id=user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+        )
+
+    persisted_source = _read_verified_xsd_blob(
+        document_item,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if persisted_source["sha256"] != inspection["sha256"]:
+        raise RuntimeError("The persisted XSD source does not match the uploaded file.")
+
+    update_callback(status="Compiling XML schema...")
+    inspection = _evaluate_xsd_document_schema(
+        document_item,
+        persisted_source["bytes"],
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    schema_status = _store_xsd_document_schema_state(
+        document_item,
+        inspection,
+        persisted_source,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        mark_processing_complete=True,
+    )
+    _revalidate_xsd_workspace_dependents(
+        logical_path,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        exclude_document_id=document_id,
+    )
+    log_event(
+        "[XSD_INGESTION] XML schema source preserved and summary indexed.",
+        extra={
+            "document_id": document_id,
+            "schema_status": schema_status,
+            "dependency_count": len(inspection.get("dependencies") or []),
+        },
+    )
+
+
+def load_xsd_generation_contract(schema_sources, user_id):
+    """Load one explicitly authorized ready XSD as an XML output contract."""
+    authorized_sources = [
+        source
+        for source in list(schema_sources or [])
+        if isinstance(source, dict)
+        and source.get("source_kind") == "xml_schema"
+        and source.get("authorization_status") == "authorized"
+    ]
+    if not authorized_sources:
+        return None
+    if len(authorized_sources) != 1:
+        raise ValueError(
+            "Select one root XSD for each XML generation request."
+        )
+
+    source = authorized_sources[0]
+    if source.get("scope") == "chat":
+        raise ValueError(
+            "The selected XSD must finish promotion to a workspace before it can govern XML output."
+        )
+
+    group_id = source.get("group_id")
+    public_workspace_id = source.get("public_workspace_id")
+    _require_xsd_request_scope_access(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    document_item = get_document_metadata(
+        document_id=source.get("document_id"),
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not document_item:
+        raise PermissionError("The selected XSD is no longer available.")
+    if document_item.get("is_current_version") is False:
+        raise ValueError(
+            "The selected XSD revision is archived. Select the current revision."
+        )
+    if not _xsd_document_has_approved_scope_access(
+        document_item,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    ):
+        raise PermissionError("The selected XSD is no longer available.")
+    if str(document_item.get("xsd_schema_status") or "") != "ready":
+        raise ValueError(
+            "The selected XSD is not ready for XML generation. Review its schema status and dependencies."
+        )
+
+    persisted_source = _read_verified_xsd_blob(
+        document_item,
+        document_item.get("user_id") or user_id,
+        group_id=(
+            document_item.get("group_id")
+            if group_id is not None
+            else None
+        ),
+        public_workspace_id=(
+            document_item.get("public_workspace_id")
+            if public_workspace_id is not None
+            else None
+        ),
+    )
+    graph, graph_sources = _compile_xsd_workspace_graph(
+        document_item,
+        persisted_source["bytes"],
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        include_source_manifest=True,
+    )
+    root_inspection = graph.inspections.get(graph.root_logical_path) or {}
+    root_elements = list(root_inspection.get("global_elements") or [])
+    if not root_elements:
+        raise ValueError(
+            "The selected XSD is a type library and does not declare a global XML root element."
+        )
+    return {
+        "document_id": str(document_item.get("id") or ""),
+        "file_name": str(document_item.get("file_name") or "schema.xsd"),
+        "logical_path": graph.root_logical_path,
+        "target_namespace": root_inspection.get("target_namespace"),
+        "root_elements": root_elements,
+        "profile_id": graph.profile_id,
+        "validator_id": graph.validator_id,
+        "guidance": build_xsd_generation_guidance(graph),
+        "compiled_graph": graph,
+        "authorization_group_id": group_id,
+        "authorization_public_workspace_id": public_workspace_id,
+        "graph_sources": graph_sources,
+    }
+
+
+def refresh_xsd_generation_contract(contract, user_id):
+    """Reauthorize and rebuild an unchanged XSD graph immediately before use."""
+    if not isinstance(contract, dict) or not contract.get("document_id"):
+        raise ValueError("A valid XSD generation contract is required.")
+
+    group_id = contract.get("authorization_group_id")
+    public_workspace_id = contract.get(
+        "authorization_public_workspace_id"
+    )
+    _require_xsd_request_scope_access(
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    root_document = get_document_metadata(
+        document_id=contract.get("document_id"),
+        user_id=user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    )
+    if not root_document or not _xsd_document_has_approved_scope_access(
+        root_document,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+    ):
+        raise PermissionError(
+            "The selected XSD is no longer authorized for this request."
+        )
+    if root_document.get("is_current_version") is False:
+        raise ValueError(
+            "The selected XSD changed while XML was being generated."
+        )
+    if str(root_document.get("xsd_schema_status") or "") != "ready":
+        raise ValueError(
+            "The selected XSD is no longer ready for XML generation."
+        )
+
+    persisted_source = _read_verified_xsd_blob(
+        root_document,
+        root_document.get("user_id") or user_id,
+        group_id=(
+            root_document.get("group_id")
+            if group_id is not None
+            else None
+        ),
+        public_workspace_id=(
+            root_document.get("public_workspace_id")
+            if public_workspace_id is not None
+            else None
+        ),
+    )
+    graph, graph_sources = _compile_xsd_workspace_graph(
+        root_document,
+        persisted_source["bytes"],
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        include_source_manifest=True,
+    )
+    if _xsd_graph_source_identity(graph_sources) != _xsd_graph_source_identity(
+        contract.get("graph_sources")
+    ):
+        raise ValueError(
+            "The selected XSD or one of its dependencies changed while XML "
+            "was being generated. Retry with the current schema."
+        )
+
+    refreshed_contract = dict(contract)
+    refreshed_contract.update({
+        "compiled_graph": graph,
+        "guidance": build_xsd_generation_guidance(graph),
+        "graph_sources": graph_sources,
+    })
+    return refreshed_contract
+
+
+def validate_xsd_generated_output(xml_bytes, contract):
+    """Validate final artifact bytes against the pinned in-memory XSD graph."""
+    if not isinstance(contract, dict) or not contract.get("compiled_graph"):
+        raise ValueError("A loaded XSD generation contract is required.")
+    validation = validate_xml_bytes(
+        xml_bytes,
+        contract["compiled_graph"],
+    )
+    if not validation.get("valid"):
+        raise ValueError(
+            "The generated XML did not satisfy the selected XSD."
+        )
+    return validation
+
 
 def process_txt(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes plain text files."""
@@ -8754,7 +10260,8 @@ def queue_personal_workspace_upload_from_temp_file(
             user_id,
             workspace_document_id,
             num_file_chunks=0,
-            status="Queued for processing"
+            status="Queued for processing",
+            source_file_path=workspace_temp_file_path,
         )
         document_created = True
 
@@ -8904,6 +10411,7 @@ def queue_group_workspace_upload_from_temp_file(
             num_file_chunks=0,
             status="Queued for processing",
             group_id=group_id,
+            source_file_path=workspace_temp_file_path,
         )
         document_created = True
 
@@ -9209,7 +10717,18 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             "auto_extract_metadata": False
         }
 
-        if file_ext == '.txt':
+        if file_ext == '.xsd':
+            process_xsd(
+                document_id=document_id,
+                user_id=user_id,
+                temp_file_path=temp_file_path,
+                original_filename=original_filename,
+                update_callback=update_doc_callback,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            total_chunks_saved = 1
+        elif file_ext == '.txt':
             result = process_txt(**{k: v for k, v in args.items() if k != "file_ext"})
             # Handle tuple return (chunks, tokens, model_name)
             if isinstance(result, tuple) and len(result) == 3:
@@ -9316,15 +10835,18 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
 
 
         # --- 2. Final Metadata Extraction and Status Update ---
-        metadata_extraction_result = _run_final_metadata_extraction(
-            document_id,
-            user_id,
-            total_chunks_saved,
-            enable_extract_meta_data,
-            update_doc_callback,
-            group_id=group_id,
-            public_workspace_id=public_workspace_id
-        )
+        if file_ext == '.xsd':
+            metadata_extraction_result = "disabled"
+        else:
+            metadata_extraction_result = _run_final_metadata_extraction(
+                document_id,
+                user_id,
+                total_chunks_saved,
+                enable_extract_meta_data,
+                update_doc_callback,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id
+            )
 
         final_status = _resolve_processing_complete_status(
             total_chunks_saved,

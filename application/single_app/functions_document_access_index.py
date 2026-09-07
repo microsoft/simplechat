@@ -38,7 +38,7 @@ DOCUMENT_ACCESS_BACKFILL_STATE_TYPE = 'document_access_index_backfill_state'
 DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID = 'document_access_index_backfill_state'
 DOCUMENT_ACCESS_SHADOW_STATE_TYPE = 'document_access_index_shadow_validation_state'
 DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID = 'document_access_index_shadow_validation_state'
-DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 2
+DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 3
 
 DOCUMENT_ACCESS_SCOPE_PERSONAL = 'personal'
 DOCUMENT_ACCESS_SCOPE_GROUP = 'group'
@@ -1738,6 +1738,22 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'number_of_pages': document_item.get('number_of_pages'),
         'publication_date': document_item.get('publication_date'),
         'enhanced_citations': _has_persisted_blob_reference(document_item),
+        'document_kind': document_item.get('document_kind'),
+        'xsd_logical_path': document_item.get('xsd_logical_path'),
+        'xsd_schema_status': document_item.get('xsd_schema_status'),
+        'xsd_profile': document_item.get('xsd_profile'),
+        'xsd_validator_id': document_item.get('xsd_validator_id'),
+        'xsd_dialect': document_item.get('xsd_dialect'),
+        'xsd_effective_dialect': document_item.get('xsd_effective_dialect'),
+        'xsd_target_namespace': document_item.get('xsd_target_namespace'),
+        'xsd_sha256': document_item.get('xsd_sha256'),
+        'xsd_byte_size': document_item.get('xsd_byte_size'),
+        'xsd_author_version': document_item.get('xsd_author_version'),
+        'xsd_global_elements': document_item.get('xsd_global_elements'),
+        'xsd_global_types': document_item.get('xsd_global_types'),
+        'xsd_dependencies': document_item.get('xsd_dependencies'),
+        'xsd_dependency_count': document_item.get('xsd_dependency_count'),
+        'xsd_diagnostics': document_item.get('xsd_diagnostics'),
         'document_intelligence_extraction_mode': document_item.get('document_intelligence_extraction_mode'),
         'extraction_engine': document_item.get('extraction_engine'),
         'extraction_engine_reason': document_item.get('extraction_engine_reason'),
@@ -2410,6 +2426,22 @@ def _projection_row_to_document(row, source_scope):
         'number_of_pages': row.get('number_of_pages'),
         'publication_date': row.get('publication_date'),
         'enhanced_citations': row.get('enhanced_citations'),
+        'document_kind': row.get('document_kind'),
+        'xsd_logical_path': row.get('xsd_logical_path'),
+        'xsd_schema_status': row.get('xsd_schema_status'),
+        'xsd_profile': row.get('xsd_profile'),
+        'xsd_validator_id': row.get('xsd_validator_id'),
+        'xsd_dialect': row.get('xsd_dialect'),
+        'xsd_effective_dialect': row.get('xsd_effective_dialect'),
+        'xsd_target_namespace': row.get('xsd_target_namespace'),
+        'xsd_sha256': row.get('xsd_sha256'),
+        'xsd_byte_size': row.get('xsd_byte_size'),
+        'xsd_author_version': row.get('xsd_author_version'),
+        'xsd_global_elements': row.get('xsd_global_elements'),
+        'xsd_global_types': row.get('xsd_global_types'),
+        'xsd_dependencies': row.get('xsd_dependencies'),
+        'xsd_dependency_count': row.get('xsd_dependency_count'),
+        'xsd_diagnostics': row.get('xsd_diagnostics'),
         'document_intelligence_extraction_mode': row.get('document_intelligence_extraction_mode'),
         'extraction_engine': row.get('extraction_engine'),
         'extraction_engine_reason': row.get('extraction_engine_reason'),

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.176
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176
+Version: 0.261.023
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.023
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -11,12 +11,20 @@ UI without requiring live Azure services.
 
 import asyncio
 import ast
+import csv
+import io
+import json
+import re
 import sys
 from pathlib import Path
+from xml.etree import ElementTree
+from xml.sax.saxutils import escape as escape_xml_text
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / 'application' / 'single_app'
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
 EXPORT_MODULE = APP_ROOT / 'functions_tabular_generated_exports.py'
 CHAT_ROUTE = APP_ROOT / 'route_backend_chats.py'
 CHAT_MESSAGES_JS = APP_ROOT / 'static' / 'js' / 'chat' / 'chat-messages.js'
@@ -123,10 +131,81 @@ def test_export_runner_module():
     assert_contains(source_text, 'waiting_for_retry', 'scheduled retry status payload')
     assert_contains(source_text, 'retry_delay_seconds', 'retry delay status payload')
     assert_contains(source_text, 'Background scheduler scan result', 'scheduler scan diagnostics')
+    assert_contains(source_text, '<GeneratedOutput>', 'XML document root')
+    assert_contains(source_text, "elif output_format == 'xml':", 'dedicated XML stream branch')
 
     simplechat_operations_source = read_text(APP_ROOT / 'functions_simplechat_operations.py')
     assert_contains(simplechat_operations_source, 'artifact_idempotency_key', 'idempotent artifact key')
     assert_contains(simplechat_operations_source, 'uuid.uuid5', 'deterministic artifact message identity')
+
+
+def test_background_xml_stream_is_well_formed_xml():
+    """Validate XML background exports do not write JSON under an XML filename."""
+    export_tree = parse_python(EXPORT_MODULE)
+    writer_function = get_function(export_tree, '_write_ordered_output_stream')
+    xml_tag_function = get_function(export_tree, '_sanitize_generated_xml_tag_name')
+    xml_row_function = get_function(export_tree, '_write_generated_xml_row')
+    assert writer_function is not None
+    assert xml_tag_function is not None
+    assert xml_row_function is not None
+
+    output_rows = [{
+        '__source_row_number': 1,
+        'name': 'A & B',
+    }]
+    namespace = {
+        '_safe_int': lambda value: int(value or 0),
+        'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': '__source_row_number',
+        'TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD': '__source_row_identity',
+        '_get_tabular_run_serialized_public_schema': lambda _run: ['name'],
+        'build_safe_csv_headers': lambda fields: fields,
+        'csv': csv,
+        'json': json,
+        're': re,
+        'escape_xml_text': escape_xml_text,
+        '_output_blob_path': lambda *args: 'checkpoint.json',
+        '_validate_tabular_output_checkpoint_metadata': lambda *args: None,
+        '_download_json_blob': lambda *args: output_rows,
+        '_serialize_generated_output_value': lambda value: '' if value is None else str(value),
+        'project_structured_deliverable_row': (
+            lambda row, schema, require_all_fields=False: {
+                field_name: row.get(field_name)
+                for field_name in schema
+            }
+        ),
+    }
+    exec(
+        compile(
+            ast.Module(
+                body=[xml_tag_function, xml_row_function, writer_function],
+                type_ignores=[],
+            ),
+            str(EXPORT_MODULE),
+            'exec',
+        ),
+        namespace,
+    )
+
+    output_stream = io.StringIO()
+    written_row_count = namespace['_write_ordered_output_stream'](
+        {
+            'user_id': 'user-1',
+            'conversation_id': 'conversation-1',
+            'id': 'run-1',
+            'batch_count': 1,
+            'row_count': 1,
+            'output_format': 'xml',
+            'output_schema': ['__source_row_number', 'name'],
+        },
+        output_stream,
+    )
+
+    xml_text = output_stream.getvalue()
+    root = ElementTree.fromstring(xml_text)
+    assert written_row_count == 1
+    assert root.tag == 'GeneratedOutput'
+    assert root.findtext('./Row/name') == 'A & B'
+    assert not xml_text.lstrip().startswith('[')
 
 
 def test_background_runner_bounded_batch_concurrency():
@@ -400,6 +479,7 @@ def main():
     """Run all checks and report a compact summary."""
     tests = [
         test_export_runner_module,
+        test_background_xml_stream_is_well_formed_xml,
         test_background_runner_bounded_batch_concurrency,
         test_background_batch_timeout_prevents_indefinite_model_wait,
         test_chat_route_wires_background_exports,

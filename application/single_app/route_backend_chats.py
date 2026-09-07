@@ -53,6 +53,7 @@ from functions_mixed_source_orchestration import (
     build_failed_narrative_evidence_envelopes,
     build_mixed_source_evidence_handoff,
     build_narrative_evidence_envelopes,
+    build_schema_summary_evidence_envelopes,
     build_tabular_file_contexts_from_manifest,
     compare_reauthorized_source_manifests,
     emit_mixed_source_telemetry,
@@ -148,6 +149,12 @@ from functions_agents import get_agent_id_by_name
 from functions_group import find_group_by_id, get_group_model_endpoints, get_user_role_in_group
 from functions_chat import *
 from functions_content import generate_embedding, generate_embeddings_batch
+from functions_documents import (
+    load_xsd_generation_contract,
+    refresh_xsd_generation_contract,
+    validate_xsd_generated_output,
+)
+from functions_xsd_schema import XsdSchemaError
 from functions_assistant_table_exports import (
     TABLE_EXPORT_REQUEST_MARKERS,
     assistant_table_export_requested,
@@ -166,6 +173,7 @@ from functions_generated_file_exports import (
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
     has_generated_file_output,
+    normalize_complete_xml_artifact_payload,
     normalize_json_artifact_payload,
     normalize_generated_output_format,
     normalize_xml_artifact_payload,
@@ -705,7 +713,49 @@ def _resolve_chat_mixed_source_partition(
             'narrative_sources',
         ),
         'tabular_sources': list(partitions.get('tabular_sources') or []),
+        'schema_sources': list(partitions.get('schema_sources') or []),
     }
+
+
+def _load_explicit_xsd_contract_without_mixed_source_search(
+    settings,
+    requested_format,
+    document_ids,
+    *,
+    user_id,
+    conversation_id,
+    active_group_ids=None,
+    active_public_workspace_ids=None,
+    doc_scope=None,
+    cancel_requested=None,
+):
+    """Load an explicitly selected XSD contract independently of search rollout."""
+    if (
+        is_mixed_source_chat_search_enabled(settings)
+        or requested_format != 'xml'
+        or not document_ids
+    ):
+        return None
+
+    manifest_kwargs = {
+        'user_id': user_id,
+        'selection_mode': 'selected',
+        'conversation_id': conversation_id,
+        'active_group_ids': active_group_ids,
+        'active_public_workspace_ids': active_public_workspace_ids,
+        'doc_scope': doc_scope,
+    }
+    if cancel_requested is not None:
+        manifest_kwargs['cancel_requested'] = cancel_requested
+
+    manifest = resolve_authorized_source_manifest(
+        document_ids,
+        **manifest_kwargs,
+    )
+    schema_sources = list(
+        partition_source_manifest(manifest).get('schema_sources') or []
+    )
+    return load_xsd_generation_contract(schema_sources, user_id)
 
 
 def _build_mixed_source_continuity_refs(manifest, evidence_envelopes, selection_origin):
@@ -1054,14 +1104,20 @@ def _resolve_chat_mixed_source_relevance_context(
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
     )
-    narrative_document_id_set = set(
+    searchable_document_id_set = set(
         resolved_context.get('narrative_document_ids') or []
+    )
+    searchable_document_id_set.update(
+        _get_manifest_partition_document_ids(
+            resolved_context.get('partitions') or {},
+            'schema_sources',
+        )
     )
     resolved_context['search_results'] = [
         result
         for result in list(search_results or [])
         if str((result or {}).get('document_id') or '').strip()
-        in narrative_document_id_set
+        in searchable_document_id_set
     ]
     resolved_context['tabular_candidate_count'] = int(
         candidate_result.get('candidate_count') or 0
@@ -2654,6 +2710,34 @@ def _build_streaming_assistant_file_status(output_format):
     return f'Generating the {normalized_output_format} file. It will appear here when ready.'
 
 
+class XsdGeneratedOutputValidationError(ValueError):
+    """Raised when schema-bound XML cannot be safely published."""
+
+
+def _find_existing_validated_xsd_output(existing_outputs, contract):
+    """Return an already-published artifact matching this in-process contract."""
+    if not isinstance(contract, dict):
+        return None
+    expected_document_id = str(contract.get('document_id') or '')
+    expected_profile = str(contract.get('profile_id') or '')
+    expected_validator = str(contract.get('validator_id') or '')
+    for output in existing_outputs or []:
+        if not isinstance(output, dict):
+            continue
+        if str(output.get('output_format') or '').lower() != 'xml':
+            continue
+        if str(output.get('xsd_document_id') or '') != expected_document_id:
+            continue
+        if str(output.get('xsd_profile') or '') != expected_profile:
+            continue
+        if str(output.get('xsd_validator_id') or '') != expected_validator:
+            continue
+        if not str(output.get('xsd_validation_sha256') or '').strip():
+            continue
+        return output
+    return None
+
+
 def _build_structured_artifact_rows_payload(user_question, output_format, conversation_id, function_results):
     """Fall back to authorized action rows when a JSON/XML reply carried no payload."""
     return build_structured_artifact_rows_payload(
@@ -2674,12 +2758,24 @@ def maybe_create_assistant_file_generated_output(
     conversation_id,
     existing_outputs=None,
     function_results=None,
+    xsd_generation_contract=None,
+    user_id=None,
 ):
     """Save assistant-generated JSON/XML content as a downloadable chat artifact."""
     output_format = get_tabular_generated_output_format(user_question)
     if output_format not in {'json', 'xml'}:
         return None
+    existing_xsd_output = _find_existing_validated_xsd_output(
+        existing_outputs,
+        xsd_generation_contract,
+    )
+    if existing_xsd_output:
+        return existing_xsd_output
     if _has_generated_file_output(existing_outputs, output_format):
+        if xsd_generation_contract and output_format == 'xml':
+            raise XsdGeneratedOutputValidationError(
+                "An unvalidated XML artifact was produced before XSD validation."
+            )
         return None
     if _assistant_content_disclaims_complete_file(assistant_content):
         return None
@@ -2707,8 +2803,16 @@ def maybe_create_assistant_file_generated_output(
             elif isinstance(json_payload, dict):
                 preview_items = [json_payload]
     else:
-        xml_payload = normalize_xml_artifact_payload(assistant_content)
+        xml_payload = (
+            normalize_complete_xml_artifact_payload(assistant_content)
+            if xsd_generation_contract
+            else normalize_xml_artifact_payload(assistant_content)
+        )
         if not xml_payload:
+            if xsd_generation_contract:
+                raise XsdGeneratedOutputValidationError(
+                    "The model did not return a complete XML document for the selected XSD."
+                )
             row_payload = _build_structured_artifact_rows_payload(
                 user_question,
                 output_format,
@@ -2719,7 +2823,32 @@ def maybe_create_assistant_file_generated_output(
                 return None
             file_content = row_payload['file_content']
         else:
-            file_content = xml_payload
+            file_content = (
+                serialize_generated_xml(
+                    xml_payload,
+                    require_xml_document=True,
+                )
+                if xsd_generation_contract
+                else xml_payload
+            )
+        validation = None
+        if xsd_generation_contract:
+            try:
+                normalized_user_id = str(user_id or '').strip()
+                if not normalized_user_id:
+                    raise ValueError(
+                        "Schema-bound XML publication requires an authorized user."
+                    )
+                xsd_generation_contract = refresh_xsd_generation_contract(
+                    xsd_generation_contract,
+                    normalized_user_id,
+                )
+                validation = validate_xsd_generated_output(
+                    file_content.encode("utf-8"),
+                    xsd_generation_contract,
+                )
+            except (ValueError, OSError, RuntimeError, XsdSchemaError) as exc:
+                raise XsdGeneratedOutputValidationError(str(exc)) from exc
         preview_lines = _build_assistant_file_preview_lines(file_content)
 
     generated_file_name = _build_assistant_file_export_name(output_format)
@@ -2746,10 +2875,18 @@ def maybe_create_assistant_file_generated_output(
             },
             debug_only=True,
         )
+        if xsd_generation_contract:
+            raise XsdGeneratedOutputValidationError(
+                "The schema-valid XML artifact could not be published."
+            ) from exc
         return None
 
     artifact_message_id = upload_result.get('message', {}).get('id')
     if not artifact_message_id:
+        if xsd_generation_contract:
+            raise XsdGeneratedOutputValidationError(
+                "The schema-valid XML artifact could not be published."
+            )
         return None
 
     uploaded_file_name = upload_result.get('message', {}).get('file_name') or generated_file_name
@@ -2779,6 +2916,15 @@ def maybe_create_assistant_file_generated_output(
         output_metadata['row_count'] = len(json_payload) if isinstance(json_payload, list) else 1
     if preview_lines:
         output_metadata['preview_lines'] = preview_lines
+    if xsd_generation_contract:
+        output_metadata.update({
+            'xsd_document_id': xsd_generation_contract.get('document_id'),
+            'xsd_logical_path': xsd_generation_contract.get('logical_path'),
+            'xsd_target_namespace': xsd_generation_contract.get('target_namespace'),
+            'xsd_profile': xsd_generation_contract.get('profile_id'),
+            'xsd_validator_id': xsd_generation_contract.get('validator_id'),
+            'xsd_validation_sha256': validation.get('sha256') if validation else None,
+        })
     return output_metadata
 
 
@@ -12988,6 +13134,7 @@ def _execute_mixed_source_tabular_evidence(
     model_context=None,
     cancel_requested=None,
     request_correlation_id=None,
+    suppress_generated_output=False,
 ):
     """Run the existing tabular engine once per manifest source with terminal coverage."""
     source_contexts = build_tabular_file_contexts_from_manifest(tabular_sources)
@@ -13076,18 +13223,20 @@ def _execute_mixed_source_tabular_evidence(
         if not file_context:
             raise ValueError('Authorized tabular source context is unavailable')
 
-        direct_generated_output = maybe_queue_search_tabular_generated_output(
-            user_question=user_question,
-            file_contexts=[file_context],
-            user_id=user_id,
-            conversation_id=conversation_id,
-            gpt_model=gpt_model,
-            settings=settings,
-            thought_callback=publish_post_processing_thought,
-            model_context=model_context,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-        )
+        direct_generated_output = None
+        if not suppress_generated_output:
+            direct_generated_output = maybe_queue_search_tabular_generated_output(
+                user_question=user_question,
+                file_contexts=[file_context],
+                user_id=user_id,
+                conversation_id=conversation_id,
+                gpt_model=gpt_model,
+                settings=settings,
+                thought_callback=publish_post_processing_thought,
+                model_context=model_context,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
         if direct_generated_output:
             generated_outputs.append(direct_generated_output)
             system_messages.append({
@@ -13194,19 +13343,21 @@ def _execute_mixed_source_tabular_evidence(
                     thought_detail,
                 )
 
-        generated_output = asyncio.run(maybe_create_tabular_generated_output(
-            user_question=user_question,
-            invocations=source_invocations,
-            gpt_model=gpt_model,
-            settings=settings,
-            conversation_id=conversation_id,
-            thought_callback=publish_post_processing_thought,
-            user_id=user_id,
-            model_context=model_context,
-            cancel_requested=cancel_requested,
-            request_correlation_id=request_correlation_id,
-            token_usage_callback=record_token_usage,
-        ))
+        generated_output = None
+        if not suppress_generated_output:
+            generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                user_question=user_question,
+                invocations=source_invocations,
+                gpt_model=gpt_model,
+                settings=settings,
+                conversation_id=conversation_id,
+                thought_callback=publish_post_processing_thought,
+                user_id=user_id,
+                model_context=model_context,
+                cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+                token_usage_callback=record_token_usage,
+            ))
         if generated_output:
             generated_outputs.append(generated_output)
 
@@ -13264,6 +13415,37 @@ def _execute_mixed_source_tabular_evidence(
         'executed': execute_tabular,
         'token_usage': token_usage if token_usage['request_count'] else None,
     }
+
+
+def _exclude_xsd_contract_sources_from_evidence(manifest, xsd_generation_contract):
+    """Keep an authoritative schema out of the ordinary source-evidence ledger."""
+    if not xsd_generation_contract:
+        return list(manifest or [])
+    return [
+        source
+        for source in list(manifest or [])
+        if not (
+            isinstance(source, dict)
+            and source.get('source_kind') == 'xml_schema'
+        )
+    ]
+
+
+def _exclude_xsd_contract_document_ids_from_search(
+    document_ids,
+    xsd_generation_contract,
+):
+    """Keep the authoritative root XSD out of legacy chunk search."""
+    contract_document_id = str(
+        (xsd_generation_contract or {}).get('document_id') or ''
+    ).strip()
+    if not contract_document_id:
+        return list(document_ids or [])
+    return [
+        document_id
+        for document_id in list(document_ids or [])
+        if str(document_id) != contract_document_id
+    ]
 
 
 def is_tabular_filename(filename):
@@ -15412,11 +15594,62 @@ def register_route_backend_chats(bp):
                 elif thought_tracker.enabled:
                     thought_tracker.add_thought('search', assigned_context_thought)
 
+        document_action_xsd_contract = None
+        if (
+            get_tabular_generated_output_format(user_message) == 'xml'
+            and selected_document_ids
+        ):
+            try:
+                action_manifest = resolve_authorized_source_manifest(
+                    selected_document_ids,
+                    user_id=user_id,
+                    selection_mode='selected',
+                    conversation_id=conversation_id,
+                    active_group_ids=active_group_ids,
+                    active_public_workspace_ids=active_public_workspace_ids,
+                    doc_scope=document_scope,
+                    request_correlation_id=request_correlation_id,
+                )
+                action_partitions = partition_source_manifest(action_manifest)
+                action_schema_sources = list(
+                    action_partitions.get('schema_sources') or []
+                )
+                if action_schema_sources:
+                    document_action_xsd_contract = load_xsd_generation_contract(
+                        action_schema_sources,
+                        user_id,
+                    )
+            except (PermissionError, ValueError, XsdSchemaError) as exc:
+                log_event(
+                    '[XSD_GENERATION] Document action schema contract could not be loaded.',
+                    extra={
+                        'conversation_id': conversation_id,
+                        'error_type': type(exc).__name__,
+                    },
+                    level=logging.WARNING,
+                    exceptionTraceback=True,
+                )
+                return {
+                    'error': (
+                        'The selected XSD cannot be used for XML generation. '
+                        'Review its readiness, roots, and dependencies, then try again.'
+                    )
+                }, 400
+
         workflow_task_prompt = _build_document_action_prompt_with_assigned_knowledge_context(
             user_message,
             assigned_knowledge_action_context.get('context_block'),
             normalized_action.get('type'),
         )
+        if document_action_xsd_contract:
+            workflow_task_prompt = (
+                f'{workflow_task_prompt}\n\n'
+                f'{build_generated_file_output_guidance(
+                    user_message,
+                    requested_format="xml",
+                    xml_schema_guidance=document_action_xsd_contract["guidance"],
+                )}'
+            )
         document_action_agent_fields = _get_conversation_context_agent_fields(request_agent_info)
         document_action_context_snapshot = build_conversation_context_snapshot(
             user_metadata,
@@ -15454,6 +15687,9 @@ def register_route_backend_chats(bp):
                 document_action_context_json
             ),
             'conversation_context_snapshot': document_action_context_snapshot,
+            'suppress_generic_generated_output': bool(document_action_xsd_contract),
+            '_xsd_generation_contract': document_action_xsd_contract,
+            '_xsd_generation_guidance_applied': bool(document_action_xsd_contract),
             'document_action': normalized_action,
             'analyze': {
                 'enabled': normalized_action.get('type') == DOCUMENT_ACTION_TYPE_ANALYZE,
@@ -15536,6 +15772,12 @@ def register_route_backend_chats(bp):
                 settings=settings,
             )
         except MixedSourceCancellationError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                list(execution_result.get('generated_analysis_artifacts') or [])
+                + list(execution_result.get('generated_tabular_outputs') or []),
+            )
             if thought_tracker.enabled:
                 thought_tracker.add_thought(
                     'cancellation',
@@ -15549,6 +15791,12 @@ def register_route_backend_chats(bp):
                 'request_correlation_id': request_correlation_id,
             }, 409
         except PermissionError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                list(execution_result.get('generated_analysis_artifacts') or [])
+                + list(execution_result.get('generated_tabular_outputs') or []),
+            )
             debug_print(f'[CHAT_DOCUMENT_ACTION] Finalization authorization failed: {exc}')
             return {
                 'error': 'One or more selected sources are no longer available.',
@@ -15556,6 +15804,12 @@ def register_route_backend_chats(bp):
                 'user_message_id': user_message_id,
             }, 403
         except RuntimeError as exc:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                list(execution_result.get('generated_analysis_artifacts') or [])
+                + list(execution_result.get('generated_tabular_outputs') or []),
+            )
             debug_print(f'[CHAT_DOCUMENT_ACTION] Finalization state changed: {exc}')
             return {
                 'error': 'Document action finalization could not complete. Please try again.',
@@ -15607,15 +15861,17 @@ def register_route_backend_chats(bp):
                 'artifact_publication',
                 request_correlation_id=request_correlation_id,
             )
-            generated_file_output = maybe_create_generated_file_output(
-                user_question=user_message,
-                assistant_content=document_action_reply_content,
-                conversation_id=conversation_id,
-                function_results=execution_result.get('agent_citations') or [],
-                existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
-                cancel_requested=cancel_requested,
-                request_correlation_id=request_correlation_id,
-            )
+            generated_file_output = None
+            if not document_action_xsd_contract:
+                generated_file_output = maybe_create_generated_file_output(
+                    user_question=user_message,
+                    assistant_content=document_action_reply_content,
+                    conversation_id=conversation_id,
+                    function_results=execution_result.get('agent_citations') or [],
+                    existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                    cancel_requested=cancel_requested,
+                    request_correlation_id=request_correlation_id,
+                )
             if generated_file_output:
                 document_generated_analysis_artifacts.append(generated_file_output)
                 if generated_file_output.get('output_format') == 'csv':
@@ -15626,9 +15882,22 @@ def register_route_backend_chats(bp):
                 conversation_id=conversation_id,
                 existing_outputs=document_generated_analysis_artifacts + document_generated_tabular_outputs,
                 function_results=execution_result.get('agent_citations') or [],
+                xsd_generation_contract=document_action_xsd_contract,
+                user_id=user_id,
             )
             if assistant_file_generated_output:
-                document_generated_analysis_artifacts.append(assistant_file_generated_output)
+                artifact_message_id = assistant_file_generated_output.get(
+                    'artifact_message_id'
+                )
+                if not any(
+                    artifact_message_id
+                    and artifact_message_id == artifact.get('artifact_message_id')
+                    for artifact in document_generated_analysis_artifacts
+                    if isinstance(artifact, dict)
+                ):
+                    document_generated_analysis_artifacts.append(
+                        assistant_file_generated_output
+                    )
                 document_action_reply_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
             _reauthorize_document_action_finalization(
                 normalized_action,
@@ -15638,6 +15907,26 @@ def register_route_backend_chats(bp):
                 cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
                 settings=settings,
+            )
+        except XsdGeneratedOutputValidationError:
+            _rollback_mixed_source_chat_publication(
+                user_id,
+                conversation_id,
+                document_generated_analysis_artifacts + document_generated_tabular_outputs,
+                compact_citations=prepared_agent_citations,
+            )
+            document_generated_analysis_artifacts = []
+            document_generated_tabular_outputs = []
+            prepared_agent_citations = []
+            document_action_reply_content = (
+                'I could not create a downloadable XML file because the generated document '
+                'could not be validated and published against the selected XSD. '
+                'No XML artifact was published.'
+            )
+            log_event(
+                '[XSD_GENERATION] Document action XML failed final schema validation.',
+                extra={'conversation_id': conversation_id},
+                level=logging.WARNING,
             )
         except MixedSourceCancellationError as exc:
             _rollback_mixed_source_chat_publication(
@@ -16341,6 +16630,7 @@ def register_route_backend_chats(bp):
             deep_research_web_search_runs = []
             generated_tabular_outputs_list = []
             generated_analysis_artifacts_list = []
+            xsd_generation_contract = None
             system_messages_for_augmentation = [] # Collect system messages from search
             generated_file_output_guidance = build_generated_file_output_guidance(
                 user_message,
@@ -16554,6 +16844,45 @@ def register_route_backend_chats(bp):
                     or assigned_knowledge_user_context_active
                 )
             )
+            if request_has_explicit_document_selection:
+                try:
+                    xsd_generation_contract = (
+                        _load_explicit_xsd_contract_without_mixed_source_search(
+                            settings,
+                            get_tabular_generated_output_format(user_message),
+                            effective_selected_document_ids,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            active_group_ids=effective_active_group_ids,
+                            active_public_workspace_ids=effective_active_public_workspace_ids,
+                            doc_scope=effective_document_scope,
+                        )
+                    )
+                    if xsd_generation_contract:
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': build_generated_file_output_guidance(
+                                user_message,
+                                requested_format='xml',
+                                xml_schema_guidance=xsd_generation_contract['guidance'],
+                            ),
+                        })
+                except (PermissionError, ValueError, XsdSchemaError) as exc:
+                    log_event(
+                        '[XSD_GENERATION] Selected schema contract could not be loaded.',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'error_type': type(exc).__name__,
+                        },
+                        level=logging.WARNING,
+                        exceptionTraceback=True,
+                    )
+                    return jsonify({
+                        'error': (
+                            'The selected XSD cannot be used for XML generation. '
+                            'Review its readiness, roots, and dependencies, then try again.'
+                        )
+                    }), 400
 
             explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
                 web_search_enabled=web_search_enabled,
@@ -16885,6 +17214,7 @@ def register_route_backend_chats(bp):
             mixed_source_partitions = {}
             mixed_source_narrative_document_ids = []
             mixed_source_tabular_sources = []
+            mixed_source_schema_sources = []
             mixed_source_evidence_envelopes = []
             mixed_source_native_token_usage = None
             mixed_source_request_correlation_id = normalize_mixed_source_correlation_id()
@@ -16913,11 +17243,15 @@ def register_route_backend_chats(bp):
                 mixed_source_tabular_sources = list(
                     mixed_source_partitions.get('tabular_sources') or []
                 )
+                mixed_source_schema_sources = list(
+                    mixed_source_partitions.get('schema_sources') or []
+                )
                 authorized_selected_document_ids = [
                     str(source.get('document_id') or '').strip()
                     for source in (
                         list(mixed_source_partitions.get('narrative_sources') or [])
                         + mixed_source_tabular_sources
+                        + mixed_source_schema_sources
                     )
                     if str(source.get('document_id') or '').strip()
                 ]
@@ -16935,12 +17269,46 @@ def register_route_backend_chats(bp):
                         'authorized_source_count': len(authorized_selected_document_ids),
                         'narrative_source_count': len(mixed_source_narrative_document_ids),
                         'tabular_source_count': len(mixed_source_tabular_sources),
+                        'schema_source_count': len(mixed_source_schema_sources),
                         'omitted_source_count': len(
                             mixed_source_partitions.get('unresolved_sources') or []
                         ),
                     },
                     level=logging.INFO,
                 )
+                if (
+                    get_tabular_generated_output_format(user_message) == 'xml'
+                    and mixed_source_schema_sources
+                ):
+                    try:
+                        xsd_generation_contract = load_xsd_generation_contract(
+                            mixed_source_schema_sources,
+                            user_id,
+                        )
+                    except (PermissionError, ValueError, XsdSchemaError) as exc:
+                        log_event(
+                            '[XSD_GENERATION] Selected schema contract could not be loaded.',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'error_type': type(exc).__name__,
+                            },
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+                        return jsonify({
+                            'error': (
+                                'The selected XSD cannot be used for XML generation. '
+                                'Review its readiness, roots, and dependencies, then try again.'
+                            )
+                        }), 400
+                    system_messages_for_augmentation.append({
+                        'role': 'system',
+                        'content': build_generated_file_output_guidance(
+                            user_message,
+                            requested_format='xml',
+                            xml_schema_guidance=xsd_generation_contract['guidance'],
+                        ),
+                    })
             else:
                 _maybe_resolve_chat_source_manifest(
                     settings,
@@ -17573,6 +17941,9 @@ def register_route_backend_chats(bp):
                 mixed_source_tabular_sources = list(
                     history_context.get('tabular_sources') or []
                 )
+                mixed_source_schema_sources = list(
+                    history_context.get('schema_sources') or []
+                )
                 if is_mixed_source_conversation_continuity_enabled(settings):
                     continuity_decision = _build_reauthorized_continuity_decision(
                         prior_grounded_document_refs,
@@ -17584,6 +17955,10 @@ def register_route_backend_chats(bp):
                     + _get_manifest_partition_document_ids(
                         mixed_source_partitions,
                         'tabular_sources',
+                    )
+                    + _get_manifest_partition_document_ids(
+                        mixed_source_partitions,
+                        'schema_sources',
                     )
                 )
                 effective_selected_document_id = (
@@ -17606,13 +17981,34 @@ def register_route_backend_chats(bp):
                     or history_grounded_search_used
                 )
             )
+            legacy_search_document_ids = (
+                _exclude_xsd_contract_document_ids_from_search(
+                    effective_selected_document_ids,
+                    xsd_generation_contract,
+                )
+            )
             combined_documents = []
             mixed_source_narrative_search_active = bool(
                 mixed_source_document_context_active
                 and (
-                    not is_mixed_source_chat_search_enabled(settings)
-                    or not mixed_source_manifest
-                    or mixed_source_narrative_document_ids
+                    (
+                        not is_mixed_source_chat_search_enabled(settings)
+                        and (
+                            not xsd_generation_contract
+                            or legacy_search_document_ids
+                        )
+                    )
+                    or (
+                        is_mixed_source_chat_search_enabled(settings)
+                        and (
+                            not mixed_source_manifest
+                            or mixed_source_narrative_document_ids
+                            or (
+                                mixed_source_schema_sources
+                                and not xsd_generation_contract
+                            )
+                        )
+                    )
                 )
             )
             if mixed_source_narrative_search_active:
@@ -17731,14 +18127,27 @@ def register_route_backend_chats(bp):
                         search_args["active_public_workspace_id"] = effective_active_public_workspace_id
 
                     search_document_ids = (
-                        mixed_source_narrative_document_ids
+                        (
+                            mixed_source_narrative_document_ids
+                            + (
+                                _get_manifest_partition_document_ids(
+                                    mixed_source_partitions,
+                                    'schema_sources',
+                                )
+                                if not xsd_generation_contract
+                                else []
+                            )
+                        )
                         if is_mixed_source_chat_search_enabled(settings)
                         and mixed_source_manifest
-                        else effective_selected_document_ids
+                        else legacy_search_document_ids
                     )
                     if search_document_ids:
                         search_args["document_ids"] = search_document_ids
-                    elif effective_selected_document_id:
+                    elif (
+                        effective_selected_document_id
+                        and not xsd_generation_contract
+                    ):
                         search_args["document_id"] = effective_selected_document_id
                     if auto_linked_chat_upload_document_ids:
                         search_args["enable_file_sharing"] = False
@@ -17803,6 +18212,9 @@ def register_route_backend_chats(bp):
                         )
                         mixed_source_tabular_sources = list(
                             relevance_context.get('tabular_sources') or []
+                        )
+                        mixed_source_schema_sources = list(
+                            relevance_context.get('schema_sources') or []
                         )
                         search_results = list(
                             relevance_context.get('search_results') or []
@@ -18123,6 +18535,10 @@ def register_route_backend_chats(bp):
             mixed_source_has_authorized_evidence_sources = bool(
                 mixed_source_narrative_document_ids
                 or mixed_source_tabular_sources
+                or (
+                    mixed_source_schema_sources
+                    and not xsd_generation_contract
+                )
             )
             if mixed_source_document_context_active and (
                 search_results or mixed_source_has_authorized_evidence_sources
@@ -18457,6 +18873,14 @@ def register_route_backend_chats(bp):
                         effective_mixed_source_selection_mode,
                     )
                 )
+                if mixed_source_schema_sources and not xsd_generation_contract:
+                    mixed_source_evidence_envelopes.extend(
+                        build_schema_summary_evidence_envelopes(
+                            mixed_source_schema_sources,
+                            search_results,
+                            effective_mixed_source_selection_mode,
+                        )
+                    )
                 mixed_source_tabular_result = _execute_mixed_source_tabular_evidence(
                     tabular_sources=mixed_source_tabular_sources,
                     selection_mode=effective_mixed_source_selection_mode,
@@ -18469,6 +18893,7 @@ def register_route_backend_chats(bp):
                     thought_tracker=thought_tracker,
                     model_context=tabular_model_context,
                     request_correlation_id=mixed_source_request_correlation_id,
+                    suppress_generated_output=bool(xsd_generation_contract),
                 )
                 mixed_source_evidence_envelopes.extend(
                     mixed_source_tabular_result.get('evidence_envelopes') or []
@@ -18484,7 +18909,10 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_result.get('generated_outputs') or []
                 )
                 mixed_source_handoff = build_mixed_source_evidence_handoff(
-                    mixed_source_manifest,
+                    _exclude_xsd_contract_sources_from_evidence(
+                        mixed_source_manifest,
+                        xsd_generation_contract,
+                    ),
                     mixed_source_evidence_envelopes,
                     effective_mixed_source_selection_mode,
                     mode='chat',
@@ -18587,16 +19015,18 @@ def register_route_backend_chats(bp):
                 streamed_tabular_tool_thoughts = []
                 tabular_invocations = []
                 tabular_related_document_summary = ''
-                tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                    user_question=user_message,
-                    file_contexts=workspace_tabular_file_contexts,
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    gpt_model=gpt_model,
-                    settings=settings,
-                    thought_callback=record_tabular_post_processing_thought,
-                    model_context=tabular_model_context,
-                )
+                tabular_generated_output = None
+                if not xsd_generation_contract:
+                    tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                        user_question=user_message,
+                        file_contexts=workspace_tabular_file_contexts,
+                        user_id=user_id,
+                        conversation_id=conversation_id,
+                        gpt_model=gpt_model,
+                        settings=settings,
+                        thought_callback=record_tabular_post_processing_thought,
+                        model_context=tabular_model_context,
+                    )
                 if not tabular_generated_output:
                     tabular_analysis, streamed_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                         user_question=user_message,
@@ -18638,16 +19068,17 @@ def register_route_backend_chats(bp):
                     for thought_content, thought_detail in tabular_status_thought_payloads:
                         thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
-                    tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                        user_question=user_message,
-                        invocations=tabular_invocations,
-                        gpt_model=gpt_model,
-                        settings=settings,
-                        conversation_id=conversation_id,
-                        thought_callback=record_tabular_post_processing_thought,
-                        user_id=user_id,
-                        model_context=tabular_model_context,
-                    ))
+                    if not xsd_generation_contract:
+                        tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                            user_question=user_message,
+                            invocations=tabular_invocations,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            conversation_id=conversation_id,
+                            thought_callback=record_tabular_post_processing_thought,
+                            user_id=user_id,
+                            model_context=tabular_model_context,
+                        ))
                 if tabular_generated_output:
                     generated_tabular_outputs_list.append(tabular_generated_output)
                     generated_analysis_artifacts_list.append(tabular_generated_output)
@@ -18954,16 +19385,18 @@ def register_route_backend_chats(bp):
                         build_tabular_file_context(file_name, source_hint='chat')
                         for file_name in chat_tabular_files
                     ]
-                    chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                        user_question=user_message,
-                        file_contexts=chat_tabular_file_contexts,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        gpt_model=gpt_model,
-                        settings=settings,
-                        thought_callback=record_tabular_post_processing_thought,
-                        model_context=tabular_model_context,
-                    )
+                    chat_tabular_generated_output = None
+                    if not xsd_generation_contract:
+                        chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                            user_question=user_message,
+                            file_contexts=chat_tabular_file_contexts,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            thought_callback=record_tabular_post_processing_thought,
+                            model_context=tabular_model_context,
+                        )
                     if not chat_tabular_generated_output:
                         chat_tabular_analysis, streamed_chat_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                             user_question=user_message,
@@ -19002,16 +19435,17 @@ def register_route_backend_chats(bp):
                         for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                             thought_tracker.add_thought('tabular_analysis', thought_content, thought_detail)
 
-                        chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                            user_question=user_message,
-                            invocations=chat_tabular_invocations,
-                            gpt_model=gpt_model,
-                            settings=settings,
-                            conversation_id=conversation_id,
-                            thought_callback=record_tabular_post_processing_thought,
-                            user_id=user_id,
-                            model_context=tabular_model_context,
-                        ))
+                        if not xsd_generation_contract:
+                            chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                                user_question=user_message,
+                                invocations=chat_tabular_invocations,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                conversation_id=conversation_id,
+                                thought_callback=record_tabular_post_processing_thought,
+                                user_id=user_id,
+                                model_context=tabular_model_context,
+                            ))
                     if chat_tabular_generated_output:
                         generated_tabular_outputs_list.append(chat_tabular_generated_output)
                         generated_analysis_artifacts_list.append(chat_tabular_generated_output)
@@ -20090,24 +20524,41 @@ def register_route_backend_chats(bp):
                 created_timestamp=assistant_timestamp,
                 user_info=user_info_for_assistant,
             )
-            generated_file_output = maybe_create_generated_file_output(
-                user_question=user_message,
-                assistant_content=ai_message,
-                conversation_id=conversation_id,
-                function_results=agent_citations_list,
-                existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-            )
+            generated_file_output = None
+            if not xsd_generation_contract:
+                generated_file_output = maybe_create_generated_file_output(
+                    user_question=user_message,
+                    assistant_content=ai_message,
+                    conversation_id=conversation_id,
+                    function_results=agent_citations_list,
+                    existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                )
             if generated_file_output:
                 generated_analysis_artifacts_list.append(generated_file_output)
                 if generated_file_output.get('output_format') == 'csv':
                     generated_tabular_outputs_list.append(generated_file_output)
-            assistant_file_generated_output = maybe_create_assistant_file_generated_output(
-                user_question=user_message,
-                assistant_content=ai_message,
-                conversation_id=conversation_id,
-                existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-                function_results=agent_citations_list,
-            )
+            try:
+                assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+                    user_question=user_message,
+                    assistant_content=ai_message,
+                    conversation_id=conversation_id,
+                    existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                    function_results=agent_citations_list,
+                    xsd_generation_contract=xsd_generation_contract,
+                    user_id=user_id,
+                )
+            except XsdGeneratedOutputValidationError:
+                log_event(
+                    '[XSD_GENERATION] Generated XML failed final schema validation.',
+                    extra={'conversation_id': conversation_id},
+                    level=logging.WARNING,
+                )
+                assistant_file_generated_output = None
+                ai_message = (
+                    'I could not create a downloadable XML file because the generated document '
+                    'could not be validated and published against the selected XSD. '
+                    'No XML artifact was published.'
+                )
             if assistant_file_generated_output:
                 generated_analysis_artifacts_list.append(assistant_file_generated_output)
                 ai_message = _build_assistant_file_output_handoff(assistant_file_generated_output)
@@ -20730,6 +21181,7 @@ def register_route_backend_chats(bp):
                 deep_research_web_search_runs = []
                 generated_tabular_outputs_list = []
                 generated_analysis_artifacts_list = []
+                xsd_generation_contract = None
                 system_messages_for_augmentation = []
                 requested_streamed_file_format = _resolve_generated_file_guidance_format(
                     user_message,
@@ -20949,6 +21401,45 @@ def register_route_backend_chats(bp):
                         or assigned_knowledge_user_context_active
                     )
                 )
+                if request_has_explicit_document_selection:
+                    try:
+                        xsd_generation_contract = (
+                            _load_explicit_xsd_contract_without_mixed_source_search(
+                                settings,
+                                requested_streamed_file_format,
+                                effective_selected_document_ids,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                active_group_ids=effective_active_group_ids,
+                                active_public_workspace_ids=effective_active_public_workspace_ids,
+                                doc_scope=effective_document_scope,
+                                cancel_requested=stream_cancel_requested,
+                            )
+                        )
+                        if xsd_generation_contract:
+                            system_messages_for_augmentation.append({
+                                'role': 'system',
+                                'content': build_generated_file_output_guidance(
+                                    user_message,
+                                    requested_format='xml',
+                                    xml_schema_guidance=xsd_generation_contract['guidance'],
+                                ),
+                            })
+                    except (PermissionError, ValueError, XsdSchemaError) as exc:
+                        log_event(
+                            '[XSD_GENERATION] Streaming schema contract could not be loaded.',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'error_type': type(exc).__name__,
+                            },
+                            level=logging.WARNING,
+                            exceptionTraceback=True,
+                        )
+                        yield build_stream_error_event(
+                            'The selected XSD cannot be used for XML generation. '
+                            'Review its readiness, roots, and dependencies, then try again.'
+                        )
+                        return
                 mixed_source_document_context_active = request_document_context_enabled
                 mixed_source_has_authorized_evidence_sources = False
                 explicit_external_retrieval_requested = _is_explicit_external_retrieval_requested(
@@ -21330,6 +21821,7 @@ def register_route_backend_chats(bp):
                 mixed_source_partitions = {}
                 mixed_source_narrative_document_ids = []
                 mixed_source_tabular_sources = []
+                mixed_source_schema_sources = []
                 mixed_source_evidence_envelopes = []
                 mixed_source_native_token_usage = None
                 mixed_source_request_correlation_id = normalize_mixed_source_correlation_id()
@@ -21360,11 +21852,18 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_sources = list(
                         explicit_context.get('tabular_sources') or []
                     )
+                    mixed_source_schema_sources = list(
+                        explicit_context.get('schema_sources') or []
+                    )
                     effective_selected_document_ids = (
                         mixed_source_narrative_document_ids
                         + _get_manifest_partition_document_ids(
                             mixed_source_partitions,
                             'tabular_sources',
+                        )
+                        + _get_manifest_partition_document_ids(
+                            mixed_source_partitions,
+                            'schema_sources',
                         )
                     )
                     effective_selected_document_id = (
@@ -21380,12 +21879,45 @@ def register_route_backend_chats(bp):
                             'authorized_source_count': len(effective_selected_document_ids),
                             'narrative_source_count': len(mixed_source_narrative_document_ids),
                             'tabular_source_count': len(mixed_source_tabular_sources),
+                            'schema_source_count': len(mixed_source_schema_sources),
                             'omitted_source_count': len(
                                 mixed_source_partitions.get('unresolved_sources') or []
                             ),
                         },
                         level=logging.INFO,
                     )
+                    if (
+                        requested_streamed_file_format == 'xml'
+                        and mixed_source_schema_sources
+                    ):
+                        try:
+                            xsd_generation_contract = load_xsd_generation_contract(
+                                mixed_source_schema_sources,
+                                user_id,
+                            )
+                        except (PermissionError, ValueError, XsdSchemaError) as exc:
+                            log_event(
+                                '[XSD_GENERATION] Streaming schema contract could not be loaded.',
+                                extra={
+                                    'conversation_id': conversation_id,
+                                    'error_type': type(exc).__name__,
+                                },
+                                level=logging.WARNING,
+                                exceptionTraceback=True,
+                            )
+                            yield build_stream_error_event(
+                                'The selected XSD cannot be used for XML generation. '
+                                'Review its readiness, roots, and dependencies, then try again.'
+                            )
+                            return
+                        system_messages_for_augmentation.append({
+                            'role': 'system',
+                            'content': build_generated_file_output_guidance(
+                                user_message,
+                                requested_format='xml',
+                                xml_schema_guidance=xsd_generation_contract['guidance'],
+                            ),
+                        })
                 else:
                     _maybe_resolve_chat_source_manifest(
                         settings,
@@ -22027,6 +22559,9 @@ def register_route_backend_chats(bp):
                     mixed_source_tabular_sources = list(
                         history_context.get('tabular_sources') or []
                     )
+                    mixed_source_schema_sources = list(
+                        history_context.get('schema_sources') or []
+                    )
                     if is_mixed_source_conversation_continuity_enabled(settings):
                         continuity_decision = _build_reauthorized_continuity_decision(
                             prior_grounded_document_refs,
@@ -22038,6 +22573,10 @@ def register_route_backend_chats(bp):
                         + _get_manifest_partition_document_ids(
                             mixed_source_partitions,
                             'tabular_sources',
+                        )
+                        + _get_manifest_partition_document_ids(
+                            mixed_source_partitions,
+                            'schema_sources',
                         )
                     )
                     effective_selected_document_id = (
@@ -22057,12 +22596,33 @@ def register_route_backend_chats(bp):
                         or history_grounded_search_used
                     )
                 )
+                legacy_search_document_ids = (
+                    _exclude_xsd_contract_document_ids_from_search(
+                        effective_selected_document_ids,
+                        xsd_generation_contract,
+                    )
+                )
                 mixed_source_narrative_search_active = bool(
                     mixed_source_document_context_active
                     and (
-                        not is_mixed_source_chat_search_enabled(settings)
-                        or not mixed_source_manifest
-                        or mixed_source_narrative_document_ids
+                        (
+                            not is_mixed_source_chat_search_enabled(settings)
+                            and (
+                                not xsd_generation_contract
+                                or legacy_search_document_ids
+                            )
+                        )
+                        or (
+                            is_mixed_source_chat_search_enabled(settings)
+                            and (
+                                not mixed_source_manifest
+                                or mixed_source_narrative_document_ids
+                                or (
+                                    mixed_source_schema_sources
+                                    and not xsd_generation_contract
+                                )
+                            )
+                        )
                     )
                 )
                 if mixed_source_narrative_search_active:
@@ -22109,14 +22669,27 @@ def register_route_backend_chats(bp):
                             search_args['active_public_workspace_id'] = effective_active_public_workspace_id
 
                         search_document_ids = (
-                            mixed_source_narrative_document_ids
+                            (
+                                mixed_source_narrative_document_ids
+                                + (
+                                    _get_manifest_partition_document_ids(
+                                        mixed_source_partitions,
+                                        'schema_sources',
+                                    )
+                                    if not xsd_generation_contract
+                                    else []
+                                )
+                            )
                             if is_mixed_source_chat_search_enabled(settings)
                             and mixed_source_manifest
-                            else effective_selected_document_ids
+                            else legacy_search_document_ids
                         )
                         if search_document_ids:
                             search_args['document_ids'] = search_document_ids
-                        elif effective_selected_document_id:
+                        elif (
+                            effective_selected_document_id
+                            and not xsd_generation_contract
+                        ):
                             search_args['document_id'] = effective_selected_document_id
                         if auto_linked_chat_upload_document_ids:
                             search_args['enable_file_sharing'] = False
@@ -22177,6 +22750,9 @@ def register_route_backend_chats(bp):
                             )
                             mixed_source_tabular_sources = list(
                                 relevance_context.get('tabular_sources') or []
+                            )
+                            mixed_source_schema_sources = list(
+                                relevance_context.get('schema_sources') or []
                             )
                             search_results = list(
                                 relevance_context.get('search_results') or []
@@ -22486,6 +23062,14 @@ def register_route_backend_chats(bp):
                             effective_mixed_source_selection_mode,
                         )
                     )
+                    if mixed_source_schema_sources and not xsd_generation_contract:
+                        mixed_source_evidence_envelopes.extend(
+                            build_schema_summary_evidence_envelopes(
+                                mixed_source_schema_sources,
+                                search_results,
+                                effective_mixed_source_selection_mode,
+                            )
+                        )
                     mixed_source_tabular_result = _execute_mixed_source_tabular_evidence(
                         tabular_sources=mixed_source_tabular_sources,
                         selection_mode=effective_mixed_source_selection_mode,
@@ -22500,6 +23084,7 @@ def register_route_backend_chats(bp):
                         model_context=tabular_model_context,
                         cancel_requested=stream_cancel_requested,
                         request_correlation_id=mixed_source_request_correlation_id,
+                        suppress_generated_output=bool(xsd_generation_contract),
                     )
                     mixed_source_evidence_envelopes.extend(
                         mixed_source_tabular_result.get('evidence_envelopes') or []
@@ -22515,7 +23100,10 @@ def register_route_backend_chats(bp):
                         mixed_source_tabular_result.get('generated_outputs') or []
                     )
                     mixed_source_handoff = build_mixed_source_evidence_handoff(
-                        mixed_source_manifest,
+                        _exclude_xsd_contract_sources_from_evidence(
+                            mixed_source_manifest,
+                            xsd_generation_contract,
+                        ),
                         mixed_source_evidence_envelopes,
                         effective_mixed_source_selection_mode,
                         mode='chat',
@@ -22530,6 +23118,10 @@ def register_route_backend_chats(bp):
                     mixed_source_has_authorized_evidence_sources = bool(
                         mixed_source_narrative_document_ids
                         or mixed_source_tabular_sources
+                        or (
+                            mixed_source_schema_sources
+                            and not xsd_generation_contract
+                        )
                     )
                     user_metadata['mixed_source_coverage'] = mixed_source_coverage
                     if continuity_decision:
@@ -22628,16 +23220,18 @@ def register_route_backend_chats(bp):
                     streamed_tabular_tool_thoughts = []
                     tabular_invocations = []
                     tabular_related_document_summary = ''
-                    tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                        user_question=user_message,
-                        file_contexts=workspace_tabular_file_contexts,
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        gpt_model=gpt_model,
-                        settings=settings,
-                        thought_callback=record_and_publish_streaming_thought,
-                        model_context=tabular_model_context,
-                    )
+                    tabular_generated_output = None
+                    if not xsd_generation_contract:
+                        tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                            user_question=user_message,
+                            file_contexts=workspace_tabular_file_contexts,
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            gpt_model=gpt_model,
+                            settings=settings,
+                            thought_callback=record_and_publish_streaming_thought,
+                            model_context=tabular_model_context,
+                        )
                     if not tabular_generated_output:
                         tabular_analysis, streamed_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                             user_question=user_message,
@@ -22684,16 +23278,17 @@ def register_route_backend_chats(bp):
                         for thought_content, thought_detail in tabular_status_thought_payloads:
                             yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
-                        tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                            user_question=user_message,
-                            invocations=tabular_invocations,
-                            gpt_model=gpt_model,
-                            settings=settings,
-                            conversation_id=conversation_id,
-                            thought_callback=record_and_publish_streaming_thought,
-                            user_id=user_id,
-                            model_context=tabular_model_context,
-                        ))
+                        if not xsd_generation_contract:
+                            tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                                user_question=user_message,
+                                invocations=tabular_invocations,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                conversation_id=conversation_id,
+                                thought_callback=record_and_publish_streaming_thought,
+                                user_id=user_id,
+                                model_context=tabular_model_context,
+                            ))
                     if tabular_generated_output:
                         generated_tabular_outputs_list.append(tabular_generated_output)
                         generated_analysis_artifacts_list.append(tabular_generated_output)
@@ -23012,16 +23607,18 @@ def register_route_backend_chats(bp):
                             build_tabular_file_context(file_name, source_hint='chat')
                             for file_name in chat_tabular_files
                         ]
-                        chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
-                            user_question=user_message,
-                            file_contexts=chat_tabular_file_contexts,
-                            user_id=user_id,
-                            conversation_id=conversation_id,
-                            gpt_model=gpt_model,
-                            settings=settings,
-                            thought_callback=record_and_publish_streaming_thought,
-                            model_context=tabular_model_context,
-                        )
+                        chat_tabular_generated_output = None
+                        if not xsd_generation_contract:
+                            chat_tabular_generated_output = maybe_queue_search_tabular_generated_output(
+                                user_question=user_message,
+                                file_contexts=chat_tabular_file_contexts,
+                                user_id=user_id,
+                                conversation_id=conversation_id,
+                                gpt_model=gpt_model,
+                                settings=settings,
+                                thought_callback=record_and_publish_streaming_thought,
+                                model_context=tabular_model_context,
+                            )
                         if not chat_tabular_generated_output:
                             chat_tabular_analysis, streamed_chat_tabular_tool_thoughts = asyncio.run(run_tabular_analysis_with_thought_tracking(
                                 user_question=user_message,
@@ -23065,16 +23662,17 @@ def register_route_backend_chats(bp):
                             for thought_content, thought_detail in chat_tabular_status_thought_payloads:
                                 yield emit_thought('tabular_analysis', thought_content, thought_detail)
 
-                            chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
-                                user_question=user_message,
-                                invocations=chat_tabular_invocations,
-                                gpt_model=gpt_model,
-                                settings=settings,
-                                conversation_id=conversation_id,
-                                thought_callback=record_and_publish_streaming_thought,
-                                user_id=user_id,
-                                model_context=tabular_model_context,
-                            ))
+                            if not xsd_generation_contract:
+                                chat_tabular_generated_output = asyncio.run(maybe_create_tabular_generated_output(
+                                    user_question=user_message,
+                                    invocations=chat_tabular_invocations,
+                                    gpt_model=gpt_model,
+                                    settings=settings,
+                                    conversation_id=conversation_id,
+                                    thought_callback=record_and_publish_streaming_thought,
+                                    user_id=user_id,
+                                    model_context=tabular_model_context,
+                                ))
                         if chat_tabular_generated_output:
                             generated_tabular_outputs_list.append(chat_tabular_generated_output)
                             generated_analysis_artifacts_list.append(chat_tabular_generated_output)
@@ -23333,7 +23931,11 @@ def register_route_backend_chats(bp):
 
                 def finalize_cancelled_stream_response():
                     cancel_reason = stream_session.get_cancel_reason() if stream_session else 'user_requested'
-                    partial_content = accumulated_content.strip()
+                    partial_content = (
+                        ''
+                        if suppress_streamed_file_payload
+                        else accumulated_content.strip()
+                    )
                     message_persisted = False
                     partial_citation_tracking = {}
                     cancel_metadata = {
@@ -23342,7 +23944,7 @@ def register_route_backend_chats(bp):
                         'cancel_reason': cancel_reason,
                     }
 
-                    if mixed_source_manifest:
+                    if mixed_source_manifest or suppress_streamed_file_payload:
                         _rollback_mixed_source_chat_publication(
                             user_id,
                             conversation_id,
@@ -24066,26 +24668,44 @@ def register_route_backend_chats(bp):
                         'artifact_publication',
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
-                    generated_file_output = maybe_create_generated_file_output(
-                        user_question=user_message,
-                        assistant_content=accumulated_content,
-                        conversation_id=conversation_id,
-                        function_results=agent_citations_list,
-                        existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-                        cancel_requested=stream_cancel_requested,
-                        request_correlation_id=mixed_source_request_correlation_id,
-                    )
+                    generated_file_output = None
+                    if not xsd_generation_contract:
+                        generated_file_output = maybe_create_generated_file_output(
+                            user_question=user_message,
+                            assistant_content=accumulated_content,
+                            conversation_id=conversation_id,
+                            function_results=agent_citations_list,
+                            existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            cancel_requested=stream_cancel_requested,
+                            request_correlation_id=mixed_source_request_correlation_id,
+                        )
                     if generated_file_output:
                         generated_analysis_artifacts_list.append(generated_file_output)
                         if generated_file_output.get('output_format') == 'csv':
                             generated_tabular_outputs_list.append(generated_file_output)
-                    assistant_file_generated_output = maybe_create_assistant_file_generated_output(
-                        user_question=user_message,
-                        assistant_content=accumulated_content,
-                        conversation_id=conversation_id,
-                        existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
-                        function_results=agent_citations_list,
-                    )
+                    try:
+                        assistant_file_generated_output = maybe_create_assistant_file_generated_output(
+                            user_question=user_message,
+                            assistant_content=accumulated_content,
+                            conversation_id=conversation_id,
+                            existing_outputs=generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            function_results=agent_citations_list,
+                            xsd_generation_contract=xsd_generation_contract,
+                            user_id=user_id,
+                        )
+                    except XsdGeneratedOutputValidationError:
+                        log_event(
+                            '[XSD_GENERATION] Streamed XML failed final schema validation.',
+                            extra={'conversation_id': conversation_id},
+                            level=logging.WARNING,
+                        )
+                        assistant_file_generated_output = None
+                        accumulated_content = (
+                            'I could not create a downloadable XML file because the generated document '
+                            'could not be validated and published against the selected XSD. '
+                            'No XML artifact was published.'
+                        )
+                        yield f"data: {json.dumps({'content': accumulated_content})}\n\n"
                     if assistant_file_generated_output:
                         generated_analysis_artifacts_list.append(assistant_file_generated_output)
                         accumulated_content = _build_assistant_file_output_handoff(assistant_file_generated_output)
@@ -24394,12 +25014,24 @@ def register_route_backend_chats(bp):
                         get_rate_limit_message() if stream_rate_limited
                         else CLIENT_SAFE_STREAM_ERROR_MESSAGE
                     )
+                    safe_partial_content = (
+                        ''
+                        if suppress_streamed_file_payload
+                        else accumulated_content
+                    )
+                    if suppress_streamed_file_payload:
+                        _rollback_mixed_source_chat_publication(
+                            user_id,
+                            conversation_id,
+                            generated_analysis_artifacts_list + generated_tabular_outputs_list,
+                            compact_citations=locals().get('prepared_agent_citations') or [],
+                        )
 
                     # Save partial response if we have content
                     interrupted_message_persisted = False
                     interrupted_citation_tracking = {}
                     interrupted_agent_citations = []
-                    if accumulated_content:
+                    if safe_partial_content:
                         current_assistant_thread_id = str(uuid.uuid4())
                         assistant_timestamp = datetime.utcnow().isoformat()
                         apply_agent_document_citations(
@@ -24410,7 +25042,7 @@ def register_route_backend_chats(bp):
                             plugin_invocations=_get_current_message_plugin_invocations(user_id, conversation_id),
                         )
                         interrupted_citation_tracking = build_cited_source_subsets(
-                            accumulated_content,
+                            safe_partial_content,
                             hybrid_citations=hybrid_citations_list,
                             web_search_citations=web_search_citations_list,
                         )
@@ -24430,7 +25062,7 @@ def register_route_backend_chats(bp):
                             'id': assistant_message_id,
                             'conversation_id': conversation_id,
                             'role': 'assistant',
-                            'content': accumulated_content,
+                            'content': safe_partial_content,
                             'timestamp': assistant_timestamp,
                             'augmented': bool(system_messages_for_augmentation),
                             'hybrid_citations': hybrid_citations_list,
@@ -24512,7 +25144,7 @@ def register_route_backend_chats(bp):
                         stream_failure_message,
                         rate_limited=stream_rate_limited or None,
                         status_code=429 if stream_rate_limited else None,
-                        partial_content=accumulated_content,
+                        partial_content=safe_partial_content,
                         conversation_id=conversation_id,
                         user_message_id=user_message_id,
                         message_id=(
