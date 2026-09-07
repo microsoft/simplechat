@@ -6,7 +6,7 @@ The revision store owns concurrency and publication. This module prepares the sc
 request, reuses the planner and source authorization boundaries, and never executes work
 or writes conversation messages.
 
-Version: 0.261.102
+Version: 0.261.103
 """
 
 import json
@@ -28,6 +28,7 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
     validate_clarification_answers,
 )
+from functions_orchestration_models import OrchestrationModelError, resolve_orchestration_model
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_planner import plan_request
 from functions_orchestration_registry import resolve_available_capabilities
@@ -325,15 +326,34 @@ def build_plan_edit_outcome(
         'current_request': current_request, 'instruction': instruction,
         'chat': [{key: turn[key] for key in ('role', 'content')} for turn in chat[-20:]],
     }
-    kind, document = plan_request(
-        changed_request, planner_context, context['conversation_id'], user_id,
-        settings=settings, approval_mode='manual',
-        authorized_document_ids={item['document_id'] for item in candidates},
-        turn_id=context['turn_id'], seeds=seeds,
-        document_labels={item['document_id']: item['file_name'] for item in candidates},
-        request_context=caller, edit_context=edit_context, allow_elicitation=allow_elicitation,
-        revision=int(record.get('revision') or 0) + 1,
-    )
+    try:
+        planner_model = resolve_orchestration_model(
+            settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,
+        )
+    except (ValueError, PermissionError) as exc:
+        raise PlanRevisionError(
+            'The selected model is unavailable. Your previous plan is unchanged.',
+            code='model_unavailable',
+            status_code=403 if isinstance(exc, (OrchestrationModelError, PermissionError)) else 503,
+        ) from exc
+    try:
+        seeds = context['seeds'] = {
+            **seeds, 'model': planner_model.answer_model_selection(),
+        }
+        context['original_seeds'] = {
+            **(context.get('original_seeds') or seeds), 'model': dict(seeds['model']),
+        }
+        kind, document = plan_request(
+            changed_request, planner_context, context['conversation_id'], user_id,
+            settings=settings, approval_mode='manual',
+            authorized_document_ids={item['document_id'] for item in candidates},
+            turn_id=context['turn_id'], seeds=seeds,
+            document_labels={item['document_id']: item['file_name'] for item in candidates},
+            request_context=caller, edit_context=edit_context, allow_elicitation=allow_elicitation,
+            revision=int(record.get('revision') or 0) + 1, planner_model=planner_model,
+        )
+    finally:
+        planner_model.close()
     _add_usage(context, document.get('token_usage'))
     chat.append(_chat_turn('user', user_content))
     if kind == 'elicitation':

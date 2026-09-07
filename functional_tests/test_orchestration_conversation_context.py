@@ -1,8 +1,9 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.099
+Version: 0.261.103
 Implemented in: 0.261.096
+Resolver response compatibility and bounded recovery: 0.261.103
 
 Exercises the real history, resolution, triage, and adapter code with external
 model/search/analysis boundaries replaced. No Azure resources or credentials are used.
@@ -15,7 +16,10 @@ import types
 import unittest
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+from httpx import Request, Response
+from openai import AuthenticationError, BadRequestError, RateLimitError
 
 from test_support.app_stubs import stubbed_app_imports, stubbed_config
 from test_support.versioning import assert_app_version_at_least
@@ -209,13 +213,15 @@ class ResolutionTests(unittest.TestCase):
             'clarification': '',
         }
 
-    def resolve(self, payload=None, text=LATEST, answers=None):
+    def resolve(self, payload=None, text=LATEST, answers=None, replies=None):
         planner = self.modules.planner
         usage = SimpleNamespace(prompt_tokens=30, completion_tokens=20, total_tokens=50)
         with patch.object(planner, 'resolve_planner_client', return_value=(object(), 'planner')), \
                 patch.object(planner, '_call_planner', return_value=(
                     json.dumps(payload if payload is not None else self.payload), usage
                 )) as call:
+            if replies is not None:
+                call.side_effect = [(json.dumps(reply), usage) for reply in replies]
             result = planner.resolve_conversation_request(
                 text, self.snapshot, settings={}, answered_questions=answers
             )
@@ -267,6 +273,139 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(supplied['answered_questions'], answers)
         self.assertEqual(result['resolved_message'], RESOLVED)
 
+    def test_unused_null_clarification_is_normalized_without_a_repair_call(self):
+        original_snapshot = deepcopy(self.snapshot)
+        for relationship in ('follow_up', 'new_topic'):
+            with self.subTest(relationship=relationship):
+                payload = {**self.payload, 'relationship': relationship, 'clarification': None}
+                if relationship == 'new_topic':
+                    payload['message_ids'] = []
+                result, call = self.resolve(payload)
+                self.assertEqual(result['clarification'], '')
+                self.assertEqual(result['relationship'], relationship)
+                self.assertEqual(result['message_ids'], payload['message_ids'])
+                self.assertEqual(result['resolved_message'], RESOLVED if relationship == 'follow_up' else LATEST)
+                self.assertEqual(result['token_usage']['total_tokens'], 50)
+                self.assertEqual(call.call_count, 1)
+                self.assertIsNone(payload['clarification'])
+        self.assertEqual(self.snapshot, original_snapshot)
+
+    def test_repair_preserves_input_and_accounts_for_both_completions(self):
+        planner = self.modules.planner
+        answers = [{'question': 'Which day?', 'answer': {'day': 'Wednesday'}}]
+        invalid = {**self.payload, 'message_ids': ['PRIVATE_FORGED_MESSAGE_ID']}
+        with patch.object(planner, 'log_event') as log:
+            result, call = self.resolve(answers=answers, replies=[invalid, self.payload])
+        self.assertEqual(call.call_count, 2)
+        original_messages = call.call_args_list[0].args[2]
+        repaired_messages = call.call_args_list[1].args[2]
+        self.assertEqual(repaired_messages[:2], original_messages)
+        original_payload = json.loads(repaired_messages[1]['content'])
+        self.assertEqual(original_payload['answered_questions'], answers)
+        self.assertEqual(original_payload['original_message'], LATEST)
+        self.assertIn('Schmidt', json.dumps(original_payload['conversation']))
+        self.assertIn('unknown_message_ids', repaired_messages[-1]['content'])
+        self.assertNotIn('PRIVATE_FORGED_MESSAGE_ID', json.dumps(repaired_messages))
+        self.assertNotIn('PRIVATE_FORGED_MESSAGE_ID', repr(log.call_args_list))
+        self.assertEqual(result['message_ids'], self.payload['message_ids'])
+        self.assertEqual(result['token_usage'], {
+            'prompt_tokens': 60, 'completion_tokens': 40, 'total_tokens': 100,
+        })
+
+    def test_unparseable_output_can_be_repaired_without_replaying_it(self):
+        result, call = self.resolve(replies=['PRIVATE_INVALID_OUTPUT', self.payload])
+        self.assertEqual(call.call_count, 2)
+        self.assertEqual(result['resolved_message'], RESOLVED)
+        self.assertIn('invalid_json', call.call_args.args[2][-1]['content'])
+        self.assertNotIn('PRIVATE_INVALID_OUTPUT', json.dumps(call.call_args.args[2]))
+
+    def test_persistent_invalid_output_has_an_exact_attempt_limit_and_safe_reason(self):
+        planner = self.modules.planner
+        invalid = {**self.payload, 'resolved_message': 'PRIVATE_MODEL_TEXT', 'requires_retrieval': 'false'}
+        with patch.object(planner, 'resolve_planner_client', return_value=(object(), 'planner')), \
+                patch.object(planner, '_call_planner', return_value=(json.dumps(invalid), None)) as call, \
+                patch.object(planner, 'log_event') as log:
+            with self.assertRaises(planner.ConversationResolutionError) as failure:
+                planner.resolve_conversation_request(LATEST, self.snapshot)
+        self.assertEqual(call.call_count, 2)
+        self.assertEqual(failure.exception.attempts, 2)
+        self.assertEqual(failure.exception.reason, 'invalid_retrieval_flag')
+        self.assertNotIn('PRIVATE_MODEL_TEXT', str(failure.exception))
+        self.assertNotIn('PRIVATE_MODEL_TEXT', repr(log.call_args_list))
+
+    def model_response(self, *, finish_reason='stop', refusal=None, content=None):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(
+                finish_reason=finish_reason,
+                message=SimpleNamespace(
+                    content=json.dumps(self.payload) if content is None else content,
+                    refusal=refusal,
+                ),
+            )],
+            usage=SimpleNamespace(prompt_tokens=30, completion_tokens=20, total_tokens=50),
+        )
+
+    def test_refused_incomplete_and_absent_completions_are_not_repaired(self):
+        planner = self.modules.planner
+        cases = [
+            (self.model_response(finish_reason='content_filter'), 'model_refusal'),
+            (self.model_response(refusal='PRIVATE_REFUSAL'), 'model_refusal'),
+            (self.model_response(finish_reason='length'), 'incomplete_completion'),
+            (self.model_response(content=''), 'empty_completion'),
+            (SimpleNamespace(choices=[]), 'empty_completion'),
+        ]
+        for response, reason in cases:
+            with self.subTest(reason=reason):
+                client = Mock()
+                client.chat.completions.create.return_value = response
+                with patch.object(planner, 'resolve_planner_client', return_value=(client, 'planner')), \
+                        patch.object(planner, 'log_event') as log:
+                    with self.assertRaises(planner.ConversationResolutionError) as failure:
+                        planner.resolve_conversation_request(LATEST, self.snapshot)
+                self.assertEqual(client.chat.completions.create.call_count, 1)
+                self.assertEqual(failure.exception.attempts, 1)
+                self.assertEqual(failure.exception.reason, reason)
+                self.assertNotIn('PRIVATE_REFUSAL', repr(log.call_args_list))
+
+    def test_provider_failures_are_not_retried_as_json_format_or_schema_failures(self):
+        planner = self.modules.planner
+        for error_type, status in (
+            (AuthenticationError, 401), (RateLimitError, 429), (BadRequestError, 400),
+        ):
+            with self.subTest(status=status):
+                client = Mock()
+                response = Response(status, request=Request('POST', 'https://model.example.test/completions'))
+                client.chat.completions.create.side_effect = error_type(
+                    'PRIVATE_PROVIDER_DETAIL', response=response,
+                    body={'error': {'code': 'content_filter', 'message': 'PRIVATE_PROVIDER_DETAIL'}},
+                )
+                with patch.object(planner, 'resolve_planner_client', return_value=(client, 'planner')), \
+                        patch.object(planner, 'log_event') as log:
+                    with self.assertRaises(planner.ConversationResolutionError) as failure:
+                        planner.resolve_conversation_request(LATEST, self.snapshot)
+                self.assertEqual(client.chat.completions.create.call_count, 1)
+                self.assertEqual(failure.exception.reason, 'model_request_failed')
+                self.assertNotIn('PRIVATE_PROVIDER_DETAIL', repr(log.call_args_list))
+                self.assertNotIn('PRIVATE_PROVIDER_DETAIL', str(failure.exception))
+
+    def test_unsupported_json_format_keeps_the_compatible_fallback(self):
+        planner = self.modules.planner
+        response = Response(400, request=Request('POST', 'https://model.example.test/completions'))
+        error = BadRequestError('Unsupported format', response=response, body={'error': {
+            'message': "'response_format' of type 'json_object' is not supported with this model.",
+            'param': None, 'code': None,
+        }})
+        client = Mock()
+        client.chat.completions.create.side_effect = [error, self.model_response()]
+        with patch.object(planner, 'resolve_planner_client', return_value=(client, 'planner')):
+            result = planner.resolve_conversation_request(LATEST, self.snapshot)
+        calls = client.chat.completions.create.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertIn('response_format', calls[0].kwargs)
+        self.assertNotIn('response_format', calls[1].kwargs)
+        self.assertEqual(result['message_ids'], self.payload['message_ids'])
+        self.assertEqual(result['token_usage']['total_tokens'], 50)
+
     def test_malformed_and_forged_resolution_do_not_become_silent_fallbacks(self):
         invalid = [
             {},
@@ -274,6 +413,13 @@ class ResolutionTests(unittest.TestCase):
             {**self.payload, 'message_ids': ['u1', 'u1']},
             {**self.payload, 'requires_retrieval': 'false'},
             {**self.payload, 'relationship': 'clarification', 'clarification': ''},
+            {**self.payload, 'relationship': 'clarification', 'clarification': None},
+            {**self.payload, 'clarification': False},
+            {**self.payload, 'message_ids': []},
+            {**self.payload, 'message_ids': None},
+            {**self.payload, 'message_ids': [{}]},
+            {**self.payload, 'resolved_message': None},
+            {**self.payload, 'relationship': 'new_topic'},
             {**self.payload, 'resolved_message': 'x' * 6001},
         ]
         for payload in invalid:
@@ -455,5 +601,5 @@ class AdapterTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.096')
+    assert_app_version_at_least('0.261.103')
     unittest.main()

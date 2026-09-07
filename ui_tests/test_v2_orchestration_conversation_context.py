@@ -1,8 +1,9 @@
 # test_v2_orchestration_conversation_context.py
 """
 Browser regressions for orchestration follow-up and clarification transport.
-Version: 0.261.099
+Version: 0.261.103
 Implemented in: 0.261.096
+Model selection transport and live answer attribution: 0.261.103
 
 Runs the shipped controller, stores, elicitation card, and approval card in the
 existing local Playwright harness. HTTP/SSE is stubbed here; the companion
@@ -83,13 +84,19 @@ async ({ mode, ask, conversationId }) => {
             return stream({
                 done: true, message_id: 'answer-1', conversation_id: conversationId,
                 full_content: 'The request concerns wineries near Grants Pass.',
+                model_deployment_name: 'gpt-5.6-terra',
             });
         }
         return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
     };
     await H.controller.startOrchestrationPlan({
         conversationId, message: 'Which are open on Wednesdays?', approvalMode: mode,
-        seeds: { selected_document_ids: ['hours-document'] },
+        seeds: {
+            selected_document_ids: ['hours-document'],
+            model_deployment: 'gpt-5.6-terra', model_provider: 'aoai',
+            model_endpoint_id: 'selected-endpoint', model_id: 'terra-model',
+            reasoning_effort: 'high',
+        },
     });
     const turnId = window.contextPlanCalls[0].turn_id;
     H.mount('mount-a', ask ? 'ElicitationCard' : 'OrchestrationPlanCard', { conversationId, turnId });
@@ -136,6 +143,8 @@ class ConversationTransportTests(unittest.TestCase):
         self.assertEqual(second['turn_id'], turn_id)
         self.assertEqual(second['revision'], 1)
         self.assertEqual(second['selected_document_ids'], ['hours-document'])
+        for key in ('model_deployment', 'model_provider', 'model_endpoint_id', 'model_id', 'reasoning_effort'):
+            self.assertEqual(second[key], first[key])
         self.assertEqual(second['elicitation']['elicitation_id'], 'question-1')
         self.assertEqual(second['elicitation']['turn_id'], turn_id)
         self.assertEqual(second['elicitation_id'], 'question-1')
@@ -183,12 +192,19 @@ class ConversationTransportTests(unittest.TestCase):
                 plans, runs = self.page.evaluate('() => [window.contextPlanCalls, window.contextRunCalls]')
                 self.assertEqual(len(plans), 1)
                 self.assertEqual(plans[0]['message'], 'Which are open on Wednesdays?')
+                self.assertEqual(plans[0]['model_deployment'], 'gpt-5.6-terra')
+                self.assertEqual(plans[0]['model_endpoint_id'], 'selected-endpoint')
+                self.assertEqual(plans[0]['model_id'], 'terra-model')
                 self.assertNotIn('recent_messages', plans[0])
                 self.assertEqual(len(runs), 1)
                 self.assertEqual(runs[0]['conversation_id'], conversation_id)
                 self.assertEqual(runs[0]['run_id'], f'run-{turn_id}')
                 self.assertNotIn('message', runs[0])
                 self.assertNotIn('recent_messages', runs[0])
+                self.page.evaluate("() => window.OrchHarness.mount('mount-b', 'MessageList')")
+                model_label = self.page.get_by_text('gpt-5.6-terra', exact=True)
+                model_label.wait_for(state='visible')
+                self.assertTrue(model_label.is_visible())
 
     def test_navigation_does_not_retarget_a_pending_plan(self):
         conversation_id, turn_id = self.start(ask=False)
@@ -206,5 +222,5 @@ class ConversationTransportTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.096')
+    assert_app_version_at_least('0.261.103')
     unittest.main()

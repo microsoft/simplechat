@@ -1,8 +1,9 @@
 # test_v2_orchestration_plan_editor_backend.py
 """
 Browser-to-Flask regression for editing and running an orchestration plan.
-Version: 0.261.102
+Version: 0.261.103
 Implemented in: 0.261.102
+Selected model continuity through editing and execution: 0.261.103
 
 The browser's real HTTP requests are forwarded to the actual Flask route test client.
 Unlike the frontend-only suite, no orchestration response is fabricated by the browser
@@ -35,10 +36,11 @@ from test_v2_orchestration_plan_editor import (  # noqa: E402, F401
 pytestmark = pytest.mark.ui
 
 
-@pytest.fixture
-def integrated_editor(editor_browser, editor_assets):
+@pytest.fixture(params=['legacy', 'terra'])
+def integrated_editor(request, editor_browser, editor_assets):
     backend = backend_tests.PlanRevisionRouteTests()
     backend.setUp()
+    selection = backend.use_modern_models() if request.param == 'terra' else {}
     context = editor_browser.new_context(viewport={'width': 1440, 'height': 900})
     page = context.new_page()
     errors = []
@@ -80,7 +82,7 @@ def integrated_editor(editor_browser, editor_assets):
     page.route('**/*', forward)
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
-        plan = backend.planned(approval_mode='timed')
+        plan = backend.planned(approval_mode='timed', **selection)
         seeded = SimpleNamespace(assets=editor_assets, editors={'conv1': {'plan': plan}})
         editor_tests.mount(page, seeded, 'conv1', 'turn1')
         record = backend.runs.read_item(plan['run_id'], 'conv1')
@@ -171,6 +173,12 @@ def test_real_editor_add_remove_question_restore_and_run(integrated_editor):
     saved = backend.runs.read_item(current['plan']['run_id'], 'conv1')
     assert saved['status'] == 'completed'
     assert len(backend.messages.items) == initial_message_count + 1
+    if hasattr(backend, 'model_clients'):
+        assert saved['seeds']['model'] == backend_tests.TERRA_SELECTION
+        assert all(call['model'] == 'gpt-5.6-terra' for call in backend.edit_calls)
+        assert backend.model.calls[-1]['model'] == 'gpt-5.6-terra'
+        for client in backend.model_clients:
+            client.close.assert_called_once_with()
 
 
 def test_stale_cancel_does_not_discard_another_tabs_new_question(integrated_editor):

@@ -1,9 +1,10 @@
 # test_orchestration_elicitation_context.py
 """
 Behavioral coverage for persisted inline clarification and execution context.
-Version: 0.261.099
+Version: 0.261.103
 Implemented in: 0.261.096
 Conversation-context, prompt-snapshot, and action integration: 0.261.099
+Atomic revision-store fixture isolation: 0.261.103
 
 Drives the actual Flask plan/answer/run handlers, planner normalization, Cosmos state
 helpers, source manifest, document-context resolver, executor, and adapters. Only external
@@ -123,6 +124,8 @@ def installed_modules(stubs):
         'functions_orchestration_registry', 'functions_orchestration_runs',
         'functions_orchestration_executor', 'functions_orchestration_adapters',
         'functions_orchestration_planner', 'functions_orchestration_events',
+        'functions_orchestration_models', 'functions_orchestration_plan_revisions',
+        'functions_orchestration_plan_editing',
     }
     originals = {name: sys.modules.get(name) for name in names}
     for name in names:

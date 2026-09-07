@@ -13,12 +13,11 @@ It also means none of this touches ``route_backend_chats.py``. That file is over
 lines and carries the entire existing chat contract; adding a second execution model to it
 would put every existing conversation at risk for a feature that is off by default.
 
-Request data is read out of the Flask request *before* any generator starts. A streamed
-response outlives the request context, so touching ``request`` from inside the generator
-raises rather than returning the value it would have had -- a failure that only appears
-once streaming is actually exercised.
+Request data is captured before streaming. The planning stream retains authenticated
+request context for model authorization after canonical turn state is restored.
+Execution workers receive explicit identity and model bindings, never Flask state.
 
-Version: 0.261.102
+Version: 0.261.103
 """
 
 import hashlib
@@ -34,7 +33,8 @@ from datetime import datetime, timezone
 from azure.cosmos import exceptions
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Response, jsonify, request, session
+from flask import Response, jsonify, request, session, stream_with_context
+from openai import OpenAIError
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from functions_appinsights import log_event
@@ -106,11 +106,18 @@ from functions_orchestration_plan_revisions import (
 from functions_orchestration_planner import (
     ConversationResolutionError,
     PlannerError,
+    PlannerResponseError,
     build_trivial_plan,
     plan_request,
     resolve_conversation_request,
     resolve_planner_client,
     triage_request,
+)
+from functions_orchestration_models import (
+    OrchestrationModel,
+    OrchestrationModelError,
+    has_planner_model_override,
+    resolve_orchestration_model,
 )
 from functions_orchestration_runs import (
     ElicitationStateError,
@@ -145,6 +152,7 @@ from functions_orchestration_schema import (
 )
 from functions_settings import get_settings, get_user_settings
 from functions_prompt_metadata import build_prompt_selection_metadata
+from model_endpoint_clients import extract_chat_completion_response_text
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -199,7 +207,7 @@ def _orchestration_enabled(settings):
     return bool((settings or {}).get('enable_chat_orchestration'))
 
 
-def _build_invoke_prompt(settings, token_usage=None):
+def _build_invoke_prompt(settings, token_usage=None, model=None):
     """A closure the adapters call to ask the model something.
 
     The signature is not ours to choose. ``run_document_analysis``,
@@ -215,18 +223,17 @@ def _build_invoke_prompt(settings, token_usage=None):
     model call either way. They are named rather than swallowed by ``**kwargs`` so this
     file states the contract it is honouring.
 
-    Shares the planner's client resolution, which already handles APIM, managed identity
-    and key auth, but deliberately not its deployment: planning may be pointed at a small
-    model, while the answer should come from the deployment the administrator chose for
-    chat.
+    The run supplies an authorized model binding resolved from its saved selection or
+    the administrator's default. The legacy branch remains for callers without a binding.
     """
-    client, planner_deployment = resolve_planner_client(settings)
-
-    deployment = None
-    gpt_model = (settings or {}).get('gpt_model') or {}
-    if gpt_model.get('selected'):
-        deployment = (gpt_model['selected'][0] or {}).get('deploymentName')
-    deployment = deployment or planner_deployment
+    if model is None:
+        client, planner_deployment = resolve_planner_client(settings)
+        gpt_model = (settings or {}).get('gpt_model') or {}
+        deployment = (
+            (gpt_model['selected'][0] or {}).get('deploymentName')
+            if gpt_model.get('selected') else None
+        ) or planner_deployment
+        model = OrchestrationModel(client, deployment)
 
     def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
         messages = (
@@ -234,12 +241,19 @@ def _build_invoke_prompt(settings, token_usage=None):
             if isinstance(prompt_text, list)
             else [{'role': 'user', 'content': str(prompt_text or '')}]
         )
-        response = client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            temperature=ANSWER_TEMPERATURE,
-            max_tokens=ANSWER_MAX_TOKENS,
-        )
+        try:
+            response = model.create_completion(
+                messages=messages,
+                temperature=ANSWER_TEMPERATURE,
+                max_tokens=ANSWER_MAX_TOKENS,
+                use_model_response_length=True,
+            )
+        except (OpenAIError, AzureError) as exc:
+            log_event(
+                '[ORCHESTRATION] The answer model request failed.',
+                level=logging.WARNING, extra={'stage': stage, 'error_type': type(exc).__name__},
+            )
+            raise PlannerResponseError('model_request_failed') from exc
 
         # Accumulated here because this is the only place every model call an orchestration
         # run makes passes through. A run's cost was previously reported as zero for that
@@ -256,8 +270,14 @@ def _build_invoke_prompt(settings, token_usage=None):
                 f"[ORCHESTRATION] The model returned no choices at stage '{stage}'.",
                 level=logging.WARNING,
             )
-            return ''
-        return response.choices[0].message.content or ''
+            raise PlannerResponseError('empty_completion')
+        choice = response.choices[0]
+        if getattr(choice, 'finish_reason', None) == 'content_filter' or getattr(choice.message, 'refusal', None):
+            raise PlannerResponseError('model_refusal')
+        text = extract_chat_completion_response_text(response)
+        if not text.strip():
+            raise PlannerResponseError('empty_completion')
+        return text
 
     return invoke_prompt
 
@@ -1156,13 +1176,20 @@ def register_route_backend_orchestration(bp):
                 )
                 return jsonify({'error': 'The answer could not be checked. Please retry.'}), 503
 
-        # Captured on the request thread, before the streamed generator body runs. See
-        # _request_identity: a generator runs after the view returns, when the session is
-        # already gone.
+        # Capture stable caller identity now; resolve the model only after the stream
+        # restores the original turn's canonical seeds.
         identity = _request_identity(user_id)
+        planner_model = None
+
+        def close_planning_resources():
+            try:
+                if planner_model is not None:
+                    planner_model.close()
+            finally:
+                release_elicitation_submission(submission)
 
         def generate():
-            nonlocal turn_context, seeds, answered_record, approval_mode, replan_hint
+            nonlocal turn_context, seeds, answered_record, approval_mode, replan_hint, planner_model
             try:
                 if submission and submission.get('outcome'):
                     outcome = submission['outcome']
@@ -1264,8 +1291,29 @@ def register_route_backend_orchestration(bp):
                 planning_identity = dict(identity)
                 if isinstance(seeds.get('agent'), dict) and seeds['agent'].get('name'):
                     planning_identity['user_enable_agents'] = True
+                try:
+                    planner_model = resolve_orchestration_model(
+                        settings, user_id=user_id, seeds=seeds, planner=True,
+                        identity_context=planning_identity,
+                    )
+                    seeds['model'] = planner_model.answer_model_selection()
+                    turn_context['original_seeds'] = {
+                        **(turn_context.get('original_seeds') or seeds),
+                        'model': dict(seeds['model']),
+                    }
+                except (ValueError, PermissionError, PlannerError, AzureError) as exc:
+                    log_event(
+                        '[ORCHESTRATION] The planner model could not be selected.',
+                        level=logging.WARNING, extra={'error_type': type(exc).__name__},
+                    )
+                    yield build_error_event(
+                        'The selected model is unavailable. Choose an enabled model you can access.',
+                        resolved_conversation_id,
+                    )
+                    return
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
+                    planner_model=planner_model,
                 )
                 planning_usage = _sum_token_usage(
                     turn_context.get('planning_token_usage'), resolution.get('token_usage')
@@ -1387,6 +1435,7 @@ def register_route_backend_orchestration(bp):
                             action_catalog,
                             allowed_user_urls=allowed_user_urls,
                         ),
+                        planner_model=planner_model,
                     )
 
                 planning_usage = _sum_token_usage(planning_usage, plan.get('token_usage'))
@@ -1415,7 +1464,21 @@ def register_route_backend_orchestration(bp):
             except PlanRevisionError as exc:
                 payload, _status = _plan_edit_error(exc)
                 yield serialize_sse(payload)
-            except (ConversationContextError, ConversationResolutionError) as exc:
+            except ConversationResolutionError as exc:
+                log_event(
+                    '[ORCHESTRATION] The conversational request could not be interpreted.',
+                    level=logging.WARNING,
+                    extra={
+                        'stage': 'request_resolution', 'reason': exc.reason,
+                        'attempt': exc.attempts, 'error_type': type(exc).__name__,
+                        'resource': f"conversation:{hashlib.sha256(resolved_conversation_id.encode('utf-8')).hexdigest()}",
+                    },
+                )
+                yield build_error_event(
+                    'The conversation could not be interpreted. Please retry your request.',
+                    resolved_conversation_id,
+                )
+            except ConversationContextError as exc:
                 log_event(
                     '[ORCHESTRATION] Conversation context could not be used for planning.',
                     level=logging.WARNING, extra={'error_type': type(exc).__name__},
@@ -1431,11 +1494,10 @@ def register_route_backend_orchestration(bp):
                 )
                 yield build_error_event('The request could not be planned or saved. Please retry.', conversation_id)
             finally:
-                release_elicitation_submission(submission)
+                close_planning_resources()
 
-        streamed = _sse(generate())
-        if submission:
-            streamed.call_on_close(lambda: release_elicitation_submission(submission))
+        streamed = _sse(stream_with_context(generate()))
+        streamed.call_on_close(close_planning_resources)
         return streamed
 
     @bp.route("/api/v2/orchestration/runs/<run_id>/editor", methods=["GET"])
@@ -1528,7 +1590,7 @@ def register_route_backend_orchestration(bp):
             finally:
                 release_plan_revision(claim)
 
-        streamed = _sse(generate_revision())
+        streamed = _sse(stream_with_context(generate_revision()))
         streamed.call_on_close(lambda: release_plan_revision(claim))
         return streamed
 
@@ -1597,12 +1659,6 @@ def register_route_backend_orchestration(bp):
 
         # One accumulator for the whole run, filled by every model call the closure makes.
         run_token_usage = _sum_token_usage(record.get('planning_token_usage'))
-        try:
-            invoke_prompt = _build_invoke_prompt(settings, token_usage=run_token_usage)
-        except Exception as exc:
-            log_event(f"[ORCHESTRATION] No usable chat model: {exc}", level=logging.ERROR)
-            return jsonify({'error': 'No chat model is configured.'}), 503
-
         user_message = _text(record.get('user_message')) or _text(
             (plan.get('intent') or {}).get('summary')
         )
@@ -1630,15 +1686,48 @@ def register_route_backend_orchestration(bp):
             user_id, seeds=seeds, settings=settings,
             user_groups=seeds.get('active_group_ids') or None,
         )
-        selected_model = seeds.get('model') or {}
+        answer_model = None
+        research_model = None
+
+        def close_models():
+            try:
+                if research_model is not None:
+                    research_model.close()
+            finally:
+                if answer_model is not None:
+                    answer_model.close()
+
+        try:
+            answer_model = resolve_orchestration_model(
+                settings, user_id=user_id, seeds=seeds, identity_context=identity,
+            )
+            research_model = (
+                resolve_orchestration_model(
+                    settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,
+                ) if has_planner_model_override(settings) else answer_model
+            )
+            invoke_prompt = _build_invoke_prompt(
+                settings, token_usage=run_token_usage, model=answer_model,
+            )
+        except (ValueError, PermissionError, PlannerError, AzureError) as exc:
+            close_models()
+            log_event(
+                '[ORCHESTRATION] The execution model could not be selected.',
+                level=logging.WARNING, extra={'error_type': type(exc).__name__},
+            )
+            return jsonify({
+                'error': 'The selected model is unavailable. Choose an enabled model you can access.',
+            }), 403 if isinstance(exc, (PermissionError, OrchestrationModelError)) else 503
+
         action_model_context = {
-            'model_id': selected_model.get('model_id'),
-            'endpoint_id': selected_model.get('model_endpoint_id'),
-            'provider': selected_model.get('model_provider'),
-            'model_deployment': selected_model.get('model_deployment'),
+            'model_id': answer_model.model_id,
+            'endpoint_id': answer_model.endpoint_id,
+            'provider': answer_model.provider,
+            'model_deployment': answer_model.deployment,
             'user_id': user_id,
             'active_group_ids': seeds.get('active_group_ids') or [],
         }
+        worker_started = False
 
         try:
             record = claim_plan_run(
@@ -1647,11 +1736,13 @@ def register_route_backend_orchestration(bp):
                 conversation_context=snapshot,
             )
         except (PlanRevisionError, AzureError) as exc:
+            close_models()
             payload, status = _plan_edit_error(exc)
             return jsonify(payload), status
         plan = record['plan']
 
         def generate():
+            nonlocal worker_started
             # Progress is streamed from a worker thread rather than collected and flushed at
             # the end. The executor is synchronous and calls `emit` from inside its own loop,
             # and a generator cannot yield from a callback -- so buffering was the obvious
@@ -1709,6 +1800,8 @@ def register_route_backend_orchestration(bp):
                 user_id=user_id,
                 turn_index=record.get('turn_index') or 0,
                 invoke_prompt=invoke_prompt,
+                planner_client=research_model.as_planner_client(),
+                planner_deployment=research_model.deployment,
                 user_message=user_message,
                 user_message_id=record.get('user_message_id'),
                 answered_questions=record.get('answered_questions') or [],
@@ -1735,7 +1828,7 @@ def register_route_backend_orchestration(bp):
                 active_group_id=(seeds.get('active_group_ids') or [None])[0],
                 agent_catalog=agent_catalog,
                 action_catalog=action_catalog,
-                gpt_model=selected_model.get('model_deployment'),
+                gpt_model=answer_model.deployment,
                 model_context=action_model_context,
                 agent_execution_identity=agent_execution_identity,
             )
@@ -1763,12 +1856,16 @@ def register_route_backend_orchestration(bp):
                     # The sentinel is what ends the drain loop. Sent from `finally` so a
                     # thrown worker cannot leave the response waiting on a queue nothing
                     # will ever write to again.
-                    frames.put(None)
+                    try:
+                        close_models()
+                    finally:
+                        frames.put(None)
 
             thread = threading.Thread(
                 target=worker, name=f'orchestration-run-{run_id}', daemon=True
             )
             thread.start()
+            worker_started = True
 
             while True:
                 try:
@@ -1785,7 +1882,11 @@ def register_route_backend_orchestration(bp):
 
             thread.join(timeout=RUN_JOIN_TIMEOUT_SECONDS)
 
-            if 'error' in outcome or 'result' not in outcome:
+            failed_result = outcome.get('result') or {}
+            if (
+                'error' in outcome or 'result' not in outcome
+                or failed_result.get('status') == PLAN_STATUS_FAILED
+            ):
                 error_message = (
                     'Conversation context changed. Create a new plan.'
                     if isinstance(outcome.get('error'), ConversationContextError)
@@ -1796,7 +1897,9 @@ def register_route_backend_orchestration(bp):
                         'status': PLAN_STATUS_FAILED,
                         'error': error_message,
                         'completed_at': _now_iso(),
-                        'token_usage': run_token_usage,
+                        'token_usage': _combined_token_usage(
+                            run_token_usage, failed_result.get('token_usage'),
+                        ),
                     }, conversation_id=conversation_id)
                 except AzureError as exc:
                     log_event(
@@ -1839,6 +1942,7 @@ def register_route_backend_orchestration(bp):
                     'token_usage': combined_usage,
                 },
                 extra={
+                    **answer_model.metadata(),
                     'hybrid_citations': document_citations,
                     'web_search_citations': web_citations,
                     'agent_citations': tool_citations,
@@ -1876,9 +1980,12 @@ def register_route_backend_orchestration(bp):
                 artifacts=result.get('artifacts'),
                 plan_summary=summary,
                 status=result.get('status') or PLAN_STATUS_COMPLETED,
+                **answer_model.metadata(),
             )
 
-        return _sse(generate())
+        response = _sse(generate())
+        response.call_on_close(lambda: close_models() if not worker_started else None)
+        return response
 
     @bp.route("/api/v2/orchestration/cancel/<run_id>", methods=["POST"])
     @swagger_route(security=get_auth_security())

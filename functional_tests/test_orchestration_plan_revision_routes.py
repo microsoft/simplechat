@@ -1,8 +1,9 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.102
+Version: 0.261.103
 Implemented in: 0.261.102
+Authorized model routing through revisions and clarification: 0.261.103
 
 Exercises the real Flask routes, planner, executor, and atomic revision persistence.
 Only model, search, source-access, and Cosmos service boundaries are replaced.
@@ -18,6 +19,7 @@ from unittest.mock import patch
 from azure.core.exceptions import AzureError
 
 import test_orchestration_conversation_context_routes as context_routes
+from test_orchestration_model_selection import TERRA_SELECTION
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -55,6 +57,7 @@ def question():
 class PlanRevisionRouteTests(unittest.TestCase):
     plan = context_routes.ConversationRouteTests.plan
     planned = context_routes.ConversationRouteTests.planned
+    use_modern_models = context_routes.ConversationRouteTests.use_modern_models
 
     def setUp(self):
         context_routes.ConversationRouteTests.setUp(self)
@@ -148,7 +151,109 @@ class PlanRevisionRouteTests(unittest.TestCase):
         }, buffered=True)
 
     def test_application_version(self):
-        assert_app_version_at_least('0.261.102')
+        assert_app_version_at_least('0.261.103')
+
+    def test_editing_preserves_the_selected_model_through_execution(self):
+        selection = self.use_modern_models()
+        editor = self.open_editor(self.planned(**selection, reasoning_effort='high'))
+        self.settings['default_model_selection']['model_id'] = 'luna-model'
+        revised, _body = self.revise(editor, revised_plan())
+        self.assertEqual(self.edit_calls[0]['model'], 'gpt-5.6-terra')
+        self.assertEqual(self.edit_calls[0]['reasoning_effort'], 'high')
+        self.assertIn('max_completion_tokens', self.edit_calls[0])
+        self.assertNotIn('max_tokens', self.edit_calls[0])
+        self.assertNotIn('temperature', self.edit_calls[0])
+        record = self.runs.read_item(revised['plan']['run_id'], 'conv1')
+        self.assertEqual(record['seeds']['model'], selection)
+        self.assertEqual(record['original_seeds']['model'], selection)
+        events = frames(self.run_editor_plan(revised))
+        self.assertFalse(any(event.get('error') for event in events), events)
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['model_deployment_name'], 'gpt-5.6-terra')
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_editing_uses_a_separate_planner_without_replacing_the_answer_model(self):
+        self.use_modern_models()
+        self.settings.update({
+            'chat_orchestration_planner_model_endpoint_id': 'selected-endpoint',
+            'chat_orchestration_planner_model_id': 'luna-model',
+        })
+        revised, _body = self.revise(self.open_editor(), revised_plan())
+        self.assertEqual(self.edit_calls[0]['model'], 'gpt-5.6-luna')
+        record = self.runs.read_item(revised['plan']['run_id'], 'conv1')
+        self.assertEqual(record['seeds']['model'], TERRA_SELECTION)
+        events = frames(self.run_editor_plan(revised))
+        self.assertFalse(any(event.get('error') for event in events), events)
+        self.assertEqual(self.model.calls[-1]['model'], 'gpt-5.6-terra')
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_edit_clarification_retains_the_original_default_model(self):
+        self.use_modern_models()
+        editor = self.open_editor()
+        pending, _body = self.revise(editor, question())
+        self.settings['default_model_selection']['model_id'] = 'luna-model'
+        clarification = pending['pending']
+        revised, _body = self.revise(
+            pending, revised_plan('Compare wineries on Friday.', searches=1),
+            action='answer', elicitation_id=clarification['elicitation_id'],
+            elicitation_revision=clarification['revision'],
+            elicitation_response={'action': 'accept', 'content': {'day': 'Friday'}},
+        )
+        self.assertEqual([call['model'] for call in self.edit_calls], ['gpt-5.6-terra'] * 2)
+        record = self.runs.read_item(revised['plan']['run_id'], 'conv1')
+        self.assertEqual(record['seeds']['model'], TERRA_SELECTION)
+        self.assertEqual(record['original_seeds']['model'], TERRA_SELECTION)
+        self.assertIsNone(revised['pending'])
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
+
+    def test_replay_discard_and_restore_do_not_allocate_model_clients(self):
+        self.use_modern_models()
+        editor = self.open_editor()
+        pending, body = self.revise(editor, question())
+        client_count = len(self.model_clients)
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = None
+        response = self.client.post(
+            f"/api/v2/orchestration/runs/{editor['plan']['run_id']}/revisions",
+            json=body, buffered=True,
+        )
+        replay = next(event['editor'] for event in frames(response) if event.get('editor'))
+        self.assertEqual(replay['pending']['elicitation_id'], pending['pending']['elicitation_id'])
+        discarded, _body = self.revise(replay, action='discard')
+        restored, _body = self.revise(
+            discarded, action='restore', source_run_id=editor['plan']['run_id'],
+        )
+        self.assertIsNone(restored['pending'])
+        self.assertEqual(len(self.model_clients), client_count)
+        self.assertEqual(len(self.edit_calls), 1)
+
+    def test_revoked_model_does_not_replace_the_plan_and_releases_its_edit_claim(self):
+        self.use_modern_models()
+        editor = self.open_editor()
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = None
+        _response, events, _body = self.request_revision(editor)
+        self.assertTrue(any(event.get('code') == 'model_unavailable' for event in events), events)
+        self.assertEqual(self.edit_calls, [])
+        current = self.editor(editor['plan']['run_id'])
+        self.assertEqual(current['plan']['run_id'], editor['plan']['run_id'])
+        self.assertEqual(current['version'], editor['version'])
+        self.assertFalse(current['busy'])
+        self.model_runtime.resolve_model_endpoint_from_context.return_value = self.endpoint
+        revised, _body = self.revise(current, revised_plan())
+        self.assertNotEqual(revised['plan']['run_id'], current['plan']['run_id'])
+        self.assertEqual(self.edit_calls[0]['model'], 'gpt-5.6-terra')
+
+    def test_failed_model_edit_closes_its_client_and_preserves_the_plan(self):
+        self.use_modern_models()
+        editor = self.open_editor()
+        self.edit_responses.append({'kind': 'plan', 'steps': []})
+        _response, events, _body = self.request_revision(editor)
+        self.assertTrue(any(event.get('error') for event in events), events)
+        self.assertEqual(self.editor(editor['plan']['run_id'])['version'], editor['version'])
+        for client in self.model_clients:
+            client.close.assert_called_once_with()
 
     def test_get_does_not_pause_but_edit_holds_countdown_durably(self):
         self.settings.update({

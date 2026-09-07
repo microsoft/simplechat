@@ -36,6 +36,19 @@ MODEL_CONTEXT_MODE_SYSTEM = "system"
 MODEL_CONTEXT_MODE_FOLD_LATEST_USER = "fold_latest_user"
 
 
+def normalize_anthropic_finish_reason(finish_reason: Any) -> str | None:
+    """Preserve Anthropic completion semantics in the chat-completions interface."""
+    normalized_reason = str(finish_reason or "").strip().lower()
+    return {
+        "end_turn": "stop",
+        "stop_sequence": "stop",
+        "max_tokens": "length",
+        "model_context_window_exceeded": "length",
+        "tool_use": "tool_calls",
+        "refusal": "content_filter",
+    }.get(normalized_reason, normalized_reason or None)
+
+
 class ModelEndpointBehavior:
     """Provider/model behavior policy shared by Simple Chat model endpoint callers."""
 
@@ -485,7 +498,7 @@ class AnthropicChatCompletionClient:
         return SimpleNamespace(
             choices=[SimpleNamespace(
                 message=SimpleNamespace(content=text, tool_calls=tool_calls),
-                finish_reason=response_payload.get("stop_reason"),
+                finish_reason=normalize_anthropic_finish_reason(response_payload.get("stop_reason")),
             )],
             usage=SimpleNamespace(
                 prompt_tokens=prompt_tokens,
@@ -697,11 +710,9 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         ]
 
     def _normalize_finish_reason(self, finish_reason: Any) -> FinishReason | None:
-        normalized_reason = str(finish_reason or "").strip().lower()
+        normalized_reason = normalize_anthropic_finish_reason(finish_reason)
         if not normalized_reason:
             return None
-        if normalized_reason == "tool_use":
-            normalized_reason = "tool_calls"
         try:
             return FinishReason(normalized_reason)
         except ValueError:
