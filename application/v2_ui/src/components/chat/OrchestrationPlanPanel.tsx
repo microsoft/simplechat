@@ -12,14 +12,20 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { AlertCircle, ArrowDownToLine, ListTree, Loader2, Map as MapIcon, Undo2 } from 'lucide-react';
+import { AlertCircle, ArrowDownToLine, ListTree, Loader2, Map as MapIcon, PenLine, Undo2 } from 'lucide-react';
 import { useChatStore } from '../../stores/chatStore';
 import {
     selectActiveTurn,
+    selectCanEditPlan,
+    selectPlan,
     useOrchestrationStore,
+    type StepRuntimeMap,
     type TrackedRun,
 } from '../../stores/orchestrationStore';
-import { fetchOrchestrationRun, fetchRunSteps } from '../../lib/orchestration';
+import { fetchOrchestrationRun, fetchRunSteps, type OrchestrationPlan } from '../../lib/orchestration';
+import { normalizePlan } from '../../lib/orchestrationPlan';
+import { openOrchestrationPlanEditor } from '../../lib/orchestrationController';
+import { GlassButton } from '../ui/primitives';
 import { OrchestrationRunView } from './OrchestrationRunView';
 import { OrchestrationMapView } from './OrchestrationMapView';
 
@@ -87,6 +93,10 @@ export function OrchestrationPlanPanel() {
     /** The archived run currently being fetched, so the Run view can say so instead of sitting empty. */
     const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
     const [loadError, setLoadError] = useState<string | null>(null);
+    const [archivedPreview, setArchivedPreview] = useState<{
+        runId: string; plan: OrchestrationPlan; runtime: StepRuntimeMap;
+    } | null>(null);
+    const archiveRequest = useRef<object | null>(null);
     const headingRef = useRef<HTMLHeadingElement | null>(null);
 
     // Move focus into the panel when it opens, so a keyboard user is not left back on the toggle
@@ -96,6 +106,18 @@ export function OrchestrationPlanPanel() {
     }, []);
 
     const shownTurnId = pinned?.turnId ?? currentTurnId ?? null;
+    const shownPlan = useOrchestrationStore((state) => selectPlan(state, activeConversationId, shownTurnId ?? ''));
+    const canEdit = useOrchestrationStore((state) => selectCanEditPlan(state, activeConversationId, shownTurnId ?? ''));
+
+    useEffect(() => {
+        archiveRequest.current = null;
+        setPinned(null);
+        setArchivedPreview(null);
+        setLoadingRunId(null);
+        setLoadError(null);
+        pinRun(null);
+        return () => { archiveRequest.current = null; };
+    }, [activeConversationId, pinRun]);
 
     // The newest run still in flight for this conversation, whichever turn it belongs to. Drives
     // the jump bar: a run is live "off-screen" when it exists and its turn is not the shown one.
@@ -113,7 +135,10 @@ export function OrchestrationPlanPanel() {
     }, [inFlightMap, activeConversationId]);
 
     const clearPin = () => {
+        archiveRequest.current = null;
         setPinned(null);
+        setArchivedPreview(null);
+        setLoadingRunId(null);
         setLoadError(null);
         pinRun(null);
     };
@@ -126,6 +151,10 @@ export function OrchestrationPlanPanel() {
      * of a run that already finished would be offering something that cannot be done.
      */
     const loadArchivedRun = (turnId: string, runId: string) => {
+        const request = {};
+        archiveRequest.current = request;
+        const isCurrent = () => archiveRequest.current === request
+            && useChatStore.getState().activeConversationId === activeConversationId;
         setLoadingRunId(runId);
         setLoadError(null);
         Promise.all([
@@ -133,26 +162,41 @@ export function OrchestrationPlanPanel() {
             fetchRunSteps(runId, { conversationId: activeConversationId }),
         ])
             .then(([run, steps]) => {
-                if (!run?.plan) {
+                if (!isCurrent()) {
+                    return;
+                }
+                const plan = normalizePlan(run?.plan);
+                if (!plan) {
                     setLoadError('This run did not keep a plan.');
                     return;
                 }
-                useOrchestrationStore
-                    .getState()
-                    .adoptPersistedPlan(activeConversationId, turnId, run.plan, steps, {
+                const store = useOrchestrationStore.getState();
+                const current = selectPlan(store, activeConversationId, turnId);
+                if (current && (current.run_id !== runId
+                    || selectCanEditPlan(store, activeConversationId, turnId))) {
+                    const runtime: StepRuntimeMap = {};
+                    for (const step of steps) {
+                        runtime[step.step_id] = { status: step.status ?? 'pending', summary: step.summary ?? '' };
+                    }
+                    setArchivedPreview({ runId, plan, runtime });
+                } else {
+                    store.adoptPersistedPlan(activeConversationId, turnId, run?.plan, steps, {
                         readOnly: true,
                     });
+                }
             })
             .catch(() => {
-                setLoadError('This run could not be loaded.');
+                if (isCurrent()) setLoadError('This run could not be loaded.');
             })
             .finally(() => {
-                setLoadingRunId((current) => (current === runId ? null : current));
+                if (isCurrent()) setLoadingRunId(null);
             });
     };
 
     const selectRun = (turnId: string, runId: string, live: boolean) => {
         setPinned({ turnId, runId });
+        archiveRequest.current = null;
+        setArchivedPreview(null);
         setLoadError(null);
         // Only a live run can be pinned in the store, whose pin resolves against in-flight records;
         // a settled run is browsed through this component's own pin instead.
@@ -166,7 +210,7 @@ export function OrchestrationPlanPanel() {
         scrollToTurn(turnId, entry?.userMessageId ?? null, messages);
 
         // A live run is streaming its plan in; anything already in memory is authoritative.
-        if (live || store.plans[scopeKey(activeConversationId, turnId)]) {
+        if (live || store.plans[scopeKey(activeConversationId, turnId)]?.run_id === runId) {
             return;
         }
         loadArchivedRun(turnId, runId);
@@ -222,6 +266,20 @@ export function OrchestrationPlanPanel() {
                 </div>
             </div>
 
+            {view === 'run' && canEdit && shownTurnId && (!pinned || pinned.runId === shownPlan?.run_id) ? (
+                <div className="border-b border-edge px-3 py-2">
+                    <GlassButton size="sm" variant="subtle" aria-label="Edit the plan"
+                        onClick={() => {
+                            clearPin();
+                            void openOrchestrationPlanEditor({
+                                conversationId: activeConversationId, turnId: shownTurnId,
+                            });
+                        }}>
+                        <PenLine size={14} aria-hidden="true" />
+                        Edit
+                    </GlassButton>
+                </div>
+            ) : null}
             {pinned ? (
                 <button
                     type="button"
@@ -261,6 +319,8 @@ export function OrchestrationPlanPanel() {
                         <OrchestrationRunView
                             conversationId={activeConversationId}
                             turnId={shownTurnId}
+                            previewPlan={archivedPreview?.runId === pinned?.runId ? archivedPreview?.plan : undefined}
+                            previewRuntime={archivedPreview?.runId === pinned?.runId ? archivedPreview?.runtime : undefined}
                         />
                     ) : (
                         <p className="p-4 text-sm text-text-3">

@@ -27,7 +27,7 @@ tries several strategies before giving up, and a total failure degrades to a sin
 answering step rather than to an error -- a user who asked a question should get an
 answer even when the planning layer had a bad day.
 
-Version: 0.261.099
+Version: 0.261.102
 """
 
 import json
@@ -52,6 +52,7 @@ from functions_orchestration_schema import (
     PlanValidationError,
     normalize_elicitation,
     normalize_plan,
+    plan_document_ids,
 )
 
 PLANNER_MAX_TOKENS = 2000
@@ -368,8 +369,33 @@ Do not repeat a question that clarifications or earlier runs already answered or
 Only ask when you truly cannot proceed; a reasonable assumption stated in "assumptions"
 is better than a question."""
 
+PLAN_EDIT_INSTRUCTIONS = """
+You are now in the plan editor, not executing a request. No step of this plan has run.
+The plan_edit object contains the current effective plan, the current task, the user's
+latest change, and this plan's own editing conversation. Revise THAT plan rather than
+starting a new conversation or answering the original task.
 
-def build_planner_messages(planner_context, replan_hint=None):
+Preserve the user's previous changes, disabled steps, source selections, and constraints
+unless the latest instruction explicitly changes them. An earlier version or chat turn
+does not undo the current plan. Keep existing step IDs for work that remains the same.
+You may add, remove, or change work only using the offered capabilities and authorized
+sources. Adding a capability to a plan cannot enable a disabled product feature. All
+capability gates, limits, argument schemas, and the final respond step still apply.
+
+For a change, return kind "plan" with the normal plan fields AND "revised_request": a
+self-contained description of the complete updated task, at most 6000 characters. This
+request will guide retrieval and the final answer, so include the latest changes and
+retain the relevant earlier constraints. Do not claim to have performed any planned work.
+
+If the user asks about the plan, or requests unavailable work, you may instead return
+{"kind": "message", "message": "<a concise explanation, at most 2000 characters>"}.
+That keeps the current plan unchanged. Do not silently substitute a different capability
+for one the user specifically requested. If necessary information is missing, return the
+existing elicitation shape; the editor will ask without discarding the current plan.
+"""
+
+
+def build_planner_messages(planner_context, replan_hint=None, edit_context=None):
     """The two messages the planner sees.
 
     The context is passed as JSON rather than prose because it is data the model has to
@@ -377,6 +403,8 @@ def build_planner_messages(planner_context, replan_hint=None):
     paraphrased document id is a plan step that fails validation.
     """
     payload = dict(planner_context or {})
+    if edit_context is not None:
+        payload['plan_edit'] = edit_context
 
     user_content = json.dumps(payload, ensure_ascii=False, separators=(',', ':'), default=str)
 
@@ -389,7 +417,12 @@ def build_planner_messages(planner_context, replan_hint=None):
         )
 
     return [
-        {'role': 'system', 'content': PLANNER_SYSTEM_PROMPT},
+        {
+            'role': 'system',
+            'content': PLANNER_SYSTEM_PROMPT + (
+                '\n\n' + PLAN_EDIT_INSTRUCTIONS if edit_context is not None else ''
+            ),
+        },
         {'role': 'user', 'content': user_content},
     ]
 
@@ -620,10 +653,12 @@ def plan_request(
     seeds=None,
     document_labels=None,
     request_context=None,
+    edit_context=None,
 ):
     """Produce a validated plan, or a question set, for one request.
 
-    Returns ``(kind, document)`` where ``kind`` is ``'plan'`` or ``'elicitation'``.
+    Returns ``(kind, document)`` where ``kind`` is ``'plan'`` or ``'elicitation'``,
+    or ``'message'`` for an editor-only explanation.
 
     ``request_context`` describes *this caller*, as opposed to the deployment: their app
     roles, whether their message contains a URL, whether they have an agent to invoke. It
@@ -636,7 +671,8 @@ def plan_request(
     A planner that fails -- unreachable, unparseable, or producing something that cannot
     be validated -- degrades to a single answering step rather than raising. The user
     asked a question; an orchestration layer having a bad day is not a reason to refuse to
-    answer it.
+    answer it. An editor request is different: a failed change must preserve the prior
+    plan, so ``edit_context`` disables that fallback and permits an explanatory message.
     """
     settings = settings if isinstance(settings, dict) else {}
 
@@ -655,6 +691,14 @@ def plan_request(
     actions = context.get('actions') or []
 
     def _fallback(reason):
+        if edit_context is not None:
+            log_event(
+                '[ORCHESTRATION_PLANNER] Could not revise the plan.',
+                level=logging.WARNING, extra={'reason': reason},
+            )
+            raise PlannerError(
+                'The requested change could not be planned. Your previous plan is unchanged.'
+            )
         log_event(
             f"[ORCHESTRATION_PLANNER] Falling back to a direct answer: {reason}",
             level=logging.WARNING,
@@ -684,7 +728,9 @@ def plan_request(
 
     try:
         reply, usage = _call_planner(
-            client, deployment, build_planner_messages(context, replan_hint=replan_hint)
+            client, deployment, build_planner_messages(
+                context, replan_hint=replan_hint, edit_context=edit_context,
+            )
         )
     except Exception as exc:
         return _fallback(f'the planner call failed: {exc}')
@@ -694,6 +740,29 @@ def plan_request(
         return _fallback('the planner returned nothing parseable')
 
     kind = str(parsed.get('kind') or '').strip().lower()
+
+    if edit_context is not None:
+        if kind == 'message':
+            message = parsed.get('message')
+            if not isinstance(message, str) or not message.strip() or len(message) > 2000:
+                return _fallback('the editor explanation was invalid')
+            return 'message', {
+                'message': message.strip(),
+                'token_usage': {
+                    field: getattr(usage, field)
+                    for field in ('prompt_tokens', 'completion_tokens', 'total_tokens')
+                    if isinstance(getattr(usage, field, None), int)
+                },
+            }
+        if kind not in ('plan', 'elicitation'):
+            return _fallback('the editor response did not identify a plan or question')
+        if kind == 'plan':
+            revised_request = parsed.get('revised_request')
+            if (
+                not isinstance(revised_request, str) or not revised_request.strip()
+                or len(revised_request) > RESOLVED_REQUEST_MAX_LENGTH
+            ):
+                return _fallback('the revised task was missing or too large')
 
     if kind == 'elicitation' and allow_elicitation:
         try:
@@ -740,10 +809,15 @@ def plan_request(
                 seeds=seeds,
                 document_labels=document_labels,
                 request_context=request_context,
+                edit_context=edit_context,
             )
 
     if kind == 'elicitation':
         return _fallback('the planner asked a question when it had already asked one')
+
+    if edit_context is not None and authorized_document_ids is not None:
+        if set(plan_document_ids(parsed, include_disabled=True)) - set(authorized_document_ids):
+            return _fallback('the revised plan named unavailable documents')
 
     try:
         plan = normalize_plan(
@@ -762,6 +836,9 @@ def plan_request(
         )
     except PlanValidationError as exc:
         return _fallback(f'no runnable step survived validation: {exc}')
+
+    if edit_context is not None and plan.get('validation', {}).get('errors'):
+        return _fallback('the revised plan contained unavailable or invalid work')
 
     plan['revision'] = revision
     plan['planner_model'] = deployment
