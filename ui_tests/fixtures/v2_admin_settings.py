@@ -1,7 +1,7 @@
 # v2_admin_settings.py
 """
 Schema-backed browser fixtures for V2 Admin Settings.
-Version: 0.261.093
+Version: 0.261.096
 Implemented in: 0.261.093
 
 Serve the real built SPA through Playwright request interception, using the real
@@ -15,16 +15,14 @@ are created and no access tokens are stored.
 """
 
 import copy
-import os
 import sys
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from uuid import uuid4
+from urllib.parse import urlsplit
 
 import pytest
-from azure.identity import DefaultAzureCredential
-from azure.mgmt.playwright import PlaywrightMgmtClient
 from playwright.sync_api import Page, Route, expect
+
+from playwright_connection import connect_options  # noqa: F401
 
 # Reuse the existing isolated application imports rather than initializing Azure clients.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -43,51 +41,6 @@ AGENT_SECTION_IDS = (
     "agents-page-customization-card",
     "agent-template-approvals-section",
 )
-
-
-@pytest.fixture(scope="session")
-def connect_options():
-    """Let pytest-playwright use the configured Azure workspace, or a local browser."""
-    service_url = os.getenv("PLAYWRIGHT_SERVICE_URL", "")
-    if not service_url:
-        return {}
-
-    resource_id = os.getenv("PLAYWRIGHT_WORKSPACE_RESOURCE_ID", "")
-    parts = resource_id.strip("/").split("/")
-    if (
-        len(parts) != 8
-        or parts[0].lower() != "subscriptions"
-        or parts[2].lower() != "resourcegroups"
-        or parts[4].lower() != "providers"
-        or parts[5].lower() != "microsoft.loadtestservice"
-        or parts[6].lower() != "playwrightworkspaces"
-    ):
-        raise ValueError("Set PLAYWRIGHT_WORKSPACE_RESOURCE_ID to the workspace's ARM resource ID.")
-
-    endpoint = urlsplit(service_url)
-    with DefaultAzureCredential() as credential:
-        with PlaywrightMgmtClient(credential, parts[1]) as client:
-            workspace = client.playwright_workspaces.get(parts[3], parts[7])
-        dataplane_uri = workspace.properties.dataplane_uri if workspace.properties else None
-        if (
-            endpoint.scheme != "wss"
-            or not dataplane_uri
-            or endpoint.hostname != urlsplit(dataplane_uri).hostname
-        ):
-            raise ValueError("PLAYWRIGHT_SERVICE_URL must target the configured Azure workspace.")
-        token = credential.get_token("https://management.azure.com/.default").token
-
-    query = dict(parse_qsl(endpoint.query))
-    query.update({
-        "os": "linux",
-        "runId": os.getenv("PLAYWRIGHT_SERVICE_RUN_ID") or str(uuid4()),
-        "api-version": "2025-09-01",
-    })
-    return {
-        "ws_endpoint": urlunsplit(endpoint._replace(query=urlencode(query))),
-        "headers": {"Authorization": f"Bearer {token}"},
-        "timeout": 180000,
-    }
 
 
 class AdminSettingsFixture:

@@ -1,12 +1,14 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.094
+Version: 0.261.096
 Implemented in: 0.261.094
+Shared editor and prompt dispatch regression coverage added in: 0.261.096
 
 The real Composer, DocumentExplorer, stores, router, and request builders run in the
-existing local Playwright harness. Only API responses are mocked. No Azure resource,
-credentials, or running Flask instance is needed.
+existing Playwright harness. The shared connection fixture supports a configured Azure
+Playwright workspace or a local browser. API responses and local harness assets are
+intercepted; no running Flask instance or application credentials are needed.
 
 Selections must stay pills-only through draft edits, while explicit # completions own
 their inline tokens. The suite also covers workspace and delayed StrictMode handoffs,
@@ -27,7 +29,9 @@ from playwright.sync_api import Page, Route, expect
 
 # The shared harness must also resolve when this file is run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures" / "orchestration"))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "fixtures"))
 import harness_build as hb  # noqa: E402
+from playwright_connection import connect_options  # noqa: E402,F401
 
 
 pytestmark = pytest.mark.ui
@@ -96,6 +100,7 @@ class ContextApi:
         self.unexpected = []
         self.deferred_document_ids = set()
         self.pending_documents = []
+        self.expected_resource_errors = set()
 
     def handle(self, route: Route):
         request = route.request
@@ -195,21 +200,45 @@ class ContextApi:
 
 
 @pytest.fixture
-def context_page():
+def context_page(page):
     errors = []
-    with hb.harness_page(collect_errors=errors) as page:
-        api = ContextApi()
-        page.route("**/api/**", api.handle)
-        page.on(
-            "console",
-            lambda message: errors.append(message.text) if message.type == "error" else None,
-        )
-        try:
-            yield page, api
-        finally:
-            page.evaluate("() => window.OrchHarness.reset()")
-            assert not errors, f"Unexpected workflow browser errors: {errors}"
-            assert not api.unexpected, f"Unmocked workflow requests: {api.unexpected}"
+    hb.ensure_bundle()
+    api = ContextApi()
+
+    def handle(route):
+        path = urlsplit(route.request.url).path
+        if path == "/harness.html":
+            route.fulfill(content_type="text/html", body=(hb.HERE / "harness.html").read_text(encoding="utf-8"))
+        elif path == "/harness.bundle.js":
+            route.fulfill(content_type="application/javascript", body=hb.BUNDLE.read_text(encoding="utf-8"))
+        elif path == "/favicon.ico":
+            route.fulfill(status=204)
+        else:
+            api.handle(route)
+
+    page.route("**/*", handle)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on(
+        "console",
+        lambda message: errors.append(message.text)
+        if message.type == "error" and not (
+            message.text.startswith("Failed to load resource:")
+            and any(
+                urlsplit(message.location.get("url", "")).path == path
+                and f"status of {status}" in message.text
+                for path, status in api.expected_resource_errors
+            )
+        ) else None,
+    )
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.goto("http://simplechat.test/harness.html")
+    page.wait_for_function('() => typeof window.OrchHarness === "object"')
+    try:
+        yield page, api
+    finally:
+        page.evaluate("() => window.OrchHarness.reset()")
+        assert not errors, f"Unexpected workflow browser errors: {errors}"
+        assert not api.unexpected, f"Unmocked workflow requests: {api.unexpected}"
 
 
 def mount_workflow(page: Page, entry="/chat", *, strict_mode=False, orchestration=False):
@@ -701,6 +730,459 @@ def test_collapsed_workspace_removal_keeps_other_context_and_unbound_text(contex
     expect_context_metadata(
         payload, documents=["group-campaign", "public-policy"], group=True, public=True
     )
+
+
+@pytest.mark.parametrize("dispatch", ["chat", "plan"])
+def test_shared_editor_prompt_variables_and_context_reach_both_main_send_paths(context_page, dispatch):
+    page, api = context_page
+    mount_workflow(page, orchestration=dispatch == "plan")
+    page.evaluate(
+        """() => window.OrchHarness.stores.bootstrap.useBootstrapStore.getState().upsertPromptInCatalog({
+            id: 'context-prompt', name: 'Context report', content: 'For {{topic}}: {{composer}}',
+            scope_type: 'personal'
+        })"""
+    )
+    pick_context(page, "Quarterly brief")
+    draft = page.get_by_role("textbox", name="Message", exact=True)
+    draft.fill("/Context")
+    menu = page.get_by_role("listbox", name="Prompt suggestions", exact=True)
+    expect(menu.get_by_role("option", name=re.compile(r"^Context report"))).to_be_visible()
+    draft.press("Tab")
+    expect(menu).to_have_count(0)
+    expect(draft).to_have_value("")
+    expect_pills(page, "Quarterly brief", "Context report")
+
+    page.get_by_role("button", name="Edit Context report for this message", exact=True).click()
+    page.get_by_role("textbox", name="{{topic}}", exact=True).fill("resilience")
+    page.get_by_role("textbox", name="Prompt text", exact=True).fill(
+        "Compare {{topic}} using {{composer}}."
+    )
+    draft.fill("the latest report")
+    expect_pills(page, "Quarterly brief", "Context report")
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == STREAM_PATHS[dispatch]
+    ) as sent:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    payload = sent.value.post_data_json
+    assert payload["message"] == "Compare resilience using the latest report."
+    assert payload["prompt_info"]["variables"] == {"topic": "resilience"}
+    assert payload["prompt_info"]["original_content"] == "For {{topic}}: {{composer}}"
+    assert payload["prompt_info"]["edited"] is True
+    assert payload["prompt_info"]["user_text"] == ""
+    expect_context_metadata(payload, documents=["personal-brief"])
+    expect(draft).to_have_value("")
+    expect_pills(page)
+    assert [path for method, path in api.requests if method == "POST"] == [STREAM_PATHS[dispatch]]
+
+
+def test_shared_editor_prompt_only_send_and_picker_keyboard_remain_safe(context_page):
+    page, api = context_page
+    mount_workflow(page)
+    page.evaluate(
+        """() => window.OrchHarness.stores.bootstrap.useBootstrapStore.getState().upsertPromptInCatalog({
+            id: 'brief-prompt', name: 'Brief report', content: 'Summarize the available sources.',
+            scope_type: 'personal'
+        })"""
+    )
+    draft = page.get_by_role("textbox", name="Message", exact=True)
+    draft.fill("/Brief")
+    expect(page.get_by_role("listbox", name="Prompt suggestions")).to_be_visible()
+    draft.press("Enter")
+    expect(draft).to_have_value("")
+    expect(page.get_by_role("button", name="Send message", exact=True)).to_be_enabled()
+    open_picker(page)
+    page.get_by_role("searchbox", name="Search documents", exact=True).press("Enter")
+    assert not [path for method, path in api.requests if method == "POST"]
+    page.get_by_role("button", name="Done", exact=True).click()
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == STREAM_PATHS["chat"]
+    ) as sent:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    assert sent.value.post_data_json["message"] == "Summarize the available sources."
+    assert sent.value.post_data_json["prompt_info"]["user_text"] == ""
+    expect(page.get_by_role("button", name="Remove Brief report", exact=True)).to_have_count(0)
+
+
+def test_shared_editor_upload_requires_destination_and_waits_for_real_group_document(context_page):
+    page, api = context_page
+    mount_workflow(page)
+    page.evaluate(
+        """() => {
+            const store = window.OrchHarness.stores.bootstrap.useBootstrapStore;
+            store.setState(state => ({data: {...state.data,
+                features: {...state.data.features, enable_chat_file_uploads: true},
+                scope: {...state.data.scope, groups: [
+                    {id: 'group-1', name: 'Marketing'}, {id: 'group-2', name: 'Legal'}
+                ]}
+            }}));
+        }"""
+    )
+    pick_context(page, "Marketing", "Legal")
+    page.get_by_role("textbox", name="Message", exact=True).fill("Read the uploaded group document.")
+    uploads = []
+    ready = False
+    api.expected_resource_errors.add(("/upload", 400))
+
+    def upload(route):
+        uploads.append(route.request.post_data_buffer.decode("utf-8", errors="replace"))
+        if len(uploads) == 1:
+            route.fulfill(status=400, json={
+                "error": "Choose a destination.",
+                "requires_group_upload_target": True,
+                "group_upload_targets": [
+                    {"id": "group-1", "name": "Marketing", "can_upload": True},
+                    {"id": "group-2", "name": "Legal", "can_upload": True},
+                ],
+            })
+        else:
+            route.fulfill(json={
+                "conversation_id": CONVERSATION_ID,
+                "file_message_id": "real-file-message",
+                "workspace_document_id": "real-group-document",
+                "workspace_scope": "group",
+                "workspace_document": {
+                    "document_id": "real-group-document", "scope": "group", "group_id": "group-2",
+                    "file_name": "evidence.pdf", "status": "Queued for processing", "percentage_complete": 0,
+                },
+                "group_upload_target": {"id": "group-2", "name": "Legal", "can_upload": True},
+            })
+
+    def document_status(route):
+        route.fulfill(json={
+            "id": "real-group-document", "group_id": "group-2", "file_name": "evidence.pdf",
+            "status": "Processing complete" if ready else "Processing",
+            "percentage_complete": 100 if ready else 35,
+        })
+
+    page.route("**/upload", upload)
+    page.route("**/api/get_messages?*", lambda route: route.fulfill(json={"messages": []}))
+    page.route("**/api/group_documents/real-group-document", document_status)
+    page.locator('[data-composer-editor="composer-input"] input[type="file"]').set_input_files({
+        "name": "evidence.pdf", "mimeType": "application/pdf", "buffer": b"upload fixture",
+    })
+    destination = page.get_by_label("Upload destination", exact=True)
+    expect(destination).to_be_visible()
+    expect(page.get_by_role("button", name="Retry evidence.pdf", exact=True)).to_be_disabled()
+    destination.select_option("group-2")
+    page.get_by_role("button", name="Retry evidence.pdf", exact=True).click()
+    expect(page.get_by_text("Processing 35%", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Send message", exact=True)).to_be_disabled()
+    assert len(uploads) == 2
+    assert 'name="upload_scope_group_ids"\r\n\r\ngroup-1' in uploads[1]
+    assert 'name="upload_scope_group_ids"\r\n\r\ngroup-2' in uploads[1]
+    assert 'name="group_upload_target_id"\r\n\r\ngroup-2' in uploads[1]
+    ready = True
+    expect(page.get_by_text("Ready", exact=True)).to_be_visible(timeout=15000)
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == STREAM_PATHS["chat"]
+    ) as sent:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    assert sent.value.post_data_json["selected_document_ids"] == ["real-group-document"]
+    assert sorted(sent.value.post_data_json["active_group_ids"]) == ["group-1", "group-2"]
+    assert "real-file-message" not in sent.value.post_data_json["selected_document_ids"]
+    expect(page.get_by_role("list", name="Attached files", exact=True)).to_have_count(0)
+
+
+def test_shared_editor_new_chat_upload_batches_share_the_returned_conversation(context_page):
+    page, _ = context_page
+    mount_workflow(page)
+    page.evaluate(
+        """() => {
+            const H = window.OrchHarness;
+            H.stores.chat.useChatStore.setState({activeConversationId: null});
+            const store = H.stores.bootstrap.useBootstrapStore;
+            store.setState(state => ({data: {...state.data,
+                features: {...state.data.features, enable_chat_file_uploads: true}
+            }}));
+        }"""
+    )
+    uploads = []
+    pending = []
+    created = "new-upload-conversation"
+
+    def upload(route):
+        uploads.append(route.request.post_data_buffer.decode("utf-8", errors="replace"))
+        if len(uploads) == 1:
+            pending.append(route)
+        else:
+            route.fulfill(json={"conversation_id": created, "file_message_id": "created_file_2"})
+
+    page.route("**/upload", upload)
+    file_input = page.locator('[data-composer-editor="composer-input"] input[type="file"]')
+    with page.expect_request(lambda request: urlsplit(request.url).path == "/upload"):
+        file_input.set_input_files({"name": "first.txt", "mimeType": "text/plain", "buffer": b"first"})
+    file_input.set_input_files({"name": "second.txt", "mimeType": "text/plain", "buffer": b"second"})
+    expect(page.get_by_text("second.txt", exact=True)).to_be_visible()
+    assert len(uploads) == 1
+    pending[0].fulfill(json={"conversation_id": created, "file_message_id": "created_file_1"})
+    expect(page.get_by_text("Ready", exact=True)).to_have_count(2)
+    assert len(uploads) == 2
+    assert 'name="conversation_id"' not in uploads[0]
+    assert f'name="conversation_id"\r\n\r\n{created}' in uploads[1]
+    page.get_by_role("textbox", name="Message", exact=True).fill("Read both files.")
+    with page.expect_request(
+        lambda request: request.method == "POST" and urlsplit(request.url).path == STREAM_PATHS["chat"]
+    ) as sent:
+        page.get_by_role("button", name="Send message", exact=True).click()
+    assert sent.value.post_data_json["conversation_id"] == created
+    assert sent.value.post_data_json["selected_document_ids"] == []
+
+
+def mount_inline_lifecycle(page):
+    mount_workflow(page)
+    page.evaluate(
+        """(conv) => {
+            const H = window.OrchHarness;
+            H.unmount('mount-a');
+            const bootstrap = H.stores.bootstrap.useBootstrapStore;
+            bootstrap.setState(state => ({data: {...state.data,
+                features: {...state.data.features, enable_chat_file_uploads: true},
+                catalogs: {...state.data.catalogs, prompts: [{
+                    id: 'lifecycle-prompt', name: 'Lifecycle prompt',
+                    content: 'Compare {{topic}}: {{composer}}. {{note|keep default}}',
+                    scope_type: 'personal'
+                }]}
+            }}));
+            H.stores.orchestration.useOrchestrationStore.getState().setElicitation(conv, 'lifecycle-turn', {
+                contract_version: 2, elicitation_id: 'lifecycle-question', revision: 0,
+                turn_id: 'lifecycle-turn', run_id: '', message: 'Choose a source and describe its use.',
+                requested_schema: {type: 'object', properties: {
+                    files: {type: 'array', items: {type: 'string'}, title: 'Source files'},
+                    details: {type: 'string', title: 'Details'}
+                }, required: ['files', 'details']},
+                ui_hints: {pages: [['files'], ['details']], order: ['files', 'details'],
+                    fields: {files: {input: 'files', candidates: []}}}
+            });
+            H.mount('mount-a', 'ElicitationCard', {conversationId: conv, turnId: 'lifecycle-turn'},
+                {strictMode: true});
+        }""",
+        CONVERSATION_ID,
+    )
+    card = page.get_by_role("region", name="Follow-up questions")
+    expect(card).to_be_visible()
+    return card
+
+
+def read_inline_lifecycle_draft(page):
+    return page.evaluate(
+        """(conv) => {
+            const O = window.OrchHarness.stores.orchestration;
+            return O.selectElicitationDraft(O.useOrchestrationStore.getState(), conv, 'lifecycle-turn');
+        }""",
+        CONVERSATION_ID,
+    )
+
+
+def defer_editor_response(page, endpoint, payload):
+    """Keep one response late even after abort, proving stale completions cannot change drafts."""
+    page.evaluate(
+        """({endpoint, payload}) => {
+            const previous = window.fetch.bind(window);
+            window.deferredEditorRequest = {started: false, release: null, signal: null};
+            window.fetch = (input, init) => {
+                const path = new URL(String(input), window.location.href).pathname;
+                const held = window.deferredEditorRequest;
+                if (path === endpoint && !held.started) {
+                    held.started = true;
+                    held.signal = init.signal;
+                    return new Promise(resolve => {
+                        held.release = () => resolve(new Response(JSON.stringify(payload),
+                            {status: 200, headers: {'Content-Type': 'application/json'}}));
+                    });
+                }
+                return previous(input, init);
+            };
+        }""",
+        {"endpoint": endpoint, "payload": payload},
+    )
+
+
+def test_shared_editor_paging_marks_interrupted_transfer_actionable_and_retries(context_page):
+    page, _ = context_page
+    card = mount_inline_lifecycle(page)
+    defer_editor_response(page, "/upload", {
+        "conversation_id": CONVERSATION_ID, "file_message_id": "late-file-message",
+    })
+    page.route("**/upload", lambda route: route.fulfill(json={
+        "conversation_id": CONVERSATION_ID, "file_message_id": "retried-file-message",
+    }))
+    card.locator('input[type="file"]').set_input_files({
+        "name": "first.txt", "mimeType": "text/plain", "buffer": b"first answer file",
+    })
+    page.wait_for_function("() => typeof window.deferredEditorRequest.release === 'function'")
+    before = read_inline_lifecycle_draft(page)["editors"]["files"]["uploads"][0]
+    assert before["state"] == "uploading"
+    card.get_by_role("button", name="Next", exact=True).click()
+    card.get_by_role("textbox", name="Details", exact=True).fill("Keep the second answer.")
+    state = read_inline_lifecycle_draft(page)
+    interrupted = state["editors"]["files"]["uploads"][0]
+    assert interrupted["state"] == "failed"
+    assert interrupted["interrupted"] == "uploading"
+    assert "Retry" in interrupted["error"]
+    assert page.evaluate("() => window.deferredEditorRequest.signal.aborted") is True
+    page.evaluate("() => window.deferredEditorRequest.release()")
+    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_disabled()
+    assert read_inline_lifecycle_draft(page)["editors"]["files"]["uploads"][0]["state"] == "failed"
+    card.get_by_role("button", name="Back", exact=True).click()
+    expect(card.get_by_role("alert").filter(has_text="transfer was interrupted")).to_be_visible()
+    with page.expect_file_chooser() as chooser:
+        card.get_by_role("button", name="Retry first.txt", exact=True).click()
+    chooser.value.set_files({"name": "first.txt", "mimeType": "text/plain", "buffer": b"first answer file"})
+    expect(card.get_by_text("Ready", exact=True)).to_be_visible()
+    retried = read_inline_lifecycle_draft(page)["editors"]["files"]["uploads"][0]
+    assert retried["id"] == before["id"]
+    assert retried["reference"]["id"] == "retried-file-message"
+    assert retried["reference"]["scope"]["id"] == CONVERSATION_ID
+    card.get_by_role("button", name="Next", exact=True).click()
+    expect(card.get_by_role("textbox", name="Details", exact=True)).to_have_value("Keep the second answer.")
+    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+
+
+def test_shared_editor_retained_processing_and_prompt_values_survive_remount(context_page):
+    page, _ = context_page
+    card = mount_inline_lifecycle(page)
+    draft = card.get_by_role("textbox", name="Additional details for Source files (optional)", exact=True)
+    draft.fill("/Lifecycle")
+    expect(card.get_by_role("listbox", name="Prompt suggestions")).to_be_visible()
+    draft.press("Tab")
+    card.get_by_role("button", name="Edit Lifecycle prompt for this message", exact=True).click()
+    card.get_by_role("textbox", name="{{topic}}", exact=True).fill("contracts")
+    card.get_by_role("textbox", name="{{note}}", exact=True).fill("")
+    edited = "Review {{topic}}: {{composer}}. {{note|keep default}}"
+    card.get_by_role("textbox", name="Prompt text", exact=True).fill(edited)
+    draft.fill("the first answer")
+    uploading_document = {
+        "document_id": "lifecycle-document", "scope": "personal", "file_name": "source.pdf",
+        "status": "Processing", "percentage_complete": 25,
+    }
+    uploads = []
+
+    def upload(route):
+        uploads.append(route.request.post_data_buffer)
+        route.fulfill(json={
+            "conversation_id": CONVERSATION_ID, "file_message_id": "source-file-message",
+            "workspace_scope": "personal", "workspace_document_id": "lifecycle-document",
+            "workspace_document": uploading_document,
+        })
+
+    page.route("**/upload", upload)
+    page.route("**/api/documents/lifecycle-document", lambda route: route.fulfill(json={
+        **uploading_document, "status": "Processing complete", "percentage_complete": 100,
+    }))
+    defer_editor_response(page, "/api/documents/lifecycle-document", {
+        **uploading_document, "status": "Processing complete", "percentage_complete": 100,
+    })
+    card.locator('input[type="file"]').set_input_files({
+        "name": "source.pdf", "mimeType": "application/pdf", "buffer": b"source fixture",
+    })
+    expect(card.get_by_text("Processing 25%", exact=True)).to_be_visible()
+    page.wait_for_function("() => typeof window.deferredEditorRequest.release === 'function'")
+    before = read_inline_lifecycle_draft(page)["editors"]["files"]
+    card.get_by_role("button", name="Next", exact=True).click()
+    card.get_by_role("textbox", name="Details", exact=True).fill("The independent second answer.")
+    retained = read_inline_lifecycle_draft(page)["editors"]["files"]
+    assert retained["uploads"][0]["state"] == "processing"
+    assert retained["uploads"][0]["reference"] == before["uploads"][0]["reference"]
+    assert retained["promptValues"] == {"topic": "contracts", "note": ""}
+    assert page.evaluate("() => window.deferredEditorRequest.signal.aborted") is False
+    page.evaluate("() => window.OrchHarness.unmount('mount-a')")
+    page.evaluate("() => window.deferredEditorRequest.release()")
+    page.wait_for_function(
+        """(conv) => {
+            const O = window.OrchHarness.stores.orchestration;
+            return O.selectElicitationDraft(O.useOrchestrationStore.getState(), conv, 'lifecycle-turn')
+                .editors.files.uploads[0].state === 'ready';
+        }""",
+        arg=CONVERSATION_ID,
+    )
+    page.evaluate(
+        """(conv) => {
+            const H = window.OrchHarness;
+            H.mount('mount-a', 'ElicitationCard', {conversationId: conv, turnId: 'lifecycle-turn'},
+                {strictMode: true});
+        }""",
+        CONVERSATION_ID,
+    )
+    expect(card.get_by_role("textbox", name="Details", exact=True)).to_have_value("The independent second answer.")
+    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+    card.get_by_role("button", name="Back", exact=True).click()
+    expect(card.get_by_text("Ready", exact=True)).to_be_visible()
+    card.get_by_role("button", name="Edit Lifecycle prompt for this message", exact=True).click()
+    expect(card.get_by_role("textbox", name="{{topic}}", exact=True)).to_have_value("contracts")
+    expect(card.get_by_role("textbox", name="{{note}}", exact=True)).to_have_value("")
+    expect(card.get_by_role("textbox", name="Prompt text", exact=True)).to_have_value(edited)
+    expect(draft).to_have_value("the first answer")
+    resumed = read_inline_lifecycle_draft(page)
+    assert resumed["editors"]["files"]["uploads"][0]["id"] == before["uploads"][0]["id"]
+    assert resumed["editors"]["files"]["uploads"][0]["state"] == "ready"
+    assert resumed["editors"]["details"]["attachedPrompt"] is None
+    assert len(uploads) == 1, "Remounting must check the existing file, not upload it a second time."
+    card.get_by_role("button", name="Next", exact=True).click()
+    expect(card.get_by_role("button", name="Finish", exact=True)).to_be_enabled()
+
+
+@pytest.mark.parametrize("retirement", ["discard", "supersede", "remove"])
+@pytest.mark.parametrize("processing", [False, True], ids=["transfer", "processing"])
+def test_shared_editor_late_upload_cannot_revive_a_retired_question(context_page, retirement, processing):
+    page, _ = context_page
+    card = mount_inline_lifecycle(page)
+    if processing:
+        page.route("**/upload", lambda route: route.fulfill(json={
+            "conversation_id": CONVERSATION_ID, "workspace_document_id": "retired-document",
+            "workspace_scope": "personal", "workspace_document": {
+                "document_id": "retired-document", "scope": "personal", "status": "Processing",
+                "file_name": "retired.txt", "percentage_complete": 25,
+            },
+        }))
+        defer_editor_response(page, "/api/documents/retired-document", {
+            "status": "Processing complete", "percentage_complete": 100,
+        })
+    else:
+        defer_editor_response(page, "/upload", {
+            "conversation_id": CONVERSATION_ID, "file_message_id": "late-retired-file",
+        })
+    card.locator('input[type="file"]').set_input_files({
+        "name": "retired.txt", "mimeType": "text/plain", "buffer": b"retired upload",
+    })
+    page.wait_for_function("() => typeof window.deferredEditorRequest.release === 'function'")
+    if processing:
+        card.get_by_role("button", name="Next", exact=True).click()
+        assert page.evaluate("() => window.deferredEditorRequest.signal.aborted") is False
+    page.evaluate(
+        """({conv, retirement}) => {
+            const O = window.OrchHarness.stores.orchestration;
+            const store = O.useOrchestrationStore.getState();
+            if (retirement === 'supersede') {
+                const previous = O.selectElicitation(store, conv, 'lifecycle-turn');
+                store.setElicitation(conv, 'lifecycle-turn', {...previous, elicitation_id: 'replacement-question'});
+            } else if (retirement === 'remove') {
+                store.updateElicitationDraft(conv, 'lifecycle-turn', 'lifecycle-question', 0, draft => ({
+                    ...draft, editors: {...draft.editors, files: {...draft.editors.files, uploads: []}}
+                }));
+            } else {
+                store.clearElicitation(conv, 'lifecycle-turn');
+            }
+        }""",
+        {"conv": CONVERSATION_ID, "retirement": retirement},
+    )
+    page.wait_for_function("() => window.deferredEditorRequest.signal.aborted")
+    page.evaluate(
+        """async () => {
+            window.deferredEditorRequest.release();
+            await new Promise(resolve => window.requestAnimationFrame(resolve));
+        }"""
+    )
+    current = read_inline_lifecycle_draft(page)
+    if retirement != "discard":
+        assert current["elicitationId"] == (
+            "replacement-question" if retirement == "supersede" else "lifecycle-question"
+        )
+        assert current["editors"]["files"]["uploads"] == []
+        assert current["editors"]["files"]["text"] == ""
+    else:
+        assert current is None
+        expect(card).to_have_count(0)
+    expect(page.get_by_text("retired.txt", exact=True)).to_have_count(0)
 
 
 if __name__ == "__main__":
