@@ -690,6 +690,7 @@ def register_enhanced_citations_routes(bp):
                     document_id=document_id,
                     num_file_chunks=0,
                     status="Pending approval",
+                    allow_deferred_xsd_source=True,
                 )
                 update_document(
                     document_id=document_id,
@@ -777,6 +778,7 @@ def register_enhanced_citations_routes(bp):
                 document_id=document_id,
                 num_file_chunks=0,
                 status="Pending approval",
+                allow_deferred_xsd_source=True,
             )
             update_document(
                 document_id=document_id,

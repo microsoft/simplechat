@@ -2,8 +2,9 @@
 # test_mixed_source_manifest_contracts.py
 """
 Functional test for authorized mixed-source manifest and evidence contracts.
-Version: 0.250.064
-Implemented in: 0.250.062; Phase 2 request/evidence coverage added in 0.250.064
+Version: 0.250.160
+Implemented in: 0.250.062; Phase 2 request/evidence coverage added in 0.250.064;
+XSD source partition coverage added in 0.250.160
 
 This test ensures Phase 1 of #1056 resolves requested sources once through
 current authorization boundaries, preserves ordering, partitions mixed source
@@ -204,6 +205,22 @@ def build_authorized_resolver_fixture():
             "file_name": "data.csv",
             "version": 2,
         },
+        "personal-xsd": {
+            "id": "personal-xsd",
+            "user_id": "user-1",
+            "title": "Order schema",
+            "file_name": "order.xsd",
+            "version": 1,
+            "blob_container": "user-documents",
+            "blob_path": "user-1/xsd/schema/order.xsd",
+            "document_kind": "xml_schema",
+            "xsd_logical_path": "schemas/order.xsd",
+            "xsd_schema_status": "ready",
+            "xsd_profile": "simplechat-xsd10-lxml-v1",
+            "xsd_validator_id": "lxml-test",
+            "xsd_target_namespace": "urn:orders",
+            "xsd_sha256": "abc123",
+        },
         "personal-unsupported": {
             "id": "personal-unsupported",
             "user_id": "user-1",
@@ -311,6 +328,21 @@ def test_mixed_classification_order_and_partition():
         "tabular",
     ]
 
+    schema_manifest = resolve_manifest(["personal-xsd"], resolver)
+    assert schema_manifest[0]["source_kind"] == "xml_schema"
+    assert schema_manifest[0]["storage_locator"] == {
+        "container": "user-documents",
+        "blob_path": "user-1/xsd/schema/order.xsd",
+    }
+    assert schema_manifest[0]["xsd_logical_path"] == "schemas/order.xsd"
+    assert schema_manifest[0]["xsd_schema_status"] == "ready"
+    schema_partitions = orchestration.partition_source_manifest(schema_manifest)
+    assert [entry["document_id"] for entry in schema_partitions["schema_sources"]] == [
+        "personal-xsd",
+    ]
+    assert schema_partitions["narrative_sources"] == []
+    assert schema_partitions["tabular_sources"] == []
+
     for document_ids in (
         ["personal-docx", "personal-csv"],
         ["personal-csv", "personal-docx"],
@@ -324,6 +356,37 @@ def test_mixed_classification_order_and_partition():
         assert [entry["document_id"] for entry in partitions["narrative_sources"]] == [
             "personal-docx",
         ]
+
+
+def test_xsd_summary_evidence_preserves_schema_source_kind():
+    schema_source = {
+        "document_id": "personal-xsd",
+        "source_kind": "xml_schema",
+        "authorization_status": "authorized",
+    }
+    envelopes = orchestration.build_schema_summary_evidence_envelopes(
+        [schema_source],
+        [{
+            "document_id": "personal-xsd",
+            "id": "personal-xsd_1",
+            "chunk_text": "XSD schema: schemas/order.xsd",
+            "page_number": 1,
+            "chunk_sequence": 1,
+            "score": 1.0,
+        }],
+        "selected",
+    )
+
+    assert len(envelopes) == 1
+    assert envelopes[0]["source_kind"] == "xml_schema"
+    assert envelopes[0]["status"] == "completed"
+    handoff = orchestration.build_mixed_source_evidence_handoff(
+        [schema_source],
+        envelopes,
+        "selected",
+    )
+    assert handoff["mixed_source_coverage"]["completed_source_count"] == 1
+    assert handoff["mixed_source_coverage"]["failed_source_count"] == 0
 
 
 def test_duplicates_and_cross_scope_filename_identity():

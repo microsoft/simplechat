@@ -53,6 +53,7 @@ CHAT_WORKSPACE_UPLOAD_EXTENSIONS = (
     DOCUMENT_EXTENSIONS
     | IMAGE_EXTENSIONS
     | TABULAR_EXTENSIONS
+    | SCHEMA_EXTENSIONS
     | EMAIL_EXTENSIONS
     | {'doc', 'docm', 'html', 'txt', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
 )
@@ -719,6 +720,10 @@ def register_route_frontend_chats(bp):
         public_settings['deep_research_max_search_queries_per_turn'] = deep_research_config.get('deep_research_max_search_queries_per_turn')
         enable_user_feedback = public_settings.get("enable_user_feedback", False)
         enable_enhanced_citations = public_settings.get("enable_enhanced_citations", False)
+        public_settings["xsd_upload_available"] = bool(
+            enable_enhanced_citations
+            and CLIENTS.get("storage_account_office_docs_client")
+        )
         enable_document_classification = public_settings.get("enable_document_classification", False)
         enable_extract_meta_data = public_settings.get("enable_extract_meta_data", False)
         enable_multi_model_endpoints = public_settings.get("enable_multi_model_endpoints", False)
@@ -1024,6 +1029,20 @@ def register_route_frontend_chats(bp):
         workspace_upload_enabled = _is_setting_enabled(settings.get('enable_group_workspaces', False)) if group_upload_target else _is_setting_enabled(settings.get('enable_user_workspace', False))
         workspace_upload_supported = file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS and allowed_file(original_filename)
 
+        if file_ext_nodot in SCHEMA_EXTENSIONS and not _is_setting_enabled(settings.get('enable_enhanced_citations', False)):
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            return jsonify({
+                'error': 'XSD uploads require Enhanced Citations to preserve the complete schema file.'
+            }), 409
+
+        if file_ext_nodot in SCHEMA_EXTENSIONS and not workspace_upload_enabled:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            return jsonify({
+                'error': 'XSD uploads require an enabled personal or group workspace.'
+            }), 409
+
         if group_upload_target and not workspace_upload_enabled:
             if temp_file_path and os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
@@ -1113,6 +1132,26 @@ def register_route_frontend_chats(bp):
                         sharing_result = sync_chat_upload_workspace_document_sharing_for_collaboration(collaboration_conversation)
                         for affected_user_id in sharing_result.get('affected_user_ids', []):
                             invalidate_personal_search_cache(affected_user_id)
+            except XsdIngestionCapabilityError as workspace_error:
+                log_event(
+                    "[CHAT_UPLOAD] XSD workspace upload capability check failed.",
+                    extra={
+                        'conversation_id': response_conversation_id,
+                        'source_conversation_id': conversation_id,
+                        'filename': filename,
+                        'error_code': workspace_error.code,
+                    },
+                    level=logging.WARNING,
+                )
+                if temp_file_path and os.path.exists(temp_file_path):
+                    try:
+                        os.remove(temp_file_path)
+                    except Exception as cleanup_error:
+                        debug_print(f"Unable to clean up XSD chat upload temp file: {cleanup_error}")
+                return jsonify({
+                    'error': str(workspace_error),
+                    'code': workspace_error.code,
+                }), workspace_error.http_status
             except Exception as workspace_error:
                 log_event(
                     f"[CHAT_UPLOAD] Failed to queue workspace document for {filename}: {workspace_error}",

@@ -3508,6 +3508,9 @@ def _create_document_from_remote_file(source: Dict[str, Any], remote_file: Dict[
         status="Queued from file sync",
         group_id=group_id,
         public_workspace_id=public_workspace_id,
+        xsd_logical_path=remote_file.get("relative_path") or remote_file["file_name"],
+        xsd_family_namespace=f"file-sync:{source['id']}",
+        source_file_path=temp_file_path,
     )
     _ensure_sync_tag_definitions(user_id, scope_type, group_id, public_workspace_id, tags)
 

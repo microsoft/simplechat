@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 5A/5B document access index read path.
-Version: 0.250.047
+Version: 0.250.160
 Implemented in: 0.250.022
 Public workspace UI coverage updated in: 0.250.023
 Tag listing coverage updated in: 0.250.024
@@ -10,6 +10,7 @@ Production read metrics updated in: 0.250.025
 Default read enablement updated in: 0.250.027
 Redis DAI cache updated in: 0.250.029
 Legacy tag family projection updated in: 0.250.030
+XSD schema metadata projection updated in: 0.250.160
 
 This test ensures the default DAI read path only serves document list reads
 when backfill is complete and repair backlog is clear. It also verifies
@@ -142,7 +143,7 @@ def _succeeded_backfill_state():
         "completed_source_scopes": ["personal", "group", "public"],
         "total_documents_processed": 3,
         "total_documents_failed": 0,
-        "schema_version": 2,
+        "schema_version": 3,
     }
 
 
@@ -377,6 +378,53 @@ def test_read_switch_returns_list_ready_projection_documents():
     assert read_metrics["windows"]["15m"]["served_from_index_count"] == 1
     assert read_metrics["windows"]["15m"]["source_fallback_count"] == 0
     assert read_metrics["windows"]["15m"]["item_count"] == 1
+
+
+def test_xsd_metadata_round_trips_through_access_projection():
+    """Document pickers receive the bounded schema metadata used by orchestration."""
+    xsd_metadata = {
+        "document_kind": "xml_schema",
+        "xsd_logical_path": "schemas/orders.xsd",
+        "xsd_schema_status": "ready",
+        "xsd_profile": "simplechat-xsd10-subset-profile/1",
+        "xsd_validator_id": "lxml/test",
+        "xsd_dialect": "xsd-1.0-subset",
+        "xsd_effective_dialect": "xsd-1.0-subset",
+        "xsd_target_namespace": "urn:orders",
+        "xsd_sha256": "abc123",
+        "xsd_byte_size": 2048,
+        "xsd_author_version": "1.0",
+        "xsd_global_elements": ["Order"],
+        "xsd_global_types": ["OrderType"],
+        "xsd_dependencies": [{"kind": "include", "schema_location": "types.xsd"}],
+        "xsd_dependency_count": 1,
+        "xsd_diagnostics": [],
+    }
+    with _load_document_access_index_module() as (
+        indexing,
+        _index_container,
+        settings_container,
+    ):
+        settings_container.upsert_item(_succeeded_backfill_state())
+        indexing.sync_document_access_index_for_document(
+            _document(
+                "schema-orders",
+                "owner-1",
+                file_name="orders.xsd",
+                **xsd_metadata,
+            ),
+            force=True,
+        )
+        result = indexing.query_document_access_index_documents(
+            source_scope="personal",
+            user_id="owner-1",
+        )
+
+    assert result["success"] is True
+    assert len(result["documents"]) == 1
+    projected = result["documents"][0]
+    for field_name, expected_value in xsd_metadata.items():
+        assert projected[field_name] == expected_value
 
 
 def test_read_switch_returns_multi_public_workspace_documents():
@@ -812,7 +860,7 @@ def test_wave5b_route_and_admin_contract_are_wired():
     settings_source = open(os.path.join(SINGLE_APP_DIR, "functions_settings.py"), "r", encoding="utf-8").read()
 
     assert_app_version_at_least("0.250.047")
-    assert "DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 2" in index_source
+    assert "DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 3" in index_source
     assert "def query_document_access_index_documents(" in index_source
     assert "def query_document_access_index_tag_counts(" in index_source
     assert "def query_document_access_index_legacy_count(" in index_source

@@ -2,8 +2,8 @@
 # test_generated_json_xml_exports.py
 """
 Functional test for generated JSON/XML export artifacts.
-Version: 0.250.156
-Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156
+Version: 0.250.160
+Implemented in: 0.250.114; completed file-export cards and View actions in 0.250.152; truthful private payload streaming in 0.250.153; shared structured-format intent terminology in 0.250.154; source-only intent guardrails in 0.250.156; schema-bound XML guardrails in 0.250.160
 
 This test ensures JSON/XML generation requests are recognized as downloadable
 artifact workflows, reuse shared serialization helpers, avoid duplicate XML
@@ -85,6 +85,15 @@ def test_shared_json_xml_export_helpers():
     assert serialized_xml.startswith('<?xml version="1.0" encoding="UTF-8"?>')
     assert "<GeneratedRows>" in serialized_xml
     assert serialized_xml.count("<Row>") == 2
+    try:
+        module.serialize_generated_xml(
+            [{"name": "A"}],
+            require_xml_document=True,
+        )
+    except ValueError as error:
+        assert "complete XML document" in str(error)
+    else:
+        raise AssertionError("Schema-bound XML serialization must not synthesize a generic fallback")
 
     assert module.normalize_generated_output_format(".xml") == "xml"
     assert module.normalize_generated_output_format("json") == "json"
@@ -109,6 +118,11 @@ def test_shared_json_xml_export_helpers():
     xml_guidance = module.build_generated_file_output_guidance(
         'Take the content for the PDF and put it into the XML.',
     )
+    schema_xml_guidance = module.build_generated_file_output_guidance(
+        'Create an XML file.',
+        requested_format='xml',
+        xml_schema_guidance='Schema contract: urn:orders',
+    )
     json_guidance = module.build_generated_file_output_guidance(
         'Create a downloadable JSON file.',
         requested_format='json',
@@ -118,6 +132,8 @@ def test_shared_json_xml_export_helpers():
         assert 'claim that files cannot be attached' in guidance
         assert 'copy or save content manually' in guidance
         assert 'Return ONLY' in guidance
+    assert 'selected schema is authoritative' in schema_xml_guidance
+    assert 'Schema contract: urn:orders' in schema_xml_guidance
     print("Shared helper checks passed")
 
 
@@ -184,6 +200,7 @@ def test_structured_artifact_intent_is_shared_across_execution_paths():
         assert len(selected_nodes) == len(function_names)
         namespace = {
             'get_requested_structured_artifact_format': module.get_requested_structured_artifact_format,
+            '_shared_get_tabular_generated_output_format': module.get_requested_structured_artifact_format,
         }
         exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(source_file), 'exec'), namespace)
         return namespace

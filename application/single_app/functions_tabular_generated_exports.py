@@ -6623,6 +6623,8 @@ def _write_ordered_output_stream(run, output_stream):
         safe_output_schema = build_safe_csv_headers(output_schema)
         csv_writer = csv.DictWriter(output_stream, fieldnames=safe_output_schema, lineterminator='\n')
         csv_writer.writeheader()
+    elif output_format == 'xml':
+        output_stream.write('<?xml version="1.0" encoding="UTF-8"?>\n<GeneratedRows>\n')
     else:
         output_stream.write('[\n')
 
@@ -6660,6 +6662,14 @@ def _write_ordered_output_stream(run, output_stream):
                     safe_field_name: _serialize_generated_output_value(ordered_entry.get(field_name))
                     for field_name, safe_field_name in zip(output_schema, safe_output_schema)
                 })
+            elif output_format == 'xml':
+                serialized_row = serialize_generated_xml(
+                    ordered_entry,
+                    root_name='Row',
+                    item_name='Item',
+                )
+                row_body = serialized_row.split('?>', 1)[-1].strip()
+                output_stream.write(f'  {row_body}\n')
             else:
                 if written_row_count:
                     output_stream.write(',\n')
@@ -6668,7 +6678,9 @@ def _write_ordered_output_stream(run, output_stream):
             written_row_count += 1
             expected_source_row_number += 1
 
-    if output_format != 'csv':
+    if output_format == 'xml':
+        output_stream.write('</GeneratedRows>\n')
+    elif output_format != 'csv':
         output_stream.write('\n]\n')
     if written_row_count != expected_row_count:
         raise ValueError(

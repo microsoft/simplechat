@@ -1,7 +1,7 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.250.129
+Version: 0.250.160
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
@@ -14,13 +14,14 @@ import ast
 import uuid
 from pathlib import Path
 
+from test_support.versioning import assert_app_version_at_least
+
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = ROOT / "application" / "single_app"
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
-EXPECTED_VERSION = "0.250.129"
 
 
 def read_text(path: Path) -> str:
@@ -797,9 +798,8 @@ def test_execution_revalidation_rejects_deleted_agent_and_disabled_model() -> No
 
 def test_version_and_legacy_dispatch_contract() -> None:
     """Keep the version and legacy no-task dispatch branch explicit."""
-    config_content = read_text(APP_ROOT / "config.py")
     runner_content = read_text(RUNNER_FILE)
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_content
+    assert_app_version_at_least("0.250.129")
     assert "if execution_workflow.get('tasks'):" in runner_content
     assert "execution_result = _execute_workflow_dispatch(" in runner_content
 
