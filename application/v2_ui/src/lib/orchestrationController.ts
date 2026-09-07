@@ -15,8 +15,15 @@
 // same reason.
 
 import { createConversation } from './endpoints';
+import { ApiError } from './apiClient';
 import {
+    beginPlanEdit,
+    fetchOrchestrationRun,
+    fetchPlanEditor,
+    MAX_PLAN_INSTRUCTION_LENGTH,
+    orchestrationErrorInfo,
     planOrchestration,
+    reviseOrchestrationPlan,
     runOrchestration,
     type ApprovalMode,
     type ElicitationContext,
@@ -25,17 +32,25 @@ import {
     type OrchestrationPlan,
     type OrchestrationPlanRequest,
     type OrchestrationRunRequest,
+    type OrchestrationRequestError,
+    type PlanRevisionAction,
+    type PlanRevisionRequest,
     type RunStreamEvent,
 } from './orchestration';
-import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable } from './orchestrationPlan';
+import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan } from './orchestrationPlan';
 import type { Json } from './types';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
+    selectCanEditPlan,
     selectElicitation,
     selectElicitationDraft,
     selectPlan,
+    selectHasPlanHold,
+    selectPlanEditor,
+    selectPlanRunBlocked,
     useOrchestrationStore,
+    type PlanEditorTarget,
 } from '../stores/orchestrationStore';
 
 /** Mirrors `orchestrationStore`'s own `scopeKey`; the separator has to match to share a key space. */
@@ -87,6 +102,8 @@ const turnContexts = new Map<string, TurnContext>();
  * re-plan superseding a plan — reaches the right one while another conversation's run is untouched.
  */
 const activeControllers = new Map<string, AbortController>();
+/** Editor requests never abort, begin, settle, or append a main-thread turn. */
+const editorControllers = new Map<string, AbortController>();
 
 export type ElicitationSubmitResult = { ok: true } | { ok: false; error: string };
 
@@ -401,10 +418,13 @@ async function dispatchPlan(
         const autoRun =
             settledPlan !== null &&
             settledPlan.approval.mode === 'auto' &&
+            !selectHasPlanHold(useOrchestrationStore.getState(), currentConversationId, currentTurnId) &&
             isPlanApproved(settledPlan) &&
             isPlanRunnable(settledPlan);
         if (autoRun) {
-            void approveAndRunPlan({ conversationId: currentConversationId, turnId: currentTurnId });
+            void approveAndRunPlan({
+                conversationId: currentConversationId, turnId: currentTurnId, automatic: true,
+            });
         } else {
             useChatStore
                 .getState()
@@ -563,11 +583,13 @@ export async function answerElicitation(params: {
 export async function approveAndRunPlan(params: {
     conversationId: string;
     turnId: string;
+    automatic?: boolean;
 }): Promise<void> {
     const { conversationId, turnId } = params;
     const store = useOrchestrationStore.getState();
     const plan = selectPlan(store, conversationId, turnId);
-    if (!plan) {
+    if (!plan || selectPlanRunBlocked(store, conversationId, turnId)
+        || (params.automatic && selectHasPlanHold(store, conversationId, turnId))) {
         return;
     }
     const edits = selectEdits(store, conversationId, turnId);
@@ -587,6 +609,9 @@ export async function approveAndRunPlan(params: {
     if (!began) {
         return;
     }
+    if (store.editorTarget?.conversationId === conversationId && store.editorTarget.turnId === turnId) {
+        store.setEditorTarget(null);
+    }
 
     const context = turnContexts.get(scopeKey(conversationId, turnId));
     // Enter the streaming state for the answer without a second user bubble — the question is
@@ -602,9 +627,11 @@ export async function approveAndRunPlan(params: {
         plan_id: planId,
         conversation_id: conversationId,
         edits,
+        ...(plan.edit_version ? { expected_version: plan.edit_version } : {}),
     };
 
     let settled = false;
+    let conflictMessage = '';
     const result = await runOrchestration(
         runBody,
         {
@@ -643,6 +670,16 @@ export async function approveAndRunPlan(params: {
                     .settleOrchestrationTurn(conversationId, { status: 'failed', error: message });
                 useOrchestrationStore.getState().endRun(runId, 'failed');
             },
+            onConflict: (message) => {
+                settled = true;
+                conflictMessage = message;
+                const current = useOrchestrationStore.getState();
+                current.releaseRunAttempt(runId);
+                current.updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor, blocked: true, error: message,
+                }));
+                useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+            },
             // The plan was already run somewhere else.
             //
             // Only reachable now that a pending approval can be picked up on a second device: two
@@ -666,6 +703,11 @@ export async function approveAndRunPlan(params: {
 
     if (activeControllers.get(conversationId) === controller) {
         activeControllers.delete(conversationId);
+    }
+    if (result.conflict) {
+        await refreshOrchestrationPlanEditor(
+            { conversationId, turnId }, result.conflict.current_run_id ?? runId, conflictMessage,
+        );
     }
 
     if (!settled) {
@@ -705,6 +747,9 @@ export function hasActiveOrchestration(conversationId: string): boolean {
  */
 export function dismissOrchestrationTurn(conversationId: string, turnId: string): void {
     cancelOrchestration(conversationId);
+    const key = scopeKey(conversationId, turnId);
+    editorControllers.get(key)?.abort();
+    editorControllers.delete(key);
     const store = useOrchestrationStore.getState();
     store.clearPlan(conversationId, turnId);
     store.clearElicitation(conversationId, turnId);
@@ -712,4 +757,368 @@ export function dismissOrchestrationTurn(conversationId: string, turnId: string)
     useChatStore
         .getState()
         .settleOrchestrationTurn(conversationId, { status: 'cancelled', accumulated: '' });
+}
+
+function editorRequestFailure(error: unknown): { message: string; info: OrchestrationRequestError } {
+    if (error instanceof ApiError) {
+        const payload = error.payload as { error?: unknown } | null;
+        return {
+            message: typeof payload?.error === 'string'
+                ? payload.error : 'The saved plan could not be loaded. Please try again.',
+            info: orchestrationErrorInfo(error.payload, error.status),
+        };
+    }
+    return {
+        message: 'The request could not connect. Your current plan and instruction have been kept.',
+        info: {},
+    };
+}
+
+function isEditorRequestCurrent(target: PlanEditorTarget, controller: AbortController): boolean {
+    return !controller.signal.aborted
+        && editorControllers.get(scopeKey(target.conversationId, target.turnId)) === controller
+        && Boolean(selectPlanEditor(useOrchestrationStore.getState(), target.conversationId, target.turnId));
+}
+
+async function loadPlanEditorState(
+    target: PlanEditorTarget,
+    begin: boolean,
+    runId?: string,
+    preservedError?: string,
+): Promise<ElicitationSubmitResult> {
+    const { conversationId, turnId } = target;
+    const key = scopeKey(conversationId, turnId);
+    const store = useOrchestrationStore.getState();
+    const plan = selectPlan(store, conversationId, turnId);
+    if (!plan || !selectCanEditPlan(store, conversationId, turnId)) {
+        return { ok: false, error: 'Only a pending plan can be edited.' };
+    }
+    if (editorControllers.has(key)) {
+        return { ok: true };
+    }
+    const controller = new AbortController();
+    editorControllers.set(key, controller);
+    store.updatePlanEditor(conversationId, turnId, (editor) => ({
+        ...editor,
+        loading: true,
+        error: preservedError ?? (begin && editor.state && !editor.blocked ? editor.error : null),
+    }));
+    const currentRunId = runId ?? plan.run_id;
+    try {
+        const editor = begin
+            ? await beginPlanEdit(currentRunId, {
+                conversation_id: conversationId,
+                plan_id: plan.plan_id,
+                edits: selectEdits(store, conversationId, turnId),
+                ...(plan.edit_version ? { expected_version: plan.edit_version } : {}),
+            }, controller.signal)
+            : await fetchPlanEditor(currentRunId, conversationId, { signal: controller.signal });
+        if (!isEditorRequestCurrent(target, controller)) {
+            return { ok: false, error: 'This editor request is no longer active.' };
+        }
+        if (!useOrchestrationStore.getState().adoptPlanEditor(
+            conversationId, turnId, editor, { retainLocalEdits: begin },
+        )) {
+            throw new Error('Invalid or stale editor identity');
+        }
+        return { ok: true };
+    } catch (error) {
+        const { message, info } = editorRequestFailure(error);
+        if (isEditorRequestCurrent(target, controller)) {
+            if (info.code === 'plan_changed' || info.code === 'edit_in_progress') {
+                try {
+                    const editor = await fetchPlanEditor(
+                        info.current_run_id ?? currentRunId, conversationId, { signal: controller.signal },
+                    );
+                    if (isEditorRequestCurrent(target, controller)
+                        && useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, editor)) {
+                        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                            (session) => ({ ...session, error: message }));
+                        return { ok: true };
+                    }
+                } catch {
+                    // The local pause remains; a failed refresh must not authorize stale work.
+                }
+            }
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor, blocked: true, error: message,
+            }));
+        }
+        return { ok: false, error: message };
+    } finally {
+        if (isEditorRequestCurrent(target, controller)) {
+            editorControllers.delete(key);
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor, loading: false,
+            }));
+        }
+    }
+}
+
+/** Pause synchronously, then acquire the durable hold; closing never undoes either. */
+export async function openOrchestrationPlanEditor(target: PlanEditorTarget): Promise<void> {
+    const store = useOrchestrationStore.getState();
+    if (!selectCanEditPlan(store, target.conversationId, target.turnId)) {
+        return;
+    }
+    store.updatePlanEditor(target.conversationId, target.turnId, (editor) => editor);
+    store.setEditorTarget(target);
+    await loadPlanEditorState(target, true);
+}
+
+/** Read-only hydration also works with an old run ID; the server resolves the current revision. */
+export async function refreshOrchestrationPlanEditor(
+    target: PlanEditorTarget,
+    runId?: string,
+    preservedError?: string,
+): Promise<ElicitationSubmitResult> {
+    return loadPlanEditorState(target, false, runId, preservedError);
+}
+
+export async function submitPlanRevision(
+    target: PlanEditorTarget,
+    action: PlanRevisionAction,
+): Promise<ElicitationSubmitResult> {
+    const { conversationId, turnId } = target;
+    const key = scopeKey(conversationId, turnId);
+    const store = useOrchestrationStore.getState();
+    const session = selectPlanEditor(store, conversationId, turnId);
+    const plan = selectPlan(store, conversationId, turnId);
+    const discarding = action.action === 'discard';
+    if (!session?.state || !plan || !selectCanEditPlan(store, conversationId, turnId)
+        || session.loading || session.cancellationStatus === 'cancelling'
+        || (!discarding && (session.submitting || session.blocked || session.state.busy
+            || editorControllers.has(key) || plan.edit_version !== session.state.version))) {
+        return { ok: false, error: 'Wait for the current plan to be saved before editing.' };
+    }
+    const pending = session.state.pending;
+    const cancellationChangedError = 'The plan changed. Review the current change before cancelling it.';
+    if (action.action === 'discard' && action.elicitation_id !== undefined
+        && (action.elicitation_id !== pending?.elicitation_id
+            || action.elicitation_revision !== pending?.revision)) {
+        store.updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor, error: cancellationChangedError,
+        }));
+        return { ok: false, error: cancellationChangedError };
+    }
+    if ((pending && (action.action === 'ask' || action.action === 'restore'))
+        || (action.action === 'answer' && (!pending
+            || action.elicitation_id !== pending.elicitation_id
+            || action.elicitation_revision !== (pending.revision ?? 0)))) {
+        return { ok: false, error: 'Answer or cancel the current edit question first.' };
+    }
+    if (action.action === 'ask') {
+        action = { ...action, instruction: action.instruction.trim() };
+        if (!action.instruction || action.instruction.length > MAX_PLAN_INSTRUCTION_LENGTH) {
+            const error = `Enter an instruction of 1–${MAX_PLAN_INSTRUCTION_LENGTH} characters.`;
+            store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
+            return { ok: false, error };
+        }
+    }
+    const controller = new AbortController();
+    const previousController = editorControllers.get(key);
+    editorControllers.set(key, controller);
+    if (discarding) {
+        // The explicit discard owns this turn now. Aborting the reader alone is not
+        // cancellation: the server must acknowledge the token-rotating discard below.
+        previousController?.abort();
+    }
+    store.updatePlanEditor(conversationId, turnId, (editor) => ({
+        ...editor,
+        submitting: true,
+        cancellationStatus: discarding ? 'cancelling' : 'idle',
+        error: null,
+        pendingDraft: editor.pendingDraft ? { ...editor.pendingDraft, submitting: true } : null,
+    }));
+    let failure = 'The planner did not return a saved revision. Your current plan has been kept.';
+    let info: OrchestrationRequestError | undefined;
+    let accepted = false;
+    try {
+        let requestPlan = plan;
+        let version = session.state.version;
+        if (discarding) {
+            const latest = await fetchPlanEditor(plan.run_id, conversationId, { signal: controller.signal });
+            if (!isEditorRequestCurrent(target, controller)) {
+                return { ok: false, error: 'This editor request is no longer active.' };
+            }
+            if (!useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, latest)) {
+                throw new Error('Invalid or stale editor identity');
+            }
+            requestPlan = latest.plan;
+            version = latest.version;
+            if (!latest.busy && !latest.pending && (!previousController
+                || latest.version !== session.state.version || latest.plan.run_id !== plan.run_id)) {
+                accepted = true;
+                useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor,
+                    submission: null,
+                    error: 'No pending change remains. Review the latest saved plan before running it.',
+                }));
+                return { ok: true };
+            }
+            const sameQuestion = pending === null
+                ? latest.pending === null
+                : latest.pending?.elicitation_id === pending.elicitation_id
+                    && latest.pending?.revision === pending.revision;
+            if (latest.plan.run_id !== plan.run_id || latest.plan.plan_id !== plan.plan_id
+                || latest.version !== session.state.version || !sameQuestion) {
+                failure = cancellationChangedError;
+                useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor, submission: null, error: failure,
+                }));
+                return { ok: false, error: failure };
+            }
+            if (pending) {
+                action = {
+                    action: 'discard',
+                    elicitation_id: pending.elicitation_id,
+                    elicitation_revision: pending.revision ?? 0,
+                };
+            }
+        }
+        const edits = discarding ? undefined : selectEdits(store, conversationId, turnId);
+        const fingerprint = JSON.stringify({ runId: requestPlan.run_id, version, edits, action });
+        const submissionId = session.submission?.fingerprint === fingerprint
+            ? session.submission.id : makeTurnId();
+        const body: PlanRevisionRequest = {
+            ...action,
+            conversation_id: conversationId,
+            expected_version: version,
+            ...(edits ? { edits } : {}),
+            submission_id: submissionId,
+        };
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor, submission: { id: submissionId, fingerprint },
+        }));
+        const result = await reviseOrchestrationPlan(requestPlan.run_id, body, {
+            onError: (message, error) => { failure = message; info = error; },
+        }, controller.signal);
+        if (!isEditorRequestCurrent(target, controller)) {
+            return { ok: false, error: 'This editor request is no longer active.' };
+        }
+        accepted = !result.errored && !result.cancelled && Boolean(result.editor)
+            && useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, result.editor!);
+        if (accepted) {
+            const context = turnContexts.get(key);
+            if (context && result.editor) {
+                context.revision = result.editor.plan.revision;
+            }
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor,
+                instruction: action.action === 'ask' && !result.editor?.pending
+                    && editor.instruction.trim() === action.instruction ? '' : editor.instruction,
+                submission: null,
+            }));
+        } else {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor, error: failure,
+                blocked: discarding || info?.code === 'plan_changed' || info?.code === 'edit_in_progress'
+                    || info?.code === 'already_run' || info?.status === 403 || info?.status === 404,
+            }));
+        }
+    } catch (error) {
+        failure = editorRequestFailure(error).message;
+        if (isEditorRequestCurrent(target, controller)) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (editor) => ({ ...editor, error: failure, blocked: discarding || editor.blocked }));
+        }
+    } finally {
+        if (isEditorRequestCurrent(target, controller)) {
+            editorControllers.delete(key);
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor,
+                submitting: false,
+                cancellationStatus: discarding && !accepted ? 'failed' : 'idle',
+                pendingDraft: editor.pendingDraft ? { ...editor.pendingDraft, submitting: false } : null,
+            }));
+        }
+    }
+    if (info?.code === 'plan_changed' || info?.code === 'edit_in_progress') {
+        await refreshOrchestrationPlanEditor(target, info.current_run_id ?? plan.run_id, failure);
+    }
+    return accepted ? { ok: true } : { ok: false, error: failure };
+}
+
+export async function loadPlanEditorHistory(target: PlanEditorTarget): Promise<void> {
+    const { conversationId, turnId } = target;
+    const session = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId);
+    const editor = session?.state;
+    if (!editor || session.historyLoading || editor.next_before_revision === null) {
+        return;
+    }
+    useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+        (current) => ({ ...current, historyLoading: true }));
+    try {
+        const page = await fetchPlanEditor(editor.plan.run_id, conversationId, {
+            beforeRevision: editor.next_before_revision,
+        });
+        const current = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId);
+        if (current?.state?.version !== editor.version || page.version !== editor.version) {
+            return;
+        }
+        const byRun = new Map([...current.state.history, ...page.history].map((entry) => [entry.run_id, entry]));
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (value) => ({
+            ...value,
+            state: value.state ? {
+                ...value.state,
+                history: [...byRun.values()].sort((left, right) => right.revision - left.revision),
+                next_before_revision: page.next_before_revision,
+            } : null,
+        }));
+    } catch (error) {
+        if (selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (current) => ({ ...current, error: editorRequestFailure(error).message }));
+        }
+    } finally {
+        if (selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (current) => ({ ...current, historyLoading: false }));
+        }
+    }
+}
+
+export async function previewPlanEditorRevision(target: PlanEditorTarget, runId: string): Promise<void> {
+    const { conversationId, turnId } = target;
+    const store = useOrchestrationStore.getState();
+    const session = selectPlanEditor(store, conversationId, turnId);
+    if (!session?.state) {
+        return;
+    }
+    if (session.state.plan.run_id === runId) {
+        store.updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor, previewRunId: null, previewPlan: null, previewLoading: false,
+        }));
+        return;
+    }
+    store.updatePlanEditor(conversationId, turnId, (editor) => ({
+        ...editor, previewRunId: runId, previewPlan: null, previewLoading: true, error: null,
+    }));
+    const stillSelected = () => {
+        const current = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId);
+        return current?.previewRunId === runId && current.state?.version === session.state?.version;
+    };
+    try {
+        const run = await fetchOrchestrationRun(runId, { conversationId });
+        const plan = normalizePlan(run?.plan);
+        if (!stillSelected()) {
+            return;
+        }
+        if (!plan || plan.run_id !== runId || plan.turn_id !== turnId
+            || plan.conversation_id !== conversationId) {
+            throw new Error('Invalid history identity');
+        }
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+            (editor) => ({ ...editor, previewPlan: plan }));
+    } catch {
+        if (stillSelected()) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (editor) => ({ ...editor, error: 'This revision could not be previewed. The current plan is unchanged.' }));
+        }
+    } finally {
+        if (stillSelected()) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (editor) => ({ ...editor, previewLoading: false }));
+        }
+    }
 }

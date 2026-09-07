@@ -1,10 +1,11 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.098
+Version: 0.261.102
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
 Direct action integration: 0.261.098
+Atomic plan revision persistence: 0.261.102
 
 Uses Flask, the real planner/executor/adapters/run store, an in-memory Cosmos boundary,
 and deterministic model completions. Authentication is a signed-in test user; actual
@@ -14,7 +15,6 @@ conversation ownership checks remain active. No external service is contacted.
 import importlib
 import importlib.util
 import json
-import re
 import sys
 import unittest
 from copy import deepcopy
@@ -22,9 +22,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from azure.core.exceptions import AzureError
-from azure.cosmos.exceptions import (
-    CosmosAccessConditionFailedError, CosmosResourceExistsError, CosmosResourceNotFoundError,
-)
 from flask import Blueprint, Flask
 from werkzeug.test import Client
 from werkzeug.wrappers import Response
@@ -33,85 +30,11 @@ from test_orchestration_conversation_context import (
     LATEST, RESOLVED, fake_module, load_modules, message, winery_history,
 )
 from test_support.app_stubs import APP_ROOT, stubbed_config
+from test_support.orchestration_revisions import AtomicMemoryContainer
 from test_support.versioning import assert_app_version_at_least
 
 
-class MemoryContainer:
-    def __init__(self, partition_field):
-        self.partition_field = partition_field
-        self.items = {}
-        self.queries = []
-        self.fail_queries = False
-        self.fail_writes = False
-        self.sequence = 0
-
-    def upsert_item(self, body):
-        if self.fail_writes:
-            raise AzureError('Test storage failure')
-        key = (body[self.partition_field], body['id'])
-        self.sequence += 1
-        self.items[key] = {**deepcopy(body), '_etag': str(self.sequence)}
-        return deepcopy(self.items[key])
-
-    def create_item(self, body):
-        if (body[self.partition_field], body['id']) in self.items:
-            raise CosmosResourceExistsError(status_code=409, message='Test record exists')
-        return self.upsert_item(body)
-
-    def replace_item(self, item, body, **kwargs):
-        existing = self.read_item(item, body[self.partition_field])
-        if kwargs.get('etag') != existing['_etag']:
-            raise CosmosAccessConditionFailedError(status_code=412, message='Test version changed')
-        return self.upsert_item(body)
-
-    def delete_item(self, item, partition_key, **kwargs):
-        existing = self.read_item(item, partition_key)
-        if kwargs.get('etag') != existing['_etag']:
-            raise CosmosAccessConditionFailedError(status_code=412, message='Test version changed')
-        del self.items[(partition_key, item)]
-
-    def read_item(self, item, partition_key):
-        record = self.items.get((partition_key, item))
-        if record is None:
-            raise CosmosResourceNotFoundError(status_code=404, message='Test record not found')
-        return deepcopy(record)
-
-    def query_items(self, query, parameters=None, partition_key=None, **kwargs):
-        self.queries.append((query, deepcopy(parameters), partition_key))
-        if self.fail_queries:
-            raise AzureError('Test query failure')
-        params = {entry['name']: entry['value'] for entry in parameters or []}
-        rows = [
-            deepcopy(item) for (partition, _), item in self.items.items()
-            if partition_key is None or partition == partition_key
-        ]
-        for parameter, field in (
-            ('@conversation_id', 'conversation_id'), ('@user_id', 'user_id'),
-            ('@turn_id', 'turn_id'), ('@run_id', 'id'),
-        ):
-            if parameter in params:
-                rows = [row for row in rows if row.get(field) == params[parameter]]
-        if '@message_ids' in params:
-            rows = [row for row in rows if row['id'] in params['@message_ids']]
-        if '@before_timestamp' in params:
-            rows = [row for row in rows if row.get('timestamp', '') < params['@before_timestamp']]
-        if 'c.record_type' in query:
-            rows = [row for row in rows if row.get('record_type', 'run') == 'run']
-        if 'c.role IN' in query:
-            rows = [
-                row for row in rows
-                if row.get('role') in ('user', 'assistant')
-                and not (row.get('metadata') or {}).get('masked')
-                and not (row.get('metadata') or {}).get('is_generated_chat_artifact')
-                and (row.get('metadata') or {}).get('thread_info', {}).get('active_thread') is not False
-            ]
-        if 'SELECT VALUE MAX' in query:
-            return [max((row.get('turn_index', 0) for row in rows), default=None)]
-        for field in ('timestamp', 'created_at', 'turn_index'):
-            if f'ORDER BY c.{field} DESC' in query:
-                rows.sort(key=lambda row: row.get(field, ''), reverse=True)
-        top = re.search(r'SELECT TOP (\d+)', query)
-        return rows[:int(top.group(1))] if top else rows
+MemoryContainer = AtomicMemoryContainer
 
 
 class ModelBoundary:

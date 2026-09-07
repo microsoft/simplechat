@@ -29,6 +29,7 @@ import { readConversationParam, syncedConversationParams } from '../lib/conversa
 import { MessageList } from '../components/chat/MessageList';
 import { Composer } from '../components/chat/Composer';
 import { ConversationDrawer } from '../components/chat/ConversationDrawer';
+import { OrchestrationPlanEditorHost } from '../components/chat/OrchestrationPlanEditor';
 import { ConversationDetails } from '../components/chat/ConversationDetails';
 import { ConversationBadges } from '../components/chat/ConversationBadges';
 import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
@@ -428,6 +429,7 @@ export function ChatPage() {
                 <Composer initialAgentSelection={launchAgentSelection} />
             </div>
             <ConversationDrawer />
+            <OrchestrationPlanEditorHost />
             {/* Gated on there being a conversation as well as on the panel being open, so
                 starting a new chat cannot leave a details panel describing the conversation
                 just left. The button that opened it is drawn from the same condition. */}

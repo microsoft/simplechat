@@ -193,3 +193,17 @@ without adding another model, agent, or execution toolbar. See
 | Clear suggested selections | Clears chosen file suggestions without clearing the answer editor. | Use your own referenced or uploaded file when none of the suggestions is right. | `enable_chat_orchestration` |
 | Back / Next / Finish | Keeps each page's answer while navigating; Finish submits the answers for the same request and waits for required answers and ready uploads. | Complete a multi-question clarification without losing drafts or continuing with unfinished files. | `enable_chat_orchestration` |
 | Decline / Cancel | Sends no answer text, selected references, or attached-prompt metadata. | Decline to provide the requested information or abandon the current answer. | `enable_chat_orchestration` |
+
+## Plan editing (V2 interface)
+
+Implemented in **0.261.102**. These controls refine an unexecuted orchestration
+plan rather than editing the main chat message. See
+[Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Review | Opens the plan drawer with step details and narrowing-only controls. | Inspect the proposed sources and work, or remove something unnecessary. | `enable_chat_orchestration` |
+| Edit | Opens the full-screen plan editor and holds the plan for manual approval, stopping its countdown. | Change the proposed approach before it runs. | Same as Review; the plan must not have started |
+| Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
+| History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
+| Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |

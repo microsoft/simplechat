@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_v2_orchestration_plan_editing.py
 """
-UI test for the V2 chat orchestration plan editing: narrowing only, never widening.
-Version: 0.261.085
+UI test for the V2 orchestration Review controls: narrowing only, never client-side widening.
+Version: 0.261.101
 Implemented in: 0.261.085
 
 A user may narrow a plan before it runs -- switch a step off, or drop a document from one -- but
@@ -17,8 +17,9 @@ This test drives the REAL OrchestrationRunView against a seeded plan and asserts
     toggling it back on clears that edit rather than widening past the plan's own default.
   * A document can be removed and restored; a document the step merely references
     (`left_document_id`) is shown but has no remove control.
-  * There is no widening affordance anywhere: no "add" control, no free-text field, and the store
-    exposes no method that could add a step, capability or document.
+  * Review has no widening affordance: no "add" control or free-text field, and the store exposes
+    no method that could add executable steps. Planner-assisted revisions have separate coverage
+    in test_v2_orchestration_plan_editor.py; they are not browser-authored PlanEdits.
 
 No Azure credentials or server are required; the component and store are the shipped code. The
 browser checks are skipped (reported, not failed) when application/v2_ui/node_modules is absent.
@@ -239,7 +240,7 @@ def test_document_removes_and_restores_and_pinned_is_readonly():
 
 
 def test_there_is_no_widening_affordance():
-    """No control or store method can add a step, capability or document to the plan."""
+    """Review cannot add executable steps, capabilities or documents client-side."""
     print("Testing there is no way to widen the plan...")
     page = _PAGE
     try:
