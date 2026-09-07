@@ -1,0 +1,727 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'extraction' %} show active{% endif %}" id="extraction" role="tabpanel" aria-labelledby="extraction-tab">
+                <div class="card p-3 mb-3" id="document-intelligence-section">
+                    <h5><i class="bi bi-file-earmark-text me-2"></i>Document Intelligence</h5>
+                    <p class="text-muted">
+                        Configure Azure Document Intelligence settings. Document Intelligence always powers
+                        <strong>Standard</strong> extraction and is required for workspaces and chat file uploads.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_enhanced_extraction"
+                            name="enable_enhanced_extraction"
+                            {% if settings.enable_enhanced_extraction %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_enhanced_extraction">
+                            Enable Enhanced extraction
+                        </label>
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline-secondary rounded-circle ms-2"
+                            data-bs-toggle="modal"
+                            data-bs-target="#documentIntelligenceExtractionHelpModal"
+                            aria-label="Enhanced extraction guidance"
+                            title="Enhanced extraction guidance"
+                        >
+                            <i class="bi bi-question-lg" aria-hidden="true"></i>
+                        </button>
+                    </div>
+
+                    <div id="enhanced_extraction_settings" class="{% if not settings.enable_enhanced_extraction %}d-none{% endif %}">
+                        {% if content_understanding_supported %}
+                        <div class="alert alert-info small" role="note">
+                            Enhanced extraction uses <strong>Azure AI Content Understanding</strong>, which returns tables,
+                            page structure, checkbox states, and AI-generated descriptions of figures, charts, and images.
+                            Configure the connection below.
+                        </div>
+                        {% else %}
+                        <div class="alert alert-secondary small" id="enhanced_extraction_fallback_notice" role="note">
+                            Azure AI Content Understanding is not available in the
+                            <strong>{{ azure_environment }}</strong> cloud, so Enhanced extraction uses
+                            <strong>Document Intelligence Layout</strong> here. There is nothing more to configure —
+                            Enhanced still captures tables, page structure, forms, and checkbox states.
+                        </div>
+                        {% endif %}
+
+                        <div class="mb-3">
+                            <label for="document_intelligence_pdf_image_extraction_mode" class="form-label mb-0">
+                                PDF and Image Extraction Mode
+                            </label>
+                            <select
+                                class="form-select"
+                                id="document_intelligence_pdf_image_extraction_mode"
+                                name="document_intelligence_pdf_image_extraction_mode"
+                            >
+                                <option value="read" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'read' %}selected{% endif %}>
+                                    Standard - faster text extraction
+                                </option>
+                                <option value="layout" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'layout' %}selected{% endif %}>
+                                    Enhanced - richer structure, tables, and checkbox states
+                                </option>
+                                <option value="auto" {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') == 'auto' %}selected{% endif %}>
+                                    Auto - sample first pages, then choose Standard or Enhanced
+                                </option>
+                            </select>
+                            <div class="form-text">
+                                Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected.
+                            </div>
+                            <div
+                                class="mt-3 {% if settings.document_intelligence_pdf_image_extraction_mode|default('read') != 'auto' %}d-none{% endif %}"
+                                id="document_intelligence_auto_sample_pages_group"
+                            >
+                                <label for="document_intelligence_auto_sample_pages" class="form-label">
+                                    Auto Sample Pages
+                                </label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="document_intelligence_auto_sample_pages"
+                                    name="document_intelligence_auto_sample_pages"
+                                    min="1"
+                                    max="20"
+                                    value="{{ settings.document_intelligence_auto_sample_pages|default(3) }}"
+                                >
+                                <div class="form-text">
+                                    Auto samples this many first PDF pages with Document Intelligence Layout. If it detects tables, selection marks, or figures, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mode.
+                                </div>
+                            </div>
+                            <div class="alert alert-light border mt-3 mb-0 small" role="note">
+                                <div><strong>Standard:</strong> Document Intelligence Read. Fastest and lowest-cost path for plain text PDFs and images.</div>
+                                <div><strong>Enhanced:</strong> best for tables, section structure, page layout, forms, checkbox states, and figure descriptions. Expect more latency and higher cost.</div>
+                                <div><strong>Auto:</strong> samples the first pages with Document Intelligence Layout, then uses Enhanced only when the sample shows tables, selection marks, or figures.</div>
+                            </div>
+                        </div>
+
+                        <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                            <input
+                                type="checkbox"
+                                class="form-check-input me-2"
+                                id="enable_document_intelligence_formula_extraction"
+                                name="enable_document_intelligence_formula_extraction"
+                                {% if settings.enable_document_intelligence_formula_extraction %}checked{% endif %}
+                            >
+                            <label class="form-check-label" for="enable_document_intelligence_formula_extraction">
+                                Extract mathematical formulas
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Requests the Document Intelligence formulas add-on so equations are captured as LaTeX instead of approximated as OCR text."></i>
+                        </div>
+                        <div class="form-text mb-3">
+                            Captures equations in PDFs and images as LaTeX rather than approximate OCR text. This is a
+                            <strong>billed Document Intelligence add-on</strong> that adds per-page cost to every Enhanced
+                            extraction, so it is off by default. It applies to the Layout model only, so it has no effect
+                            while extraction is set to Standard.
+                        </div>
+
+                        {% if content_understanding_supported %}
+                        <div class="card p-3 mb-3 bg-body-tertiary" id="content-understanding-section">
+                            <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+                                <h6 class="mb-0"><i class="bi bi-stars me-2"></i>Azure AI Content Understanding</h6>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm btn-outline-secondary rounded-circle"
+                                    data-bs-toggle="modal"
+                                    data-bs-target="#contentUnderstandingSetupHelpModal"
+                                    aria-label="Content Understanding setup guide"
+                                    title="Content Understanding setup guide"
+                                >
+                                    <i class="bi bi-question-lg" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <p class="text-muted small">
+                                Required for Enhanced extraction. Deployed from a Microsoft Foundry resource.
+                                If this is left blank, Enhanced falls back to Document Intelligence Layout.
+                            </p>
+
+                            <div class="mb-3">
+                                <label for="azure_content_understanding_endpoint" class="form-label">
+                                    Foundry Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_content_understanding_endpoint"
+                                    name="azure_content_understanding_endpoint"
+                                    placeholder="https://your-resource.services.ai.azure.com"
+                                    value="{{ settings.azure_content_understanding_endpoint or '' }}"
+                                >
+                                <div class="form-text">
+                                    Your Microsoft Foundry resource endpoint, without a trailing path.
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="azure_content_understanding_authentication_type" class="form-label">
+                                    Authentication Type
+                                </label>
+                                <select class="form-select" id="azure_content_understanding_authentication_type" name="azure_content_understanding_authentication_type">
+                                    <option value="key" {% if settings.azure_content_understanding_authentication_type != 'managed_identity' %}selected{% endif %}>
+                                        Key
+                                    </option>
+                                    <option value="managed_identity" {% if settings.azure_content_understanding_authentication_type == 'managed_identity' %}selected{% endif %}>
+                                        Managed Identity
+                                    </option>
+                                </select>
+                                <div class="form-text">
+                                    Managed identity requires the <strong>Cognitive Services User</strong> role on the Foundry resource.
+                                </div>
+                            </div>
+
+                            <div class="mb-3 {% if settings.azure_content_understanding_authentication_type == 'managed_identity' %}d-none{% endif %}" id="azure_content_understanding_key_container">
+                                <label for="azure_content_understanding_key" class="form-label">
+                                    Content Understanding Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_content_understanding_key"
+                                        name="azure_content_understanding_key"
+                                        value="{{ settings.azure_content_understanding_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_content_understanding_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-4">
+                                    <label for="azure_content_understanding_api_version" class="form-label">API Version</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="azure_content_understanding_api_version"
+                                        name="azure_content_understanding_api_version"
+                                        value="{{ settings.azure_content_understanding_api_version or content_understanding_api_version_default }}"
+                                    >
+                                    <div class="form-text">Default: {{ content_understanding_api_version_default }}</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="azure_content_understanding_analyzer_id" class="form-label">Document Analyzer</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="azure_content_understanding_analyzer_id"
+                                        name="azure_content_understanding_analyzer_id"
+                                        value="{{ settings.azure_content_understanding_analyzer_id or content_understanding_document_analyzer_default }}"
+                                    >
+                                    <div class="form-text">Default: {{ content_understanding_document_analyzer_default }}</div>
+                                </div>
+                                <div class="col-md-4">
+                                    <label for="azure_content_understanding_image_analyzer_id" class="form-label">Image Analyzer</label>
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        id="azure_content_understanding_image_analyzer_id"
+                                        name="azure_content_understanding_image_analyzer_id"
+                                        value="{{ settings.azure_content_understanding_image_analyzer_id or content_understanding_image_analyzer_default }}"
+                                    >
+                                    <div class="form-text">Default: {{ content_understanding_image_analyzer_default }}</div>
+                                </div>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="btn btn-secondary"
+                                style="width: auto;"
+                                id="test_content_understanding_button"
+                            >
+                                Test Content Understanding Connection
+                            </button>
+                            <div id="test_content_understanding_result" class="mt-2"></div>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="card p-3 mb-3 bg-body-tertiary" id="office-embedded-image-section">
+                        <h6 class="mb-2"><i class="bi bi-images me-2"></i>Images Inside Office Files</h6>
+                        <p class="text-muted small">
+                            Neither extraction engine describes figures inside Word and PowerPoint files. When this is on,
+                            embedded images are pulled out of the file, analyzed with whichever engine backs the selected
+                            extraction mode, and indexed as their own citable chunks. This works with Standard extraction
+                            too, using Document Intelligence.
+                        </p>
+                        <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                            <input
+                                type="checkbox"
+                                class="form-check-input me-2"
+                                id="enable_office_embedded_image_analysis"
+                                name="enable_office_embedded_image_analysis"
+                                {% if settings.enable_office_embedded_image_analysis %}checked{% endif %}
+                            >
+                            <label class="form-check-label" for="enable_office_embedded_image_analysis">
+                                Analyze images embedded in DOCX and PPTX files
+                            </label>
+                        </div>
+                        <div class="row g-3 {% if not settings.enable_office_embedded_image_analysis %}d-none{% endif %}" id="office_embedded_image_options">
+                            <div class="col-md-6">
+                                <label for="office_embedded_image_min_pixels" class="form-label">Minimum Image Size (pixels)</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="office_embedded_image_min_pixels"
+                                    name="office_embedded_image_min_pixels"
+                                    min="1"
+                                    max="2000"
+                                    value="{{ settings.office_embedded_image_min_pixels|default(150) }}"
+                                >
+                                <div class="form-text">Images narrower or shorter than this are skipped as icons or spacers.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="office_embedded_image_max_per_document" class="form-label">Maximum Images Per Document</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="office_embedded_image_max_per_document"
+                                    name="office_embedded_image_max_per_document"
+                                    min="0"
+                                    max="200"
+                                    value="{{ settings.office_embedded_image_max_per_document|default(25) }}"
+                                >
+                                <div class="form-text">Caps per-document cost. Duplicate images are analyzed once.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="documentIntelligenceExtractionHelpModal" tabindex="-1" aria-labelledby="documentIntelligenceExtractionHelpModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="documentIntelligenceExtractionHelpModalLabel">Standard, Enhanced, and Auto</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p><strong>Standard</strong> always uses Azure Document Intelligence Read. It is the fastest and lowest-cost path for mostly text-based PDFs and images, and it is what runs when Enhanced extraction is turned off.</p>
+                                    <p><strong>Enhanced</strong> is for documents where structure matters: tables, page layout, headings, forms, checked or unchecked boxes, and figures.</p>
+                                    <ul>
+                                        <li>In Azure commercial clouds, Enhanced uses <strong>Azure AI Content Understanding</strong>, which additionally generates natural-language descriptions of figures, charts, and diagrams.</li>
+                                        <li>In Azure Government and custom clouds, Content Understanding is unavailable, so Enhanced automatically uses <strong>Document Intelligence Layout</strong> instead. Tables and checkbox states still work; figure descriptions do not.</li>
+                                        <li>If Content Understanding is enabled but unreachable, the document falls back to Document Intelligence Layout and the reason is recorded on the document.</li>
+                                    </ul>
+                                    <p><strong>Auto</strong> lets the platform decide per document. It samples the configured number of first PDF pages with Document Intelligence Layout, which is the cheaper detector. If those pages contain tables, selection marks, or figures, the full document is extracted with Enhanced; otherwise it is extracted with Standard. Images always use Enhanced in Auto mode because they are single-page inputs that benefit from figure and spatial analysis.</p>
+                                    <p class="mb-0"><strong>Cost:</strong> Enhanced adds latency and cost on every document. Content Understanding also invokes a language model per document, so it is more expensive than Document Intelligence Layout. Auto is usually the best value.</p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="modal fade" id="contentUnderstandingSetupHelpModal" tabindex="-1" aria-labelledby="contentUnderstandingSetupHelpModalLabel" aria-hidden="true">
+                        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                            <div class="modal-content">
+                                <div class="modal-header">
+                                    <h5 class="modal-title" id="contentUnderstandingSetupHelpModalLabel">Set Up Azure AI Content Understanding</h5>
+                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p>Content Understanding is part of Microsoft Foundry. Follow these steps, then paste the endpoint and key below.</p>
+                                    <h6>1. Create a Microsoft Foundry resource</h6>
+                                    <p>
+                                        In the Azure portal, create a <strong>Microsoft Foundry</strong> resource in one of the supported regions:
+                                        East US, East US 2, West US, West US 3, South Central US, North Europe, West Europe, Sweden Central,
+                                        UK South, Australia East, Japan East, or Southeast Asia. You need Contributor or higher on the subscription
+                                        or resource group.
+                                    </p>
+                                    <div class="alert alert-warning small">
+                                        Content Understanding is not offered in Azure Government or other sovereign clouds. In those clouds
+                                        SimpleChat automatically uses Document Intelligence Layout for Enhanced extraction.
+                                    </div>
+                                    <h6>2. Deploy the models Content Understanding needs</h6>
+                                    <p>
+                                        Analyzers that describe figures require a completion model and an embedding model to be deployed and set
+                                        as resource defaults. In the
+                                        <a href="https://contentunderstanding.ai.azure.com/settings" target="_blank" rel="noopener noreferrer">Content Understanding settings page</a>,
+                                        add your Foundry resource and leave
+                                        <em>Enable autodeployment for required models if no defaults are available</em> checked. Without this step,
+                                        analysis requests fail with a missing model deployment error.
+                                    </p>
+                                    <h6>3. Copy the endpoint and key</h6>
+                                    <p>
+                                        In the Azure portal, open the Foundry resource and go to
+                                        <strong>Resource Management &rarr; Keys and Endpoint</strong>. The endpoint looks like
+                                        <code>https://your-resource.services.ai.azure.com</code>. Paste it into
+                                        <strong>Content Understanding Endpoint</strong>, and paste either key into
+                                        <strong>Content Understanding Key</strong>.
+                                    </p>
+                                    <h6>4. Or use managed identity instead of a key</h6>
+                                    <p>
+                                        Set <strong>Authentication Type</strong> to Managed Identity and assign this application's identity the
+                                        <strong>Cognitive Services User</strong> role on the Foundry resource. That role assignment is required even
+                                        for resource owners.
+                                    </p>
+                                    <h6>5. Test the connection</h6>
+                                    <p class="mb-0">
+                                        Use <strong>Test Content Understanding Connection</strong> to confirm the endpoint, credentials, and analyzer
+                                        are reachable before saving.
+                                        See the
+                                        <a href="https://learn.microsoft.com/azure/ai-services/content-understanding/quickstart/use-rest-api" target="_blank" rel="noopener noreferrer">Content Understanding quickstart</a>
+                                        for more detail.
+                                    </p>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_document_intelligence_apim"
+                            name="enable_document_intelligence_apim"
+                            {% if settings.enable_document_intelligence_apim %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_document_intelligence_apim">
+                            Use APIM instead of direct Document Intelligence endpoint
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route Document Intelligence requests through API Management for centralized monitoring and control instead of direct service access."></i>
+                    </div>
+
+                    <div>
+
+                        <div id="non_apim_document_intelligence_settings" {% if settings.enable_document_intelligence_apim %}style="display: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="azure_document_intelligence_endpoint" class="form-label">
+                                    Document Intelligence Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_document_intelligence_endpoint"
+                                    name="azure_document_intelligence_endpoint"
+                                    value="{{ settings.azure_document_intelligence_endpoint or '' }}"
+                                >
+                            </div>
+                            <div class="mb-3">
+                                <label for="azure_document_intelligence_authentication_type" class="form-label">
+                                    Authentication Type
+                                </label>
+                                <select class="form-select" id="azure_document_intelligence_authentication_type" name="azure_document_intelligence_authentication_type">
+                                    <option value="key" {% if settings.azure_document_intelligence_authentication_type=='key' %}selected{% endif %}>
+                                        Key
+                                    </option>
+                                    <option value="managed_identity" {% if settings.azure_document_intelligence_authentication_type=='managed_identity' %}selected{% endif %}>
+                                        Managed Identity
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="mb-3" id="azure_document_intelligence_key_container" {% if settings.azure_document_intelligence_authentication_type !='key' %}style="display: none;"{% endif %}>
+                                <label for="azure_document_intelligence_key" class="form-label">
+                                    Document Intelligence Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_document_intelligence_key"
+                                        name="azure_document_intelligence_key"
+                                        value="{{ settings.azure_document_intelligence_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_docintel_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <div id="apim_document_intelligence_settings" {% if not settings.enable_document_intelligence_apim %}style="display: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="azure_apim_document_intelligence_endpoint" class="form-label">
+                                    Azure APIM Document Intelligence Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_apim_document_intelligence_endpoint"
+                                    name="azure_apim_document_intelligence_endpoint"
+                                    value="{{ settings.azure_apim_document_intelligence_endpoint or '' }}"
+                                >
+                            </div>
+                            <div class="mb-3">
+                                <label for="azure_apim_document_intelligence_subscription_key" class="form-label">
+                                    Azure APIM Document Intelligence Subscription Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_apim_document_intelligence_subscription_key"
+                                        name="azure_apim_document_intelligence_subscription_key"
+                                        value="{{ settings.azure_apim_document_intelligence_subscription_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_azure_apim_document_intelligence_subscription_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <button
+                            type="button"
+                            class="btn btn-secondary mt-3"
+                            style="width: auto;"
+                            id="test_azure_doc_intelligence_button"
+                        >
+                            Test Document Intelligence Connection
+                        </button>
+                        <div id="test_azure_doc_intelligence_result" class="mt-2"></div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="chunk-size-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0"><i class="bi bi-collection me-2"></i>Chunk Sizes</h5>
+                        <span class="badge bg-primary-subtle text-primary-emphasis">Caps: {{ chunk_size_word_cap }} words / {{ chunk_size_character_cap }} characters</span>
+                    </div>
+                    <p class="text-muted mb-2 small">Custom chunk sizes apply to new uploads only. Existing documents keep their current chunks.</p>
+                    <div class="alert alert-warning small mb-3">
+                        <strong>Heads up:</strong> A chunk has to fit in one embedding request, so overrides are capped at
+                        <strong>{{ chunk_size_word_cap }} words</strong> or <strong>{{ chunk_size_character_cap }} characters</strong>,
+                        derived from the embedding model's context window. Page and slide counts are structural, so they are
+                        bounded when the chunk is embedded rather than here.
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_chunk_size_override"
+                            name="enable_chunk_size_override"
+                            {% if settings.enable_chunk_size_override %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_chunk_size_override">
+                            Enable custom chunk sizes by file type
+                        </label>
+                    </div>
+
+                    <div id="chunk-size-fields" class="{% if not settings.enable_chunk_size_override %}d-none{% endif %}">
+                        <div id="chunk-size-cap-warning" class="alert alert-warning d-none" role="alert">
+                            <span id="chunk-size-cap-warning-text">Chunk sizes above the cap will be reduced automatically.</span>
+                        </div>
+                        <input type="hidden" id="chunk_size_cap" value="{{ chunk_size_cap }}" />
+                        {% set chunk_settings = chunk_size_settings or {} %}
+                        {% set chunk_defaults = chunk_size_defaults or {} %}
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="chunk_size_txt" class="form-label">TXT (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="TXT" data-cap="{{ chunk_size_caps.get('txt') }}" id="chunk_size_txt" name="chunk_size_txt" value="{{ chunk_settings.get('txt', {}).get('value', chunk_defaults.get('txt', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_log" class="form-label">LOG (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="LOG" data-cap="{{ chunk_size_caps.get('log') }}" id="chunk_size_log" name="chunk_size_log" value="{{ chunk_settings.get('log', {}).get('value', chunk_defaults.get('log', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_doc" class="form-label">DOC (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOC" data-cap="{{ chunk_size_caps.get('doc') }}" id="chunk_size_doc" name="chunk_size_doc" value="{{ chunk_settings.get('doc', {}).get('value', chunk_defaults.get('doc', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_docm" class="form-label">DOCM (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOCM" data-cap="{{ chunk_size_caps.get('docm') }}" id="chunk_size_docm" name="chunk_size_docm" value="{{ chunk_settings.get('docm', {}).get('value', chunk_defaults.get('docm', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="chunk_size_docx" class="form-label">DOCX (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="DOCX" data-cap="{{ chunk_size_caps.get('docx') }}" id="chunk_size_docx" name="chunk_size_docx" value="{{ chunk_settings.get('docx', {}).get('value', chunk_defaults.get('docx', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_html" class="form-label">HTML (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="HTML" data-cap="{{ chunk_size_caps.get('html') }}" id="chunk_size_html" name="chunk_size_html" value="{{ chunk_settings.get('html', {}).get('value', chunk_defaults.get('html', {}).get('value')) }}">
+                                <div class="form-text">Minimum enforced at 50% of target on merge.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_md" class="form-label">Markdown (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="MD" data-cap="{{ chunk_size_caps.get('md') }}" id="chunk_size_md" name="chunk_size_md" value="{{ chunk_settings.get('md', {}).get('value', chunk_defaults.get('md', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_xml" class="form-label">XML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="XML" data-cap="{{ chunk_size_caps.get('xml') }}" id="chunk_size_xml" name="chunk_size_xml" value="{{ chunk_settings.get('xml', {}).get('value', chunk_defaults.get('xml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_yaml" class="form-label">YAML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="YAML" data-cap="{{ chunk_size_caps.get('yaml') }}" id="chunk_size_yaml" name="chunk_size_yaml" value="{{ chunk_settings.get('yaml', {}).get('value', chunk_defaults.get('yaml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_yml" class="form-label">YML (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="YML" data-cap="{{ chunk_size_caps.get('yml') }}" id="chunk_size_yml" name="chunk_size_yml" value="{{ chunk_settings.get('yml', {}).get('value', chunk_defaults.get('yml', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_json" class="form-label">JSON (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="JSON" data-cap="{{ chunk_size_caps.get('json') }}" id="chunk_size_json" name="chunk_size_json" value="{{ chunk_settings.get('json', {}).get('value', chunk_defaults.get('json', {}).get('value')) }}">
+                            </div>
+                            <!--
+                            <div class="col-md-6">
+                                <label for="chunk_size_csv" class="form-label">CSV (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="CSV" data-cap="{{ chunk_size_caps.get('csv') }}" id="chunk_size_csv" name="chunk_size_csv" value="{{ chunk_settings.get('csv', {}).get('value', chunk_defaults.get('csv', {}).get('value')) }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_excel" class="form-label">Excel (characters)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="EXCEL" data-cap="{{ chunk_size_caps.get('excel') }}" id="chunk_size_excel" name="chunk_size_excel" value="{{ chunk_settings.get('excel', {}).get('value', chunk_defaults.get('excel', {}).get('value')) }}">
+                            </div>
+                            -->
+                            <div class="col-md-6">
+                                <label for="chunk_size_transcript" class="form-label">Transcripts (words)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="TRANSCRIPT" data-cap="{{ chunk_size_caps.get('transcript') }}" id="chunk_size_transcript" name="chunk_size_transcript" value="{{ chunk_settings.get('transcript', {}).get('value', chunk_defaults.get('transcript', {}).get('value')) }}">
+                                <div class="form-text">Applies to new audio transcripts.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_pdf" class="form-label">PDF (pages)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="PDF" data-cap="{{ chunk_size_caps.get('pdf') }}" id="chunk_size_pdf" name="chunk_size_pdf" value="{{ chunk_settings.get('pdf', {}).get('value', chunk_defaults.get('pdf', {}).get('value')) }}">
+                                <div class="form-text">Pages per chunk after extraction.</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="chunk_size_pptx" class="form-label">PPT/PPTX (slides)</label>
+                                <input type="number" min="1" class="form-control chunk-size-input" data-label="PPT/PPTX" data-cap="{{ chunk_size_caps.get('pptx') }}" id="chunk_size_pptx" name="chunk_size_pptx" value="{{ chunk_settings.get('pptx', {}).get('value', chunk_defaults.get('pptx', {}).get('value')) }}">
+                                <div class="form-text">Slides per chunk after extraction.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Video Intelligence Card -->
+                <div class="card mb-3 p-3" id="metadata-extraction-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-code me-2"></i>Metadata Extraction
+                    </h5>
+                    <p class="text-muted">
+                      Enable this to automatically parse and store file metadata for advanced indexing and search.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                      <input
+                        type="checkbox"
+                        class="form-check-input"
+                        id="enable_extract_meta_data"
+                        name="enable_extract_meta_data"
+                        {% if settings.enable_extract_meta_data %}checked{% endif %}>
+                      <label class="form-check-label ms-2" for="enable_extract_meta_data">
+                        Enable Extract Meta Data
+                      </label>
+                      <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically extract and index metadata from uploaded files for enhanced search capabilities and content organization."></i>
+                    </div>
+
+                    <div id="metadata_extraction_model_settings" class="mb-3"
+                         {% if not settings.enable_extract_meta_data %}style="display: none;"{% endif %}>
+                                            <label for="metadata_extraction_model" class="form-label">Extraction Model</label>
+                                            <select class="form-select" id="metadata_extraction_model" name="metadata_extraction_model">
+                                                <option value="">No metadata extraction model selected</option>
+                                            </select>
+                                            <input type="hidden" name="metadata_extraction_model_selection_json" id="metadata_extraction_model_selection_json" />
+                                            <div class="form-text">
+                                                Uses Global Endpoints when multi-endpoint model management is enabled; otherwise uses the legacy GPT/APIM deployment settings.
+                                            </div>
+                    </div>
+                </div>
+
+                <!-- Multi-Modal Vision Analysis Section -->
+                <div class="card mb-3 p-3" id="multimodal-vision-section">
+                    <h5>
+                        <i class="bi bi-eye me-2"></i>Multi-Modal Vision Analysis
+                    </h5>
+                    <p class="text-muted">
+                        Enable AI-powered vision analysis for images uploaded to chat or workspace. When enabled alongside Document Intelligence OCR, images will receive both text extraction (OCR) and semantic understanding (vision AI).
+                    </p>
+
+                    <div class="alert alert-info mb-3">
+                        <strong><i class="bi bi-info-circle"></i> How it works:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li><strong>Document Intelligence</strong>: Extracts text from images (OCR)</li>
+                            <li><strong>Vision Model</strong>: Provides semantic analysis, object detection, and contextual understanding</li>
+                            <li>Both analyses are combined and available in citations when Enhanced Citations is enabled</li>
+                        </ul>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_multimodal_vision"
+                            name="enable_multimodal_vision"
+                            {% if settings.enable_multimodal_vision %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_multimodal_vision">
+                            Enable Multi-Modal Vision Analysis
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Use GPT-4 Vision or similar models to analyze images for semantic content, objects, and contextual information beyond OCR."></i>
+                    </div>
+
+                    <div id="multimodal_vision_model_settings" class="mb-3"
+                         {% if not settings.enable_multimodal_vision %}style="display: none;"{% endif %}>
+                        <label for="multimodal_vision_model" class="form-label">
+                            Vision Model <span class="text-danger">*</span>
+                        </label>
+                        <select class="form-select" id="multimodal_vision_model" name="multimodal_vision_model"
+                                data-prev="{{ settings.multimodal_vision_model or '' }}">
+                            <option value="">Select a vision-capable model...</option>
+
+                            {#
+                                Multi-endpoint aware vision model selection.
+                                Preference order:
+                                1. When multi-endpoint is enabled and model_endpoints has entries, use those.
+                                2. Otherwise, fall back to legacy gpt_model.selected / APIM settings.
+                            #}
+
+                            {% set has_multi_endpoints = settings.enable_multi_model_endpoints and settings.model_endpoints %}
+
+                            {% if has_multi_endpoints %}
+                                {# Iterate all enabled endpoints and models, filter to vision-capable #}
+                                {% for endpoint in settings.model_endpoints if endpoint.enabled %}
+                                    {% for m in endpoint.models if m.enabled %}
+                                        {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
+                                            {% set option_value = m.modelName or m.deploymentName %}
+                                            <option value="{{ option_value }}"
+                                                data-endpoint-id="{{ endpoint.id or '' }}"
+                                                data-model-id="{{ m.id or '' }}"
+                                                data-provider="{{ endpoint.provider or '' }}"
+                                                data-model-name="{{ m.modelName or '' }}"
+                                                {% if settings.multimodal_vision_model == option_value %}selected{% endif %}>
+                                                {{ m.displayName or m.modelName or m.deploymentName }}{% if m.modelName and m.displayName != m.modelName %} ({{ m.modelName }}){% endif %}
+                                            </option>
+                                        {% endif %}
+                                    {% endfor %}
+                                {% endfor %}
+                            {% elif settings.enable_gpt_apim %}
+                                {# Legacy APIM-based GPT configuration #}
+                                {% for d in (settings.azure_apim_gpt_deployment or '').split(',') if d %}
+                                    {% set d_trim = d.strip() %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(d_trim) %}
+                                        <option value="{{ d_trim }}"
+                                            {% if settings.multimodal_vision_model == d_trim %}selected{% endif %}>
+                                            {{ d_trim }}
+                                        </option>
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}
+                                {# Legacy single-endpoint GPT configuration #}
+                                {% for m in settings.gpt_model.selected %}
+                                    {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
+                                        <option value="{{ m.deploymentName }}"
+                                            {% if settings.multimodal_vision_model == m.deploymentName %}selected{% endif %}>
+                                            {{ m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
+                                        </option>
+                                    {% endif %}
+                                {% endfor %}
+                            {% endif %}
+                        </select>
+                        <div class="form-text">Select a GPT model with vision capabilities (for example, gpt-4o or supported GPT 5 and later models). Only vision-capable models are shown.</div>
+
+                        <button type="button" class="btn btn-secondary mt-3" id="test_multimodal_vision_button">
+                            <i class="bi bi-clipboard-check me-1"></i>Test Vision Analysis
+                        </button>
+                        <div id="test_multimodal_vision_result" class="mt-2"></div>
+                    </div>
+                </div>
+            </div>

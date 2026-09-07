@@ -112,7 +112,7 @@ For Azure Government, use the corresponding sovereign-cloud private DNS zones su
 
 For detailed private networking guidance, see:
 - `deployers/bicep/README.md`
-- `docs/how-to/enterprise_networking.md`
+- `docs/guides/enterprise-networking.md`
 
 ============================================
 Manual changes post-deployment.

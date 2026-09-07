@@ -16,10 +16,10 @@ hero_pills:
   - Container-based runtime
 hero_links:
   - label: "Getting Started"
-    url: /setup_instructions/
+    url: /start/deployment-options/
     style: primary
   - label: "Upgrade paths"
-    url: /how-to/upgrade_paths/
+    url: /guides/upgrade-paths/
     style: secondary
 nav_links:
   prev:

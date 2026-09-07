@@ -1,13 +1,15 @@
 # test_chat_conversation_contents_drawer.py
 """
 UI test for the conversation contents drawer.
-Version: 0.250.159
+Version: 0.250.215
 Implemented in: 0.250.074
 Documents mode added in: 0.250.159
+Compact overflow-safe layout added in: 0.250.171
+Source/cited distinction added in: 0.250.215
 
 This test validates user-message filtering, cited-document mode, safe labels,
 navigation, live updates, conversation replacement, keyboard closing, and
-responsive layouts.
+responsive layouts without horizontal overflow.
 """
 
 import json
@@ -35,6 +37,21 @@ def _require_authenticated_chat_env():
         pytest.skip("Set SIMPLECHAT_UI_BASE_URL to run this UI test.")
     if not STORAGE_STATE or not Path(STORAGE_STATE).exists():
         pytest.skip("Set SIMPLECHAT_UI_STORAGE_STATE to a valid authenticated Playwright storage state file.")
+
+
+def _assert_no_horizontal_overflow(locator, label):
+    metrics = locator.evaluate(
+        """
+        node => ({
+            scrollWidth: node.scrollWidth,
+            clientWidth: node.clientWidth,
+        })
+        """
+    )
+    assert metrics["scrollWidth"] <= metrics["clientWidth"] + 1, (
+        f"Expected no horizontal overflow in {label}, got "
+        f"scrollWidth={metrics['scrollWidth']} and clientWidth={metrics['clientWidth']}"
+    )
 
 
 def _set_drawer_preference(page, enabled):
@@ -146,12 +163,21 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
         expect(toggle).to_be_visible()
         expect(entries).to_have_count(3)
         expect(entries.nth(0)).to_have_text("First topic")
-        expect(entries.nth(1)).to_have_text("A very long user prompt that should be truncated without overflowing th…")
+        expect(entries.nth(1)).to_have_text("A very long user prompt that…")
         expect(entries.nth(2)).to_have_text("User message 3")
         assert "<" not in entries.nth(0).inner_html()
 
         toggle.click()
         expect(page.locator("#conversation-contents-drawer")).to_be_visible()
+        _assert_no_horizontal_overflow(
+            page.locator("#conversation-contents-drawer .offcanvas-body"),
+            "drawer body",
+        )
+        _assert_no_horizontal_overflow(
+            page.locator("#conversation-contents-list"),
+            "contents list",
+        )
+        _assert_no_horizontal_overflow(entries.nth(1), "contents entry")
         entries.nth(1).click()
         expect(page.locator('.message[data-message-id="user-2"]')).to_be_focused()
         page.evaluate(
@@ -210,36 +236,57 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
         expect(entries.nth(0)).to_have_text("Next conversation topic")
 
         document_title = "Policy Handbook <img src=x onerror='window.__documentsPaneXss = true'>"
+        document_file_name = (
+            "bank-treasury-operations-quarterly-reference-"
+            "with-an-intentionally-long-filename.xlsx"
+        )
+        source_document_tags = [
+            {
+                "category": "document",
+                "document_id": "doc-1",
+                "title": document_title,
+                "file_name": document_file_name,
+                "classification": "Confidential",
+                "chunk_ids": ["doc-1_1", "doc-1_2"],
+                "scope": {
+                    "type": "group",
+                    "id": "group-1",
+                    "name": "Product Documentation Workspace With A Long Display Name",
+                },
+            },
+            {
+                "category": "document",
+                "document_id": "doc-2",
+                "title": "Release Plan",
+                "file_name": "release-plan.pdf",
+                "classification": "None",
+                "chunk_ids": ["doc-2_4"],
+                "scope": {
+                    "type": "personal",
+                    "id": "user-1",
+                    "name": "Personal",
+                },
+            },
+        ]
         page.route(
             "**/api/conversations/conversation-documents-pane/metadata",
             lambda route: _fulfill_json(route, {
                 "title": "Documents pane conversation",
-                "tags": [
-                    {
-                        "category": "document",
-                        "document_id": "doc-1",
-                        "title": document_title,
-                        "classification": "Confidential",
-                        "chunk_ids": ["doc-1_1", "doc-1_2"],
-                        "scope": {
-                            "type": "group",
-                            "id": "group-1",
-                            "name": "Product Docs",
-                        },
-                    },
-                    {
-                        "category": "document",
-                        "document_id": "doc-2",
-                        "title": "Release Plan",
-                        "classification": "None",
-                        "chunk_ids": ["doc-2_4"],
-                        "scope": {
-                            "type": "personal",
-                            "id": "user-1",
-                            "name": "Personal",
-                        },
-                    },
-                ],
+                "tags": source_document_tags,
+                "used_documents_tracking_version": 1,
+                "legacy_used_documents": [],
+                "used_documents": [{
+                    **source_document_tags[0],
+                    "chunk_ids": ["doc-1_99"],
+                    "citation_ids": ["doc-1_99"],
+                    "page_numbers": [2],
+                    "citation_locations": [{
+                        "citation_id": "doc-1_99",
+                        "page_number": 2,
+                        "location_label": "Page",
+                        "location_value": 2,
+                    }],
+                }],
             }),
         )
 
@@ -263,15 +310,61 @@ def test_chat_conversation_contents_drawer(playwright, viewport):
         expect(documents_toggle).to_be_visible()
         expect(page.locator("#conversation-contents-drawer")).to_be_visible()
         expect(page.locator("#conversation-contents-title")).to_have_text("Used documents")
-        expect(documents_entries).to_have_count(2)
+        expect(page.locator("#conversation-contents-subtitle")).to_have_text(
+            "Documents cited in active responses"
+        )
+        expect(documents_entries).to_have_count(1)
         expect(documents_entries.nth(0)).to_contain_text(document_title)
-        expect(documents_entries.nth(0)).to_contain_text("2 chunks (Pages: 1, 2)")
-        expect(documents_entries.nth(0)).to_contain_text("group scope: Product Docs")
-        expect(documents_entries.nth(1)).to_contain_text("Release Plan")
-        expect(page.locator("#conversation-documents-count")).to_have_text("2")
+        expect(documents_entries.nth(0)).to_contain_text(document_file_name)
+        expect(documents_entries.nth(0)).to_contain_text("Confidential")
+        expect(documents_entries.nth(0)).to_contain_text("Pages: 2")
+        expect(documents_entries.nth(0)).to_contain_text(
+            "group scope: Product Documentation Workspace With A Long Display Name"
+        )
+        expect(documents_entries.nth(0)).not_to_contain_text("chunks")
+        expect(documents_entries.nth(0)).not_to_contain_text("ID:")
+        expect(page.locator("#conversation-documents-count")).to_have_text("1")
         expect(page.locator("#conversation-documents-panel img[src='x']")).to_have_count(0)
         assert page.evaluate("() => window.__documentsPaneXss") is False
+        _assert_no_horizontal_overflow(
+            page.locator("#conversation-documents-list"),
+            "documents list",
+        )
+        _assert_no_horizontal_overflow(documents_entries.nth(0), "document entry")
 
+        documents_toggle.click()
+        expect(page.locator("#conversation-contents-drawer")).to_be_hidden()
+
+        page.route(
+            "**/api/conversations/conversation-documents-legacy/metadata",
+            lambda route: _fulfill_json(route, {
+                "title": "Legacy documents pane conversation",
+                "tags": source_document_tags,
+            }),
+        )
+        page.evaluate(
+            """
+            () => {
+                window.currentConversationId = 'conversation-documents-legacy';
+                window.dispatchEvent(new CustomEvent('chat:conversation-documents-refresh', {
+                    detail: {
+                        conversationId: 'conversation-documents-legacy',
+                        autoOpen: true
+                    }
+                }));
+            }
+            """
+        )
+        expect(documents_entries).to_have_count(2)
+        expect(documents_entries.nth(1)).to_contain_text("Release Plan")
+        expect(page.locator("#conversation-documents-count")).to_have_text("2")
+        expect(page.locator("#conversation-contents-drawer")).to_be_hidden()
+        expect(page.locator("#conversation-contents-subtitle")).to_have_text(
+            "Documents associated with this historical conversation"
+        )
+
+        documents_toggle.click()
+        expect(page.locator("#conversation-contents-drawer")).to_be_visible()
         page.locator("#conversation-contents-mode-contents").click()
         expect(page.locator("#conversation-contents-title")).to_have_text("Conversation contents")
         expect(page.locator("#conversation-contents-panel")).to_be_visible()

@@ -8,7 +8,7 @@ import app_settings_cache
 from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
 
 from config import *
-from collaboration_models import MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
+from collaboration_models import COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
 from functions_appinsights import log_event
 from functions_authentication import *
 from functions_collaboration import (
@@ -45,6 +45,10 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_conversation_cache import bump_conversation_cache_version
+from functions_chat_stream_events import (
+    USER_MESSAGE_PERSISTED_EVENT_TYPE,
+    build_user_message_persisted_stream_event,
+)
 from functions_group import assert_group_role, check_group_status_allows_operation, find_group_by_id, require_active_group
 from functions_image_messages import decode_image_content, get_complete_image_content, is_blob_backed_image_message, is_external_image_url
 from functions_message_masking import (
@@ -55,6 +59,11 @@ from functions_message_masking import (
 )
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
 from functions_message_artifacts import make_json_serializable
+from functions_simplechat_operations import (
+    attach_generated_file_approval_state,
+    list_pending_generated_file_approvals_for_user,
+    resolve_generated_file_approval_for_user,
+)
 from functions_settings import get_settings
 from swagger_wrapper import swagger_route, get_auth_security
 
@@ -302,6 +311,26 @@ def _serialize_stream_error(error_message, **extra_fields):
     return f'data: {json.dumps(payload)}\n\n'
 
 
+def _resolve_internal_view_function(endpoint_name):
+    """Resolve a registered Flask view function, tolerating Blueprint endpoint prefixes.
+
+    Route modules are registered through Blueprints, so a view declared as ``chat_stream_api``
+    is stored in ``view_functions`` under its qualified endpoint (``backend_chats.chat_stream_api``).
+    Fall back to matching the final endpoint segment so internal bridges keep working whether the
+    route was registered on a Blueprint or directly on the application.
+    """
+    view_functions = getattr(current_app, 'view_functions', None) or {}
+    view_function = view_functions.get(endpoint_name)
+    if callable(view_function):
+        return view_function
+
+    for registered_endpoint, registered_view in view_functions.items():
+        if str(registered_endpoint).rsplit('.', 1)[-1] == endpoint_name and callable(registered_view):
+            return registered_view
+
+    return None
+
+
 def _build_collaboration_stream_request_payload(data, source_conversation_id, message_content):
     return {
         'message': message_content,
@@ -389,6 +418,91 @@ def _sync_collaboration_mask_metadata_to_source(message_doc):
 
 
 def register_route_backend_collaboration(bp):
+    @bp.route('/api/collaboration/file-approvals', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_generated_file_approvals_api():
+        """List generated files staged in shared conversations that this user may release."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            approvals = list_pending_generated_file_approvals_for_user(current_user['user_id'])
+            return jsonify({'approvals': approvals})
+        except PermissionError as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Permission denied while listing pending file approvals: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Permission denied'}), 403
+        except Exception as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Failed to list pending file approvals: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to load pending file approvals'}), 500
+
+    @bp.route(
+        '/api/collaboration/file-approvals/<source_conversation_id>/<artifact_message_id>/<decision>',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def resolve_generated_file_approval_api(source_conversation_id, artifact_message_id, decision):
+        """Approve or deny one generated file staged in a shared conversation."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            normalized_decision = str(decision or '').strip().lower()
+            if normalized_decision not in ('approve', 'deny'):
+                return jsonify({'error': 'Decision must be approve or deny'}), 400
+
+            updated_message = resolve_generated_file_approval_for_user(
+                user_id=current_user['user_id'],
+                source_conversation_id=source_conversation_id,
+                artifact_message_id=artifact_message_id,
+                decision='approved' if normalized_decision == 'approve' else 'denied',
+            )
+            message_metadata = updated_message.get('metadata') or {}
+            return jsonify({
+                'artifact_message_id': updated_message.get('id'),
+                'approval_state': message_metadata.get('generated_artifact_approval_state'),
+                'resolved_by_name': message_metadata.get('generated_artifact_approval_resolved_by_name'),
+                'resolved_at': message_metadata.get('generated_artifact_approval_resolved_at'),
+            })
+        except LookupError:
+            return jsonify({'error': 'Generated file approval not found'}), 404
+        except PermissionError as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Permission denied while resolving file approval: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Permission denied'}), 403
+        except ValueError as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Invalid request while resolving file approval: {exc}',
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Invalid request'}), 400
+        except Exception as exc:
+            log_event(
+                f'[GENERATED_FILE_APPROVALS] Failed to resolve file approval: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to resolve the file approval'}), 500
+
     @bp.route('/api/collaboration/conversations', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1154,6 +1268,7 @@ def register_route_backend_collaboration(bp):
                 allow_pending=True,
             )
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
+            attach_generated_file_approval_state(messages, current_user['user_id'])
             return jsonify({'messages': messages}), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
@@ -1447,16 +1562,40 @@ def register_route_backend_collaboration(bp):
                 message_content,
             )
 
+            def collaboration_stream_error(error_message, **extra_fields):
+                """Serialize a stream error that stays attributed to this shared conversation.
+
+                Every failure in this bridge belongs to the collaboration conversation, not the
+                hidden source conversation, so ``conversation_kind`` is always included. The
+                browser recovery path keys off it to reload through the collaboration endpoint
+                instead of the personal one, which does not know this conversation id.
+                """
+                return _serialize_stream_error(
+                    error_message,
+                    user_message_id=serialized_user_message.get('id'),
+                    message_persisted=True,
+                    conversation_id=conversation_id,
+                    conversation_kind=COLLABORATION_KIND,
+                    **extra_fields,
+                )
+
             def generate_stream():
                 try:
-                    internal_stream_view = current_app.view_functions.get('chat_stream_api')
+                    yield build_user_message_persisted_stream_event(
+                        conversation_id,
+                        serialized_user_message.get('id'),
+                    )
+                    internal_stream_view = _resolve_internal_view_function('chat_stream_api')
                     if not callable(internal_stream_view):
-                        yield _serialize_stream_error(
-                            'Chat streaming endpoint is unavailable',
-                            user_message_id=serialized_user_message.get('id'),
-                            message_persisted=True,
-                            conversation_id=conversation_id,
+                        log_event(
+                            '[COLLABORATION] Chat streaming view function could not be resolved for the collaboration stream bridge',
+                            extra={
+                                'conversation_id': conversation_id,
+                                'endpoint_name': 'chat_stream_api',
+                            },
+                            level=logging.ERROR,
                         )
+                        yield collaboration_stream_error('Chat streaming endpoint is unavailable')
                         return
 
                     buffer = ''
@@ -1470,11 +1609,8 @@ def register_route_backend_collaboration(bp):
                                 error_payload = internal_response.get_json(silent=True) or {}
                             except Exception:
                                 error_payload = {}
-                            yield _serialize_stream_error(
+                            yield collaboration_stream_error(
                                 error_payload.get('error') or error_payload.get('message') or 'Failed to start collaboration AI workflow',
-                                user_message_id=serialized_user_message.get('id'),
-                                message_persisted=True,
-                                conversation_id=conversation_id,
                             )
                             return
 
@@ -1499,14 +1635,22 @@ def register_route_backend_collaboration(bp):
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
 
-                            if stream_payload.get('error'):
-                                return _serialize_stream_error(
+                            if (
+                                stream_payload.get('error')
+                                and not (
+                                    stream_payload.get('message_persisted')
+                                    and stream_payload.get('message_id')
+                                )
+                            ):
+                                return collaboration_stream_error(
                                     stream_payload.get('error'),
                                     partial_content=stream_payload.get('partial_content'),
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
+                            if stream_payload.get('error'):
+                                stream_payload['done'] = True
+
+                            if stream_payload.get('type') == USER_MESSAGE_PERSISTED_EVENT_TYPE:
+                                return None
 
                             if not stream_payload.get('done'):
                                 return normalized_event_block + '\n\n'
@@ -1525,11 +1669,8 @@ def register_route_backend_collaboration(bp):
                                     return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
 
                             if not source_message_id:
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     'AI workflow completed without a source assistant message',
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
 
                             source_user_message_id = str(stream_payload.get('user_message_id') or '').strip()
@@ -1552,11 +1693,8 @@ def register_route_backend_collaboration(bp):
                             try:
                                 source_message_doc = _read_source_message_doc(source_conversation_id, source_message_id)
                             except CosmosResourceNotFoundError:
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     'Failed to load the generated assistant response',
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
 
                             collaboration_conversation_doc = updated_conversation_doc
@@ -1586,11 +1724,8 @@ def register_route_backend_collaboration(bp):
                                 },
                             )
                             if not mirrored_message_doc:
-                                return _serialize_stream_error(
+                                return collaboration_stream_error(
                                     'Failed to mirror the assistant response into the collaboration conversation',
-                                    user_message_id=serialized_user_message.get('id'),
-                                    message_persisted=True,
-                                    conversation_id=conversation_id,
                                 )
 
                             create_collaboration_message_notifications(final_conversation_doc, mirrored_message_doc)
@@ -1616,6 +1751,7 @@ def register_route_backend_collaboration(bp):
                                 **stream_payload,
                                 'conversation_id': conversation_id,
                                 'conversation_title': serialized_final_conversation.get('title'),
+                                'conversation_kind': serialized_final_conversation.get('conversation_kind'),
                                 'chat_type': serialized_final_conversation.get('chat_type'),
                                 'classification': serialized_final_conversation.get('classification', []),
                                 'context': serialized_final_conversation.get('context', []),
@@ -1627,12 +1763,15 @@ def register_route_backend_collaboration(bp):
                                 'augmented': serialized_assistant_message.get('augmented', False),
                                 'hybrid_citations': serialized_assistant_message.get('hybrid_citations', []),
                                 'web_search_citations': serialized_assistant_message.get('web_search_citations', []),
+                                'citation_tracking_version': serialized_assistant_message.get('citation_tracking_version'),
+                                'cited_hybrid_citations': serialized_assistant_message.get('cited_hybrid_citations', []),
+                                'cited_web_search_citations': serialized_assistant_message.get('cited_web_search_citations', []),
                                 'agent_citations': serialized_assistant_message.get('agent_citations', []),
                                 'agent_display_name': serialized_assistant_message.get('agent_display_name'),
                                 'agent_name': serialized_assistant_message.get('agent_name'),
                                 'full_content': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),
                                 'image_url': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') == 'image' else stream_payload.get('image_url'),
-                                'reload_messages': False,
+                                'reload_messages': bool(stream_payload.get('error')),
                             }
                             return f'data: {json.dumps(make_json_serializable(transformed_payload))}\n\n'
 
@@ -1659,12 +1798,7 @@ def register_route_backend_collaboration(bp):
                         level=logging.ERROR,
                         exceptionTraceback=True,
                     )
-                    yield _serialize_stream_error(
-                        'Failed to stream collaborative AI response',
-                        user_message_id=serialized_user_message.get('id'),
-                        message_persisted=True,
-                        conversation_id=conversation_id,
-                    )
+                    yield collaboration_stream_error('Failed to stream collaborative AI response')
 
             return Response(stream_with_context(generate_stream()), mimetype='text/event-stream')
         except CosmosResourceNotFoundError:

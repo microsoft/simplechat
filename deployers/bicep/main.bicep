@@ -269,9 +269,41 @@ var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
 - Default is false''')
 param deployContentSafety bool
 
-@description('''Enable deployment of Azure Cache for Redis and related resources.
+@description('''Enable deployment of a Redis cache and related resources.
 - Default is false''')
 param deployRedisCache bool
+
+@description('''Which Azure Redis offering to provision.
+- managed deploys Azure Managed Redis, the replacement for the retiring Azure Cache for Redis tiers.
+- classic deploys Azure Cache for Redis, required in clouds where Azure Managed Redis is unavailable such as Azure Government and Azure operated by 21Vianet.''')
+@allowed([
+  'managed'
+  'classic'
+])
+param redisCacheKind string = 'managed'
+
+@description('''Azure Managed Redis SKU. Balanced_B0 (0.5 GB) is the documented replacement for Azure Cache for Redis Standard C0.
+- Only applies when redisCacheKind is managed.''')
+param redisManagedSkuName string = 'Balanced_B0'
+
+@description('''High availability for Azure Managed Redis.
+- Enabled matches the replication of Azure Cache for Redis Standard and is required for the availability SLA.
+- Disabled halves the cost for dev/test and cannot be turned back off later.''')
+@allowed([
+  'Enabled'
+  'Disabled'
+])
+param redisHighAvailability string = 'Enabled'
+
+@description('''Clustering policy for the Azure Managed Redis database.
+- NoCluster presents a single non-sharded endpoint, which SimpleChat's Redis client requires.
+- Do not use OSSCluster: it requires a cluster-aware client that SimpleChat does not use.''')
+@allowed([
+  'NoCluster'
+  'EnterpriseCluster'
+  'OSSCluster'
+])
+param redisClusteringPolicy string = 'NoCluster'
 
 @description('''Enable deployment of Azure Speech service and related resources.
 - Default is false''')
@@ -713,6 +745,10 @@ module redisCache 'modules/redisCache.bicep' = if (deployRedisCache) {
     appName: appName
     environment: environment
     redisAuthenticationType: redisAuthenticationType
+    redisCacheKind: redisCacheKind
+    redisManagedSkuName: redisManagedSkuName
+    redisHighAvailability: redisHighAvailability
+    redisClusteringPolicy: redisClusteringPolicy
     tags: tags
     enableDiagLogging: enableDiagLogging
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
@@ -787,6 +823,7 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
     #disable-next-line BCP318 // expect one value to be null
     redisCacheName: deployRedisCache ? redisCache.outputs.redisCacheName : ''
+    redisCacheKind: redisCacheKind
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
@@ -815,6 +852,7 @@ module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = i
     speechServiceName: deploySpeechService ? speechService.outputs.speechServiceName : ''
     #disable-next-line BCP318 // expect one value to be null
     redisCacheName: deployRedisCache ? redisCache.outputs.redisCacheName : ''
+    redisCacheKind: redisCacheKind
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
   }
@@ -888,6 +926,9 @@ output var_openAIEmbeddingModels array = resolvedEmbeddingModels
 output var_openAISubscriptionId string = openAI.outputs.openAISubscriptionId
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
+output var_redisCacheKind string = deployRedisCache ? redisCacheKind : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_redisCachePort string = deployRedisCache ? string(redisCache.outputs.redisCachePort) : ''
 output var_rgName string = rgName
 output var_searchServiceEndpoint string = searchService.outputs.searchServiceEndpoint
 #disable-next-line BCP318 // expect one value to be null

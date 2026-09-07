@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -31,8 +32,8 @@ DEPLOYER_VERSION_FILE = os.path.join(ROOT_DIR, 'deployers', 'version.txt')
 
 
 def read_file(path):
-    with open(path, 'r', encoding='utf-8') as file_handle:
-        return file_handle.read()
+    with open(path, "r", encoding="utf-8") as file_handle:
+        return compose_if_admin_settings(path, file_handle.read())
 
 
 def parse_functions_documents():

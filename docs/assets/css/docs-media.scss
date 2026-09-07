@@ -1,0 +1,327 @@
+---
+# Compiled by Jekyll to /assets/css/docs-media.css
+---
+
+// docs-media.scss
+//
+// Styles for the documentation media system: screenshots, video poster cards,
+// and the auto-resolving placeholder cards that show which asset file to create.
+//
+// Kept separate from main.scss so media styling can evolve independently of the
+// site shell. Colors use Bootstrap 5.3 theme variables so light and dark mode
+// are handled without duplicate rule sets.
+
+$docs-media-radius: 0.5rem;
+$docs-media-gap: 0.75rem;
+$bp-md: 768px;
+
+.docs-media {
+    margin: 1.75rem 0;
+    max-width: 100%;
+}
+
+.docs-media img,
+.docs-media video {
+    max-width: 100%;
+    height: auto;
+}
+
+.docs-media-caption {
+    margin-top: 0.6rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+// ---------------------------------------------------------------------------
+// Rendered screenshot
+// ---------------------------------------------------------------------------
+
+.docs-media-zoom {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: $docs-media-radius;
+    background: var(--bs-body-bg, #fff);
+    cursor: zoom-in;
+    overflow: hidden;
+}
+
+.docs-media-zoom:hover {
+    border-color: var(--bs-primary, #0d6efd);
+}
+
+.docs-media-zoom:focus-visible {
+    outline: 2px solid var(--bs-primary, #0d6efd);
+    outline-offset: 2px;
+}
+
+.docs-media-image {
+    display: block;
+    width: 100%;
+}
+
+// ---------------------------------------------------------------------------
+// Placeholder card
+//
+// Shown until the asset file exists. It names the exact path to create so a
+// contributor can fill the slot by dropping in one file.
+// ---------------------------------------------------------------------------
+
+.docs-media--placeholder .docs-media-placeholder {
+    padding: 1.5rem;
+    border: 2px dashed var(--bs-border-color, #ced4da);
+    border-radius: $docs-media-radius;
+    background: var(--bs-tertiary-bg, #f8f9fa);
+    text-align: left;
+}
+
+.docs-media-placeholder-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    margin-bottom: 0.75rem;
+    border-radius: 50%;
+    background: var(--bs-secondary-bg, #e9ecef);
+    color: var(--bs-secondary-color, #6c757d);
+    font-size: 1.1rem;
+}
+
+.docs-media-placeholder-kicker {
+    margin: 0 0 0.2rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.docs-media-placeholder-title {
+    margin: 0 0 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--bs-body-color, #212529);
+}
+
+.docs-media-placeholder-capture {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: var(--bs-body-color, #212529);
+}
+
+.docs-media-placeholder-path {
+    margin: 0 0 0.35rem;
+    font-size: 0.875rem;
+}
+
+.docs-media-placeholder-path code {
+    padding: 0.15rem 0.4rem;
+    border-radius: 0.25rem;
+    background: var(--bs-secondary-bg, #e9ecef);
+    word-break: break-all;
+}
+
+.docs-media-placeholder-hint {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.docs-media-placeholder-steps {
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.docs-media-placeholder-steps p {
+    margin: 0 0 0.35rem;
+}
+
+.docs-media-placeholder-steps ol {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.docs-media-placeholder-steps code {
+    word-break: break-all;
+}
+
+// ---------------------------------------------------------------------------
+// Unknown slot id
+// ---------------------------------------------------------------------------
+
+.docs-media--error {
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--bs-danger-border-subtle, #f5c2c7);
+    border-radius: $docs-media-radius;
+    background: var(--bs-danger-bg-subtle, #f8d7da);
+}
+
+.docs-media-error-title {
+    margin: 0 0 0.25rem;
+    font-weight: 600;
+}
+
+.docs-media-error-body {
+    margin: 0;
+    font-size: 0.875rem;
+}
+
+// ---------------------------------------------------------------------------
+// Video poster card
+//
+// Videos are never iframed and never committed as MP4. A local poster image
+// links out to YouTube or Microsoft Stream.
+// ---------------------------------------------------------------------------
+
+.docs-video-card {
+    display: flex;
+    flex-direction: column;
+    gap: $docs-media-gap;
+    padding: 0;
+    border: 1px solid var(--bs-border-color, #dee2e6);
+    border-radius: $docs-media-radius;
+    background: var(--bs-body-bg, #fff);
+    color: inherit;
+    text-decoration: none;
+    overflow: hidden;
+}
+
+.docs-video-card:hover {
+    border-color: var(--bs-primary, #0d6efd);
+}
+
+.docs-video-card:focus-visible {
+    outline: 2px solid var(--bs-primary, #0d6efd);
+    outline-offset: 2px;
+}
+
+.docs-video-poster {
+    position: relative;
+    display: block;
+    background: var(--bs-secondary-bg, #e9ecef);
+    aspect-ratio: 16 / 9;
+}
+
+.docs-video-poster-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.docs-video-poster-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    font-size: 2rem;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+.docs-video-play {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3.25rem;
+    height: 3.25rem;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    font-size: 1.5rem;
+}
+
+.docs-video-meta {
+    display: block;
+    padding: 0 1rem 1rem;
+}
+
+.docs-video-title {
+    display: block;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.docs-video-sub {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.8125rem;
+    color: var(--bs-secondary-color, #6c757d);
+}
+
+// ---------------------------------------------------------------------------
+// Lightbox
+// ---------------------------------------------------------------------------
+
+.docs-media-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 1080;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background: rgba(0, 0, 0, 0.82);
+}
+
+.docs-media-lightbox img {
+    max-width: 100%;
+    max-height: 90vh;
+    border-radius: $docs-media-radius;
+    object-fit: contain;
+}
+
+.docs-media-lightbox-close {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    font-size: 1.25rem;
+}
+
+.docs-media-lightbox-close:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+// ---------------------------------------------------------------------------
+// Small viewports
+// ---------------------------------------------------------------------------
+
+@media (max-width: ($bp-md - 0.02px)) {
+    .docs-media {
+        margin: 1.25rem 0;
+    }
+
+    .docs-media--placeholder .docs-media-placeholder {
+        padding: 1.1rem;
+    }
+
+    .docs-media-lightbox {
+        padding: 0.75rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .docs-media-zoom,
+    .docs-video-card {
+        transition: none;
+    }
+}

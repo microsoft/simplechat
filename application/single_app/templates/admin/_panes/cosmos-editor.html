@@ -1,0 +1,49 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'cosmos-editor' %} show active{% endif %}" id="cosmos-editor" role="tabpanel" aria-labelledby="cosmos-editor-tab" data-testid="cosmos-editor-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true">
+                <div class="card p-4 mb-4 border-danger shadow-sm" id="data-management-cosmos-editor-section" data-ignore-data-management-change="true">
+                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+                        <div>
+                            <h4 class="mb-1"><i class="bi bi-database-exclamation me-2"></i>Cosmos DB JSON Editor</h4>
+                            <p class="text-muted mb-0 small">Query SimpleChat Cosmos DB containers, inspect one document, and save JSON changes with ETag protection.</p>
+                        </div>
+                        <button type="button" class="btn btn-danger" id="data-management-cosmos-editor-open-danger-btn">
+                            <i class="bi bi-unlock me-1"></i>Unlock Editor
+                        </button>
+                    </div>
+                    <div class="alert alert-danger mb-3" role="alert">
+                        This tool can modify production Cosmos DB documents directly. Use it only for targeted admin repair or investigation after you understand the impact.
+                    </div>
+                    <div class="alert alert-warning mb-3" id="data-management-cosmos-editor-locked-message" role="status">
+                        The Cosmos DB JSON editor is locked. Acknowledge the danger prompt before querying or editing data.
+                    </div>
+                    <div class="d-none" id="data-management-cosmos-editor-workspace">
+                        <div class="row g-3">
+                            <div class="col-lg-4">
+                                <label class="form-label" for="data_management_cosmos_editor_container">Container</label>
+                                <select class="form-select" id="data_management_cosmos_editor_container">
+                                    <option value="">Loading containers...</option>
+                                </select>
+                                <div class="form-text" id="data-management-cosmos-editor-container-help">Choose a known SimpleChat Cosmos DB container.</div>
+                            </div>
+                            <div class="col-lg-2">
+                                <label class="form-label" for="data_management_cosmos_editor_page_size">Page size</label>
+                                <input class="form-control" type="number" id="data_management_cosmos_editor_page_size" min="1" max="100" value="100">
+                                <div class="form-text">Max 100 per request.</div>
+                            </div>
+                            <div class="col-lg-6">
+                                <label class="form-label" for="data_management_cosmos_editor_query">SELECT query</label>
+                                <textarea class="form-control font-monospace" id="data_management_cosmos_editor_query" rows="4" placeholder="Leave empty to browse the first 100 documents. Custom queries must start with SELECT."></textarea>
+                                <div class="form-text">Empty query returns only the first 100 documents. Custom SELECT queries can page beyond 100 with Next Page.</div>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                            <button type="button" class="btn btn-primary" id="data-management-cosmos-editor-run-query-btn">
+                                <i class="bi bi-search me-1"></i>Run Query
+                            </button>
+                            <span class="small text-muted" id="data-management-cosmos-editor-query-status">No query has run yet.</span>
+                        </div>
+                        <div class="form-text mt-2">
+                            Query results and the JSON editor open in a modal so the Data Management page stays compact.
+                        </div>
+                    </div>
+                </div>
+            </div>

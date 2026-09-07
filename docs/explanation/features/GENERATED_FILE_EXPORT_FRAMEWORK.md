@@ -2,7 +2,7 @@
 
 Implemented in version: **0.250.072**
 
-Updated through version: **0.250.160**
+Updated through version: **0.261.022**
 
 GitHub issue: [#1071](https://github.com/microsoft/simplechat/issues/1071)
 

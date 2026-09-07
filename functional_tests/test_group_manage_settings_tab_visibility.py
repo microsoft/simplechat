@@ -93,7 +93,7 @@ def test_download_settings_patch_responses_match_frontend_contract() -> None:
     require_ordered_tokens(
         group_routes,
         [
-            '@app.route("/api/groups/<group_id>/download-settings", methods=["PATCH"])',
+            '@bp.route("/api/groups/<group_id>/download-settings", methods=["PATCH"])',
             'assert_group_role(user_id, group_id, allowed_roles=("Owner", "Admin"))',
             'if not is_group_workspace_file_download_admin_enabled(get_settings(), group_doc):',
             '"success": True,',
@@ -104,7 +104,7 @@ def test_download_settings_patch_responses_match_frontend_contract() -> None:
     require_ordered_tokens(
         public_routes,
         [
-            '@app.route("/api/public_workspaces/<ws_id>/download-settings", methods=["PATCH"])',
+            '@bp.route("/api/public_workspaces/<ws_id>/download-settings", methods=["PATCH"])',
             'if not is_public_workspace_file_download_admin_enabled(get_settings(), ws):',
             '"success": True,',
             '"disable_file_downloads": ws["disable_file_downloads"],',

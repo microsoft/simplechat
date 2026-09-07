@@ -2,8 +2,8 @@
 # test_tabular_document_actions_workflow.py
 """
 Functional test for tabular document-action workflow support.
-Version: 0.250.070
-Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062
+Version: 0.250.185
+Implemented in: 0.241.038; mixed-source manifest coverage added in 0.250.062; generated-output Analyze durable routing added in 0.250.184; model endpoint context added in 0.250.185
 
 This test ensures tabular document actions reuse the shared tabular analysis
 path for Analyze and comparison workflows instead of relying only on the
@@ -13,10 +13,12 @@ live tabular activity thoughts. It also ensures the Phase 1 contract from
 """
 
 import ast
+import asyncio
 import logging
 from pathlib import Path
 import sys
 import traceback
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +68,9 @@ def test_shared_tabular_document_action_helper_exists() -> None:
     )
     assert 'maybe_create_tabular_generated_output(' in workflow_runner_content, (
         "Expected the shared helper to reuse generated tabular export creation for workflow-backed tabular actions."
+    )
+    assert 'maybe_queue_direct_tabular_generated_output(' in workflow_runner_content, (
+        "Expected the shared helper to queue direct durable tabular work when foreground analysis yields no computed results."
     )
 
     print("Shared tabular document-action helper checks passed")
@@ -170,6 +175,166 @@ def test_mixed_sources_preserve_valid_tabular_partition() -> None:
     ]
 
     print("Mixed-source tabular partition checks passed")
+
+
+def test_generated_output_tabular_analyze_queues_direct_output_before_foreground() -> None:
+    print("Testing generated-output tabular Analyze primary durable routing...")
+
+    workflow_runner_tree = ast.parse(read_text(WORKFLOW_RUNNER_FILE))
+    helper_node = next(
+        node
+        for node in workflow_runner_tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_maybe_execute_tabular_document_action"
+    )
+    helper_module = ast.Module(body=[helper_node], type_ignores=[])
+    ast.fix_missing_locations(helper_module)
+
+    queued_calls = []
+
+    class FakePluginLogger:
+        def get_invocations_for_conversation(self, *args, **kwargs):
+            return []
+
+        def clear_invocations_for_conversation(self, *args, **kwargs):
+            raise AssertionError("Primary durable routing should not clear plugin invocations.")
+
+    async def fake_run_tabular_analysis_with_thought_tracking(**kwargs):
+        raise AssertionError("Generated-output Analyze should queue durable work before foreground tools run.")
+
+    async def fake_maybe_create_tabular_generated_output(**kwargs):
+        raise AssertionError("Primary durable routing should not build exports from empty invocations.")
+
+    def fake_maybe_queue_direct_tabular_generated_output(**kwargs):
+        queued_calls.append(kwargs)
+        return {
+            "background_export": True,
+            "status": "queued",
+            "task_type": "combined",
+            "output_format": "csv",
+            "export_run_id": "run-1",
+            "source_file_name": "bank.csv",
+        }
+
+    fake_tabular_module = types.ModuleType("functions_tabular_analysis")
+    fake_tabular_module.augment_tabular_invocations_with_related_document_evidence = lambda *args, **kwargs: {}
+    fake_tabular_module.build_tabular_related_document_evidence_summary = lambda *args, **kwargs: ""
+    fake_tabular_module.get_new_plugin_invocations = lambda invocations, baseline_count: []
+    fake_tabular_module.maybe_create_tabular_generated_output = fake_maybe_create_tabular_generated_output
+    fake_tabular_module.maybe_queue_direct_tabular_generated_output = fake_maybe_queue_direct_tabular_generated_output
+    fake_tabular_module.plan_tabular_request = lambda *args, **kwargs: {
+        "action_mode": "analyze",
+        "durable_task_type": "combined",
+        "execution_contract": "combined",
+        "reason_code": "durable_intent",
+    }
+    fake_tabular_module.run_tabular_analysis_with_thought_tracking = fake_run_tabular_analysis_with_thought_tracking
+
+    original_tabular_module = sys.modules.get("functions_tabular_analysis")
+    sys.modules["functions_tabular_analysis"] = fake_tabular_module
+    try:
+        namespace = {
+            "asyncio": asyncio,
+            "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
+            "DOCUMENT_ACTION_TYPE_COMPARISON": "comparison",
+            "EVIDENCE_STATUS_PENDING": "pending",
+            "MixedSourceCancellationError": orchestration.MixedSourceCancellationError,
+            "TABULAR_PARITY_EVENT_FIRST_FOREGROUND_TABULAR_INVOCATION": "foreground_invocation",
+            "raise_if_mixed_source_cancelled": orchestration.raise_if_mixed_source_cancelled,
+            "is_tabular_processing_enabled": lambda settings: True,
+            "is_mixed_source_manifest_enabled": lambda settings: False,
+            "_resolve_tabular_document_action_documents": lambda *args, **kwargs: [{
+                "document_id": "table-1",
+                "document_name": "Bank Treasury Operations Dataset",
+                "file_name": "bank.csv",
+                "scope": "personal",
+                "source_hint": "workspace",
+                "group_id": None,
+                "public_workspace_id": None,
+            }],
+            "_resolve_tabular_document_action_model_name": lambda workflow, settings: "gpt-4o",
+            "_build_workflow_model_context": lambda workflow, deployment_name, provider: {
+                "endpoint_id": workflow.get("model_endpoint_id"),
+                "model_id": workflow.get("model_id"),
+                "model_deployment": deployment_name,
+                "provider": provider,
+            },
+            "_build_tabular_document_action_thought_callback": lambda **kwargs: None,
+            "_build_tabular_analysis_request_prompt": lambda *args, **kwargs: "analyze every row and produce csv",
+            "_build_agent_citations_from_plugin_invocations": lambda invocations: [],
+            "_build_tabular_analyze_durable_handoff": lambda output: "queued handoff",
+            "_get_pending_tabular_generated_output": lambda outputs: next(
+                (output for output in outputs if output.get("status") == "queued"),
+                None,
+            ),
+            "_get_terminal_unsuccessful_tabular_generated_output": lambda outputs: next(
+                (output for output in outputs if output.get("status") in {"failed", "canceled", "cancelled"}),
+                None,
+            ),
+            "_get_tabular_generated_output_status": lambda output: str((output or {}).get("status") or "").lower(),
+            "_build_tabular_document_action_coverage": lambda documents, phase_label: {
+                "processed_windows": len(documents),
+                "processed_chunks": len(documents),
+                "documents": [{"document_id": document.get("document_id")} for document in documents],
+                "progress_meta": {"phase_label": phase_label},
+            },
+            "classify_tabular_parity_request": lambda prompt: {"reason_code": "durable_intent"},
+            "emit_tabular_parity_event": lambda *args, **kwargs: None,
+            "get_plugin_logger": lambda: FakePluginLogger(),
+            "log_event": lambda *args, **kwargs: None,
+            "logging": logging,
+        }
+        exec(compile(helper_module, str(WORKFLOW_RUNNER_FILE), "exec"), namespace)
+        helper = namespace["_maybe_execute_tabular_document_action"]
+
+        def fail_invoke_prompt(*args, **kwargs):
+            raise AssertionError("Primary durable routing should not synthesize empty tabular results.")
+
+        result = helper(
+            "analyze",
+            {
+                "user_id": "user-1",
+                "task_prompt": "Analyze all rows and create a CSV.",
+                "model_endpoint_id": "endpoint-1",
+                "model_id": "model-1",
+                "model_provider": "new_foundry",
+            },
+            {"type": "analyze", "document_ids": ["table-1"], "doc_scope": "personal"},
+            {"enable_tabular_processing_plugin": True},
+            conversation_id="conversation-1",
+            invoke_prompt=fail_invoke_prompt,
+        )
+    finally:
+        if original_tabular_module is None:
+            sys.modules.pop("functions_tabular_analysis", None)
+        else:
+            sys.modules["functions_tabular_analysis"] = original_tabular_module
+
+    assert queued_calls, "Expected generated-output Analyze to queue a direct durable run."
+    assert queued_calls[0]["file_contexts"] == [{
+        "file_name": "bank.csv",
+        "source_hint": "workspace",
+        "group_id": None,
+        "public_workspace_id": None,
+    }]
+    assert queued_calls[0]["planner_metadata"] == {
+        "action_mode": "analyze",
+        "durable_task_type": "combined",
+        "execution_contract": "combined",
+        "reason_code": "durable_intent",
+    }
+    assert queued_calls[0]["model_context"] == {
+        "endpoint_id": "endpoint-1",
+        "model_id": "model-1",
+        "model_deployment": "gpt-4o",
+        "provider": "new_foundry",
+    }
+    assert result["generated_tabular_outputs"][0]["status"] == "queued"
+    assert result["result"]["analysis_reply"] == "queued handoff"
+    assert result["result"]["coverage"]["processed_windows"] == 0
+    assert result["result"]["coverage"]["progress_meta"]["status"] == "pending"
+
+    print("Generated-output tabular Analyze primary durable routing checks passed")
 
 
 def test_manifest_flag_does_not_change_workflow_dispatch() -> None:
@@ -288,6 +453,7 @@ def run_tests() -> bool:
         test_analyze_and_compare_dispatch_use_tabular_helper,
         test_tabular_document_actions_stream_live_activity,
         test_mixed_sources_preserve_valid_tabular_partition,
+        test_generated_output_tabular_analyze_queues_direct_output_before_foreground,
         test_manifest_flag_does_not_change_workflow_dispatch,
         test_document_action_chat_does_not_duplicate_shadow_manifest,
     ]

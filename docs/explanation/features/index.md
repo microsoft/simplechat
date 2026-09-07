@@ -8,13 +8,13 @@ category: Version History
 
 ## Tutorial Features
 
-- [Guided Tutorials](GUIDED_TUTORIALS.md)
-- [User Tutorial Visibility Preference](USER_TUTORIAL_VISIBILITY_PREFERENCE.md)
+- [Guided Tutorials](v0.241.001/GUIDED_TUTORIALS.md)
+- [User Tutorial Visibility Preference](v0.241.001/USER_TUTORIAL_VISIBILITY_PREFERENCE.md)
 
 ## Admin Experience Features
 
 - [Azure OpenAI Identity Setup Guide](v0.250.001/AZURE_OPENAI_IDENTITY_SETUP_GUIDE.md)
-- [AI Voice Conversations Setup Guide](AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
+- [AI Voice Conversations Setup Guide](v0.241.006/AI_VOICE_CONVERSATIONS_SETUP_GUIDE.md)
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
 - [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)
@@ -24,7 +24,10 @@ category: Version History
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
+- [RocksDB Action](v0.250.216/ROCKSDB_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
+- [Tableau Action](TABLEAU_ACTION.md)
+- [Yamcs Action](YAMCS_ACTION.md)
 
 ## MCP Features
 
@@ -38,6 +41,10 @@ category: Version History
 - [Outlook MSG File Ingestion](v0.242.063/MSG_FILE_INGESTION.md)
 - [Chat Upload Personal Workspace Handoff](CHAT_UPLOAD_PERSONAL_WORKSPACE_HANDOFF.md)
 
+## Collaborative Conversation Features
+
+- [Shared Conversation File Approvals](SHARED_CONVERSATION_FILE_APPROVALS.md)
+
 ## Workspace Branding Features
 
 - [Group And Public Workspace Custom Hero Colors](GROUP_PUBLIC_WORKSPACE_CUSTOM_HERO_COLORS.md)
@@ -47,6 +54,7 @@ category: Version History
 - [Data Management Durable Backup Jobs](DATA_MANAGEMENT_BACKUP_MIGRATION.md)
 - [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md)
 - [Migration Provenance](MIGRATION_PROVENANCE.md)
+- [Workspace Section Order](v0.250.211/WORKSPACE_SECTION_ORDER.md)
 - [Microsoft Teams App SSO](v0.242.072/TEAMS_APP_SSO.md)
 - [Tabular SK Large Result Pagination](v0.242.067/TABULAR_SK_LARGE_RESULT_PAGINATION.md)
 - [Model Endpoint Model Icon Picker](v0.242.060/MODEL_ENDPOINT_MODEL_ICON_PICKER.md)
@@ -65,3 +73,4 @@ category: Version History
 - [MCP Action Configuration](v0.241.103/MCP_ACTION_CONFIGURATION.md)
 - [Chat Comparison Modal Summary](v0.241.104/CHAT_COMPARISON_MODAL_SUMMARY.md)
 - [Databricks Action Configuration](v0.241.104/DATABRICKS_ACTION_CONFIGURATION.md)
+- [Workflow Per-Task Workspace Documents](WORKFLOW_PER_TASK_WORKSPACE_DOCUMENTS.md)

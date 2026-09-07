@@ -30,7 +30,7 @@ After a contribution is merged into `Development`, the SimpleChat team handles p
 Add a branch-flow diagram here later if you want a visual version of the process.
 
 Example:
-![SimpleChat contribution flow](./images/contribution-flow.png)
+![SimpleChat contribution flow]({{ '/images/contribution-flow.png' | relative_url }})
 -->
 
 ## Suggested Git Commands
@@ -73,7 +73,7 @@ python app.py
 
 For the full local workflow, environment guidance, and notes about Docker, WSL2, and Gunicorn validation, see:
 
-- [Setup Instructions](./setup_instructions.md)
+- [Setup Instructions]({{ '/start/deployment-options/' | relative_url }})
 - [Manual Setup](./setup_instructions_manual.md)
 - [Running Simple Chat Locally](./explanation/running_simplechat_locally.md)
 

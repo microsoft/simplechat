@@ -1,5 +1,6 @@
 {% set is_chat_page = request.endpoint == 'frontend_chats.chats' %}
 {% set latest_features_nav_is_hidden = latest_features_nav_hidden | default(false) %}
+{% set public_workspace_labels = app_settings.public_workspace_labels %}
 <nav class="navbar navbar-expand-lg navbar-light bg-light fixed-top top-nav-bar{% if is_chat_page %} top-nav-bar-chat{% endif %}">
     <div class="container-fluid top-nav-shell{% if is_chat_page %} top-nav-shell-chat{% endif %}">
         <div class="top-nav-brand">
@@ -396,4 +397,3 @@
     </div>
 </div>
 {% endif %}
-{% set public_workspace_labels = app_settings.public_workspace_labels %}

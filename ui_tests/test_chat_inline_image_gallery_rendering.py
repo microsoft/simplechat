@@ -1,12 +1,16 @@
 # test_chat_inline_image_gallery_rendering.py
 """
 UI test for inline image gallery rendering in chat.
-Version: 0.241.066
+Version: 0.260.024
 Implemented in: 0.241.056
 
 This test ensures assistant messages can hydrate inline image gallery agent
 citations, render up to five framed images inside the chat bubble, and expose
 an overlay info button that opens a detail modal for each image.
+
+It also ensures workspace image galleries render only the images the response
+actually cited, so retrieved-but-unreferenced workspace images stay out of the
+message bubble while remaining available under Sources.
 """
 
 import base64
@@ -205,6 +209,167 @@ def test_chat_inline_image_gallery_rendering(playwright):
         page.locator('[data-message-id="assistant-msg-images-1"] .inline-image-gallery-item-image').nth(1).click()
         expect(page.locator('#image-modal')).to_be_visible()
         expect(page.locator('#image-modal img')).to_be_visible()
+    finally:
+        context.close()
+        browser.close()
+
+
+def _build_inline_image_gallery_agent_citation():
+    """Return an agent citation whose gallery resolves without an artifact fetch."""
+    return {
+        "tool_name": "Image gallery: Incident Photos",
+        "function_name": "collect_images",
+        "plugin_name": "ExternalMediaPlugin",
+        "function_arguments": {"title": "Incident Photos"},
+        "function_result": {
+            "success": True,
+            "render_type": "inline_image_gallery",
+            "image_gallery": {
+                "title": "Incident Photos",
+                "summary": "Images returned by the action.",
+                "source_action_name": "media_collector",
+                "items": [
+                    {
+                        "title": "Loading Dock Camera",
+                        "image_url": f"data:image/png;base64,{TINY_PNG_BASE64}",
+                    },
+                ],
+            },
+        },
+    }
+
+
+@pytest.mark.ui
+def test_chat_inline_image_gallery_renders_cited_media_only(playwright):
+    """Retrieved-but-uncited workspace images must not render as inline media."""
+    _require_ui_env()
+
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        storage_state=STORAGE_STATE,
+        viewport={"width": 1440, "height": 900},
+    )
+    page = context.new_page()
+
+    cited_citation = {
+        "file_name": "cited-photo.png",
+        "citation_id": "cited-image-001_1",
+        "page_number": 1,
+    }
+    uncited_citation = {
+        "file_name": "uncited-photo.png",
+        "citation_id": "uncited-image-001_1",
+        "page_number": 1,
+    }
+
+    page.route(
+        "**/api/user/settings",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"selected_agent": None, "settings": {"enable_agents": False}}),
+        ),
+    )
+    page.route(
+        "**/api/get_conversations",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps({"conversations": []})),
+    )
+    page.route(
+        "**/api/enhanced_citations/image**",
+        lambda route: route.fulfill(status=200, content_type="image/png", body=TINY_PNG_BYTES),
+    )
+
+    try:
+        response = page.goto(f"{BASE_URL}/chats", wait_until="domcontentloaded")
+        assert response is not None, "Expected a navigation response when loading /chats."
+
+        if response.status in SKIP_RESPONSE_CODES:
+            pytest.skip(f"Chat page unavailable in this environment (HTTP {response.status}).")
+
+        if "login" in page.url.lower():
+            pytest.skip("Inline image gallery UI test requires an authenticated chat session.")
+
+        page.wait_for_selector("#chatbox")
+
+        page.evaluate(
+            """
+            async ({ citedCitation, uncitedCitation, agentCitation }) => {
+                currentConversationId = 'test-convo';
+                window.currentConversationId = 'test-convo';
+                const messagesModule = await import('/static/js/chat/chat-messages.js');
+                const retrievedCitations = [citedCitation, uncitedCitation];
+
+                messagesModule.appendMessage(
+                    'AI', 'Cited image results', null, 'assistant-msg-images-cited', true,
+                    retrievedCitations, [], [], null, null,
+                    {
+                        id: 'assistant-msg-images-cited',
+                        role: 'assistant',
+                        content: 'Cited image results',
+                        conversation_id: 'test-convo',
+                        hybrid_citations: retrievedCitations,
+                        citation_tracking_version: 1,
+                        cited_hybrid_citations: [citedCitation],
+                        cited_web_search_citations: [],
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI', 'No cited image results', null, 'assistant-msg-images-uncited', true,
+                    retrievedCitations, [], [agentCitation], null, null,
+                    {
+                        id: 'assistant-msg-images-uncited',
+                        role: 'assistant',
+                        content: 'No cited image results',
+                        conversation_id: 'test-convo',
+                        hybrid_citations: retrievedCitations,
+                        agent_citations: [agentCitation],
+                        citation_tracking_version: 1,
+                        cited_hybrid_citations: [],
+                        cited_web_search_citations: [],
+                    },
+                    true
+                );
+
+                messagesModule.appendMessage(
+                    'AI', 'Legacy image results', null, 'assistant-msg-images-legacy', true,
+                    retrievedCitations, [], [], null, null,
+                    {
+                        id: 'assistant-msg-images-legacy',
+                        role: 'assistant',
+                        content: 'Legacy image results',
+                        conversation_id: 'test-convo',
+                        hybrid_citations: retrievedCitations,
+                    },
+                    true
+                );
+            }
+            """,
+            {
+                "citedCitation": cited_citation,
+                "uncitedCitation": uncited_citation,
+                "agentCitation": _build_inline_image_gallery_agent_citation(),
+            },
+        )
+
+        cited_scope = page.locator('[data-message-id="assistant-msg-images-cited"]')
+        expect(cited_scope.locator('.inline-image-gallery-card')).to_have_count(1)
+        expect(cited_scope.locator('.inline-image-gallery-title')).to_have_text('Workspace images')
+        expect(cited_scope.locator('.inline-image-gallery-item')).to_have_count(1)
+        expect(cited_scope.locator('.inline-image-gallery-item-title')).to_have_text('cited-photo.png')
+
+        # A tracked response that cited no documents keeps its executed action
+        # gallery but drops every retrieved workspace image.
+        uncited_scope = page.locator('[data-message-id="assistant-msg-images-uncited"]')
+        expect(uncited_scope.locator('.inline-image-gallery-card')).to_have_count(1)
+        expect(uncited_scope.locator('.inline-image-gallery-title')).to_have_text('Incident Photos')
+        expect(uncited_scope.locator('.inline-image-gallery-item')).to_have_count(1)
+
+        # Messages saved before citation tracking existed keep every retrieved image.
+        legacy_scope = page.locator('[data-message-id="assistant-msg-images-legacy"]')
+        expect(legacy_scope.locator('.inline-image-gallery-card')).to_have_count(1)
+        expect(legacy_scope.locator('.inline-image-gallery-item')).to_have_count(2)
     finally:
         context.close()
         browser.close()

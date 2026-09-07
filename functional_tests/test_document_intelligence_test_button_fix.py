@@ -23,7 +23,7 @@ def test_document_intelligence_test_button_api_parameters():
         app_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app')
         route_file = os.path.join(app_path, 'route_backend_settings.py')
         
-        with open(route_file, 'r') as f:
+        with open(route_file, 'r', encoding='utf-8') as f:
             source_code = f.read()
         
         # Find the _test_azure_doc_intelligence_connection function
@@ -80,10 +80,10 @@ def test_consistency_with_working_implementation():
         route_file = os.path.join(app_path, 'route_backend_settings.py')
         content_file = os.path.join(app_path, 'functions_content.py')
         
-        with open(route_file, 'r') as f:
+        with open(route_file, 'r', encoding='utf-8') as f:
             test_source = f.read()
             
-        with open(content_file, 'r') as f:
+        with open(content_file, 'r', encoding='utf-8') as f:
             content_source = f.read()
         
         # Both should use the same parameter patterns for public cloud

@@ -35,10 +35,10 @@ from functions_personal_workflows import (
     WORKFLOW_TASK_RUNNER_TYPES,
     WORKFLOW_TRIGGER_TYPES,
     _build_default_model_summary,
-    _normalize_alert_priority,
     _normalize_bool,
     _normalize_document_action_config,
     _normalize_schedule,
+    _normalize_task_document_action_config,
     _normalize_text,
     _normalize_workflow_error_handling,
     _normalize_workflow_tasks,
@@ -48,10 +48,23 @@ from functions_personal_workflows import (
     get_workflow_max_tasks,
 )
 from functions_settings import get_settings, normalize_model_endpoints
+from functions_workflow_alerts import normalize_workflow_alert_settings
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
+
+
+def _apply_group_document_action_scope(group_id, action_config):
+    """Force a normalized document action to stay inside the owning group workspace."""
+    action_config = action_config if isinstance(action_config, dict) else {'type': 'none'}
+    if action_config.get('type') == 'none':
+        return action_config
+
+    action_config['doc_scope'] = 'group'
+    action_config['active_group_ids'] = [group_id]
+    action_config['active_public_workspace_id'] = []
+    return action_config
 
 
 def _normalize_group_document_action_config(group_id, workflow_data, existing_workflow=None, allow_empty_file_sync_targets=False):
@@ -60,13 +73,7 @@ def _normalize_group_document_action_config(group_id, workflow_data, existing_wo
         existing_workflow=existing_workflow,
         allow_empty_file_sync_targets=allow_empty_file_sync_targets,
     )
-    if action_config.get('type') == 'none':
-        return action_config
-
-    action_config['doc_scope'] = 'group'
-    action_config['active_group_ids'] = [group_id]
-    action_config['active_public_workspace_id'] = []
-    return action_config
+    return _apply_group_document_action_scope(group_id, action_config)
 
 
 def _normalize_group_workflow_conversation_id(group_id, workflow_data, existing_workflow=None):
@@ -440,6 +447,20 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 
     workflow_name = _normalize_text(workflow_data.get('name'), 'Workflow name', required=True)
     description = _normalize_text(workflow_data.get('description'), 'Description')
+    file_sync = _normalize_file_sync_config(
+        actor_user_id,
+        group_id,
+        workflow_data,
+        existing_workflow=existing_workflow,
+        user_info=user_info,
+    )
+    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
+    document_action = _normalize_group_document_action_config(
+        group_id,
+        workflow_data,
+        existing_workflow=existing_workflow,
+        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+    )
     tasks = _normalize_workflow_tasks(
         workflow_data,
         existing_workflow=existing_workflow,
@@ -450,6 +471,15 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             settings=settings,
         ),
         max_tasks=get_workflow_max_tasks(settings),
+        task_document_action_normalizer=lambda action_payload: _apply_group_document_action_scope(
+            group_id,
+            _normalize_task_document_action_config(
+                action_payload,
+                allow_empty_file_sync_targets=allow_empty_file_sync_targets,
+                settings=settings,
+            ),
+        ),
+        default_document_action=document_action,
     )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
@@ -479,9 +509,12 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         ),
         default=False,
     ) if url_access_enabled else False
-    alert_priority = _normalize_alert_priority(
-        workflow_data.get('alert_priority', (existing_workflow or {}).get('alert_priority', 'none'))
+    alert_settings = normalize_workflow_alert_settings(
+        workflow_data,
+        existing_workflow=existing_workflow,
+        task_ids=[task.get('id') for task in tasks],
     )
+    alert_priority = alert_settings['alert_priority']
     error_handling = _normalize_workflow_error_handling(workflow_data, existing_workflow=existing_workflow)
     default_chat_capabilities_enabled = (
         (existing_workflow or {}).get('chat_capabilities_enabled', False)
@@ -491,20 +524,6 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
     chat_capabilities_enabled = _normalize_bool(
         workflow_data.get('chat_capabilities_enabled', default_chat_capabilities_enabled),
         default=default_chat_capabilities_enabled,
-    )
-    file_sync = _normalize_file_sync_config(
-        actor_user_id,
-        group_id,
-        workflow_data,
-        existing_workflow=existing_workflow,
-        user_info=user_info,
-    )
-    allow_empty_file_sync_targets = bool(file_sync.get('enabled') and file_sync.get('use_changed_documents'))
-    document_action = _normalize_group_document_action_config(
-        group_id,
-        workflow_data,
-        existing_workflow=existing_workflow,
-        allow_empty_file_sync_targets=allow_empty_file_sync_targets,
     )
     if trigger_type == 'file_sync':
         if not file_sync.get('enabled'):
@@ -566,6 +585,9 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             'URL Access authorized at',
         ) if url_access_authorized else '',
         'alert_priority': alert_priority,
+        'alert_mode': alert_settings['alert_mode'],
+        'alert_rules': alert_settings['alert_rules'],
+        'alert_evaluation': alert_settings['alert_evaluation'],
         'schedule': schedule,
         'document_action': document_action,
         'analyze': analyze,

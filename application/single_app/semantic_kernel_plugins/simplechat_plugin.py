@@ -21,6 +21,7 @@ from functions_simplechat_operations import (
     get_simplechat_enabled_function_names,
     make_group_inactive_for_current_user,
     normalize_simplechat_capabilities,
+    raise_workflow_alert_for_current_user,
     upload_markdown_document_for_current_user,
     upload_powerpoint_document_for_current_user,
     upload_word_document_for_current_user,
@@ -255,6 +256,26 @@ class SimpleChatPlugin(BasePlugin):
                 schedule_value=schedule_value,
                 schedule_unit=schedule_unit,
                 conversation_id=conversation_id,
+            ),
+        )
+
+    # bac-check: ignore - raise_workflow_alert_for_current_user refuses outside an active workflow run.
+    @plugin_function_logger("SimpleChatPlugin")
+    @kernel_function(description="Raise an alert signal for the workflow run currently executing. severity can be 'info', 'low', 'medium', 'high', or 'critical'. Only the workflow's own alert rules decide whether the signal becomes a notification. Use signal_name when the workflow defines rules for specific named signals.")
+    def raise_workflow_alert(
+        self,
+        severity: str = "medium",
+        title: str = "",
+        reason: str = "",
+        signal_name: str = "",
+    ) -> dict:
+        return self._execute_operation(
+            "raise_workflow_alert",
+            lambda: raise_workflow_alert_for_current_user(
+                severity=severity,
+                title=title,
+                reason=reason,
+                signal_name=signal_name,
             ),
         )
 

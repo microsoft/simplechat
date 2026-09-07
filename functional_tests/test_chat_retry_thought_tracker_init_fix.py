@@ -44,8 +44,8 @@ def test_retry_and_edit_paths_initialize_thought_tracker_before_content_safety()
     print('🔍 Testing retry/edit thought-tracker initialization...')
 
     route_source = read_file_text(ROUTE_FILE)
-    chat_route_marker = "@app.route('/api/chat', methods=['POST'])"
-    chat_stream_marker = "@app.route('/api/chat/stream', methods=['POST'])"
+    chat_route_marker = "@bp.route('/api/chat', methods=['POST'])"
+    chat_stream_marker = "@bp.route('/api/chat/stream', methods=['POST'])"
     chat_route_index = route_source.find(chat_route_marker)
     chat_stream_index = route_source.find(chat_stream_marker)
 

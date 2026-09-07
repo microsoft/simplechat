@@ -200,6 +200,7 @@ def _add_document_metadata_entry(document_map, document_id, scope_info, chunk_id
                                  classification='None', file_name=None):
     """Add or merge a document-level metadata entry used by conversation tagging."""
     normalized_document_id = str(document_id or '').strip()
+    normalized_file_name = str(file_name or '').strip()
     scope_info = scope_info if isinstance(scope_info, dict) else {}
     scope_type = str(scope_info.get('scope') or '').strip()
     scope_id = str(scope_info.get('id') or '').strip()
@@ -214,8 +215,16 @@ def _add_document_metadata_entry(document_map, document_id, scope_info, chunk_id
             },
             'chunk_ids': [],
             'classification': classification or 'None',
-            'file_name': file_name or 'Unknown Document'
+            'file_name': normalized_file_name or 'Unknown Document'
         }
+
+    existing_file_name = document_map[normalized_document_id].get('file_name')
+    if (
+        normalized_file_name
+        and normalized_file_name != 'Unknown Document'
+        and (not existing_file_name or existing_file_name == 'Unknown Document')
+    ):
+        document_map[normalized_document_id]['file_name'] = normalized_file_name
 
     normalized_chunk_id = str(chunk_id or '').strip()
     if normalized_chunk_id and normalized_chunk_id not in document_map[normalized_document_id]['chunk_ids']:
@@ -671,8 +680,17 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
             # Update the existing document entry with chunk IDs
             existing_doc['chunk_ids'] = existing_chunks
             
-            # Ensure existing document has title and scope name if missing
-            if 'title' not in existing_doc or not existing_doc.get('title'):
+            # Ensure existing document has user-facing title and filename metadata.
+            needs_title = not existing_doc.get('title')
+            existing_file_name = str(existing_doc.get('file_name') or '').strip()
+            needs_file_name = not existing_file_name or existing_file_name == 'Unknown Document'
+            collected_file_name = str(doc_info.get('file_name') or '').strip()
+            has_collected_file_name = (
+                collected_file_name
+                and collected_file_name != 'Unknown Document'
+            )
+            doc_metadata = None
+            if needs_title or (needs_file_name and not has_collected_file_name):
                 doc_scope = doc_info['scope']
                 scope_type = doc_scope['scope']
                 scope_id = doc_scope['id']
@@ -684,9 +702,21 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                     doc_metadata = get_document_metadata(document_id, user_id, public_workspace_id=scope_id)
                 else:  # personal
                     doc_metadata = get_document_metadata(document_id, user_id)
-                
-                if doc_metadata:
-                    existing_doc['title'] = doc_metadata.get('title') or doc_metadata.get('file_name', 'Unknown Document')
+
+            if needs_title:
+                existing_doc['title'] = (
+                    (doc_metadata or {}).get('title')
+                    or (doc_metadata or {}).get('file_name')
+                    or collected_file_name
+                    or 'Unknown Document'
+                )
+            if needs_file_name:
+                existing_doc['file_name'] = (
+                    (doc_metadata or {}).get('file_name')
+                    or collected_file_name
+                    or existing_doc.get('title')
+                    or 'Unknown Document'
+                )
             
             # Ensure scope has name if missing
             if isinstance(existing_doc.get('scope'), dict) and 'name' not in existing_doc['scope']:
@@ -722,8 +752,11 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 doc_metadata = get_document_metadata(document_id, user_id)
             
             doc_title = "Unknown Document"
+            doc_file_name = str(doc_info.get('file_name') or '').strip()
             if doc_metadata:
                 doc_title = doc_metadata.get('title') or doc_metadata.get('file_name', 'Unknown Document')
+                doc_file_name = doc_metadata.get('file_name') or doc_file_name
+            doc_file_name = doc_file_name or doc_title
             
             # Get scope name
             scope_name = "Unknown"
@@ -741,6 +774,7 @@ def collect_conversation_metadata(user_message, conversation_id, user_id, active
                 "category": "document",
                 "document_id": document_id,
                 "title": doc_title,
+                "file_name": doc_file_name,
                 "scope": {
                     "type": scope_type,
                     "id": scope_id,

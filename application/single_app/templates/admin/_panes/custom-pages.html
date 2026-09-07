@@ -1,0 +1,133 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'custom-pages' %} show active{% endif %}" id="custom-pages" role="tabpanel" aria-labelledby="custom-pages-tab">
+                <p class="text-muted">
+                    Enable trusted deployment-time custom pages and manage metadata for simple static pages served from the application custom_pages folders.
+                </p>
+
+                <div class="card p-3 mb-3" id="custom-pages-section">
+                    <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-2 mb-3">
+                        <h5 class="mb-0">
+                            <i class="bi bi-window-plus me-2"></i>Custom Pages
+                        </h5>
+                        <button type="button" class="btn btn-sm btn-outline-info" id="custom-pages-guide-btn">
+                            <i class="bi bi-book me-1"></i>Developer Guide
+                        </button>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_custom_pages" name="enable_custom_pages"
+                            {% if settings.enable_custom_pages %}checked{% endif %}>
+                        <input type="hidden" id="custom_pages_restart_acknowledged" name="custom_pages_restart_acknowledged" value="">
+                        <label class="form-check-label ms-2" for="enable_custom_pages">
+                            Enable Custom Pages
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow trusted custom pages deployed under application/single_app/custom_pages to appear in navigation and be served under /custom."></i>
+                    </div>
+                    <p class="text-muted small">When disabled, /custom routes return Not Found before loading custom metadata, files, or Python extensions.</p>
+
+                    <div id="custom_pages_settings" class="{% if not settings.enable_custom_pages %}d-none{% endif %}">
+                        <div class="mb-3">
+                            <label for="custom_pages_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="custom_pages_menu_name" name="custom_pages_menu_name"
+                                value="{{ settings.custom_pages_menu_name or 'Custom Pages' }}" placeholder="Custom Pages">
+                            <small class="form-text text-muted">This name appears when custom pages are grouped into a menu.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="custom_pages_force_menu" name="custom_pages_force_menu"
+                                {% if settings.custom_pages_force_menu %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="custom_pages_force_menu">
+                                Force Menu Display
+                            </label>
+                            <small class="form-text text-muted d-block">When disabled, 1-2 custom pages show as top-level nav items and 3+ pages show as a menu.</small>
+                        </div>
+
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <div>
+                                <h6 class="mb-1">Static Page Metadata</h6>
+                                <p class="text-muted small mb-0">Create metadata contracts for simple pages that use files from custom_pages/html, css, js, assets, and json.</p>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 justify-content-end">
+                                <button type="button" class="btn btn-sm btn-outline-success" id="create-request-access-page-btn">
+                                    <i class="bi bi-person-plus me-1"></i>Add Request Access Page
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-primary" id="add-custom-page-btn">
+                                    <i class="bi bi-plus-circle me-1"></i>New Static Page
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle">
+                                <thead>
+                                    <tr>
+                                        <th>Slug</th>
+                                        <th>Title</th>
+                                        <th>Type</th>
+                                        <th>Access</th>
+                                        <th>Roles</th>
+                                        <th>Status</th>
+                                        <th>Nav</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="custom-pages-tbody">
+                                    <tr>
+                                        <td colspan="8" class="text-muted text-center">Loading custom pages...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-3 mb-3" id="external-links-section">
+                    <h5>
+                        <i class="bi bi-box-arrow-up-right me-2"></i>External Links
+                    </h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_external_links" name="enable_external_links"
+                            {% if settings.enable_external_links %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_external_links">
+                            Enable External Links in Navigation
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a menu of external links in the navigation bar for quick access to external resources and websites."></i>
+                    </div>
+                    <p class="text-muted small">When enabled, external links will be displayed in the navigation bar for easy access to external resources.</p>
+
+                    <div id="external_links_settings" {% if not settings.enable_external_links %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="external_links_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="external_links_menu_name" name="external_links_menu_name"
+                                   value="{{ settings.external_links_menu_name or 'External Links' }}" placeholder="External Links">
+                            <small class="form-text text-muted">This name will appear in the navigation bar as the menu title.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="external_links_force_menu" name="external_links_force_menu"
+                                {% if settings.external_links_force_menu %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="external_links_force_menu">
+                                Force Menu Display
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Always show external links as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu."></i>
+                            <small class="form-text text-muted d-block">When enabled, external links will always display as a dropdown menu. When disabled, 1-2 links show as top-level nav items, 3+ links show as a dropdown menu.</small>
+                        </div>
+
+                        <h6>External Links</h6>
+                        <p class="text-muted small">Define custom links that will appear in the navigation bar for users to access external resources.</p>
+
+                        <table class="table table-sm table-bordered">
+                            <thead>
+                                <tr>
+                                    <th>Label</th>
+                                    <th>URL</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="external-links-tbody">
+                                <!-- Populated by JavaScript -->
+                            </tbody>
+                        </table>
+
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="add-external-link-btn">Add New Link</button>
+                        <input type="hidden" name="external_links_json" id="external_links_json">
+                    </div>
+                </div>
+            </div>

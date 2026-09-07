@@ -1,0 +1,3 @@
+{
+  "allowedAuthTypes": ["username_password", "key", "identity", "NoAuth"]
+}

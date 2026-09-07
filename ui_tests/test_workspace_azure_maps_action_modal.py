@@ -110,6 +110,8 @@ def test_workspace_azure_maps_action_modal(playwright):
 
         expect(page.locator("#step-3-title")).to_have_text("Azure Maps Configuration")
         expect(page.locator("#azure-maps-config-section")).to_be_visible()
+        expect(page.locator("#azure-maps-test-connection-btn")).to_be_visible()
+        expect(page.locator("#azure-maps-test-connection-result")).to_be_hidden()
         expect(page.locator("#generic-config-section")).to_be_hidden()
         expect(page.locator("#sql-config-section")).to_be_hidden()
         expect(page.locator("#cosmos-config-section")).to_be_hidden()

@@ -92,6 +92,7 @@ def queue_direct_tabular_generated_output_from_plan(
         model_context=model_context,
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
+        planner_metadata=plan,
     )
 
 
@@ -128,6 +129,11 @@ def get_new_plugin_invocations(invocations, baseline_count):
 async def maybe_create_tabular_generated_output(*args, **kwargs):
     helper = _load_chat_helper('maybe_create_tabular_generated_output')
     return await helper(*args, **kwargs)
+
+
+def maybe_queue_direct_tabular_generated_output(*args, **kwargs):
+    helper = _load_chat_helper('maybe_queue_direct_tabular_generated_output')
+    return helper(*args, **kwargs)
 
 
 async def run_tabular_analysis_with_thought_tracking(*args, **kwargs):

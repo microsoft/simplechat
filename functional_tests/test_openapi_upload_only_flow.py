@@ -37,7 +37,7 @@ def assert_not_contains(file_path: Path, unexpected: str) -> None:
 def test_openapi_upload_only_flow() -> bool:
     print('Testing OpenAPI upload-only flow markers...')
 
-    assert_contains(ROUTE_FILE, "@app.route('/api/openapi/upload', methods=['POST'])")
+    assert_contains(ROUTE_FILE, "@bp.route('/api/openapi/upload', methods=['POST'])")
     assert_not_contains(ROUTE_FILE, "/api/openapi/validate-url")
     assert_not_contains(ROUTE_FILE, "/api/openapi/download-from-url")
 

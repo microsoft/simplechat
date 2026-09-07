@@ -70,7 +70,7 @@ def test_agent_modal_simplechat_capabilities(playwright):
             """
             async () => {
                 await window.agentModalStepper.showModal();
-                window.agentModalStepper.goToStep(4);
+                window.agentModalStepper.goToStep(window.agentModalStepper.getStepNumber('actions'));
             }
             """
         )

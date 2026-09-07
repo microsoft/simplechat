@@ -3,6 +3,8 @@
 import base64
 import json
 
+from flask import has_request_context
+
 from config import *
 from functions_appinsights import log_event
 from functions_settings import *
@@ -1064,6 +1066,23 @@ def get_current_user_id():
     if user:
         return user.get('oid')
     return None
+
+def get_current_user_id_or_none():
+    """Return the current user id, or None when no request-scoped identity exists.
+
+    Startup and background callers run outside a Flask request context, where reading the
+    session proxy raises RuntimeError. Use this helper only where the identity is optional
+    context, such as scoping optional plugin or endpoint lookups. Authorization decisions must
+    keep calling get_current_user_id() so a missing request context fails loudly instead of
+    silently resolving to an unauthenticated identity.
+    """
+    if not has_request_context():
+        return None
+
+    try:
+        return get_current_user_id()
+    except Exception:
+        return None
 
 def get_current_user_info():
     user = session.get("user")

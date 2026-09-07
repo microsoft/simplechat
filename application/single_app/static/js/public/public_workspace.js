@@ -1283,7 +1283,7 @@ function appendPublicDocumentMetaPills(container, doc) {
     doc.version ? `v${doc.version}` : null,
     doc.authors ? `By ${doc.authors}` : null,
     doc.number_of_pages ? `${doc.number_of_pages} pages` : null,
-    isPublicPdfDocument(doc) ? getPublicDocumentExtractionModeLabel(doc) : null,
+    supportsPublicExtractionModeChange(doc) ? getPublicDocumentExtractionModeLabel(doc) : null,
     doc.publication_date ? doc.publication_date : null,
   ].filter(Boolean);
 
@@ -1297,8 +1297,32 @@ function appendPublicDocumentMetaPills(container, doc) {
   });
 }
 
+const PUBLIC_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.heif', '.heic'];
+const PUBLIC_EXTRACTION_STANDARD_TOOLTIP = 'Standard extraction uses Document Intelligence Read for faster, lower-cost text extraction. Best for plain text PDFs and images.';
+const PUBLIC_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP = 'Enhanced extraction uses Azure AI Content Understanding to preserve tables, page structure, and checkbox states, and to describe figures, charts, and images. Adds latency and higher cost.';
+const PUBLIC_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP = 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.';
+
 function isPublicPdfDocument(doc) {
   return String(doc?.file_name || '').toLowerCase().endsWith('.pdf');
+}
+
+function isPublicImageDocument(doc) {
+  const fileName = String(doc?.file_name || '').toLowerCase();
+  return PUBLIC_EXTRACTION_MODE_CHANGE_IMAGE_EXTENSIONS.some((extension) => fileName.endsWith(extension));
+}
+
+function supportsPublicExtractionModeChange(doc) {
+  return isPublicPdfDocument(doc) || isPublicImageDocument(doc);
+}
+
+function getPublicDocumentExtractionEngine(doc) {
+  return String(doc?.extraction_engine || '').trim().toLowerCase();
+}
+
+function getPublicDocumentEnhancedTooltipForEngine(engine) {
+  return engine === 'content_understanding'
+    ? PUBLIC_EXTRACTION_ENHANCED_CONTENT_UNDERSTANDING_TOOLTIP
+    : PUBLIC_EXTRACTION_ENHANCED_DOCUMENT_INTELLIGENCE_TOOLTIP;
 }
 
 function getPublicDocumentExtractionModeLabel(doc) {
@@ -1319,17 +1343,19 @@ function getPublicDocumentExtractionModeLabelFromMode(mode) {
   return mode === 'layout' ? 'Enhanced' : 'Standard';
 }
 
-function getPublicDocumentExtractionChangeTooltip(targetMode) {
+function getPublicDocumentExtractionChangeTooltip(targetMode, engine) {
   return targetMode === 'layout'
-    ? 'Extract again with Enhanced extraction. Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-    : 'Extract again with Standard extraction. Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+    ? `Extract again with Enhanced extraction. ${getPublicDocumentEnhancedTooltipForEngine(engine)}`
+    : `Extract again with Standard extraction. ${PUBLIC_EXTRACTION_STANDARD_TOOLTIP}`;
 }
 
 function getPublicDocumentExtractionModeTooltip(doc) {
   const mode = String(doc?.document_intelligence_extraction_mode || '').trim().toLowerCase();
-  return mode === 'layout'
-    ? 'Enhanced extraction uses Document Intelligence Layout to preserve tables, page structure, forms, and checkbox states. Adds latency and higher cost.'
-    : 'Standard extraction uses Document Intelligence Read for faster text extraction. Best for plain text PDFs and images.';
+  const tooltip = mode === 'layout'
+    ? getPublicDocumentEnhancedTooltipForEngine(getPublicDocumentExtractionEngine(doc))
+    : PUBLIC_EXTRACTION_STANDARD_TOOLTIP;
+  const reason = String(doc?.extraction_engine_reason || '').trim();
+  return reason ? `${tooltip} ${reason}.` : tooltip;
 }
 
 function getPublicDocumentCitationTooltip(doc) {
@@ -1339,7 +1365,7 @@ function getPublicDocumentCitationTooltip(doc) {
 }
 
 function createPublicDocumentExtractionModeBadge(doc) {
-  if (!isPublicPdfDocument(doc)) {
+  if (!supportsPublicExtractionModeChange(doc)) {
     return null;
   }
 
@@ -1355,7 +1381,7 @@ function createPublicDocumentExtractionModeBadge(doc) {
 }
 
 function getPublicDocumentExtractionModeBadgeHtml(doc) {
-  if (!isPublicPdfDocument(doc)) {
+  if (!supportsPublicExtractionModeChange(doc)) {
     return '';
   }
 
@@ -1501,11 +1527,11 @@ function createPublicDocumentCard(doc) {
     if (canManage) {
       dropdownItems.push(createPublicDropdownItem('bi-pencil-fill', 'Edit Metadata', () => window.onEditPublicDocument(docId)));
       dropdownItems.push(createPublicDropdownItem('bi-magic', 'Extract Metadata', () => window.onExtractPublicMetadata(docId, null)));
-      if (isPublicPdfDocument(doc)) {
+      if (supportsPublicExtractionModeChange(doc)) {
         const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
         const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
         const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
         dropdownItems.push(createPublicDropdownDivider());
         dropdownItems.push(createPublicDropdownHeader('Change Extraction'));
         dropdownItems.push(createPublicDropdownItem(extractionActionIcon, `Change to ${extractionActionLabel}`, () => window.reprocessPublicDocumentExtraction(docId, extractionActionMode, null), false, extractionActionTooltip));
@@ -1672,7 +1698,7 @@ function renderPublicDocumentRow(doc) {
       const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
       const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
       const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-      const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+      const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
       actionsDropdown += `
           <li><hr class="dropdown-divider"></li>
           <li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;">
@@ -1681,7 +1707,7 @@ function renderPublicDocumentRow(doc) {
           <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;">
             <i class="bi bi-magic me-2"></i>Extract Metadata
           </a></li>
-          ${isPublicPdfDocument(doc) ? `
+          ${supportsPublicExtractionModeChange(doc) ? `
           <li><hr class="dropdown-divider"></li>
           <li><h6 class="dropdown-header">Change Extraction</h6></li>
           <li><a class="dropdown-item" href="#" title="${escapeHtml(extractionActionTooltip)}" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event); return false;">
@@ -1749,7 +1775,7 @@ function renderPublicDocumentRow(doc) {
   const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
   const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
   const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-  const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+  const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
 
   detailsRow.innerHTML = `
     <td colspan="4">
@@ -1759,7 +1785,7 @@ function renderPublicDocumentRow(doc) {
         <p class="mb-1"><strong>Version:</strong> ${escapeHtml(doc.version || '1')}</p>
         <p class="mb-1"><strong>Authors:</strong> ${escapeHtml(doc.authors || 'N/A')}</p>
         <p class="mb-1"><strong>Pages/Chunks:</strong> ${escapeHtml(doc.number_of_pages || 'N/A')}</p>
-        ${isPublicPdfDocument(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getPublicDocumentExtractionModeBadgeHtml(doc)}</p>` : ''}
+        ${supportsPublicExtractionModeChange(doc) ? `<p class="mb-1"><strong>Extraction:</strong> ${getPublicDocumentExtractionModeBadgeHtml(doc)}</p>` : ''}
         <p class="mb-1"><strong>Citations:</strong> ${getCitationBadge(doc.enhanced_citations)}</p>
         <p class="mb-1"><strong>Publication Date:</strong> ${escapeHtml(doc.publication_date || 'N/A')}</p>
         <p class="mb-1"><strong>Keywords:</strong> ${escapeHtml(doc.keywords || 'N/A')}</p>
@@ -1774,7 +1800,7 @@ function renderPublicDocumentRow(doc) {
             <button class="btn btn-sm btn-warning" onclick="window.onExtractPublicMetadata('${doc.id}', event)" title="Re-run Metadata Extraction">
               <i class="bi bi-magic"></i> Extract Metadata
             </button>
-            ${isPublicPdfDocument(doc) ? `
+            ${supportsPublicExtractionModeChange(doc) ? `
             <button class="btn btn-sm btn-outline-secondary" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event)" title="${escapeHtml(extractionActionTooltip)}">
               <i class="bi ${extractionActionIcon}"></i> Change to ${extractionActionLabel}
             </button>` : ''}
@@ -1954,6 +1980,29 @@ async function onPublicUploadClick() {
   let completed = 0;
   let failed = 0;
 
+  function updatePublicUploadRequestSummary() {
+    if (uploadStatus) uploadStatus.textContent = `Queued ${completed}/${files.length}${failed ? `, Upload requests not confirmed: ${failed}` : ''}`;
+  }
+
+  function finishPublicUploadRequests() {
+    fileInput.value = '';
+    publicDocsCurrentPage = 1;
+    fetchPublicDocs();
+
+    if (uploadBtn) {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Upload Document(s)';
+    }
+
+    if (uploadStatus) {
+      uploadStatus.textContent = failed
+        ? `Upload requests complete. Queued ${completed}/${files.length}; ${failed} request(s) did not confirm. Check the document list below for final processing status.`
+        : `Queued ${completed}/${files.length} file(s). Check the document list below for processing status.`;
+    }
+
+    if (progressContainer) progressContainer.innerHTML = '';
+  }
+
   // Helper to create a unique ID for each file
   function makeId(file) {
     return 'progress-' + Math.random().toString(36).slice(2, 10) + '-' + encodeURIComponent(file.name.replace(/\W+/g, ''));
@@ -2008,7 +2057,7 @@ async function onPublicUploadClick() {
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Uploaded ${file.name} (100%)`;
+          statusText.textContent = `Queued ${file.name} (100%)`;
         }
         completed++;
       } else {
@@ -2018,26 +2067,13 @@ async function onPublicUploadClick() {
           progressBar.classList.remove('progress-bar-animated');
         }
         if (statusText) {
-          statusText.textContent = `Failed to upload ${file.name}`;
+          statusText.textContent = `Upload request did not confirm for ${file.name}`;
         }
         failed++;
       }
-      // Update summary status
-      if (uploadStatus) uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      updatePublicUploadRequestSummary();
       if (completed + failed === files.length) {
-        fileInput.value = '';
-        publicDocsCurrentPage = 1;
-        fetchPublicDocs();
-        
-        // Re-enable upload button if it exists
-        if (uploadBtn) {
-          uploadBtn.disabled = false;
-          uploadBtn.textContent = 'Upload Document(s)';
-        }
-        
-        // Clear upload progress bars after all uploads and table refresh
-        const progressContainer = document.getElementById('public-upload-progress-container');
-        if (progressContainer) progressContainer.innerHTML = '';
+        finishPublicUploadRequests();
       }
     };
 
@@ -2048,24 +2084,12 @@ async function onPublicUploadClick() {
         progressBar.classList.remove('progress-bar-animated');
       }
       if (statusText) {
-        statusText.textContent = `Failed to upload ${file.name}`;
+        statusText.textContent = `Upload request did not confirm for ${file.name}`;
       }
       failed++;
-      if (uploadStatus) uploadStatus.textContent = `Uploaded ${completed}/${files.length}${failed ? `, Failed: ${failed}` : ''}`;
+      updatePublicUploadRequestSummary();
       if (completed + failed === files.length) {
-        fileInput.value = '';
-        publicDocsCurrentPage = 1;
-        fetchPublicDocs();
-        
-        // Re-enable upload button if it exists
-        if (uploadBtn) {
-          uploadBtn.disabled = false;
-          uploadBtn.textContent = 'Upload Document(s)';
-        }
-        
-        // Clear upload progress bars after all uploads and table refresh
-        const progressContainer = document.getElementById('public-upload-progress-container');
-        if (progressContainer) progressContainer.innerHTML = '';
+        finishPublicUploadRequests();
       }
     };
 
@@ -3341,10 +3365,10 @@ function buildPublicFolderDocumentsTable(docs) {
         const extractionActionMode = getPublicDocumentTargetExtractionMode(doc);
         const extractionActionLabel = getPublicDocumentExtractionModeLabelFromMode(extractionActionMode);
         const extractionActionIcon = getPublicDocumentExtractionModeIcon(extractionActionMode);
-        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode);
+        const extractionActionTooltip = getPublicDocumentExtractionChangeTooltip(extractionActionMode, getPublicDocumentExtractionEngine(doc));
         actionsHtml += `<li><a class="dropdown-item" href="#" onclick="window.onEditPublicDocument('${doc.id}'); return false;"><i class="bi bi-pencil-fill me-2"></i>Edit Metadata</a></li>
             <li><a class="dropdown-item" href="#" onclick="window.onExtractPublicMetadata('${doc.id}', event); return false;"><i class="bi bi-magic me-2"></i>Extract Metadata</a></li>
-        ${isPublicPdfDocument(doc) ? `<li><hr class="dropdown-divider"></li>
+        ${supportsPublicExtractionModeChange(doc) ? `<li><hr class="dropdown-divider"></li>
         <li><h6 class="dropdown-header">Change Extraction</h6></li>
         <li><a class="dropdown-item" href="#" title="${escapeHtml(extractionActionTooltip)}" onclick="window.reprocessPublicDocumentExtraction('${reprocessDocId}', '${extractionActionMode}', event); return false;"><i class="bi ${extractionActionIcon} me-2"></i>Change to ${extractionActionLabel}</a></li>` : ''}
             <li><hr class="dropdown-divider"></li>

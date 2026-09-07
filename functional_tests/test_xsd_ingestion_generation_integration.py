@@ -1,8 +1,8 @@
 # test_xsd_ingestion_generation_integration.py
 """
 Functional tests for XSD ingestion and schema-bound XML publication.
-Version: 0.250.160
-Implemented in: 0.250.160
+Version: 0.261.022
+Implemented in: 0.261.022
 
 These tests exercise the application integration boundaries without loading
 Azure-backed application configuration. They verify current-revision lookup,
@@ -1274,6 +1274,7 @@ def test_legacy_tabular_xml_publishers_are_suppressed_in_xsd_mode():
 
     publisher_names = {
         "maybe_queue_direct_tabular_generated_output",
+        "maybe_queue_search_tabular_generated_output",
         "maybe_create_tabular_generated_output",
     }
     calls = []
@@ -1307,6 +1308,57 @@ def test_legacy_tabular_xml_publishers_are_suppressed_in_xsd_mode():
         assert guarded, (
             f"Legacy tabular publisher at line {call.lineno} is not suppressed "
             "by xsd_generation_contract"
+        )
+
+
+def test_workflow_tabular_publishers_are_suppressed_in_xsd_mode():
+    """Analyze workflows cannot queue generic tabular output under an XSD contract."""
+    tree = ast.parse(
+        _read_text(WORKFLOW_RUNNER_FILE),
+        filename=str(WORKFLOW_RUNNER_FILE),
+    )
+    helper = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_maybe_execute_tabular_document_action"
+    )
+    parent_by_node = {
+        child: parent
+        for parent in ast.walk(helper)
+        for child in ast.iter_child_nodes(parent)
+    }
+    publisher_names = {
+        "maybe_queue_direct_tabular_generated_output",
+        "maybe_create_tabular_generated_output",
+    }
+    calls = [
+        node
+        for node in ast.walk(helper)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in publisher_names
+        )
+    ]
+
+    assert len(calls) == 2
+    for call in calls:
+        current = parent_by_node.get(call)
+        guarded = False
+        while current is not None and current is not helper:
+            if isinstance(current, ast.If):
+                condition = ast.unparse(current.test)
+                if (
+                    "suppress_generic_generated_output" in condition
+                    and "not workflow.get" in condition
+                ):
+                    guarded = True
+                    break
+            current = parent_by_node.get(current)
+        assert guarded, (
+            f"Workflow tabular publisher at line {call.lineno} is not suppressed "
+            "by suppress_generic_generated_output"
         )
 
 
@@ -1366,7 +1418,7 @@ def test_schema_contract_is_not_counted_as_source_evidence():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.250.160")
+    assert_app_version_at_least("0.261.022")
     tests = [
         test_current_xsd_query_excludes_archived_revisions,
         test_shared_personal_xsd_dependencies_use_owner_workspace_and_individual_access,
@@ -1388,6 +1440,7 @@ if __name__ == "__main__":
         test_schema_contract_is_excluded_from_legacy_chunk_search,
         test_chat_modes_each_build_one_schema_summary_evidence_envelope,
         test_legacy_tabular_xml_publishers_are_suppressed_in_xsd_mode,
+        test_workflow_tabular_publishers_are_suppressed_in_xsd_mode,
         test_suppressed_streams_never_persist_or_return_partial_file_content,
         test_xsd_chat_upload_ui_is_capability_gated,
         test_schema_contract_is_not_counted_as_source_evidence,

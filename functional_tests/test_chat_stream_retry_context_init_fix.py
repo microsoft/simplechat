@@ -42,7 +42,7 @@ def test_stream_route_initializes_retry_context_before_use():
     print('🔍 Testing streaming retry context initialization...')
 
     route_source = read_file_text(ROUTE_FILE)
-    stream_route_marker = "@app.route('/api/chat/stream', methods=['POST'])"
+    stream_route_marker = "@bp.route('/api/chat/stream', methods=['POST'])"
     stream_route_index = route_source.find(stream_route_marker)
     assert stream_route_index != -1, 'Expected to find the /api/chat/stream route definition.'
 

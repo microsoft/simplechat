@@ -2,8 +2,8 @@
 # test_conversation_export.py
 """
 Functional test for conversation export enhancements.
-Version: 0.239.029
-Implemented in: 0.239.022 (base), 0.239.023 (PDF export), 0.239.025 (tag formatting fix), 0.239.028 (summary token budget fix)
+Version: 0.250.215
+Implemented in: 0.239.022 (base); Updated in: 0.250.215
 
 This test ensures conversation export now includes normalized and raw citations,
 processing thoughts, transcript-style Markdown appendices, deleted-message filtering,
@@ -20,9 +20,11 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app'))
 
 from route_backend_conversation_export import (  # noqa: E402
+    _build_message_citation_labels,
     _build_citation_counts,
     _build_pdf_html_body,
     _collect_raw_citation_buckets,
+    _collect_source_citation_buckets,
     _conversation_to_markdown,
     _conversation_to_pdf_bytes,
     _filter_messages_for_export,
@@ -127,6 +129,130 @@ def test_sanitize_message_with_citations_and_thoughts():
     assert sanitized['details']['generation']['model_deployment'] == 'gpt-5-mini', 'Generation details should include the model.'
 
     print("✅ Message sanitization test passed!")
+    return True
+
+
+def test_tracked_export_references_exclude_uncited_sources():
+    """Tracked exports should reference exact subsets while retaining source audit data."""
+    print("Testing tracked export reference filtering...")
+
+    cited_document = {
+        'file_name': 'used-policy.pdf',
+        'document_id': 'doc-used',
+        'citation_id': 'doc-used_2',
+        'page_number': 2,
+    }
+    uncited_document = {
+        'file_name': 'retrieved-only.pdf',
+        'document_id': 'doc-unused',
+        'citation_id': 'doc-unused_8',
+        'page_number': 8,
+    }
+    cited_web = {
+        'title': 'Used web reference',
+        'url': 'https://example.com/used',
+    }
+    uncited_web = {
+        'title': 'Retrieved web result',
+        'url': 'https://example.com/unused',
+    }
+    message = {
+        'id': 'assistant-tracked',
+        'role': 'assistant',
+        'content': (
+            'The cited policy applies (Source: used-policy.pdf, Page: 2). '
+            'See https://example.com/used.'
+        ),
+        'timestamp': '2026-08-14T12:00:00Z',
+        'citation_tracking_version': 1,
+        'hybrid_citations': [cited_document, uncited_document],
+        'web_search_citations': [cited_web, uncited_web],
+        'cited_hybrid_citations': [cited_document],
+        'cited_web_search_citations': [cited_web],
+        'agent_citations': [
+            {
+                'tool_name': 'Calculator',
+                'function_name': 'calculate',
+            },
+            {
+                'tool_name': 'Retrieved web result',
+                'function_name': 'azure_ai_foundry_web_search',
+                'plugin_name': 'azure_ai_foundry',
+            },
+        ],
+    }
+
+    references = _collect_raw_citation_buckets(message)
+    sources = _collect_source_citation_buckets(message)
+    sanitized = _sanitize_message(
+        message,
+        sequence_index=1,
+        transcript_index=1,
+        thoughts=[],
+    )
+    labels = _build_message_citation_labels(message)
+
+    assert [item['file_name'] for item in references['hybrid']] == ['used-policy.pdf']
+    assert [item['title'] for item in references['web']] == ['Used web reference']
+    assert len(sources['hybrid']) == 2
+    assert len(sources['web']) == 2
+    assert sanitized['citation_counts'] == {
+        'document': 1,
+        'web': 1,
+        'agent_tool': 1,
+        'legacy': 0,
+        'total': 3,
+    }
+    assert len(sanitized['hybrid_citations']) == 2
+    assert len(sanitized['web_search_citations']) == 2
+    assert len(sanitized['agent_citations']) == 2
+    assert sanitized['cited_hybrid_citations'] == [cited_document]
+    assert sanitized['cited_web_search_citations'] == [cited_web]
+    assert 'used-policy.pdf — Page 2' in labels
+    assert 'Used web reference' in labels
+    assert 'Calculator' in labels
+    assert all('retrieved-only.pdf' not in label for label in labels)
+    assert all('Retrieved web result' not in label for label in labels)
+
+    entry = {
+        'conversation': {
+            'id': 'conversation-tracked',
+            'title': 'Tracked export',
+            'message_count': 1,
+            'citation_counts': sanitized['citation_counts'],
+        },
+        'summary_intro': {'enabled': False, 'generated': False},
+        'messages': [sanitized],
+    }
+    markdown = _conversation_to_markdown(entry)
+    pdf_html = _build_pdf_html_body(entry)
+
+    assert 'Document References' in markdown
+    assert 'Web References' in markdown
+    assert 'retrieved-only.pdf' not in markdown
+    assert 'Retrieved web result' not in markdown
+    assert 'Document References' in pdf_html
+    assert 'Web References' in pdf_html
+    assert 'retrieved-only.pdf' not in pdf_html
+    assert 'Retrieved web result' not in pdf_html
+
+    sheet_reference = {
+        'file_name': 'Budget, 2026.xlsx',
+        'document_id': 'budget-doc',
+        'citation_id': 'budget-doc_Q1',
+        'page_number': 'Q1',
+        'sheet_name': 'Q1',
+        'location_label': 'Sheet',
+        'location_value': 'Q1',
+    }
+    sheet_labels = _build_message_citation_labels({
+        'citation_tracking_version': 1,
+        'hybrid_citations': [sheet_reference],
+        'cited_hybrid_citations': [sheet_reference],
+    })
+    assert sheet_labels == ['Budget, 2026.xlsx — Sheet: Q1']
+
+    print("Tracked export reference filtering passed")
     return True
 
 
@@ -534,6 +660,7 @@ if __name__ == "__main__":
     tests = [
         test_filter_messages_for_export,
         test_sanitize_message_with_citations_and_thoughts,
+        test_tracked_export_references_exclude_uncited_sources,
         test_conversation_metadata_and_json_shape,
         test_markdown_export_structure,
         test_safe_filename_and_zip_packaging,

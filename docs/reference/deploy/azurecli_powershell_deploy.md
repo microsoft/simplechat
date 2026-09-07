@@ -19,7 +19,7 @@ hero_links:
     url: /reference/deploy/
     style: primary
   - label: "Upgrade paths"
-    url: /how-to/upgrade_paths/
+    url: /guides/upgrade-paths/
     style: secondary
 nav_links:
   prev:
@@ -103,6 +103,6 @@ cd deployers/azurecli
 
 ## References
 
-- [Setup Instructions](../../setup_instructions.md)
-- [Upgrade Paths](../../how-to/upgrade_paths.md)
+- [Setup Instructions]({{ '/start/deployment-options/' | relative_url }})
+- [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }})
 - [Azure CLI deployer README](https://github.com/microsoft/simplechat/blob/main/deployers/azurecli/README.md)

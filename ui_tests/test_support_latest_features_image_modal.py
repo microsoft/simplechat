@@ -1,16 +1,14 @@
 # test_support_latest_features_image_modal.py
 """
 UI test for support latest-features image previews.
-Version: 0.250.036
-Implemented in: 0.240.061; 0.241.002; 0.250.034; 0.250.035
+Version: 0.260.001
+Implemented in: 0.240.061; 0.241.002; 0.250.034; 0.250.035; 0.260.001
 
 This test ensures the user-facing Latest Features page opens a full-size image
 preview modal when a feature thumbnail is clicked and keeps the expanded
 user-facing feature catalog visible with actionable destination links.
-It also verifies the chart-creation feature card and preview image are shown
-so users can discover chart generation from Chat and tabular data workflows.
-The Agents Catalog card is also verified so users can discover the dedicated
-agent browsing experience from Latest Features.
+It also verifies two current-release cards render their multi-image galleries
+and destination links so users can discover the new capabilities from Chat.
 """
 
 import os
@@ -73,21 +71,22 @@ def test_support_latest_features_image_modal():
             expect(page.locator(".support-feature-callout").first).to_be_visible()
             expect(page.locator(".support-feature-action-card").first).to_be_visible()
 
-            chart_heading = page.get_by_role("heading", name="Chart Creation in Chat")
-            chart_card = page.locator(".support-feature-card").filter(has=chart_heading)
-            expect(chart_card).to_be_visible()
-            expect(chart_heading).to_be_visible()
-            expect(chart_card.get_by_text("create charts directly in conversation")).to_be_visible()
-            expect(chart_card.locator("img[src*='release_250_charts.png']")).to_be_visible()
-            expect(chart_card.get_by_role("link", name="Open Chat")).to_be_visible()
+            context_heading = page.get_by_role("heading", name="See Exactly What Shaped Each Answer")
+            context_card = page.locator(".support-feature-card").filter(has=context_heading)
+            expect(context_card).to_be_visible()
+            expect(context_heading).to_be_visible()
+            expect(context_card.get_by_text("Conversation Context citation")).to_be_visible()
+            expect(context_card.locator("img[src*='release_260_conversation_context_grounding_1.png']")).to_be_visible()
+            expect(context_card.locator(".support-feature-thumbnail-trigger")).to_have_count(3)
+            expect(context_card.get_by_role("link", name="Open Chat")).to_be_visible()
 
-            agents_heading = page.get_by_role("heading", name="Agents Catalog")
-            agents_card = page.locator(".support-feature-card").filter(has=agents_heading)
-            expect(agents_card).to_be_visible()
-            expect(agents_heading).to_be_visible()
-            expect(agents_card.get_by_text("searchable discovery experience for approved agents")).to_be_visible()
-            expect(agents_card.locator("img[src*='release_250_agents_catalog.png']")).to_be_visible()
-            expect(agents_card.get_by_role("link", name="Open Agents")).to_be_visible()
+            scroll_heading = page.get_by_role("heading", name="Chat Stops Yanking You to the Bottom")
+            scroll_card = page.locator(".support-feature-card").filter(has=scroll_heading)
+            expect(scroll_card).to_be_visible()
+            expect(scroll_heading).to_be_visible()
+            expect(scroll_card.get_by_text("no longer jumps to the bottom")).to_be_visible()
+            expect(scroll_card.locator("img[src*='release_260_chat_scroll_508_1.png']")).to_be_visible()
+            expect(scroll_card.get_by_role("link", name="Open Chat")).to_be_visible()
 
             previous_release_toggle = page.get_by_role("button", name="Show Previous Release Features")
             if previous_release_toggle.count() > 0:

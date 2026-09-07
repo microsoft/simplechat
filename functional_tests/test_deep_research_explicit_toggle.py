@@ -22,12 +22,13 @@ ADMIN_TEMPLATE = os.path.join(APP_ROOT, "templates", "admin_settings.html")
 sys.path.insert(0, APP_ROOT)
 
 from functions_source_review import get_source_review_config, should_auto_enable_source_review  # noqa: E402
+from test_support.templates import compose_if_admin_settings
 
 
 def read_text(path):
     """Read text content for static regression checks."""
     with open(path, "r", encoding="utf-8") as file_handle:
-        return file_handle.read()
+        return compose_if_admin_settings(path, file_handle.read())
 
 
 def test_web_search_does_not_auto_enable_deep_research():

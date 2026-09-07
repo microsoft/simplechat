@@ -27,6 +27,11 @@ from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 from functions_settings import get_settings, get_user_settings, is_tabular_processing_enabled, resolve_model_endpoint_foundry_scope
+from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from foundry_agent_runtime import (
     AzureAIFoundryChatCompletionAgent,
     AzureAIFoundryNewChatCompletionAgent,
@@ -41,7 +46,7 @@ from model_endpoint_clients import (
     resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
-from functions_authentication import get_current_user_id
+from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
 from semantic_kernel_plugins.plugin_invocation_logger import get_plugin_logger
@@ -52,6 +57,7 @@ from config import cognitive_services_scope
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 from functions_tableau_operations import TABLEAU_PLUGIN_TYPE
+from functions_yamcs_operations import YAMCS_PLUGIN_TYPE, YAMCS_SENSITIVE_ADDITIONAL_FIELDS
 from functions_keyvault import (
     SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS,
     SQL_PLUGIN_SENSITIVE_AUTH_FIELDS,
@@ -110,6 +116,7 @@ from semantic_kernel_plugins.mcp_plugin_factory import McpPluginFactory
 from semantic_kernel_plugins.openapi_plugin_factory import OpenApiPluginFactory
 from semantic_kernel_plugins.snowflake_plugin_factory import SnowflakePluginFactory
 from semantic_kernel_plugins.tableau_plugin_factory import TableauPluginFactory
+from semantic_kernel_plugins.yamcs_plugin_factory import YamcsPluginFactory
 from functions_agent_scope import find_agent_by_scope, is_selected_agent_scope_enabled
 import app_settings_cache
 
@@ -163,6 +170,7 @@ def resolve_agent_endpoint_protocol(agent_config):
         agent_config.get("model_provider") or agent_config.get("provider") or "aoai",
         agent_config.get("endpoint"),
         agent_config.get("deployment"),
+        agent_config.get("api_type"),
     )
 
 
@@ -177,10 +185,30 @@ def resolve_agent_endpoint_token(agent_config):
     return ""
 
 
-def create_model_endpoint_chat_completion_service(agent_config, service_id):
+def create_model_endpoint_chat_completion_service(agent_config, service_id, settings=None):
     """Create the correct Semantic Kernel chat service for an endpoint-bound agent."""
     if not agent_config.get("endpoint") or not agent_config.get("deployment"):
         return None
+
+    provider = str(
+        agent_config.get("model_provider") or agent_config.get("provider") or "aoai"
+    ).strip().lower()
+    if provider == "custom":
+        chat_service, _ = build_semantic_kernel_chat_service_for_model(
+            agent_config["deployment"],
+            settings or {},
+            service_id=service_id,
+            model_context={
+                "provider": provider,
+                "endpoint": agent_config["endpoint"],
+                "api_version": agent_config.get("api_version") or "",
+                "api_type": agent_config.get("api_type") or "",
+                "anthropic_version": agent_config.get("anthropic_version") or "",
+                "auth": agent_config.get("auth") or {},
+                "request_model": agent_config["deployment"],
+            },
+        )
+        return chat_service
 
     runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
     token_or_key = resolve_agent_endpoint_token(agent_config)
@@ -355,8 +383,18 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         if persisted_group_id:
             return persisted_group_id
 
+        scope_user_id = get_current_user_id_or_none()
+        if not scope_user_id:
+            debug_print("[SK_LOADER] No request-scoped user available while resolving group endpoint scope.")
+            log_event(
+                "[SK_LOADER] Group endpoint resolution could not determine a group scope.",
+                level=logging.WARNING,
+                extra={"agent_name": agent.get("name")}
+            )
+            return ""
+
         try:
-            return require_active_group(get_current_user_id())
+            return require_active_group(scope_user_id)
         except ValueError as err:
             debug_print(f"[SK_LOADER] No active group available while resolving group endpoint scope: {err}")
             log_event(
@@ -527,11 +565,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
-                user_settings = get_user_settings(get_current_user_id())
-                endpoints.extend([
-                    {**endpoint, "_endpoint_scope": "user"}
-                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
-                ])
+                endpoint_user_id = get_current_user_id_or_none()
+                if endpoint_user_id:
+                    user_settings = get_user_settings(endpoint_user_id)
+                    endpoints.extend([
+                        {**endpoint, "_endpoint_scope": "user"}
+                        for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                    ])
         endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
         return endpoints
@@ -562,13 +602,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         provider = (endpoint_cfg.get("provider") or "aoai").lower()
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
-        deployment = model_cfg.get("deploymentName") or model_cfg.get("deployment") or ""
+        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         api_version = connection.get("openai_api_version") or connection.get("api_version")
         endpoint = connection.get("endpoint")
         return {
             "provider": provider,
             "endpoint": endpoint,
             "api_version": api_version,
+            "api_type": get_model_endpoint_api_type(endpoint_cfg),
+            "anthropic_version": connection.get("anthropic_version") or "",
             "deployment": deployment,
             "auth": auth,
             "model": model_cfg,
@@ -645,11 +687,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     endpoints.extend([{**endpoint, "_endpoint_scope": "group"} for endpoint in get_group_model_endpoints(group_id)])
         elif not is_global_agent:
             if allow_custom_agent_endpoints:
-                user_settings = get_user_settings(get_current_user_id())
-                endpoints.extend([
-                    {**endpoint, "_endpoint_scope": "user"}
-                    for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
-                ])
+                endpoint_user_id = get_current_user_id_or_none()
+                if endpoint_user_id:
+                    user_settings = get_user_settings(endpoint_user_id)
+                    endpoints.extend([
+                        {**endpoint, "_endpoint_scope": "user"}
+                        for endpoint in user_settings.get("settings", {}).get("personal_model_endpoints", [])
+                    ])
         endpoints.extend([{**endpoint, "_endpoint_scope": "global"} for endpoint in (settings.get("model_endpoints", []) or [])])
 
         endpoint_cfg = next((e for e in endpoints if e.get("id") == endpoint_id), None)
@@ -792,7 +836,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
     if not per_user_enabled:
         try:
             token_provider = None
-            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow"):
+            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow", "custom"):
                 auth = multi_endpoint_config.get("auth", {}) or {}
                 auth_type = (auth.get("type") or "managed_identity").lower()
                 provider = multi_endpoint_config.get("provider")
@@ -800,13 +844,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                 deployment = multi_endpoint_config.get("deployment")
                 api_version = multi_endpoint_config.get("api_version")
                 key = auth.get("api_key") or ""
-                if auth_type != "api_key":
+                if auth_type not in ("api_key", "key"):
                     token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
                 return {
                     "endpoint": endpoint,
                     "key": key,
                     "deployment": deployment,
                     "api_version": api_version,
+                    "api_type": multi_endpoint_config.get("api_type") or "",
+                    "anthropic_version": multi_endpoint_config.get("anthropic_version") or "",
                     "instructions": agent.get("instructions", ""),
                     "actions_to_load": agent.get("actions_to_load", []),
                     "additional_settings": agent.get("additional_settings", {}),
@@ -827,6 +873,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
                     "model_endpoint_id": agent.get("model_endpoint_id", ""),
                     "model_id": agent.get("model_id", ""),
                     "model_provider": provider,
+                    "auth": auth,
                 }
             if global_apim_enabled:
                 g_apim = get_global_apim()
@@ -869,7 +916,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
     can_use_agent_endpoints = allow_custom_agent_endpoints
     user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
 
-    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow"):
+    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow", "custom"):
         auth = multi_endpoint_config.get("auth", {}) or {}
         auth_type = (auth.get("type") or "managed_identity").lower()
         provider = multi_endpoint_config.get("provider")
@@ -878,13 +925,15 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
         api_version = multi_endpoint_config.get("api_version")
         key = auth.get("api_key") or ""
         token_provider = None
-        if auth_type != "api_key":
+        if auth_type not in ("api_key", "key"):
             token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
         result = {
             "endpoint": endpoint,
             "key": key,
             "deployment": deployment,
             "api_version": api_version,
+            "api_type": multi_endpoint_config.get("api_type") or "",
+            "anthropic_version": multi_endpoint_config.get("anthropic_version") or "",
             "instructions": agent.get("instructions", ""),
             "actions_to_load": agent.get("actions_to_load", []),
             "additional_settings": agent.get("additional_settings", {}),
@@ -905,6 +954,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None):
             "model_endpoint_id": agent.get("model_endpoint_id", ""),
             "model_id": agent.get("model_id", ""),
             "model_provider": provider,
+            "auth": auth,
         }
         return result
 
@@ -1476,6 +1526,9 @@ def _load_agent_plugins_original_method(kernel, plugin_manifests, mode_label="gl
                     elif plugin_type == TABLEAU_PLUGIN_TYPE:
                         plugin = TableauPluginFactory.create_from_config(manifest)
                         print(f"[SK_LOADER] Created Tableau plugin: {name}")
+                    elif plugin_type == YAMCS_PLUGIN_TYPE:
+                        plugin = YamcsPluginFactory.create_from_config(manifest)
+                        print(f"[SK_LOADER] Created Yamcs plugin: {name}")
                     elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
                         plugin = McpPluginFactory.create_from_config(manifest)
                         print(f"[SK_LOADER] Created MCP plugin: {name}")
@@ -1778,7 +1831,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
     apim_enabled = settings.get("enable_gpt_apim", False)
 
     def create_chat_completion_service():
-        return create_model_endpoint_chat_completion_service(agent_config, service_id)
+        return create_model_endpoint_chat_completion_service(agent_config, service_id, settings)
 
     if agent_type in {"aifoundry", "new_foundry", "foundry_workflow"}:
         if agent_type == "foundry_workflow":
@@ -1919,7 +1972,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             else:
                 plugin_mode = mode_label
 
-            resolved_user_id = get_current_user_id()
+            resolved_user_id = get_current_user_id_or_none()
             group_id = agent_config.get("group_id") if agent_is_group else None
             print(f"[SK_LOADER] Agent scope - is_global: {agent_is_global}, is_group: {agent_is_group}, plugin_mode: {plugin_mode}, group_id: {group_id}")
             load_agent_specific_plugins(
@@ -2106,6 +2159,7 @@ def _is_sensitive_plugin_additional_field(plugin_manifest, field_name):
     return (
         _is_sql_sensitive_plugin_field(plugin_manifest, field_name)
         or (plugin_type == SNOWFLAKE_PLUGIN_TYPE and field_name in SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS)
+        or (plugin_type == YAMCS_PLUGIN_TYPE and field_name in YAMCS_SENSITIVE_ADDITIONAL_FIELDS)
     )
 
 
@@ -2283,11 +2337,7 @@ def load_plugins_for_kernel(kernel, plugin_manifests, settings, mode_label="glob
     
     # Use the logged plugin loader for custom plugins
     try:
-        user_id = None
-        try:
-            user_id = get_current_user_id()
-        except Exception:
-            pass  # User ID is optional for plugin loading
+        user_id = get_current_user_id_or_none()
         
         # Load plugins with enhanced logging
         results = logged_loader.load_multiple_plugins(plugin_manifests, user_id)
@@ -2352,6 +2402,8 @@ def _load_plugins_original_method(kernel, plugin_manifests, settings, mode_label
                         plugin = SnowflakePluginFactory.create_from_config(manifest)
                     elif plugin_type == TABLEAU_PLUGIN_TYPE:
                         plugin = TableauPluginFactory.create_from_config(manifest)
+                    elif plugin_type == YAMCS_PLUGIN_TYPE:
+                        plugin = YamcsPluginFactory.create_from_config(manifest)
                     elif plugin_type == MCP_PLUGIN_TYPE or normalized_type == normalize(MCP_PLUGIN_TYPE):
                         plugin = McpPluginFactory.create_from_config(manifest)
                     else:
@@ -2907,7 +2959,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             },
                             level=logging.INFO
                         )
-                        chat_service = create_model_endpoint_chat_completion_service(agent_config, service_id)
+                        chat_service = create_model_endpoint_chat_completion_service(agent_config, service_id, settings)
                         if should_apply_prompt_settings(orchestrator_config, settings):
                             if orchestrator_config.get('max_completion_tokens', -1) > 0:
                                 print(f"[SK_LOADER] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
@@ -3005,7 +3057,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             },
                             level=logging.INFO
                         )
-                        chat_service = create_model_endpoint_chat_completion_service(orchestrator_config, service_id)
+                        chat_service = create_model_endpoint_chat_completion_service(orchestrator_config, service_id, settings)
                         if should_apply_prompt_settings(agent_config, settings):
                             if agent_config.get('max_completion_tokens', -1) > 0:
                                 print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")

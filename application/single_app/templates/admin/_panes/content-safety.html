@@ -1,0 +1,181 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'content-safety' %} show active{% endif %}" id="content-safety" role="tabpanel" aria-labelledby="content-safety-tab">
+
+                 <p class="text-muted">
+                    Configure content safety, archiving, and user feedback settings. If Content Safety is enabled, user
+                    messages will be sent to the safety endpoint for analysis. If User Feedback is enabled, users will see
+                    thumbs up/down to provide feedback on AI responses.
+                </p>
+                <div class="card p-3 mb-3" id="content-safety-section">
+                    <h5>
+                        <i class="bi bi-shield-exclamation me-2"></i>Content Safety
+                    </h5>
+                    <p class="text-muted">Enable content safety to filter out inappropriate content.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_content_safety"
+                            name="enable_content_safety"
+                            {% if settings.enable_content_safety %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_content_safety">
+                            Enable Content Safety
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Filter user messages and AI responses through Azure Content Safety service to detect and block inappropriate content."></i>
+                    </div>
+
+
+                    <div id="content_safety_settings"
+                         {% if not settings.enable_content_safety %}style="display: none;"{% endif %}>
+
+
+                        <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                            <input
+                                type="checkbox"
+                                class="form-check-input me-2"
+                                id="enable_content_safety_apim"
+                                name="enable_content_safety_apim"
+                                {% if settings.enable_content_safety_apim %}checked{% endif %}
+                            >
+                            <label class="form-check-label" for="enable_content_safety_apim">
+                                Use APIM instead of direct Content Safety endpoint
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route content safety requests through Azure API Management instead of directly to the Content Safety service for centralized monitoring and control."></i>
+                        </div>
+
+
+                        <div id="non_apim_content_safety_settings"
+                             {% if settings.enable_content_safety_apim %}style="display: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="content_safety_endpoint" class="form-label">
+                                    Content Safety Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="content_safety_endpoint"
+                                    name="content_safety_endpoint"
+                                    value="{{ settings.content_safety_endpoint or '' }}"
+                                >
+                            </div>
+                            <div class="mb-3">
+                                <label for="content_safety_authentication_type" class="form-label">
+                                    Authentication Type
+                                </label>
+                                <select class="form-select" id="content_safety_authentication_type" name="content_safety_authentication_type">
+                                    <option value="key" {% if settings.content_safety_authentication_type=='key' %}selected{% endif %}>
+                                        Key
+                                    </option>
+                                    <option value="managed_identity" {% if settings.content_safety_authentication_type=='managed_identity' %}selected{% endif %}>
+                                        Managed Identity
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="mb-3" id="content_safety_key_container" {% if settings.content_safety_authentication_type !='key' %}style="display: none;"{% endif %}>
+                                <label for="content_safety_key" class="form-label">
+                                    Content Safety Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="content_safety_key"
+                                        name="content_safety_key"
+                                        value="{{ settings.content_safety_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_content_safety_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <div id="apim_content_safety_settings"
+                             {% if not settings.enable_content_safety_apim %}style="display: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="azure_apim_content_safety_endpoint" class="form-label">
+                                    Azure APIM Content Safety Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_apim_content_safety_endpoint"
+                                    name="azure_apim_content_safety_endpoint"
+                                    value="{{ settings.azure_apim_content_safety_endpoint or '' }}"
+                                >
+                            </div>
+                            <div class="mb-3">
+                                <label for="azure_apim_content_safety_subscription_key" class="form-label">
+                                    Azure APIM Content Safety Subscription Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_apim_content_safety_subscription_key"
+                                        name="azure_apim_content_safety_subscription_key"
+                                        value="{{ settings.azure_apim_content_safety_subscription_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_azure_apim_content_safety_subscription_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <div class="mb-3">
+                            <label for="content_safety_violation_message" class="form-label">
+                                Safety Violation Message <span class="text-muted fw-normal">(Markdown supported)</span>
+                            </label>
+                            <textarea
+                                class="form-control"
+                                id="content_safety_violation_message"
+                                name="content_safety_violation_message"
+                                rows="4"
+                                maxlength="3000"
+                                placeholder="Your message was blocked by Content Safety."
+                            >{{ settings.content_safety_violation_message or '' }}</textarea>
+                            <div class="form-text">Displayed when Content Safety blocks a chat message.</div>
+                        </div>
+
+                        <div class="form-group form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="content_safety_include_trigger_information"
+                                name="content_safety_include_trigger_information"
+                                {% if settings.content_safety_include_trigger_information %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="content_safety_include_trigger_information">
+                                Include Trigger Information
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show the reason, detected categories and severities, and blocklist matches below the safety message."></i>
+                        </div>
+                        <p class="form-text text-muted mb-3">Disable this option to show only the configured message.</p>
+
+                        <button type="button" class="btn btn-secondary mt-3" id="test_safety_button">
+                            Test Safety Connection
+                        </button>
+                        <div id="test_safety_result" class="mt-2"></div>
+                    </div>
+                </div>
+
+
+
+
+
+
+
+
+
+            </div>

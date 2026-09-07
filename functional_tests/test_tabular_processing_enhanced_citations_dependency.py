@@ -11,6 +11,7 @@ admin Actions settings, and that runtime consumers use the derived logic.
 """
 
 import os
+from test_support.templates import compose_if_admin_settings
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -27,8 +28,8 @@ FIX_DOC = os.path.join(REPO_ROOT, 'docs', 'explanation', 'fixes', 'TABULAR_PROCE
 
 
 def read_text(path):
-    with open(path, 'r', encoding='utf-8') as file_handle:
-        return file_handle.read()
+    with open(path, "r", encoding="utf-8") as file_handle:
+        return compose_if_admin_settings(path, file_handle.read())
 
 
 def test_functions_settings_derives_tabular_enablement():

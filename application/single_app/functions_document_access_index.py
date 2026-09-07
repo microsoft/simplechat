@@ -1755,6 +1755,8 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'xsd_dependency_count': document_item.get('xsd_dependency_count'),
         'xsd_diagnostics': document_item.get('xsd_diagnostics'),
         'document_intelligence_extraction_mode': document_item.get('document_intelligence_extraction_mode'),
+        'extraction_engine': document_item.get('extraction_engine'),
+        'extraction_engine_reason': document_item.get('extraction_engine_reason'),
         'generated_artifact_promotion_status': document_item.get('generated_artifact_promotion_status'),
         'generated_artifact_requested_by_user_id': document_item.get('generated_artifact_requested_by_user_id'),
         'file_sync': document_item.get('file_sync'),
@@ -2169,6 +2171,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'c.shared_user_ids, c.shared_group_ids, c.file_name, c.title, c.document_classification, c.tags, c.authors, c.keywords, '
         'c.abstract, c.status, c.percentage_complete, c.number_of_pages, c.publication_date, '
         'c.enhanced_citations, c.document_intelligence_extraction_mode, '
+        'c.extraction_engine, c.extraction_engine_reason, '
         'c.generated_artifact_promotion_status, c.generated_artifact_requested_by_user_id, '
         'c.file_sync, c.created_from_chat_upload, '
         'c.conversation_id, c.conversation_title_at_upload, c.upload_date, c.last_updated, '
@@ -2178,7 +2181,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'WHERE c.type = @type '
         'AND c.source_scope = @source_scope '
         'AND c.scope_key = @scope_key '
-        'AND c.access_granted = true '
+        'AND (c.access_granted = true OR c.approval_status = @approval_not_approved) '
         'AND c.is_current_version = true '
         'AND c.projection_version = @projection_version'
     )
@@ -2190,6 +2193,7 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
             {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
             {'name': '@source_scope', 'value': source_scope},
             {'name': '@scope_key', 'value': scope_key},
+            {'name': '@approval_not_approved', 'value': DOCUMENT_ACCESS_APPROVAL_NOT_APPROVED},
             {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
         ],
         partition_key=scope_key,
@@ -2439,6 +2443,8 @@ def _projection_row_to_document(row, source_scope):
         'xsd_dependency_count': row.get('xsd_dependency_count'),
         'xsd_diagnostics': row.get('xsd_diagnostics'),
         'document_intelligence_extraction_mode': row.get('document_intelligence_extraction_mode'),
+        'extraction_engine': row.get('extraction_engine'),
+        'extraction_engine_reason': row.get('extraction_engine_reason'),
         'generated_artifact_promotion_status': row.get('generated_artifact_promotion_status'),
         'generated_artifact_requested_by_user_id': row.get('generated_artifact_requested_by_user_id'),
         'file_sync': row.get('file_sync'),

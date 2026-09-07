@@ -6,6 +6,8 @@ from functions_governance import (
     INBOUND_MCP_SYSTEM_SOURCE_POLICY_ID,
     get_explicit_item_policies,
     get_user_governance_group_ids,
+    policy_allows_principal,
+    policy_denies_principal,
 )
 
 
@@ -49,30 +51,8 @@ def _normalize_policy_value(value):
     return str(value or "").strip().lower()
 
 
-def _normalize_policy_values(values):
-    if not isinstance(values, (list, tuple, set)):
-        return set()
-    return {
-        str(value or "").strip()
-        for value in values
-        if str(value or "").strip()
-    }
-
-
 def _policy_matches_principal(policy, user_id, group_ids):
-    if bool((policy or {}).get("allow_all", True)):
-        return True
-
-    allowed_users = _normalize_policy_values((policy or {}).get("allowed_users", []))
-    allowed_groups = _normalize_policy_values((policy or {}).get("allowed_groups", []))
-    if not allowed_users and not allowed_groups:
-        return False
-
-    normalized_user_id = str(user_id or "").strip()
-    if normalized_user_id and normalized_user_id in allowed_users:
-        return True
-
-    return bool(set(group_ids or set()).intersection(allowed_groups))
+    return policy_allows_principal(policy or {}, user_id, group_ids)
 
 
 def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, reason_prefix, ignored_policy_ids=None):
@@ -104,6 +84,13 @@ def _evaluate_explicit_policy_group(policy_checks, user_id, group_ids, error, re
                 if policy_id in ignored_policy_ids:
                     continue
                 inspected_policy_count += 1
+                if policy_denies_principal(policy, user_id, group_ids):
+                    return InboundMcpGovernanceDecision(
+                        allowed=False,
+                        error=error,
+                        reason=f"{reason_prefix} denied by explicit policy block list.",
+                        policy_id=policy_id,
+                    )
                 if not _policy_matches_principal(policy, user_id, group_ids):
                     continue
                 effect = _normalize_policy_value(policy.get("effect") or "allow")

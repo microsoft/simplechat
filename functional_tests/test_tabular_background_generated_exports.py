@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.250.160
-Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; valid XML stream serialization in: 0.250.160
+Version: 0.261.022
+Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.022
 
 This test ensures that large tabular structured exports are wired through the
 durable background queue, status API, queued retry recovery, and chat progress
@@ -12,12 +12,13 @@ UI without requiring live Azure services.
 import asyncio
 import ast
 import csv
-import importlib.util
 import io
 import json
+import re
 import sys
 from pathlib import Path
 from xml.etree import ElementTree
+from xml.sax.saxutils import escape as escape_xml_text
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -130,7 +131,7 @@ def test_export_runner_module():
     assert_contains(source_text, 'waiting_for_retry', 'scheduled retry status payload')
     assert_contains(source_text, 'retry_delay_seconds', 'retry delay status payload')
     assert_contains(source_text, 'Background scheduler scan result', 'scheduler scan diagnostics')
-    assert_contains(source_text, '<GeneratedRows>', 'XML document root')
+    assert_contains(source_text, '<GeneratedOutput>', 'XML document root')
     assert_contains(source_text, "elif output_format == 'xml':", 'dedicated XML stream branch')
 
     simplechat_operations_source = read_text(APP_ROOT / 'functions_simplechat_operations.py')
@@ -142,15 +143,11 @@ def test_background_xml_stream_is_well_formed_xml():
     """Validate XML background exports do not write JSON under an XML filename."""
     export_tree = parse_python(EXPORT_MODULE)
     writer_function = get_function(export_tree, '_write_ordered_output_stream')
+    xml_tag_function = get_function(export_tree, '_sanitize_generated_xml_tag_name')
+    xml_row_function = get_function(export_tree, '_write_generated_xml_row')
     assert writer_function is not None
-
-    generated_exports_path = APP_ROOT / 'functions_generated_file_exports.py'
-    generated_exports_spec = importlib.util.spec_from_file_location(
-        'functions_generated_file_exports_background_xml_test',
-        generated_exports_path,
-    )
-    generated_exports = importlib.util.module_from_spec(generated_exports_spec)
-    generated_exports_spec.loader.exec_module(generated_exports)
+    assert xml_tag_function is not None
+    assert xml_row_function is not None
 
     output_rows = [{
         '__source_row_number': 1,
@@ -159,17 +156,33 @@ def test_background_xml_stream_is_well_formed_xml():
     namespace = {
         '_safe_int': lambda value: int(value or 0),
         'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': '__source_row_number',
+        'TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD': '__source_row_identity',
+        '_get_tabular_run_serialized_public_schema': lambda _run: ['name'],
         'build_safe_csv_headers': lambda fields: fields,
         'csv': csv,
         'json': json,
+        're': re,
+        'escape_xml_text': escape_xml_text,
         '_output_blob_path': lambda *args: 'checkpoint.json',
         '_validate_tabular_output_checkpoint_metadata': lambda *args: None,
         '_download_json_blob': lambda *args: output_rows,
         '_serialize_generated_output_value': lambda value: '' if value is None else str(value),
-        'serialize_generated_xml': generated_exports.serialize_generated_xml,
+        'project_structured_deliverable_row': (
+            lambda row, schema, require_all_fields=False: {
+                field_name: row.get(field_name)
+                for field_name in schema
+            }
+        ),
     }
     exec(
-        compile(ast.Module(body=[writer_function], type_ignores=[]), str(EXPORT_MODULE), 'exec'),
+        compile(
+            ast.Module(
+                body=[xml_tag_function, xml_row_function, writer_function],
+                type_ignores=[],
+            ),
+            str(EXPORT_MODULE),
+            'exec',
+        ),
         namespace,
     )
 
@@ -190,7 +203,7 @@ def test_background_xml_stream_is_well_formed_xml():
     xml_text = output_stream.getvalue()
     root = ElementTree.fromstring(xml_text)
     assert written_row_count == 1
-    assert root.tag == 'GeneratedRows'
+    assert root.tag == 'GeneratedOutput'
     assert root.findtext('./Row/name') == 'A & B'
     assert not xml_text.lstrip().startswith('[')
 
@@ -247,6 +260,9 @@ def test_background_batch_timeout_prevents_indefinite_model_wait():
         'time': __import__('time'),
         '_safe_float': lambda value, default=0.0: float(value) if value is not None else default,
         '_is_compact_row_array_protocol': lambda _response_protocol: False,
+        '_build_model_expected_output_schema': (
+            lambda expected_output_schema, transformation_spec=None: list(expected_output_schema or [])
+        ),
         '_build_batch_prompt': lambda *args, **kwargs: 'test prompt',
     }
     extracted_module = ast.Module(body=[helper_node], type_ignores=[])
@@ -360,6 +376,12 @@ def test_chat_ui_renders_and_polls_background_exports():
     assert_contains(source_text, 'generated-artifact-view-btn', 'completed artifact View action')
     assert_contains(source_text, 'generated-artifact-preview-modal', 'bounded artifact preview modal')
     assert_contains(source_text, 'hideCompletedGeneratedArtifactHandoff', 'stale completion handoff suppression')
+    assert_contains(source_text, 'normalizeGeneratedArtifactSet', 'plural artifact-set normalizer')
+    assert_contains(source_text, 'replaceBackgroundGeneratedOutputCardWithArtifacts', 'plural completion replacement path')
+    assert_contains(source_text, "role === 'primary_analysis'", 'Analyze Markdown primary ordering')
+    assert_contains(source_text, 'generated_artifacts', 'authoritative plural status field')
+    assert_contains(source_text, 'simplechat:generated-artifact-set', 'safe artifact-set UI event')
+    assert_contains(source_text, 'Download ${fileName}', 'unique download accessible name')
     if 'details.open = true' in source_text:
         raise AssertionError('Background export operational details must remain collapsed until the user expands them')
     if 'generated-tabular-refresh-status-btn' in source_text or 'Refresh Status' in source_text:
@@ -398,11 +420,24 @@ def test_completed_artifact_preview_is_bounded_and_ordered():
         'TABULAR_EXPORT_ARTIFACT_PREVIEW_CELL_MAX_CHARS': 12,
         'TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD': 'source_row_number',
         '_safe_int': lambda value: int(value or 0),
+        '_get_tabular_run_serialized_public_schema': (
+            lambda run: [
+                field_name
+                for field_name in list((run or {}).get('output_schema') or [])
+                if field_name not in {'source_row_number', 'source_row_identity'}
+            ]
+        ),
         '_output_blob_path': lambda user_id, conversation_id, run_id, batch_number: f'output-{batch_number}',
         '_validate_tabular_output_checkpoint_metadata': (
             lambda run, path, batch_number: validated_batches.append((path, batch_number))
         ),
         '_download_json_blob': lambda path: batches[path],
+        'project_structured_deliverable_row': (
+            lambda entry, public_schema, require_all_fields=True: {
+                field_name: entry[field_name]
+                for field_name in public_schema
+            }
+        ),
         '_serialize_generated_output_value': lambda value: '' if value is None else str(value),
         'build_safe_csv_headers': lambda values: list(values),
         'json': __import__('json'),
@@ -430,11 +465,12 @@ def test_completed_artifact_preview_is_bounded_and_ordered():
         suppress_assistant_text=True,
     )
 
-    assert [row['source_row_number'] for row in preview_rows] == ['1', '2', '3']
-    assert preview_rows[1]['answer'] == 'xxxxxxxxx...'
+    assert [row['answer'] for row in preview_rows] == ['first', 'xxxxxxxxx...', 'third']
+    assert 'source_row_number' not in preview_rows[0]
+    assert 'source_row_identity' not in preview_rows[0]
     assert validated_batches == [('output-1', 1), ('output-2', 2)]
     assert artifact['preview_rows'] == preview_rows
-    assert artifact['preview_columns'] == ['source_row_number', 'source_row_identity', 'answer']
+    assert artifact['preview_columns'] == ['answer']
     assert len(artifact['preview_text']) == 24000
     assert artifact['suppress_assistant_text'] is True
 

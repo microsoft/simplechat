@@ -400,7 +400,7 @@ def register_route_backend_tts(bp):
                                     continue  # Retry
                                 else:
                                     debug_print(f"[TTS] ERROR - Rate limit exceeded after {max_retries} retries")
-                                    return jsonify({"error": "Service temporarily unavailable due to high load. Please try again."}), 429
+                                    return jsonify(build_rate_limit_error_payload(settings)), 429
                             elif _is_unsupported_tts_voice_error(error_details) and not unsupported_voice_retry_used:
                                 unsupported_voice_retry_used = True
                                 refreshed_voices = _get_tts_voices_for_synthesis(

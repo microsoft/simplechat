@@ -2,7 +2,7 @@
 # test_collaboration_shared_ai_workflow.py
 """
 Functional test for collaboration shared AI workflow parity.
-Version: 0.241.068
+Version: 0.250.224
 Implemented in: 0.241.068
 
 This test ensures collaborative conversations route shared AI requests through
@@ -32,9 +32,9 @@ def test_backend_collaboration_stream_bridge():
     route_source = read_repo_file('application', 'single_app', 'route_backend_collaboration.py')
     functions_source = read_repo_file('application', 'single_app', 'functions_collaboration.py')
 
-    assert "@app.route('/api/collaboration/conversations/<conversation_id>/stream', methods=['POST'])" in route_source
+    assert "@bp.route('/api/collaboration/conversations/<conversation_id>/stream', methods=['POST'])" in route_source
     assert 'ensure_collaboration_source_conversation(' in route_source
-    assert "current_app.view_functions.get('chat_stream_api')" in route_source
+    assert "_resolve_internal_view_function('chat_stream_api')" in route_source
     assert 'mirror_source_message_to_collaboration(' in route_source
     assert 'message_kind=MESSAGE_KIND_AI_REQUEST' in route_source
 
@@ -87,8 +87,8 @@ def test_streaming_metadata_alignment_for_explicit_agent_targets():
     assert "'chat_type': source_chat_type" in collaboration_functions_source
     assert "conversation_item.get('conversation_kind') == 'collaboration_source'" in metadata_functions_source
 
-    assert 'if request_agent_info and isinstance(request_agent_info, dict):' in chat_route_source
-    assert "user_metadata['agent_selection'] = {" in chat_route_source
+    assert 'if isinstance(request_agent_info, dict):' in chat_route_source
+    assert "user_metadata['agent_selection'] = agent_selection_metadata" in chat_route_source
     assert "user_message_doc['metadata']['model_selection']['selected_model'] = final_model_used if use_agent_streaming else gpt_model" in chat_route_source
     assert "model_deployment=final_model_used if use_agent_streaming else gpt_model" in chat_route_source
 

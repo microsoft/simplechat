@@ -16,7 +16,7 @@ hero_pills:
   - Upgrade validation matters
 hero_links:
   - label: "Upgrade paths"
-    url: /how-to/upgrade_paths/
+    url: /guides/upgrade-paths/
     style: primary
   - label: "Deployment reference"
     url: /reference/deploy/

@@ -36,6 +36,10 @@ from config import (
 )
 from functions_appinsights import log_event
 from functions_authentication import get_graph_authority, get_graph_base_url, get_graph_endpoint
+from functions_azure_endpoint_validation import (
+    AZURE_STORAGE_ENDPOINT_SUFFIXES,
+    azure_storage_endpoint_suffix_for_hostname,
+)
 from functions_debug import debug_print
 from functions_documents import (
     allowed_file,
@@ -110,12 +114,6 @@ FILE_SYNC_SOURCE_TYPE_LABELS = {
     FILE_SYNC_SOURCE_TYPE_SHAREPOINT_ON_PREM: "On-prem SharePoint",
     FILE_SYNC_SOURCE_TYPE_GOOGLE_WORKSPACE: "Google Workspace",
 }
-AZURE_STORAGE_ENDPOINT_SUFFIXES = (
-    "core.windows.net",
-    "core.usgovcloudapi.net",
-    "core.chinacloudapi.cn",
-    "core.cloudapi.de",
-)
 AZURE_BLOB_SAS_PERMISSION_LABELS = {
     "r": "Read",
     "l": "List",
@@ -768,15 +766,10 @@ def _normalize_azure_files_connection(
 
 
 def _azure_blob_endpoint_suffix_for_hostname(hostname: Any) -> Tuple[str, str]:
-    normalized_hostname = str(hostname or "").strip().lower()
-    for endpoint_suffix in AZURE_STORAGE_ENDPOINT_SUFFIXES:
-        blob_hostname_suffix = f".blob.{endpoint_suffix}"
-        if not normalized_hostname.endswith(blob_hostname_suffix):
-            continue
-        account_name = normalized_hostname[:-len(blob_hostname_suffix)]
-        if 3 <= len(account_name) <= 24 and account_name.isascii() and account_name.isalnum():
-            return account_name, endpoint_suffix
-    raise ValueError("Azure Blob Storage endpoint must use a supported Azure Blob service hostname")
+    return azure_storage_endpoint_suffix_for_hostname(
+        hostname,
+        error_message="Azure Blob Storage endpoint must use a supported Azure Blob service hostname",
+    )
 
 
 def _normalize_azure_blob_url(value: Any) -> Tuple[str, List[str]]:

@@ -197,6 +197,9 @@ def test_redis_monitoring_healthy_metrics():
         "enabled": True,
         "configured": True,
         "auth_type": "managed_identity",
+        "service_type": "azure_cache_for_redis",
+        "service_type_source": "detected",
+        "port": 6380,
     }
     assert status["runtime"]["app_cache_using_redis"] is True
     assert status["runtime"]["monitoring_source"] == "app_cache"

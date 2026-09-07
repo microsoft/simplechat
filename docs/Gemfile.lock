@@ -46,6 +46,7 @@ GEM
       logger
     faraday-net_http (3.4.4)
       net-http (~> 0.5)
+    ffi (1.17.2)
     ffi (1.17.2-x64-mingw-ucrt)
     ffi (1.17.2-x86_64-linux-gnu)
     forwardable-extended (2.6.0)
@@ -92,7 +93,7 @@ GEM
       liquid (= 4.0.4)
       mercenary (~> 0.3)
       minima (= 2.5.1)
-      nokogiri (>= 1.19.3, < 2.0)
+      nokogiri (>= 1.16.2, < 2.0)
       rouge (= 3.30.0)
       terminal-table (~> 1.4)
       webrick (~> 1.8)
@@ -221,7 +222,7 @@ GEM
       gemoji (>= 3, < 5)
       html-pipeline (~> 2.2)
       jekyll (>= 3.0, < 5.0)
-    json (2.19.2)
+    json (2.19.9)
     kramdown (2.4.0)
       rexml
     kramdown-parser-gfm (1.1.0)
@@ -288,6 +289,7 @@ DEPENDENCIES
   jekyll-livereload
   jekyll-optional-front-matter
   jekyll-readme-index
+  jekyll-redirect-from
   jekyll-relative-links
   jekyll-seo-tag
   jekyll-sitemap

@@ -35,6 +35,9 @@
         </nav>
 
         <div class="docs-topbar-actions">
+            <button type="button" class="docs-icon-button docs-mobile-search-toggle" id="docs-mobile-search-toggle" aria-label="Search documentation" aria-controls="docs-search-sheet" aria-expanded="false">
+                <i class="bi bi-search" aria-hidden="true"></i>
+            </button>
             {% if site.github.repository_url %}
                 <a class="docs-icon-button" href="{{ site.github.repository_url }}" target="_blank" rel="noopener noreferrer" aria-label="Open GitHub repository">
                     <i class="bi bi-github" aria-hidden="true"></i>
@@ -47,6 +50,21 @@
         </div>
     </div>
 </header>
+
+{% comment %} Full-screen search for small viewports. The inline top bar search is hidden below the md breakpoint. {% endcomment %}
+<div class="docs-search-sheet d-none" id="docs-search-sheet" role="dialog" aria-modal="true" aria-label="Search documentation">
+    <div class="docs-search-sheet-header">
+        <label class="visually-hidden" for="docs-search-sheet-input">Search documentation</label>
+        <div class="docs-search-sheet-field">
+            <i class="bi bi-search" aria-hidden="true"></i>
+            <input id="docs-search-sheet-input" class="docs-search-sheet-input" type="search" placeholder="Search documentation" data-docs-search="true" />
+        </div>
+        <button type="button" class="docs-search-sheet-close" data-docs-search-sheet-close="true" aria-label="Close search">
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+        </button>
+    </div>
+    <div class="docs-search-sheet-results" data-docs-search-results="true" role="listbox" aria-label="Search results"></div>
+</div>
 
 <aside id="sidebar-nav" class="docs-sidebar" aria-label="Documentation sections">
     <div class="docs-sidebar-header">

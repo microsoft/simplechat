@@ -1,0 +1,119 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'search-index' %} show active{% endif %}" id="search-index" role="tabpanel" aria-labelledby="search-index-tab">
+                <div class="card p-3 mb-3" id="azure-ai-search-section">
+                    <h5><i class="bi bi-search me-2"></i>Azure AI Search</h5>
+                    <p class="text-muted">
+                        Configure Azure AI Search settings.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                        <input
+                            type="checkbox"
+                            class="form-check-input me-2"
+                            id="enable_ai_search_apim"
+                            name="enable_ai_search_apim"
+                            {% if settings.enable_ai_search_apim %}checked{% endif %}
+                        >
+                        <label class="form-check-label" for="enable_ai_search_apim">
+                            Use APIM instead of direct Azure AI Search
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route Azure AI Search requests through API Management for centralized monitoring and control instead of direct service access."></i>
+                    </div>
+
+                    <div>
+
+                        <div id="non_apim_ai_search_settings" {% if settings.enable_ai_search_apim %}style="display: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="azure_ai_search_endpoint" class="form-label">Search Endpoint</label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_ai_search_endpoint"
+                                    name="azure_ai_search_endpoint"
+                                    value="{{ settings.azure_ai_search_endpoint or '' }}"
+                                >
+                            </div>
+                            <div class="mb-3">
+                                <label for="azure_ai_search_authentication_type" class="form-label">
+                                    Authentication Type
+                                </label>
+                                <select class="form-select" id="azure_ai_search_authentication_type" name="azure_ai_search_authentication_type">
+                                    <option value="key" {% if settings.azure_ai_search_authentication_type=='key' %}selected{% endif %}>
+                                        Key
+                                    </option>
+                                    <option value="managed_identity" {% if settings.azure_ai_search_authentication_type=='managed_identity' %}selected{% endif %}>
+                                        Managed Identity
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="mb-3" id="azure_ai_search_key_container" {% if settings.azure_ai_search_authentication_type !='key' %}style="display: none;"{% endif %}>
+                                <label for="azure_ai_search_key" class="form-label">Search Key</label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_ai_search_key"
+                                        name="azure_ai_search_key"
+                                        value="{{ settings.azure_ai_search_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_search_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <div id="apim_ai_search_settings" {% if not settings.enable_ai_search_apim %}style="display: none;"{% endif %}>
+                            <div class="mb-3">
+                                <label for="azure_apim_ai_search_endpoint" class="form-label">
+                                    Azure APIM AI Search Endpoint
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control"
+                                    id="azure_apim_ai_search_endpoint"
+                                    name="azure_apim_ai_search_endpoint"
+                                    value="{{ settings.azure_apim_ai_search_endpoint or '' }}"
+                                >
+                            </div>
+                            <div class="mb-3">
+                                <label for="azure_apim_ai_search_subscription_key" class="form-label">
+                                    Azure APIM AI Search Subscription Key
+                                </label>
+                                <div class="input-group">
+                                    <input
+                                        type="password"
+                                        class="form-control"
+                                        id="azure_apim_ai_search_subscription_key"
+                                        name="azure_apim_ai_search_subscription_key"
+                                        value="{{ settings.azure_apim_ai_search_subscription_key or '' }}"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="btn btn-outline-secondary"
+                                        id="toggle_azure_apim_ai_search_subscription_key"
+                                    >
+                                        Show
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+
+                        <button
+                            type="button"
+                            class="btn btn-secondary mt-3"
+                            style="width: auto;"
+                            id="test_azure_ai_search_button"
+                        >
+                            Test Azure AI Search Connection
+                        </button>
+                        <div id="test_azure_ai_search_result" class="mt-2"></div>
+                    </div>
+                </div>
+
+
+            </div>

@@ -101,7 +101,7 @@ def test_auth_route_teams_token_exchange_contract():
     assert not (required_functions - functions)
 
     required_snippets = [
-        "@app.route('/auth/teams/token-exchange', methods=['POST'])",
+        "@bp.route('/auth/teams/token-exchange', methods=['POST'])",
         '@swagger_route(security=get_auth_security())',
         'if not ENABLE_TEAMS_SSO:',
         'request.get_json(silent=True)',

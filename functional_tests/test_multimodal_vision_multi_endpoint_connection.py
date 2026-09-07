@@ -13,6 +13,8 @@ settings instead of always using the legacy GPT endpoint.
 import sys
 from pathlib import Path
 
+from test_support.templates import read_admin_settings_template
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADMIN_SETTINGS_JS = REPO_ROOT / "application" / "single_app" / "static" / "js" / "admin" / "admin_settings.js"
@@ -31,7 +33,7 @@ def test_multimodal_vision_multi_endpoint_wiring():
     print("Testing multi-endpoint Vision test connection wiring...")
 
     js_content = ADMIN_SETTINGS_JS.read_text(encoding="utf-8")
-    template_content = ADMIN_SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+    template_content = read_admin_settings_template()
     backend_content = ROUTE_BACKEND_SETTINGS.read_text(encoding="utf-8")
 
     assert_contains(js_content, "opt.dataset.endpointId = ep.id || '';", "vision endpoint id option metadata")

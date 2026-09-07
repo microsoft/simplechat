@@ -11,6 +11,7 @@ rebinding scenarios.
 """
 
 import os
+from test_support.templates import compose_if_admin_settings
 
 
 def parse_version(version_text):
@@ -25,7 +26,7 @@ def parse_version(version_text):
 
 def read_file_text(file_path):
     with open(file_path, "r", encoding="utf-8") as file:
-        return file.read()
+        return compose_if_admin_settings(file_path, file.read())
 
 
 def test_admin_agent_default_model_migration_wiring():

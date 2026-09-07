@@ -1,10 +1,10 @@
 # XSD Schema Ingestion and XML Generation
 
-Implemented in version: **0.250.160**
+Implemented in version: **0.261.022**
 
 GitHub issue: [#1212](https://github.com/microsoft/simplechat/issues/1212)
 
-Related `config.py` update: `VERSION = "0.250.160"`
+Related `config.py` update: `VERSION = "0.261.022"`
 
 ## Overview
 

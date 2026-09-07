@@ -37,7 +37,10 @@ def test_workspace_prompt_markdown_toolbar_fix() -> bool:
         'this.instructionsEditor = new window.SimpleMDE({': agent_stepper_content,
         'this.getInstructionsValue()': agent_stepper_content,
         "this.setInstructionsValue(agent.instructions || '');": agent_stepper_content,
-        "this.refreshInstructionsEditor(this.currentStep === 3 && this.currentAgentType !== 'aifoundry');": agent_stepper_content,
+        # The instructions editor is refreshed when the Instructions step is
+        # shown. The step is addressed by name so the check survives step
+        # reordering in the agent modal.
+        "this.refreshInstructionsEditor(this.isOnStep('instructions') && !this.isAnyFoundryType());": agent_stepper_content,
     }
 
     missing = [marker for marker, content in checks.items() if marker not in content]

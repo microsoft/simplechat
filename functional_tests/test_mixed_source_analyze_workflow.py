@@ -2,8 +2,8 @@
 # test_mixed_source_analyze_workflow.py
 """
 Functional test for Phase 3 mixed-source combined Analyze.
-Version: 0.250.107
-Implemented in: 0.250.072; updated in 0.250.107
+Version: 0.261.022
+Implemented in: 0.250.072; updated in 0.250.107 and 0.261.022
 
 This test ensures #1058 composes native narrative and tabular analysis behind
 automatic combined Analyze routing, retains terminal coverage after either
@@ -38,7 +38,8 @@ def test_phase_3_mixed_analyze_contracts_are_wired():
     assert 'run_document_analysis(' in helper_source
     assert "document_ids=[source.get('document_id') for source in narrative_sources]" in helper_source
     assert 'narrative_items_by_id' in helper_source
-    assert "summary=str(narrative_item.get('text') or '')" in helper_source
+    assert "narrative_summary_source_text = str(narrative_item.get('text') or '')" in helper_source
+    assert 'summary=narrative_summary_source_text' in helper_source
     assert '_maybe_execute_tabular_document_action(' in helper_source
     assert 'build_evidence_envelope(' in helper_source
     assert 'build_mixed_source_evidence_handoff(' in helper_source
@@ -53,6 +54,8 @@ def test_phase_3_mixed_analyze_contracts_are_wired():
     assert "'phase': 'complete'" in helper_source
     assert 'Tabular evidence could not be completed for this source.' in helper_source
     assert 'Narrative evidence could not be completed for this source.' in helper_source
+    assert 'We are analyzing the data and generating the requested file in the background.' in source
+    assert 'Automatic deferred composition is unavailable' not in source
     assert "'generated_tabular_outputs': generated_tabular_outputs" in helper_source
     assert "'agent_citations': tabular_agent_citations" in helper_source
 

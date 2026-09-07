@@ -101,6 +101,9 @@ import time
 import threading
 import yaml
 from functions_authentication import *
+# functions_rate_limit imports nothing, so a top-level import here cannot
+# reintroduce the circular import that get_settings is imported lazily to avoid.
+from functions_rate_limit import build_rate_limit_error_payload
 
 # Global registry to store route documentation
 _swagger_registry: Dict[str, Dict[str, Any]] = {}
@@ -2087,11 +2090,10 @@ def register_swagger_routes(app: Flask):
         spec, status_code, content_type = _swagger_cache.get_spec(app, force_refresh=force_refresh, format='json')
         
         if status_code == 429:
-            return jsonify({
-                "error": "Rate limit exceeded",
-                "message": "Too many requests for swagger.json. Please wait before trying again.",
-                "retry_after": 60
-            }), 429
+            return jsonify(build_rate_limit_error_payload(
+                get_settings(),
+                retry_after=_swagger_cache.rate_limit_window,
+            )), 429
         elif status_code == 500:
             return jsonify(spec), 500
         
@@ -2143,11 +2145,10 @@ def register_swagger_routes(app: Flask):
         spec, status_code, content_type = _swagger_cache.get_spec(app, force_refresh=force_refresh, format='yaml')
         
         if status_code == 429:
-            return jsonify({
-                "error": "Rate limit exceeded",
-                "message": "Too many requests for swagger.yaml. Please wait before trying again.",
-                "retry_after": 60
-            }), 429
+            return jsonify(build_rate_limit_error_payload(
+                get_settings(),
+                retry_after=_swagger_cache.rate_limit_window,
+            )), 429
         elif status_code == 500:
             return jsonify(spec), 500
         

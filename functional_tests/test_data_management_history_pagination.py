@@ -32,6 +32,10 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 MODULE_PATH = APP_ROOT / "functions_data_management.py"
 ROUTE_MODULE_PATH = APP_ROOT / "route_backend_data_management.py"
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from test_support.versioning import compare_simplechat_versions
+from test_support.templates import read_admin_settings_template
 
 
 class FakeHistoryContainer:
@@ -62,19 +66,16 @@ class FakeHistoryContainer:
             for item in self.documents
             if self._matches(item, query, parameter_map)
         ]
-        if "GROUP BY c.backup_type, c.status" in query:
-            grouped = {}
-            for item in matching:
-                key = (item.get("backup_type"), item.get("status"))
-                grouped[key] = grouped.get(key, 0) + 1
-            return [
-                {
-                    "backup_type": backup_type,
-                    "status": status,
-                    "count": count,
-                }
-                for (backup_type, status), count in grouped.items()
-            ]
+        if "GROUP BY" in query.upper() or "COUNT(1) AS" in query.upper():
+            # The azure-cosmos Python client does not advertise GroupBy or
+            # NonValueAggregate support, so Cosmos rejects these during query
+            # plan negotiation. Mirror that here so the fake cannot mask it.
+            raise RuntimeError(
+                "(BadRequest) Query contains the following features, which the "
+                "calling client does not support: GroupBy NonValueAggregate."
+            )
+        if "SELECT VALUE COUNT(1)" in query.upper():
+            return [len(matching)]
 
         matching.sort(
             key=lambda item: (item.get("created_at", ""), item.get("id", "")),
@@ -95,6 +96,10 @@ class FakeHistoryContainer:
         if "@backup_type" in parameters and item.get("backup_type") != parameters["@backup_type"]:
             return False
         if "@status" in parameters and item.get("status") != parameters["@status"]:
+            return False
+        if "@running" in parameters and item.get("status") != parameters["@running"]:
+            return False
+        if "@failed" in parameters and item.get("status") != parameters["@failed"]:
             return False
         if (
             "@completed" in parameters
@@ -496,6 +501,29 @@ def test_backup_summary_is_global_and_page_independent(monkeypatch):
     assert result["summary"]["latest_partial"]["id"] == "partial-new"
 
 
+def test_backup_summary_avoids_unsupported_group_by_aggregates(monkeypatch):
+    """Keep summary counts on VALUE aggregates the Cosmos Python client can serve."""
+    jobs = [
+        build_job("full-new", "2026-07-30T12:00:00+00:00"),
+        build_job("partial-new", "2026-07-30T11:00:00+00:00", backup_type="partial"),
+    ]
+    container = FakeHistoryContainer(jobs)
+    module = load_data_management_module(monkeypatch, container)
+
+    module.get_data_management_backup_summary(limit=5)
+
+    emitted = [entry["query"].upper() for entry in container.queries]
+    assert emitted, "Backup summary should emit at least one history query."
+    for query in emitted:
+        assert "GROUP BY" not in query, f"Unsupported GROUP BY in history query: {query}"
+        assert "COUNT(1) AS" not in query, f"Unsupported non-VALUE aggregate: {query}"
+
+    count_queries = [query for query in emitted if "COUNT(1)" in query]
+    assert len(count_queries) == 6, "Summary should use one VALUE count per bucket."
+    for query in count_queries:
+        assert "SELECT VALUE COUNT(1)" in query
+
+
 def test_history_provider_index_errors_are_actionable(monkeypatch):
     """Convert missing Cosmos composite-index failures into admin-safe guidance."""
     container = FailingHistoryContainer()
@@ -521,6 +549,83 @@ def test_history_provider_index_errors_are_actionable(monkeypatch):
     assert "Apply Cosmos indexing policies" in error.safe_message
     assert "corresponding composite index" not in error.safe_message
     assert "ORDER BY c.created_at DESC, c.id DESC" in container.queries[0]["query"]
+
+
+def test_history_index_errors_match_alternate_provider_wording(monkeypatch):
+    """Index guidance must survive provider wording that omits the word composite."""
+    container = FailingHistoryContainer()
+    module = load_data_management_module(monkeypatch, container)
+
+    class FakeCosmosHttpResponseError(Exception):
+        def __init__(self, message, status_code=400):
+            super().__init__(message)
+            self.status_code = status_code
+
+    module.CosmosHttpResponseError = FakeCosmosHttpResponseError
+    container.error = FakeCosmosHttpResponseError(
+        "The ORDER BY query does not have a corresponding index that it can be served from."
+    )
+
+    with pytest.raises(module.DataManagementHistoryUnavailableError) as exc_info:
+        module.get_data_management_jobs_page(page_size=25)
+
+    assert exc_info.value.reason == "missing_history_index"
+    assert exc_info.value.maintenance_required is True
+
+
+def test_history_throttling_is_retried_then_reported_as_busy(monkeypatch):
+    """Throttled history reads retry briefly, then surface retryable busy guidance."""
+    container = FailingHistoryContainer()
+    module = load_data_management_module(monkeypatch, container)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    class FakeCosmosHttpResponseError(Exception):
+        def __init__(self, message, status_code=429):
+            super().__init__(message)
+            self.status_code = status_code
+
+    module.CosmosHttpResponseError = FakeCosmosHttpResponseError
+    container.error = FakeCosmosHttpResponseError(
+        "Request rate is large. More Request Units may be needed.",
+    )
+
+    with pytest.raises(module.DataManagementHistoryUnavailableError) as exc_info:
+        module.get_data_management_jobs_page(page_size=25)
+
+    error = exc_info.value
+    assert error.reason == "history_provider_throttled"
+    assert error.retryable is True
+    assert error.status_code == 503
+    assert "busy" in error.safe_message.lower()
+    assert "Request Units" not in error.safe_message
+    assert len(container.queries) == module.DATA_MANAGEMENT_HISTORY_QUERY_MAX_ATTEMPTS
+
+
+def test_history_failures_capture_provider_detail_for_operator_logs(monkeypatch):
+    """Provider status and message must reach logs without reaching the browser."""
+    container = FailingHistoryContainer()
+    module = load_data_management_module(monkeypatch, container)
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    class FakeCosmosHttpResponseError(Exception):
+        def __init__(self, message, status_code=403):
+            super().__init__(message)
+            self.status_code = status_code
+
+    module.CosmosHttpResponseError = FakeCosmosHttpResponseError
+    container.error = FakeCosmosHttpResponseError(
+        "Request blocked by network firewall rules.",
+    )
+
+    with pytest.raises(module.DataManagementHistoryUnavailableError) as exc_info:
+        module.get_data_management_jobs_page(page_size=25)
+
+    error = exc_info.value
+    assert error.provider_status_code == 403
+    assert "network firewall" in error.provider_message
+    assert "network firewall" not in error.safe_message
+    assert error.retryable is False
+    assert len(container.queries) == 1, "Non-retryable provider errors must not retry"
 
 
 def test_expired_and_final_empty_continuations_fail_or_finish_safely(monkeypatch):
@@ -712,4 +817,24 @@ def test_deployers_apply_the_data_management_history_index():
     assert "indexing_policy=DATA_MANAGEMENT_HISTORY_INDEXING_POLICY" in config_source
     assert '"path": "/created_at", "order": "descending"' in config_source
     assert '"path": "/id", "order": "descending"' in config_source
-    assert deployer_version == "1.0.24"
+    assert compare_simplechat_versions(deployer_version, "1.0.24") >= 0, (
+        f"Deployer version must include the history index change, got {deployer_version}"
+    )
+
+
+def test_retention_cleanup_button_explains_what_it_does():
+    """Give admins hover and expandable guidance before deleting expired backups."""
+    template = read_admin_settings_template()
+
+    cleanup_button_start = template.index("data-management-run-retention-cleanup-btn")
+    cleanup_button = template[cleanup_button_start:cleanup_button_start + 600]
+    assert 'data-bs-toggle="tooltip"' in cleanup_button
+    assert "retention period" in cleanup_button
+
+    assert 'id="data-management-retention-cleanup-help"' in template
+    assert 'data-bs-target="#data-management-retention-cleanup-help"' in template
+    assert 'aria-label="What does Run Retention Cleanup do?"' in template
+    assert "bi bi-info-circle" in template
+    assert "Keep latest full backup" in template
+    assert "at most 25 backups" in template
+    assert "found no expired backups to delete" in template

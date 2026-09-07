@@ -1,9 +1,9 @@
 # test_data_management_migration_recovery.py
 """
 Functional test for Data Management migration recovery scheduling.
-Version: 0.250.076
+Version: 0.250.185
 Implemented in: 0.250.071
-Updated in: 0.250.076
+Updated in: 0.250.076; scheduler request-context submission guard added in 0.250.185
 
 This test ensures delayed queued and stale migration jobs are resubmitted to
 the executor, including when scheduled backup processing is disabled and
@@ -65,7 +65,7 @@ def load_data_management_module(monkeypatch, job_container):
     """Load production recovery helpers with in-memory Cosmos dependencies."""
     config_module = types.ModuleType("config")
     config_module.CLIENTS = {}
-    config_module.VERSION = "0.250.076"
+    config_module.VERSION = "0.250.185"
     config_module.cosmos_data_management_jobs_container = job_container
     config_module.cosmos_data_management_job_items_container = job_container
     config_module.cosmos_settings_container = job_container
@@ -126,6 +126,7 @@ def test_recovery_resubmits_delayed_queued_and_stale_migrations(monkeypatch):
     )
     job_container = FakeJobContainer([queued_job, stale_job])
     module = load_data_management_module(monkeypatch, job_container)
+    monkeypatch.setattr(module, "has_request_context", lambda: True)
     monkeypatch.setattr(module, "_record_data_management_job_event", lambda *_args, **_kwargs: None)
     executor = FakeExecutor()
 
@@ -142,6 +143,33 @@ def test_recovery_resubmits_delayed_queued_and_stale_migrations(monkeypatch):
     assert all(item["submitted"] is True for item in recovery)
     assert job_container.jobs[queued_job["id"]]["recovery_attempt_count"] == 1
     assert job_container.jobs[stale_job["id"]]["recovery_attempt_count"] == 1
+
+
+def test_background_submission_without_request_context_uses_worker_thread(monkeypatch):
+    """Validate scheduler submissions avoid request-context-copying executor APIs."""
+    module = load_data_management_module(monkeypatch, FakeJobContainer([]))
+    monkeypatch.setattr(module, "has_request_context", lambda: False)
+    executor = FakeExecutor()
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def start(self):
+            started_threads.append(self.kwargs)
+
+    monkeypatch.setattr(module, "Thread", FakeThread)
+
+    submitted = module.submit_data_management_job(
+        FakeApp(executor),
+        "11111111-2222-3333-4444-555555555555",
+    )
+
+    assert submitted is True
+    assert executor.submissions == []
+    assert len(started_threads) == 1
+    assert started_threads[0]["kwargs"] == {"job_id": "11111111-2222-3333-4444-555555555555"}
 
 
 def test_recovery_runs_when_scheduled_backups_are_disabled(monkeypatch):

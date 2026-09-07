@@ -1,0 +1,67 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'feature-governance' %} show active{% endif %}" id="feature-governance" role="tabpanel" aria-labelledby="feature-governance-tab">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-2 mb-3">
+                    <p class="text-muted mb-0">
+                        Configure governance enforcement for endpoint, agent, and action creation or usage. Governance is disabled by default and only enforced when toggled on.
+                    </p>
+                    <button type="button" class="btn btn-outline-info btn-sm flex-shrink-0" id="governance-info-guide-btn" data-bs-toggle="modal" data-bs-target="#governanceInfoModal">
+                        <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                    </button>
+                </div>
+
+                <div class="card p-3 mb-3" id="governance-feature-toggles-section">
+                    <h5>
+                        <i class="bi bi-braces-asterisk me-2"></i>Governance Feature Toggles
+                    </h5>
+                    <p class="text-muted">Turn on governance checks for each feature area. Save with the main Settings button to persist these toggles.</p>
+
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Personal Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_endpoints" name="governance_user_endpoints" {% if settings.governance_user_endpoints %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_endpoints">Govern Personal Endpoints</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_agents" name="governance_user_agents" {% if settings.governance_user_agents %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_agents">Govern Personal Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_user_actions" name="governance_user_actions" {% if settings.governance_user_actions %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_user_actions">Govern Personal Actions</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Group Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_endpoints" name="governance_group_endpoints" {% if settings.governance_group_endpoints %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_endpoints">Govern Group Endpoints</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_agents" name="governance_group_agents" {% if settings.governance_group_agents %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_agents">Govern Group Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_group_actions" name="governance_group_actions" {% if settings.governance_group_actions %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_group_actions">Govern Group Actions</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="fw-semibold mb-2">Global Scope</div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_endpoints" name="governance_global_endpoints" checked disabled data-governance-locked="true">
+                                <label class="form-check-label ms-2" for="governance_global_endpoints">Govern Global Endpoints</label>
+                                <span class="badge bg-info text-dark ms-2">Always On</span>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_agents_usage" name="governance_global_agents_usage" {% if settings.governance_global_agents_usage %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_global_agents_usage">Govern Global Agents</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" id="governance_global_actions_usage" name="governance_global_actions_usage" {% if settings.governance_global_actions_usage %}checked{% endif %}>
+                                <label class="form-check-label ms-2" for="governance_global_actions_usage">Govern Global Actions</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>

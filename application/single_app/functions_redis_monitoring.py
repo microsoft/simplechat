@@ -6,6 +6,7 @@ import re
 import time
 
 import app_settings_cache
+import functions_redis_client
 
 
 REDIS_MONITORING_STATUS_DISABLED = "disabled"
@@ -621,6 +622,13 @@ def get_redis_monitoring_status(
     enabled = bool(safe_settings.get("enable_redis_cache"))
     configured = bool(str(safe_settings.get("redis_url") or "").strip())
     auth_type = str(safe_settings.get("redis_auth_type") or "key").strip().lower() or "key"
+    # Without a host name there is nothing to resolve, so report the service as unknown
+    # rather than showing the Azure Cache for Redis fallback used for connection attempts.
+    connection = (
+        functions_redis_client.describe_redis_connection(safe_settings)
+        if configured
+        else {"service_type": None, "service_type_source": None, "port": None}
+    )
     resolved_app_cache_client = (
         app_cache_client
         if app_cache_client is not None
@@ -640,6 +648,9 @@ def get_redis_monitoring_status(
             "enabled": enabled,
             "configured": configured,
             "auth_type": auth_type,
+            "service_type": connection["service_type"],
+            "service_type_source": connection["service_type_source"],
+            "port": connection["port"],
         },
         "runtime": {
             "app_cache_using_redis": app_cache_using_redis,

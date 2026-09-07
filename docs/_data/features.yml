@@ -1,0 +1,642 @@
+model-routing:
+  name: "Model routing and endpoints"
+  area: "Platform and operations"
+  audience: "Admins"
+  summary: "Configures how chat and embeddings reach approved Azure OpenAI or model endpoint routes."
+  why: "Use this when a deployment needs API Management in front of model services or multiple endpoint choices for different teams. Keep it simple when one approved endpoint is enough, because endpoint sprawl makes governance and troubleshooting harder."
+  default_state: "Mixed"
+  admin_tab: ai-models
+  setting_keys:
+    - enable_gpt_apim
+    - enable_embedding_apim
+    - enable_multi_model_endpoints
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+chat-file-uploads:
+  name: "Chat file uploads"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Lets users attach files directly to a chat so the conversation can use uploaded content as context."
+  why: "Use this when users need a fast path from a question to a document-grounded answer without first managing a workspace. Disable or role-gate it when uploads must follow a governed workspace intake process."
+  default_state: "Enabled"
+  admin_tab: workspaces
+  setting_keys:
+    - enable_chat_file_uploads
+  guides:
+    - title: "Upload documents in chat"
+      url: /guides/upload-documents-in-chat/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+conversation-productivity:
+  name: "Conversation productivity controls"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Controls chat navigation, appearance, drawers, notifications, and audio cues around conversation work."
+  why: "Use these controls to make the chat surface easier to scan and revisit as histories grow. They do not change model behavior, so keep them focused on usability preferences rather than retrieval or security decisions."
+  default_state: "Mixed"
+  admin_tab: appearance
+  setting_keys:
+    - enable_conversation_contents_drawer
+    - enable_left_nav_default
+    - enable_dark_mode_default
+    - enable_desktop_notifications
+    - enable_chat_completion_audio_cues
+  guides:
+    - title: "Update profile preferences"
+      url: /guides/update-profile-preferences/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+collaborative-conversations:
+  name: "Collaborative conversations"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Allows shared conversation participation so multiple users can work in the same chat context."
+  why: "Use this when teams need a shared trail for decisions, prompts, and responses instead of copying transcripts around. Avoid it for private analysis where messages and source context should stay personal."
+  default_state: "Enabled"
+  admin_tab: workspaces
+  setting_keys:
+    - enable_collaborative_conversations
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+grounded-document-search:
+  name: "Grounded document search"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Controls Azure AI Search-backed retrieval, cached search results, and mixed-source evidence reuse in chat."
+  why: "Use this when answers must be grounded in workspace documents and citations rather than only model memory. The mixed-source options are staged rollout controls, so enable them deliberately when follow-up questions should reuse previously authorized evidence."
+  default_state: "Mixed"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_ai_search_apim
+    - enable_search_result_caching
+    - enable_mixed_source_chat_search
+    - enable_mixed_source_conversation_continuity
+    - enable_mixed_source_development_telemetry
+    - enable_mixed_source_manifest
+    - enable_mixed_source_relevance_candidates
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+source-history-summaries:
+  name: "Source history summaries"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Summarizes older conversation context so search and long-running chats can keep useful history."
+  why: "Use this when grounded follow-up questions need relevant prior context after the raw conversation window is too large. Leave it off when strict verbatim history is required or summarization cost is not justified."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_summarize_content_history_beyond_conversation_history_limit
+    - enable_summarize_content_history_for_search
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+enhanced-citations:
+  name: "Enhanced citations"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Adds richer source previews and storage-backed citation rendering for documents used in answers."
+  why: "Use this when users need to inspect the exact source content behind an answer, especially with Office files, media transcripts, or generated previews. It adds storage and mount dependencies, so standard citations may be enough for simple deployments."
+  default_state: "Disabled"
+  admin_tab: chat
+  setting_keys:
+    - enable_enhanced_citations
+    - enable_enhanced_citations_mount
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+chat-memory:
+  name: "Chat memory"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Lets standard chat recall a user's saved instruction and fact memories, and lets the assistant save, change, or remove them on request."
+  why: "Use this when users repeatedly restate the same context, or when response preferences such as tone, format, or naming should persist without building a custom agent. It is a chat capability rather than an agent action, so it does not require agents or actions to be enabled. Leave it off where per-user retained context is not acceptable; memories persist across conversations, so they are not a place for secrets or regulated data."
+  default_state: "Disabled"
+  admin_tab: chat
+  setting_keys:
+    - enable_fact_memory_plugin
+  guides:
+    - title: "Update profile preferences"
+      url: /guides/update-profile-preferences/
+  reference:
+    - title: "Fact memory action"
+      url: /reference/actions/fact-memory/
+web-search:
+  name: "Web search"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Adds Bing-backed web search through a configured Azure AI Foundry agent for current external information."
+  why: "Use this when users need current public information that is not in workspace documents. Do not use it for sensitive prompts unless users understand that the current message can be sent to Bing for search."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_web_search
+    - enable_web_search_user_notice
+  guides:
+    - title: "Use web search in chat"
+      url: /guides/use-web-search/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+url-access:
+  name: "URL access"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Lets chat and workflows fetch approved pasted URLs under admin-controlled limits and domain policy."
+  why: "Use this when links are the natural way to bring source pages into an answer. Keep allowlists, blocklists, and URL counts tight because external pages are untrusted input and can change outside your workspace governance."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_url_access
+  guides:
+    - title: "Review pasted URLs"
+      url: /guides/review-pasted-urls/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+deep-research:
+  name: "Deep research and source review"
+  area: "Chat and retrieval"
+  audience: "End users"
+  summary: "Adds bounded source-page review and deeper web evidence inspection before web-grounded answers are used."
+  why: "Use this when snippets are not enough and users need inspected pages, source trails, and controlled traversal. It should stay bounded by page, depth, rendering, and domain policy because it can fetch more external content than basic web search."
+  default_state: "Mixed"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_source_review
+    - enable_deep_source_review
+  guides:
+    - title: "Use deep research"
+      url: /guides/use-deep-research/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+personal-workspace:
+  name: "Personal workspaces"
+  area: "Documents and workspaces"
+  audience: "End users"
+  summary: "Gives each user a personal document workspace for uploads, tags, prompts, agents, actions, and workflows where enabled."
+  why: "Use this as the default document management area for individual knowledge work. Disable it only in deployments that require all documents to live in managed group or public spaces."
+  default_state: "Enabled"
+  admin_tab: workspaces
+  setting_keys:
+    - enable_user_workspace
+  guides:
+    - title: "Create and manage tags"
+      url: /guides/create-and-manage-tags/
+    - title: "Use tags in chat"
+      url: /guides/use-tags-in-chat/
+group-workspaces:
+  name: "Group workspaces"
+  area: "Documents and workspaces"
+  audience: "End users"
+  summary: "Enables shared group spaces, group creation, and approval-aware file sharing between groups."
+  why: "Use this when teams need shared documents, prompts, agents, and group-owned workflows with role-aware access. The file-sharing toggle is best for cross-team collaboration where the receiving group should approve content before it becomes searchable."
+  default_state: "Mixed"
+  admin_tab: workspaces
+  setting_keys:
+    - enable_group_workspaces
+    - enable_group_creation
+    - enable_file_sharing
+  guides:
+    - title: "Manage group workspaces"
+      url: /guides/manage-group-workspaces/
+    - title: "Review approval requests"
+      url: /guides/review-approval-requests/
+    - title: "Lock workspace scope"
+      url: /guides/lock-workspace-scope/
+public-workspaces:
+  name: "Public workspaces"
+  area: "Documents and workspaces"
+  audience: "End users"
+  summary: "Publishes approved workspace content to a broader public workspace experience."
+  why: "Use this for curated content that should be discoverable beyond a single group. Keep it disabled when all content must stay personal or group-scoped, because public visibility changes the review burden."
+  default_state: "Disabled"
+  admin_tab: workspaces
+  setting_keys:
+    - enable_public_workspaces
+  guides:
+    - title: "Use public workspaces"
+      url: /guides/use-public-workspaces/
+file-sync:
+  name: "File sync"
+  area: "Documents and workspaces"
+  audience: "End users"
+  summary: "Lets enabled workspaces ingest content from configured storage sources instead of relying only on manual uploads."
+  why: "Use this when workspace documents should track authoritative SMB, Azure Files, or Azure Blob sources. Scope-specific toggles let admins roll out sync gradually because credentials, schedules, and source ownership need governance."
+  default_state: "Mixed"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_file_sync
+    - enable_file_sync_group
+    - enable_file_sync_personal
+    - enable_file_sync_public
+  guides:
+    - title: "Create a file sync"
+      url: /guides/create-a-file-sync/
+document-access-index:
+  name: "Document access index"
+  area: "Documents and workspaces"
+  audience: "Operators"
+  summary: "Maintains a dedicated document-access index for faster authorization-aware document reads and validation."
+  why: "Use this to keep document access checks fast and consistent as workspace content grows. Shadow validation and debug settings are rollout aids, not everyday user features, so operators should turn them on only while validating changes."
+  default_state: "Mixed"
+  admin_tab: scale
+  setting_keys:
+    - enable_document_access_index_cache
+    - enable_document_access_index_container
+    - enable_document_access_index_reads
+    - enable_document_access_index_shadow_validation
+    - enable_document_access_index_write_through
+    - enable_startup_document_access_index_backfill
+    - enable_dai_debug
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+retention-policies:
+  name: "Retention policies"
+  area: "Documents and workspaces"
+  audience: "Admins"
+  summary: "Applies automatic retention rules separately for personal, group, and public workspace content."
+  why: "Use this when conversations and documents need lifecycle enforcement instead of relying on manual cleanup. Configure each workspace type separately because personal drafts, group records, and public knowledge usually have different retention expectations."
+  default_state: "Disabled"
+  admin_tab: backup-recovery
+  setting_keys:
+    - enable_retention_policy_group
+    - enable_retention_policy_personal
+    - enable_retention_policy_public
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+document-extraction:
+  name: "Document extraction"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Controls Document Intelligence, enhanced extraction, formulas, and embedded Office image analysis during ingestion."
+  why: "Use enhanced extraction when forms, scans, images, tables, or formulas need richer structure than standard text extraction. Keep cost and latency in mind because higher-fidelity extraction can be slower and depends on additional Azure services."
+  default_state: "Mixed"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_document_intelligence_apim
+    - enable_document_intelligence_formula_extraction
+    - enable_enhanced_extraction
+    - enable_office_embedded_image_analysis
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+document-metadata-and-classification:
+  name: "Document metadata and classification"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Adds AI-assisted metadata extraction and category labels to workspace documents."
+  why: "Use this when users need better filtering, review cues, or document summaries beyond filenames and tags. It is most useful for curated workspaces; small collections may not need the extra extraction step."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_document_classification
+    - enable_extract_meta_data
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+chunk-size-overrides:
+  name: "Chunk size overrides"
+  area: "Media and ingestion"
+  audience: "Admins"
+  summary: "Lets admins override default extraction chunk sizes by file type for indexing and retrieval."
+  why: "Use this when retrieval quality shows that default chunking is too coarse or too fragmented for your documents. Change it cautiously because reprocessing behavior, search relevance, and token cost are all affected."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_chunk_size_override
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+media-file-ingestion:
+  name: "Audio and video ingestion"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Allows audio and video files to be processed into searchable transcript-style content."
+  why: "Use this when meetings, recordings, or media assets hold knowledge that users should search and cite. Keep it disabled unless Speech or Video Indexer dependencies and processing costs are acceptable."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_audio_file_support
+    - enable_video_file_support
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+multimodal-vision:
+  name: "Multimodal vision"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Enables model-based visual analysis for images and visual document content."
+  why: "Use this when image content itself matters, not just OCR text. It should be paired with clear model selection and safety expectations because visual analysis can add cost and may describe sensitive images."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_multimodal_vision
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+tabular-analysis:
+  name: "Tabular analysis"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Runs structured CSV and spreadsheet analysis with durable planning, batching, checkpoints, and response controls."
+  why: "Use this when users need computed answers, grouped results, exports, or charts from spreadsheet data rather than prose guesses. The many rollout flags exist because large workbook analysis needs reliability controls for planning, retries, batching, and durable checkpoints."
+  default_state: "Mixed"
+  admin_tab: agents-actions
+  setting_keys:
+    - enable_analysis_deliverable_contract_telemetry
+    - enable_tabular_analyze_durable_preflight
+    - enable_tabular_compact_response_protocol
+    - enable_tabular_completion_driven_checkpointing
+    - enable_tabular_durable_run_confirmation
+    - enable_tabular_generation_balanced_batches
+    - enable_tabular_generation_plan
+    - enable_tabular_hierarchical_analysis
+    - enable_tabular_independent_batch_retries
+    - enable_tabular_mixed_deferred_composition_planning
+    - enable_tabular_multifile_execution_unit_planning
+    - enable_tabular_parity_contract_telemetry
+    - enable_tabular_processing_plugin
+    - enable_tabular_rolling_worker_pool
+    - enable_tabular_search_shared_preflight
+  reference:
+    - title: "Tabular processing action"
+      url: /reference/actions/tabular-processing/
+document-compare:
+  name: "Cross-format document compare"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Compares documents across supported formats, including staged one-to-many comparison behavior."
+  why: "Use this when users need revision review across PDFs, Office files, or other supported sources instead of manually reading each file. The one-to-many flag should be staged separately because it expands the amount of source material processed in one comparison."
+  default_state: "Disabled"
+  admin_tab: knowledge
+  setting_keys:
+    - enable_cross_format_compare
+    - enable_cross_format_compare_one_to_many
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+image-generation:
+  name: "Image generation"
+  area: "Media and ingestion"
+  audience: "End users"
+  summary: "Adds AI image creation from chat using the configured image generation model route."
+  why: "Use this when users need generated visuals as part of ideation, explanation, or content creation. Keep approval and model routing clear because generated images have different safety, cost, and compliance considerations than text answers."
+  default_state: "Disabled"
+  admin_tab: ai-models
+  setting_keys:
+    - enable_image_generation
+    - enable_image_gen_apim
+  guides:
+    - title: "Generate images"
+      url: /guides/generate-images/
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/
+agents:
+  name: "Agents"
+  area: "Agents and actions"
+  audience: "End users"
+  summary: "Enables Semantic Kernel agents, agent discovery, templates, and multi-agent orchestration options."
+  why: "Use this when users need specialized assistants with instructions, knowledge, actions, or reusable workflows. Keep basic chat available for simple questions; agents are most valuable when a task needs repeatable behavior or governed tools."
+  default_state: "Mixed"
+  admin_tab: agents-actions
+  setting_keys:
+    - enable_semantic_kernel
+    - enable_agent_template_gallery
+    - enable_multi_agent_orchestration
+  guides:
+    - title: "Create an agent"
+      url: /guides/create-an-agent/
+    - title: "Create an agent with actions"
+      url: /guides/create-an-agent-with-actions/
+  reference:
+    - title: "Actions reference"
+      url: /reference/actions/
+core-actions:
+  name: "Core actions"
+  area: "Agents and actions"
+  audience: "End users"
+  summary: "Controls built-in action plugins for HTTP access, math, text transformation, time, waits, and embedding utilities."
+  why: "Use these actions to give agents small, predictable tools for common tasks without building custom integrations. Disable tools that are not needed in your environment, especially HTTP access, because actions expand what an agent can do beyond plain chat."
+  default_state: "Mixed"
+  admin_tab: agents-actions
+  setting_keys:
+    - enable_default_embedding_model_plugin
+    - enable_http_plugin
+    - enable_math_plugin
+    - enable_text_plugin
+    - enable_time_plugin
+    - enable_wait_plugin
+  reference:
+    - title: "Smart HTTP action"
+      url: /reference/actions/smart-http/
+    - title: "All actions"
+      url: /reference/actions/
+  guides:
+    - title: "Create an action"
+      url: /guides/create-an-action/
+  reference:
+    - title: "Embedding model action"
+      url: /reference/actions/embedding-model/
+    - title: "Fact memory action"
+      url: /reference/actions/fact-memory/
+    - title: "Math action"
+      url: /reference/actions/math/
+    - title: "Text action"
+      url: /reference/actions/text/
+    - title: "Time action"
+      url: /reference/actions/time/
+    - title: "Wait action"
+      url: /reference/actions/wait/
+mcp-governance:
+  name: "MCP destination governance"
+  area: "Agents and actions"
+  audience: "Admins"
+  summary: "Adds governance controls for Model Context Protocol destinations used by agent actions."
+  why: "Use this when MCP tools are available and admins need to restrict unsafe or unapproved destinations. It is a governance guardrail, not a tool by itself, so pair it with action access policies."
+  default_state: "Disabled"
+  admin_tab: governance
+  setting_keys:
+    - enable_mcp_destination_governance
+  reference:
+    - title: "Actions reference"
+      url: /reference/actions/
+content-safety:
+  name: "Content safety"
+  area: "Governance and safety"
+  audience: "Admins"
+  summary: "Screens prompts and content through Azure AI Content Safety with optional API Management routing."
+  why: "Use this when prompts, search, image generation, or other AI flows require policy checks before processing. Tune messages and reviewer access carefully so blocked users receive useful guidance without exposing sensitive trigger details."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_content_safety
+    - enable_content_safety_apim
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+notices-and-terms:
+  name: "Notices and terms of use"
+  area: "Governance and safety"
+  audience: "End users"
+  summary: "Shows AI notices and terms-of-use acknowledgement prompts to users."
+  why: "Use this when the app needs explicit user-facing policy language before or during use. Keep messages concise and operationally maintained, because stale legal or AI-use notices reduce trust."
+  default_state: "Disabled"
+  admin_tab: appearance
+  setting_keys:
+    - enable_ai_notice
+    - enable_terms_of_use
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+feedback-and-archiving:
+  name: "Feedback and conversation archiving"
+  area: "Governance and safety"
+  audience: "End users"
+  summary: "Collects user feedback, exposes support feedback, and can archive conversations for review or compliance workflows."
+  why: "Use feedback when product owners need a structured signal on answer quality or user issues. Add archiving only when audit or compliance needs justify retaining conversation copies beyond ordinary chat history."
+  default_state: "Mixed"
+  admin_tab: help
+  setting_keys:
+    - enable_user_feedback
+    - enable_support_send_feedback
+    - enable_conversation_archiving
+  guides:
+    - title: "Send feedback"
+      url: /guides/send-feedback/
+support-menu:
+  name: "Support menu and latest features"
+  area: "Governance and safety"
+  audience: "End users"
+  summary: "Adds the support menu, latest-feature pages, and optional documentation links for in-app help."
+  why: "Use this when users need discoverable help and release guidance inside SimpleChat. Documentation links should be enabled only when the linked docs are ready for your audience and deployment path."
+  default_state: "Mixed"
+  admin_tab: help
+  setting_keys:
+    - enable_support_latest_feature_documentation_links
+    - enable_support_latest_features
+    - enable_support_menu
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+custom-navigation:
+  name: "Custom pages and external links"
+  area: "Integrations"
+  audience: "End users"
+  summary: "Lets admins add trusted in-app custom pages and curated external navigation links."
+  why: "Use custom pages for authenticated local guidance, dashboards, forms, or lightweight tools that belong beside chat. Use external links sparingly for trusted destinations; too many links turn the app navigation into a generic portal."
+  default_state: "Disabled"
+  admin_tab: appearance
+  setting_keys:
+    - enable_custom_pages
+    - enable_external_links
+  reference:
+    - title: "Feature reference"
+      url: /reference/features/
+key-vault-secrets:
+  name: "Key Vault secret storage"
+  area: "Integrations"
+  audience: "Operators"
+  summary: "Stores configured secrets in Azure Key Vault and can remind operators about secret expiration."
+  why: "Use this when secret handling should move out of app settings and into a managed vault with lifecycle reminders. It requires identity and vault setup, so file-based or Cosmos settings may be simpler for non-production experiments."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_key_vault_secret_expiration_reminders
+    - enable_key_vault_secret_storage
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+app-maintenance-and-health:
+  name: "App maintenance and health checks"
+  area: "Platform and operations"
+  audience: "Operators"
+  summary: "Runs startup and recurring maintenance jobs and exposes optional external health-check behavior."
+  why: "Use this so background upkeep such as indexing policy repair and access-index maintenance happens predictably. External and no-auth health checks should be exposed only when platform monitoring requires them and network controls are understood."
+  default_state: "Mixed"
+  admin_tab: operations
+  setting_keys:
+    - enable_app_maintenance
+    - enable_startup_app_maintenance
+    - enable_external_healthcheck
+    - enable_no_auth_external_healthcheck
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+logging-and-diagnostics:
+  name: "Logging and diagnostics"
+  area: "Platform and operations"
+  audience: "Operators"
+  summary: "Controls diagnostic logging, Application Insights global logging, and user-visible file processing logs."
+  why: "Use diagnostics when operators need to troubleshoot ingestion, settings, or runtime behavior. Keep verbose debug logging temporary because it can increase noise and operational cost."
+  default_state: "Mixed"
+  admin_tab: operations
+  setting_keys:
+    - enable_appinsights_global_logging
+    - enable_debug_logging
+    - enable_file_processing_logs
+  reference:
+    - title: "Logging tags reference"
+      url: /reference/logging-tags/
+scale-and-cache:
+  name: "Scale and cache"
+  area: "Platform and operations"
+  audience: "Operators"
+  summary: "Enables Redis-backed scale-out support and cached conversation reads for faster hot paths."
+  why: "Use Redis when multiple app instances need shared session and cache behavior. Conversation caching is useful for responsiveness, but operators should tune time-to-live values alongside consistency expectations."
+  default_state: "Mixed"
+  admin_tab: scale
+  setting_keys:
+    - enable_redis_cache
+    - enable_conversation_cache
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+front-door-and-session-security:
+  name: "Front Door and session controls"
+  area: "Platform and operations"
+  audience: "Operators"
+  summary: "Supports Azure Front Door routing and optional idle-timeout behavior for browser sessions."
+  why: "Use Front Door when the app sits behind that edge service and generated URLs or redirects need to respect it. Idle timeout is useful for shared or regulated environments, but can interrupt long reading sessions if set too aggressively."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_front_door
+    - enable_idle_timeout
+  reference:
+    - title: "Admin configuration reference"
+      url: /reference/admin_configuration/
+rate-limit-response-message:
+  name: "Rate limit response message"
+  area: "Platform and operations"
+  audience: "Admins"
+  summary: "Replaces the built-in HTTP 429 explanation with admin-authored Markdown shown wherever a request is throttled."
+  why: "Use this when throttling is a planned capacity control rather than a fault, such as a deployment fronted by API Management, and users need to know the retry window or who to ask for more capacity. Leave it off when the built-in wording is sufficient, because a stale custom message is worse than a generic accurate one."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_custom_rate_limit_message
+  reference:
+    - title: "Security settings"
+      url: /admin/security/
+thoughts-display:
+  name: "Thoughts display"
+  area: "Platform and operations"
+  audience: "End users"
+  summary: "Shows configured processing-thought information in supported chat flows."
+  why: "Use this when users benefit from seeing how a request is being processed or which tool phase is underway. Disable it when a simpler answer-only experience is preferred or when internal processing details should stay hidden."
+  default_state: "Enabled"
+  admin_tab: appearance
+  setting_keys:
+    - enable_thoughts
+  reference:
+    - title: "Chat interface reference"
+      url: /reference/chat-controls/

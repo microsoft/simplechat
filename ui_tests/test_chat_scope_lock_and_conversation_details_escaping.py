@@ -1,8 +1,8 @@
 # test_chat_scope_lock_and_conversation_details_escaping.py
 """
 UI test for chat scope-lock and conversation-details escaping.
-Version: 0.241.019
-Implemented in: 0.241.019
+Version: 0.250.215
+Implemented in: 0.241.019; Updated in: 0.250.215
 
 This test ensures malicious workspace names and conversation metadata render as
 inert text in the chat scope-lock modal and conversation-details modal.
@@ -93,6 +93,18 @@ def test_chat_scope_lock_and_conversation_details_escape_malicious_metadata(play
                 },
             },
             {
+                "category": "document",
+                "document_id": "doc-2",
+                "title": "Retrieved but not cited",
+                "classification": "Public",
+                "chunk_ids": ["chunk_2_p1"],
+                "scope": {
+                    "type": "personal",
+                    "id": "user-1",
+                    "name": "Personal",
+                },
+            },
+            {
                 "category": "semantic",
                 "value": semantic_tag,
             },
@@ -107,6 +119,22 @@ def test_chat_scope_lock_and_conversation_details_escape_malicious_metadata(play
             {
                 "category": "web",
                 "value": web_source,
+            },
+        ],
+        "used_documents_tracking_version": 1,
+        "legacy_used_documents": [],
+        "used_documents": [
+            {
+                "category": "document",
+                "document_id": "doc-1",
+                "title": document_title,
+                "classification": classification_label,
+                "chunk_ids": ["chunk_1_p2"],
+                "scope": {
+                    "type": "group",
+                    "id": "group-1",
+                    "name": document_scope_name,
+                },
             },
         ],
         "strict": False,
@@ -202,7 +230,19 @@ def test_chat_scope_lock_and_conversation_details_escape_malicious_metadata(play
         expect(details_content).to_contain_text(participant_name)
         expect(details_content).to_contain_text(participant_email)
         expect(details_content).to_contain_text(document_title)
+        expect(details_content).to_contain_text("Retrieved but not cited")
         expect(details_content).to_contain_text(document_scope_name)
+        expect(details_content).to_contain_text("Source documents")
+        expect(
+            page.locator(
+                "#conversation-details-modal .conversation-document-cited-badge"
+            )
+        ).to_have_count(1)
+        expect(
+            page.locator(
+                "#conversation-details-modal .conversation-document-cited-badge"
+            )
+        ).to_have_text("Cited")
         expect(details_content).to_contain_text(classification_label)
         expect(details_content).to_contain_text(semantic_tag)
         expect(details_content).to_contain_text(model_tag)

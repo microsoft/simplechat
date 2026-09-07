@@ -1,0 +1,157 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'workflow' %} show active{% endif %}" id="workflow" role="tabpanel" aria-labelledby="workflow-tab">
+                <div class="card mb-3 p-3" id="workflow-settings-section">
+                    <h5>
+                        <i class="bi bi-diagram-3 me-2"></i>Workflow
+                    </h5>
+                    <p class="text-muted">
+                        Control personal and group workflow authoring and execution for users.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_user_workflows"
+                            name="allow_user_workflows"
+                            {% if settings.allow_user_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_user_workflows">
+                            Enable Personal Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to create personal workflows that run a selected agent or model manually or on an interval schedule."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_member_of_workflow_user"
+                            name="require_member_of_workflow_user"
+                            {% if settings.require_member_of_workflow_user %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_member_of_workflow_user">
+                            Require WorkflowUser App Role
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Require the WorkflowUser Enterprise App role before users can open, create, edit, run, or inspect personal workflows."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
+                    </p>
+
+                    <div class="form-group mt-3 mb-3">
+                        <label for="workflow_max_auto_invoke_attempts" class="form-label">
+                            Workflow Agent Action Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_auto_invoke_attempts"
+                            name="workflow_max_auto_invoke_attempts"
+                            min="1"
+                            max="500"
+                            step="1"
+                            value="{{ settings.workflow_max_auto_invoke_attempts|default(60, true) }}">
+                        <div class="form-text">
+                            Maximum automatic tool or action calls an agent can make during one workflow run. Default is 60; increase for large document sets.
+                        </div>
+                        <div class="alert alert-warning small mb-0 mt-2" role="alert">
+                            Values above 100 are capacity-sensitive. Enable Cosmos DB Throughput automation in SimpleChat so the app can monitor RU pressure and scale up Cosmos when needed, and also monitor Azure OpenAI throttling, App Service CPU and memory, and downstream service latency.
+                        </div>
+                    </div>
+
+                    <div class="form-group mt-3 mb-3">
+                        <label for="workflow_max_tasks" class="form-label">
+                            Workflow Task Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_tasks"
+                            name="workflow_max_tasks"
+                            min="1"
+                            max="100"
+                            step="1"
+                            value="{{ settings.workflow_max_tasks|default(50, true) }}">
+                        <div class="form-text">
+                            Maximum ordered instruction tasks users can add to one workflow. Default is 50; supported range is 1-100.
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="allow_group_workflows"
+                            name="allow_group_workflows"
+                            {% if settings.allow_group_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="allow_group_workflows">
+                            Enable Group Workflows
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow permitted group members to create, manage, and run workflows from group workspaces."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="require_group_assignment_for_group_workflows"
+                            name="require_group_assignment_for_group_workflows"
+                            {% if settings.require_group_assignment_for_group_workflows %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="require_group_assignment_for_group_workflows">
+                            Require Group Assignment to Use Workflow
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="When enabled, only groups selected in Manage Groups can create, manage, or run group workflows."></i>
+                    </div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="manage-group-workflow-groups-btn" data-bs-toggle="modal" data-bs-target="#groupWorkflowAssignmentModal">
+                            <i class="bi bi-people me-1"></i>Manage Groups
+                        </button>
+                        <span class="text-muted small" id="group-workflow-assignment-summary">No groups assigned.</span>
+                    </div>
+                    <textarea class="d-none" id="group_workflow_allowed_group_ids" name="group_workflow_allowed_group_ids">{{ settings.group_workflow_allowed_group_ids|default([], true)|tojson }}</textarea>
+                    <p class="text-muted small mb-0">
+                        Group workflow authoring is available to group Owners and Admins by default. Enable the owner-only setting below to limit group agent, action, and workflow management to Owners.
+                    </p>
+                </div>
+
+
+
+                <div class="modal fade" id="groupWorkflowAssignmentModal" tabindex="-1" aria-labelledby="groupWorkflowAssignmentModalLabel" aria-hidden="true">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <div>
+                                    <h5 class="modal-title mb-0" id="groupWorkflowAssignmentModalLabel">Group Workflow Assignments</h5>
+                                    <small class="text-muted">Choose which groups can use group workflows when assignment is required.</small>
+                                </div>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 align-items-end mb-3">
+                                    <div class="col">
+                                        <label for="group-workflow-group-search" class="form-label">Search Groups</label>
+                                        <input type="search" class="form-control" id="group-workflow-group-search" placeholder="Search by group name or description" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true">
+                                    </div>
+                                    <div class="col-auto">
+                                        <button type="button" class="btn btn-outline-primary" id="group-workflow-group-search-btn">
+                                            <i class="bi bi-search me-1"></i>Search
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="alert alert-danger d-none" id="group-workflow-assignment-error"></div>
+                                <div class="small text-muted mb-2" id="group-workflow-assignment-status">No groups loaded.</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Group</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col" class="text-end">Assignment</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="group-workflow-assignment-groups-body">
+                                            <tr>
+                                                <td colspan="3" class="text-center text-muted py-3">Search for groups to assign.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Done</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>

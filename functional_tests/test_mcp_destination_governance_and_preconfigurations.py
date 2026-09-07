@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP destination governance and preconfigurations.
-Version: 0.250.100
-Implemented in: 0.250.064
+Version: 0.250.204
+Implemented in: 0.250.064; 0.250.204
 
 This test ensures MCP destination allowlisting and server preconfiguration catalog
 loading work without exposing secret-bearing defaults.
@@ -279,6 +279,38 @@ def test_governance_item_policy_backed_destination_patterns():
             user_id="user-2",
         )
         assert denied_decision["allowed"] is False
+
+        policies_by_entity_type["mcp_personal_destination"] = [
+            {
+                "item_id": "*",
+                "allow_all": True,
+                "allowed_users": [],
+                "allowed_groups": [],
+                "denied_users": ["user-1"],
+                "denied_groups": [],
+            },
+            {
+                "item_id": "preconfiguration:github",
+                "allow_all": False,
+                "allowed_users": ["user-1"],
+                "allowed_groups": [],
+                "denied_users": [],
+                "denied_groups": [],
+            },
+        ]
+        blocked_policy_config = mcp_destinations.get_mcp_destination_policy_config(
+            {"enable_mcp_destination_governance": True},
+            user_id="user-1",
+        )
+        blocked_github_decision = mcp_destinations.evaluate_mcp_destination_policy(
+            _mcp_manifest("https://api.githubcopilot.com/mcp/", "github"),
+            scope_type=MCP_DESTINATION_SCOPE_PERSONAL,
+            scope_id="user-1",
+            policy_config=blocked_policy_config,
+            user_id="user-1",
+        )
+        assert blocked_github_decision["allowed"] is False
+        assert blocked_github_decision["reason"] == "matched_destination_block_policy"
     finally:
         mcp_destinations._list_governance_item_policies = original_list
         mcp_destinations._get_governance_group_ids_for_user = original_groups

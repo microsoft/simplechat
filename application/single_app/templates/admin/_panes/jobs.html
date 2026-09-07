@@ -1,0 +1,89 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'jobs' %} show active{% endif %}" id="jobs" role="tabpanel" aria-labelledby="jobs-tab" data-testid="jobs-tab-pane" data-admin-group-pane="backup-recovery" data-ignore-settings-change="true">
+                <div class="card p-4 mb-4 border-dark shadow-sm" id="data-management-jobs-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h4 class="mb-0">Job History</h4>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="data-management-refresh-jobs-btn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                    <div class="row g-2 align-items-end mb-3" aria-label="Job history filters">
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_operation_filter">Operation</label>
+                            <select class="form-select form-select-sm" id="data_management_job_operation_filter">
+                                <option value="" selected>All operations</option>
+                                <option value="backup">Backup</option>
+                                <option value="migration">Migration</option>
+                                <option value="restore">Restore</option>
+                                <option value="dry_run">Dry run</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_status_filter">Status</label>
+                            <select class="form-select form-select-sm" id="data_management_job_status_filter">
+                                <option value="" selected>All statuses</option>
+                                <option value="queued">Queued</option>
+                                <option value="running">Running</option>
+                                <option value="completed">Completed</option>
+                                <option value="completed_with_warnings">Completed with warnings</option>
+                                <option value="failed">Failed</option>
+                                <option value="canceled">Canceled</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_scheduled_filter">Run type</label>
+                            <select class="form-select form-select-sm" id="data_management_job_scheduled_filter">
+                                <option value="all" selected>Scheduled and manual</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="manual">Manual</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_created_from">Created from</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_job_created_from" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_created_to">Created through</label>
+                            <input class="form-control form-control-sm" type="date" id="data_management_job_created_to" />
+                        </div>
+                        <div class="col-sm-6 col-lg-2">
+                            <label class="form-label small" for="data_management_job_page_size">Rows per page</label>
+                            <select class="form-select form-select-sm" id="data_management_job_page_size">
+                                <option value="10">10</option>
+                                <option value="25" selected>25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Created</th>
+                                    <th scope="col">Operation</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Progress</th>
+                                    <th scope="col">Message</th>
+                                    <th scope="col">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="data-management-jobs-tbody">
+                                <tr>
+                                    <td colspan="6" class="text-muted">Job history has not loaded yet.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <nav class="d-flex flex-wrap align-items-center justify-content-between gap-2" aria-label="Job history pagination">
+                        <span class="small text-muted" id="data-management-job-pagination-status" role="status" aria-live="polite">Page 1 has not loaded yet.</span>
+                        <div class="btn-group btn-group-sm" role="group" aria-label="Job history pages">
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-job-previous-page-btn" disabled aria-disabled="true">
+                                <i class="bi bi-chevron-left me-1"></i>Previous
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" id="data-management-job-next-page-btn" disabled aria-disabled="true">
+                                Next<i class="bi bi-chevron-right ms-1"></i>
+                            </button>
+                        </div>
+                    </nav>
+                </div>
+            </div>

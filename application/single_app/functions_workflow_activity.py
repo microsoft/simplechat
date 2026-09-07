@@ -4,6 +4,8 @@
 
 from datetime import datetime, timezone
 
+from functions_workflow_alerts import describe_alert_condition, resolve_workflow_alert_config
+
 
 def _normalize_text(value):
     return str(value or '').strip()
@@ -49,6 +51,7 @@ def _serialize_workflow(workflow):
     if not isinstance(workflow, dict):
         return None
 
+    alert_config = resolve_workflow_alert_config(workflow)
     return {
         'id': workflow.get('id'),
         'name': workflow.get('name'),
@@ -56,6 +59,19 @@ def _serialize_workflow(workflow):
         'runner_type': workflow.get('runner_type'),
         'trigger_type': workflow.get('trigger_type'),
         'alert_priority': workflow.get('alert_priority'),
+        'alert_mode': alert_config.get('alert_mode'),
+        'alert_rules': [
+            {
+                'id': rule.get('id'),
+                'name': rule.get('name'),
+                'enabled': rule.get('enabled', True),
+                'severity': rule.get('severity'),
+                'delivery': rule.get('delivery'),
+                'condition_summary': describe_alert_condition(rule.get('condition')),
+            }
+            for rule in alert_config.get('alert_rules') or []
+            if isinstance(rule, dict)
+        ],
         'conversation_id': workflow.get('conversation_id'),
     }
 
@@ -95,6 +111,7 @@ def _serialize_run(run_record):
         'agent_display_name': run_record.get('agent_display_name'),
         'response_preview': run_record.get('response_preview'),
         'error': run_record.get('error'),
+        'alert_decision': run_record.get('alert_decision') or {},
     }
 
 

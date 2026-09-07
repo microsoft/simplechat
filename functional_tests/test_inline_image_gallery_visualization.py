@@ -2,7 +2,7 @@
 # test_inline_image_gallery_visualization.py
 """
 Functional test for inline image gallery visualization support.
-Version: 0.241.066
+Version: 0.260.024
 Implemented in: 0.241.057
 
 This test ensures assistant agent citations can expose inline image galleries,
@@ -105,8 +105,18 @@ def test_chat_renderer_wires_inline_image_galleries():
     assert ".inline-image-modal-meta-row" in chats_css
     assert "max-height: 400px;" in chats_css
     assert "object-fit: contain;" in chats_css
-    assert "hybridCitations || []" in messages_js
-    assert "webCitations || []" in messages_js
+    assert "hybridCitations," in messages_js
+    assert "webCitations," in messages_js
+    assert (
+        "const citedHybridCitations = getCitedHybridCitations(fullMessageObject, hybridCitations);"
+        in messages_js
+    )
+    assert (
+        "const citedWebCitations = getCitedWebCitations(fullMessageObject, webCitations);"
+        in messages_js
+    )
+    assert "function extractWorkspaceCitationImageItems(citedHybridCitations = []" in images_js
+    assert "function extractLinkedImageItems(citedWebCitations = []" in images_js
 
 
 def test_workflow_created_conversations_keep_summary_citations():

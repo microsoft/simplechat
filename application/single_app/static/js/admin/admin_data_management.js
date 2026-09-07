@@ -9,6 +9,11 @@ const targetCosmosDatabaseName = "SimpleChat";
 const cosmosEditorConfirmationPhrase = "I understand this can damage system data";
 const migrationMirrorConfirmationPhrase = "MAKE DESTINATION MATCH SOURCE";
 const restoreOverwriteConfirmationPhrase = "RESTORE WITH OVERWRITE";
+// Backup & Recovery was a single tab until the Admin Settings information
+// architecture was split. Its controls now live in five sibling panes, so the
+// module binds across every pane that declares the group rather than looking
+// for one root element that no longer exists.
+const dataManagementPaneSelector = "[data-admin-group-pane='backup-recovery']";
 const elements = {};
 let dataManagementModified = false;
 let storedBackupConnectionStringAvailable = false;
@@ -69,7 +74,7 @@ const migrationWorkflowState = {
 };
 document.addEventListener("DOMContentLoaded", () => {
     bindElements();
-    if (!elements.tabPane) {
+    if (!elements.tabPanes.length) {
         return;
     }
 
@@ -84,7 +89,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
 function bindElements() {
     const ids = [
-        "data-management",
         "data-management-migration-section",
         "data-management-migration-readiness",
         "data-management-migration-step-error",
@@ -305,7 +309,7 @@ function bindElements() {
         elements[key] = document.getElementById(id);
     });
 
-    elements.tabPane = elements.dataManagement;
+    elements.tabPanes = Array.from(document.querySelectorAll(dataManagementPaneSelector));
 }
 
 function bindEvents() {
@@ -388,7 +392,8 @@ function bindEvents() {
         pendingDataManagementBackupDelete = null;
     });
     elements.dataManagementConfirmBackupDeleteBtn?.addEventListener("click", deleteDataManagementBackup);
-    elements.dataManagementKeyVaultLink?.addEventListener("click", openKeyVaultSettings);
+    // The Key Vault link carries data-admin-link, so admin_card_links.js
+    // resolves the owning tab from the DOM and scrolls to the card.
     elements.dataManagementCosmosEditorOpenDangerBtn?.addEventListener("click", showCosmosEditorDangerModal);
     elements.datamanagementcosmoseditordangeraccept?.addEventListener("change", updateCosmosEditorDangerAcceptState);
     elements.dataManagementCosmosEditorAcceptDangerBtn?.addEventListener("click", acceptCosmosEditorDanger);
@@ -551,12 +556,14 @@ function activateMigrationScopeTab(targetType) {
 }
 
 function bindDataManagementChangeTracking() {
-    elements.tabPane?.querySelectorAll("input, select, textarea").forEach((element) => {
-        if (element.closest("[data-ignore-data-management-change='true']")) {
-            return;
-        }
-        const eventName = element.type === "checkbox" || element.type === "radio" || element.tagName === "SELECT" ? "change" : "input";
-        element.addEventListener(eventName, markDataManagementModified);
+    elements.tabPanes.forEach((pane) => {
+        pane.querySelectorAll("input, select, textarea").forEach((element) => {
+            if (element.closest("[data-ignore-data-management-change='true']")) {
+                return;
+            }
+            const eventName = element.type === "checkbox" || element.type === "radio" || element.tagName === "SELECT" ? "change" : "input";
+            element.addEventListener(eventName, markDataManagementModified);
+        });
     });
 }
 
@@ -907,20 +914,6 @@ function setKeyStorageAlert(variant, iconClass, title, message, linkText) {
     setText(elements.dataManagementKeyStorageAlertTitle, title);
     setText(elements.dataManagementKeyStorageAlertMessage, message);
     setText(elements.dataManagementKeyVaultLink, linkText);
-}
-
-function openKeyVaultSettings(event) {
-    event?.preventDefault();
-    const securityTabButton = document.getElementById("security-tab");
-    if (securityTabButton && window.bootstrap?.Tab) {
-        window.bootstrap.Tab.getOrCreateInstance(securityTabButton).show();
-    } else if (securityTabButton) {
-        securityTabButton.click();
-    }
-    window.location.hash = "security";
-    window.setTimeout(() => {
-        document.getElementById("keyvault-section")?.scrollIntoView({ block: "start", behavior: "smooth" });
-    }, 100);
 }
 
 function collectSettings() {
@@ -3853,10 +3846,12 @@ function getMigrationLiveMetrics(job) {
         const hasRecentProgress = timestampAgeSeconds(
             job?.last_progress_at || migrationState.last_progress_at
         ) <= 10;
-        metrics.push({
-            label: "Liveness",
-            value: hasRecentProgress ? "Running - progress active" : "Running - alive, no recent progress",
-        });
+        if (!isTerminalJobStatus(job?.status)) {
+            metrics.push({
+                label: "Liveness",
+                value: hasRecentProgress ? "Running - progress active" : "Running - alive, no recent progress",
+            });
+        }
     }
     return metrics;
 }
@@ -3869,15 +3864,18 @@ function getBackupLiveMetrics(job) {
     const totals = backupState.totals && typeof backupState.totals === "object" ? backupState.totals : {};
     const telemetry = backupState.telemetry && typeof backupState.telemetry === "object" ? backupState.telemetry : {};
     const sourceCapacity = backupState.source_capacity && typeof backupState.source_capacity === "object" ? backupState.source_capacity : {};
-    const metrics = [
-        { label: "Current container", value: telemetry.current_container || "Waiting" },
+    const metrics = [];
+    if (!isTerminalJobStatus(job?.status)) {
+        metrics.push({ label: "Current container", value: telemetry.current_container || "Waiting" });
+    }
+    metrics.push(
         { label: "Checkpoint position", value: formatNumber(telemetry.checkpoint_position || totals.checkpoint_count || 0) },
         { label: "Processed", value: formatNumber(telemetry.records_processed || totals.processed_count || 0) },
         { label: "Transferred", value: formatBytes(telemetry.bytes || totals.bytes || 0) },
         { label: "Request units", value: formatNumber(telemetry.request_units || totals.request_units || 0) },
         { label: "Retries / throttles", value: `${formatNumber(telemetry.retries || totals.retry_attempt_count || 0)} / ${formatNumber(telemetry.throttles || totals.throttle_count || 0)}` },
         { label: "Skipped / failed", value: `${formatNumber(totals.skipped_count || 0)} / ${formatNumber(totals.failed_count || 0)}` },
-    ];
+    );
     if (telemetry.elapsed_seconds !== undefined || totals.elapsed_seconds !== undefined) {
         metrics.push({ label: "Elapsed", value: `${formatNumber(telemetry.elapsed_seconds ?? totals.elapsed_seconds ?? 0)}s` });
     }
@@ -3921,6 +3919,10 @@ function getRestoreLiveMetrics(job) {
         metrics.push({ label: "Last progress", value: progressAge });
     }
     return metrics;
+}
+
+function isTerminalJobStatus(status) {
+    return ["completed", "completed_with_warnings", "failed", "canceled"].includes(String(status || ""));
 }
 
 function timestampAgeSeconds(value) {

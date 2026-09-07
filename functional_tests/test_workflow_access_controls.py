@@ -12,13 +12,19 @@ with the WorkflowUser app role, and are enforced across UI and API surfaces.
 import json
 from pathlib import Path
 from test_support.versioning import assert_app_version_at_least
+from test_support.nav import iter_tabs
+from test_support.templates import compose_if_admin_settings
+from test_support.nav import iter_tabs
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def read_text(relative_path):
-    return (ROOT / relative_path).read_text(encoding="utf-8")
+    _path = ROOT / relative_path
+    return compose_if_admin_settings(
+        _path, _path.read_text(encoding="utf-8")
+    )
 
 
 def test_workflow_access_control_wiring():
@@ -114,9 +120,11 @@ def test_workflow_access_control_wiring():
     assert 'id="require_member_of_workflow_user"' in admin_template_content, (
         "Expected admin WorkflowUser requirement toggle markup."
     )
-    assert 'data-section="workflow-settings-section"' in sidebar_template_content, (
-        "Expected Admin Settings sidebar navigation to link to Workflow settings."
-    )
+    assert any(
+        section["id"] == "workflow-settings-section"
+        for _, tab in iter_tabs()
+        for section in tab["sections"]
+    ), "Expected Admin Settings navigation to link to Workflow settings."
 
     assert '{% if settings.allow_user_workflows %}' in workspace_template_content, (
         "Expected workspace workflow tab and modals to be gated by effective workflow access."

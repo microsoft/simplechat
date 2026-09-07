@@ -5,6 +5,7 @@ from config import *
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
@@ -34,7 +35,12 @@ from functions_group import (
 from functions_governance import ensure_governance_access
 from functions_image_messages import build_image_message_documents
 from functions_prompts import list_all_prompts_for_scope
-from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import (
+    add_visible_public_workspace,
+    find_public_workspace_by_id,
+    get_user_role_in_public_workspace,
+    get_user_visible_public_workspace_ids_from_settings,
+)
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
 from functions_chat_bootstrap_cache import (
@@ -461,15 +467,22 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
         selection_key = _normalize_chat_model_value(option.get('selection_key'))
         model_id = _normalize_chat_model_value(option.get('model_id'))
         display_name = _normalize_chat_model_value(
-            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+            option.get('display_name')
+            or option.get('request_model')
+            or option.get('deployment_name')
+            or option.get('model_id')
         ) or 'Select a Model'
         deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
+        request_model = _normalize_chat_model_value(
+            option.get('request_model') or deployment_name
+        )
         scope_type = _normalize_chat_model_value(option.get('scope_type'))
         scope_name = _normalize_chat_model_value(option.get('scope_name'))
 
         search_parts = [
             display_name,
             model_id,
+            request_model,
             deployment_name,
             scope_name or scope_type,
         ]
@@ -477,6 +490,7 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             'selection_key': selection_key,
             'model_id': model_id,
             'display_name': display_name,
+            'request_model': request_model,
             'deployment_name': deployment_name,
             'endpoint_id': _normalize_chat_model_value(option.get('endpoint_id')),
             'provider': _normalize_chat_model_value(option.get('provider')),
@@ -484,23 +498,28 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             'scope_id': _normalize_chat_model_value(option.get('scope_id')),
             'scope_name': scope_name,
             'icon': option.get('icon') if isinstance(option.get('icon'), dict) else {},
-            'option_value': deployment_name or model_id or selection_key,
+            'option_value': request_model or deployment_name or model_id or selection_key,
             'search_text': ' '.join(part for part in search_parts if part),
         }
 
     def sort_key(option):
         scope_type = _normalize_chat_model_value(option.get('scope_type'))
         display_name = _normalize_chat_model_value(
-            option.get('display_name') or option.get('deployment_name') or option.get('model_id')
+            option.get('display_name')
+            or option.get('request_model')
+            or option.get('deployment_name')
+            or option.get('model_id')
         ).lower()
         scope_name = _normalize_chat_model_value(option.get('scope_name')).lower()
         model_id = _normalize_chat_model_value(option.get('model_id')).lower()
         deployment_name = _normalize_chat_model_value(option.get('deployment_name')).lower()
+        request_model = _normalize_chat_model_value(option.get('request_model')).lower()
         return (
             scope_order.get(scope_type, 99),
             scope_name,
             display_name,
             model_id,
+            request_model,
             deployment_name,
         )
 
@@ -522,7 +541,13 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
     if normalized_preferred_model_deployment:
         for option in sorted_options:
             deployment_name = _normalize_chat_model_value(option.get('deployment_name'))
-            if deployment_name == normalized_preferred_model_deployment:
+            request_model = _normalize_chat_model_value(
+                option.get('request_model') or deployment_name
+            )
+            if (
+                deployment_name == normalized_preferred_model_deployment
+                or request_model == normalized_preferred_model_deployment
+            ):
                 return serialize_option(option)
 
     return serialize_option(sorted_options[0])
@@ -552,13 +577,15 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
 
                 model_id = model.get('id') or model.get('deploymentName') or model.get('deployment') or model.get('modelName') or model.get('name') or ''
                 deployment_name = model.get('deploymentName') or model.get('deployment') or ''
-                display_name = model.get('displayName') or model.get('modelName') or deployment_name or model.get('name') or model_id
-                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name}"
+                request_model = resolve_model_endpoint_request_model(endpoint, model)
+                display_name = model.get('displayName') or model.get('modelName') or request_model or deployment_name or model.get('name') or model_id
+                selection_key = f"{scope_type}:{scope_id or ''}:{endpoint_id}:{model_id or deployment_name or request_model}"
 
                 catalog.append({
                     'selection_key': selection_key,
                     'model_id': model_id,
                     'display_name': display_name,
+                    'request_model': request_model,
                     'deployment_name': deployment_name,
                     'endpoint_id': endpoint_id,
                     'provider': provider,
@@ -665,6 +692,29 @@ def _is_valid_chat_bootstrap_payload(payload):
     )
 
 
+def _ensure_public_chat_workspace_visible(user_id, request_args, user_settings_dict):
+    search_documents = str(request_args.get('search_documents') or '').strip().lower() == 'true'
+    doc_scope = str(request_args.get('doc_scope') or '').strip().lower()
+    workspace_id = str(request_args.get('workspace_id') or '').strip()
+    if not search_documents or doc_scope != 'public' or not workspace_id:
+        return False
+
+    public_directory_settings = user_settings_dict.get('publicDirectorySettings')
+    if isinstance(public_directory_settings, dict) and public_directory_settings.get(workspace_id) is True:
+        return False
+
+    workspace = find_public_workspace_by_id(workspace_id)
+    if not workspace or not get_user_role_in_public_workspace(workspace, user_id):
+        return False
+
+    add_visible_public_workspace(user_id, workspace_id)
+    if not isinstance(public_directory_settings, dict):
+        public_directory_settings = {}
+        user_settings_dict['publicDirectorySettings'] = public_directory_settings
+    public_directory_settings[workspace_id] = True
+    return True
+
+
 def register_route_frontend_chats(bp):
     @bp.route('/chats', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -678,6 +728,7 @@ def register_route_frontend_chats(bp):
         settings = get_settings()
         user_settings = get_user_settings(user_id)
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+        _ensure_public_chat_workspace_visible(user_id, request.args, user_settings_dict)
         public_settings = sanitize_settings_for_user(settings)
         ai_notice = get_ai_notice_config(public_settings)
         ai_notice['dismissed'] = is_ai_notice_dismissed(
@@ -756,6 +807,7 @@ def register_route_frontend_chats(bp):
                     multi_endpoint_models.append({
                         "id": model.get("id"),
                         "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
+                        "request_model": resolve_model_endpoint_request_model(endpoint, model),
                         "deployment_name": model.get("deploymentName") or "",
                         "endpoint_id": endpoint.get("id"),
                         "provider": endpoint.get("provider"),
@@ -1327,12 +1379,13 @@ def register_route_frontend_chats(bp):
             if file_ext_nodot in (DOCUMENT_EXTENSIONS | {'html'}) or is_image_file:
                 extraction_mode = 'read'
                 if file_ext == '.pdf' or is_image_file:
-                    extraction_mode = get_document_intelligence_pdf_image_extraction_mode(settings)
+                    extraction_mode = get_effective_document_intelligence_pdf_image_extraction_mode(settings)
                     if extraction_mode == 'auto':
                         extraction_mode = 'layout' if is_image_file else 'read'
-                extracted_content_raw  = extract_content_with_azure_di(
+                extracted_content_raw, _extraction_engine_used, _extraction_engine_fallback = extract_content_with_extraction_engine(
                     temp_file_path,
-                    extraction_mode=extraction_mode
+                    extraction_mode=extraction_mode,
+                    settings=settings
                 )
                 
                 # Convert pages_data list to string

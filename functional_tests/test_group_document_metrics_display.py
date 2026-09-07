@@ -33,7 +33,7 @@ def test_group_document_metrics_api():
                 content = f.read()
             
             # Check for group API endpoint
-            if "@app.route('/api/admin/control-center/groups'" in content:
+            if "@bp.route('/api/admin/control-center/groups'" in content:
                 print("   ✅ Found groups API endpoint")
                 
                 # Check for document metrics handling in groups endpoint

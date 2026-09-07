@@ -331,8 +331,11 @@ window.addEventListener('DOMContentLoaded', async () => {
                        if (textEl) {
                            if (docIdsToSelect.length === 1) {
                                // Find the label from the dropdown item
-                               const matchItem = docDropdownItems
-                                   ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${docIdsToSelect[0]}"] span`)
+                               const matchRow = docDropdownItems
+                                   ? docDropdownItems.querySelector(`.dropdown-item[data-document-id="${docIdsToSelect[0]}"]`)
+                                   : null;
+                               const matchItem = matchRow
+                                   ? (matchRow.querySelector('.chat-document-option-title') || matchRow.querySelector('span'))
                                    : null;
                                textEl.textContent = matchItem ? matchItem.textContent : "1 document selected";
                            } else {

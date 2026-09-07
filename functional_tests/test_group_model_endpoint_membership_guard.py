@@ -25,7 +25,7 @@ def test_group_model_endpoint_read_requires_current_membership():
     backend_content = read_file_text(backend_path)
 
     route_block_start = backend_content.index("def get_group_model_endpoints_route():")
-    route_block_end = backend_content.index("@app.route('/api/group/model-endpoints', methods=['POST'])")
+    route_block_end = backend_content.index("@bp.route('/api/group/model-endpoints', methods=['POST'])")
     route_block = backend_content[route_block_start:route_block_end]
 
     expected_guard = '''        assert_group_role(

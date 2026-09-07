@@ -55,7 +55,7 @@ def test_enhanced_citations_route_exposes_exact_document_metadata_lookup():
 
     route_source = read_text(ROUTE_FILE)
 
-    assert '@app.route("/api/enhanced_citations/document_metadata", methods=["GET"])' in route_source
+    assert '@bp.route("/api/enhanced_citations/document_metadata", methods=["GET"])' in route_source
     assert 'doc_response, status_code = get_document(user_id, doc_id)' in route_source
     assert 'get_document_blob_storage_info(raw_doc)' in route_source
     assert '"file_name": raw_doc.get("file_name")' in route_source

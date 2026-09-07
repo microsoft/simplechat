@@ -11,12 +11,17 @@ plugin callers depend on.
 """
 
 import ast
+import sys
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 OPERATIONS_FILE = ROOT_DIR / 'application' / 'single_app' / 'functions_simplechat_operations.py'
 CONFIG_FILE = ROOT_DIR / 'application' / 'single_app' / 'config.py'
+
+sys.path.insert(0, str(ROOT_DIR / 'functional_tests'))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def read_text(path):
@@ -102,7 +107,7 @@ def test_create_group_wrapper_exists_and_normalizes_inputs():
 
 def test_version_alignment():
     print('Testing version alignment...')
-    assert read_version() == '0.241.121'
+    assert_app_version_at_least('0.241.121')
     print('Version alignment passed.')
     return True
 

@@ -1,0 +1,29 @@
+<!-- templates/errors/429.html -->
+
+{% extends "base.html" %}
+{% block title %}
+  Rate limited - {{ app_settings.app_title }}
+{% endblock %}
+{% block content %}
+
+<div class="container my-4">
+  <div class="row justify-content-center">
+    <div class="col-12 col-lg-8">
+      <div class="card p-4">
+        <h1 class="h4 mb-3">
+          <i class="bi bi-hourglass-split me-2" aria-hidden="true"></i>Rate limited
+        </h1>
+        <div class="rate-limit-message">
+          {{ rate_limit_message_html }}
+        </div>
+        <div class="mt-4">
+          <a class="btn btn-primary" href="{{ url_for('public_app.index') }}">
+            Return to the home page
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

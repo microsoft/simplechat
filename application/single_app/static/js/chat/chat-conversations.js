@@ -1685,9 +1685,8 @@ export async function selectConversation(conversationId) {
   }
 
   if (isCollaborativeConversation && window.chatCollaboration?.activateConversation) {
-    await loadMessages(conversationId);
-    scrollConversationViewToBottom();
     await window.chatCollaboration.activateConversation(conversationId, metadata);
+    scrollConversationViewToBottom();
   } else {
     window.chatCollaboration?.deactivateConversation?.();
     await loadMessages(conversationId);

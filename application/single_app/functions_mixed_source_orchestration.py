@@ -82,18 +82,24 @@ EVIDENCE_ENGINES = frozenset({
 })
 
 EVIDENCE_STATUS_COMPLETED = "completed"
+EVIDENCE_STATUS_PENDING = "pending"
 EVIDENCE_STATUS_PARTIAL = "partial"
 EVIDENCE_STATUS_FAILED = "failed"
 EVIDENCE_STATUS_SKIPPED = "skipped"
+EVIDENCE_STATUS_CANCELED = "canceled"
 EVIDENCE_STATUSES = frozenset({
     EVIDENCE_STATUS_COMPLETED,
+    EVIDENCE_STATUS_PENDING,
     EVIDENCE_STATUS_PARTIAL,
     EVIDENCE_STATUS_FAILED,
     EVIDENCE_STATUS_SKIPPED,
+    EVIDENCE_STATUS_CANCELED,
 })
 
 EVIDENCE_ENVELOPE_MAX_BYTES = 65536
-EVIDENCE_SUMMARY_MAX_BYTES = 4096
+# Narrative Analyze summaries carry the only copy of document detail (no separate durable
+# artifact channel like tabular exports have), so this must stay well below EVIDENCE_ENVELOPE_MAX_BYTES.
+EVIDENCE_SUMMARY_MAX_BYTES = 16384
 EVIDENCE_ERROR_MAX_BYTES = 1024
 EVIDENCE_LIST_MAX_ITEMS = 10
 EVIDENCE_ITEM_MAX_BYTES = 1536
@@ -101,7 +107,9 @@ EVIDENCE_COVERAGE_MAX_BYTES = 4096
 EVIDENCE_JSON_MAX_DEPTH = 4
 EVIDENCE_JSON_MAX_COLLECTION_ITEMS = 20
 EVIDENCE_JSON_MAX_STRING_BYTES = 1024
-MIXED_SOURCE_HANDOFF_MAX_BYTES = 49152
+# Raised alongside EVIDENCE_SUMMARY_MAX_BYTES so a handful of narrative sources at the new
+# per-summary cap do not immediately fall back to the 512-byte-per-summary compaction path.
+MIXED_SOURCE_HANDOFF_MAX_BYTES = 131072
 MIXED_SOURCE_HANDOFF_MAX_ENVELOPES = 20
 MIXED_SOURCE_MODES = frozenset({"chat", "search", "analyze", "compare"})
 MIXED_SOURCE_TERMINAL_REASON_MAX_BYTES = 128
@@ -119,6 +127,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "authorization_failure_count",
     "background_export_count",
     "cancellation_count",
+    "canceled_source_count",
     "citation_count",
     "completed_source_count",
     "duplicate_evidence_count",
@@ -134,6 +143,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "narrative_source_count",
     "partial_failure_count",
     "partial_source_count",
+    "pending_source_count",
     "prompt_tokens",
     "request_count",
     "skipped_source_count",
@@ -279,16 +289,19 @@ def emit_mixed_source_coverage_telemetry(
         if source_kind in source_kind_counts:
             source_kind_counts[source_kind] += 1
 
-    outcome_status = (
-        EVIDENCE_STATUS_PARTIAL
-        if coverage.get("partial_coverage")
-        else EVIDENCE_STATUS_COMPLETED
-    )
-    if coverage.get("successful_source_count", 0) == 0 and coverage.get(
-        "requested_source_count",
-        0,
-    ):
+    requested_source_count = coverage.get("requested_source_count", 0)
+    successful_source_count = coverage.get("successful_source_count", 0)
+    pending_source_count = coverage.get("pending_source_count", 0)
+    canceled_source_count = coverage.get("canceled_source_count", 0)
+    outcome_status = EVIDENCE_STATUS_COMPLETED
+    if pending_source_count:
+        outcome_status = EVIDENCE_STATUS_PENDING
+    elif canceled_source_count and canceled_source_count == requested_source_count:
+        outcome_status = EVIDENCE_STATUS_CANCELED
+    elif successful_source_count == 0 and requested_source_count:
         outcome_status = EVIDENCE_STATUS_FAILED
+    elif coverage.get("partial_coverage"):
+        outcome_status = EVIDENCE_STATUS_PARTIAL
     return emit_mixed_source_telemetry(
         settings,
         "terminal_coverage",
@@ -297,9 +310,11 @@ def emit_mixed_source_coverage_telemetry(
         metrics={
             "total_source_count": coverage.get("requested_source_count", 0),
             "completed_source_count": coverage.get("completed_source_count", 0),
+            "pending_source_count": coverage.get("pending_source_count", 0),
             "partial_source_count": coverage.get("partial_source_count", 0),
             "failed_source_count": coverage.get("failed_source_count", 0),
             "skipped_source_count": coverage.get("skipped_source_count", 0),
+            "canceled_source_count": coverage.get("canceled_source_count", 0),
             "successful_source_count": coverage.get("successful_source_count", 0),
             "tabular_source_count": source_kind_counts[SOURCE_KIND_TABULAR],
             "narrative_source_count": source_kind_counts[SOURCE_KIND_NARRATIVE],
@@ -401,7 +416,15 @@ def normalize_document_context_request(
 
 
 def should_run_tabular_evidence(user_question, has_narrative_sources=False):
-    """Return whether a mixed-source question needs tabular data or schema evidence."""
+    """Return whether an in-scope tabular source should be computed for this question.
+
+    Evidence gathering is additive. When an authorized tabular source is in scope the
+    tabular engine runs unless the question unambiguously targets a narrative artifact,
+    because deciding which evidence is relevant belongs to the synthesis step rather
+    than to this gate. Indexed tabular chunks carry only a truncated schema preview, so
+    skipping computation leaves the model with a handful of preview rows that can never
+    support a numeric conclusion.
+    """
     normalized_question = " ".join(str(user_question or "").strip().lower().split())
     if not normalized_question:
         return True
@@ -419,10 +442,12 @@ def should_run_tabular_evidence(user_question, has_narrative_sources=False):
         "across the files", "across the documents", "across the sources",
         "mixed sources",
     )
-    narrative_markers = (
+    # Only artifact markers suppress computation. Topic words such as "report" or
+    # "policy" describe subject matter, not which engine can answer, and previously
+    # suppressed computation over spreadsheets that held the requested values.
+    narrative_artifact_markers = (
         "pdf", "docx", "word document", "presentation", "powerpoint",
-        "paragraph", "section", "policy", "procedure", "contract",
-        "agreement", "memo", "letter", "narrative", "prose", "report",
+        "paragraph", "section",
     )
 
     if any(marker in normalized_question for marker in tabular_markers):
@@ -430,12 +455,8 @@ def should_run_tabular_evidence(user_question, has_narrative_sources=False):
     if any(marker in normalized_question for marker in collective_markers):
         return True
     if has_narrative_sources and any(
-        marker in normalized_question for marker in narrative_markers
+        marker in normalized_question for marker in narrative_artifact_markers
     ):
-        return False
-    if normalized_question in {"summarize", "summary", "summarize the selected sources"}:
-        return True
-    if has_narrative_sources:
         return False
     return True
 
@@ -470,6 +491,9 @@ def build_tabular_file_contexts_from_manifest(tabular_sources):
             "document_id": document_id,
             "file_name": file_name,
             "source_hint": source_hint,
+            "scope": scope,
+            "scope_id": source.get("scope_id"),
+            "source_version": source.get("source_version"),
             "group_id": source.get("group_id"),
             "public_workspace_id": source.get("public_workspace_id"),
             "conversation_id": source.get("conversation_id"),
@@ -1494,7 +1518,14 @@ def execute_tabular_evidence_sources(
                 source_kind=SOURCE_KIND_TABULAR,
                 engine=EVIDENCE_ENGINE_TABULAR_TOOLS,
                 status=EVIDENCE_STATUS_SKIPPED,
-                summary="Tabular processing was not needed for this narrative-only request.",
+                summary=(
+                    "Tabular computation was not run for this source, so its full table was "
+                    "never read. Any indexed excerpt from this source contains only a "
+                    "truncated schema preview of the first few rows. Do not derive counts, "
+                    "totals, averages, minimums, maximums, trends, or any other numeric "
+                    "conclusion from those preview rows. Call the tabular analysis action if "
+                    "values from this source are required."
+                ),
                 coverage={
                     "selection_mode": normalized_selection_mode,
                     "terminal": True,
@@ -1575,6 +1606,10 @@ def _get_terminal_reason(status, source, envelope=None):
         return "unsupported_source"
     if status == EVIDENCE_STATUS_SKIPPED:
         return "bounded_policy_skip"
+    if status == EVIDENCE_STATUS_PENDING:
+        return "pending_durable_evidence"
+    if status == EVIDENCE_STATUS_CANCELED:
+        return "durable_work_canceled"
     if status == EVIDENCE_STATUS_PARTIAL:
         return "incomplete_native_coverage"
     if status == EVIDENCE_STATUS_FAILED:
@@ -1587,7 +1622,7 @@ def build_terminal_coverage_ledger(
     evidence_envelopes,
     max_handoff_envelopes=MIXED_SOURCE_HANDOFF_MAX_ENVELOPES,
 ):
-    """Align exactly one terminal state and bounded evidence item to each manifest source."""
+    """Align one source state and bounded evidence item to each manifest source."""
     manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
     raw_envelopes = [
         envelope
@@ -1654,6 +1689,36 @@ def build_terminal_coverage_ledger(
 
         status_counts[status] += 1
         handoff_included = False
+        coverage = (
+            envelope.get("coverage")
+            if isinstance(envelope, dict) and isinstance(envelope.get("coverage"), dict)
+            else {}
+        )
+        generated_artifacts = (
+            list(envelope.get("generated_artifacts") or [])
+            if isinstance(envelope, dict)
+            else []
+        )
+        generated_reference_present = any(
+            isinstance(artifact, dict)
+            and str(
+                artifact.get("run_id")
+                or artifact.get("export_run_id")
+                or artifact.get("artifact_id")
+                or artifact.get("id")
+                or ""
+            ).strip()
+            for artifact in generated_artifacts
+        )
+        required_for_composition = coverage.get(
+            "required_for_composition",
+            source.get("required_for_composition"),
+        )
+        if required_for_composition is None:
+            required_for_composition = bool(
+                source.get("authorization_status") == AUTHORIZATION_STATUS_AUTHORIZED
+                and source_kind in {SOURCE_KIND_TABULAR, SOURCE_KIND_NARRATIVE}
+            )
         if envelope is not None:
             if len(aligned_envelopes) < max(0, int(max_handoff_envelopes)):
                 aligned_envelopes.append(envelope)
@@ -1677,12 +1742,19 @@ def build_terminal_coverage_ledger(
             "request_order": request_order,
             "status": status,
             "reason": reason,
+            "terminal": status != EVIDENCE_STATUS_PENDING,
+            "required_for_composition": bool(required_for_composition),
+            "native_engine": envelope.get("engine") if isinstance(envelope, dict) else None,
+            "execution_contract": coverage.get("execution_contract") or source.get("execution_contract"),
+            "generated_reference_present": generated_reference_present,
             "handoff_included": handoff_included,
         }
         ledger_entries.append(ledger_entry)
 
     partial_coverage = bool(
         status_counts[EVIDENCE_STATUS_PARTIAL]
+        or status_counts[EVIDENCE_STATUS_PENDING]
+        or status_counts[EVIDENCE_STATUS_CANCELED]
         or status_counts[EVIDENCE_STATUS_FAILED]
         or status_counts[EVIDENCE_STATUS_SKIPPED]
         or missing_coverage_violation_count
@@ -1695,9 +1767,11 @@ def build_terminal_coverage_ledger(
         "evidence_envelopes": aligned_envelopes,
         "requested_source_count": len(manifest_entries),
         "completed_source_count": status_counts[EVIDENCE_STATUS_COMPLETED],
+        "pending_source_count": status_counts[EVIDENCE_STATUS_PENDING],
         "partial_source_count": status_counts[EVIDENCE_STATUS_PARTIAL],
         "failed_source_count": status_counts[EVIDENCE_STATUS_FAILED],
         "skipped_source_count": status_counts[EVIDENCE_STATUS_SKIPPED],
+        "canceled_source_count": status_counts[EVIDENCE_STATUS_CANCELED],
         "successful_source_count": (
             status_counts[EVIDENCE_STATUS_COMPLETED]
             + status_counts[EVIDENCE_STATUS_PARTIAL]
@@ -1711,7 +1785,7 @@ def build_terminal_coverage_ledger(
 
 
 def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
-    """Apply the Phase 6 terminal failure policy to one aggregate-only ledger."""
+    """Apply the mixed-source reduction policy to one aggregate ledger."""
     normalized_mode = str(mode or "").strip().lower()
     if normalized_mode not in MIXED_SOURCE_MODES:
         raise ValueError(f"Unsupported mixed-source mode: {normalized_mode}")
@@ -1725,6 +1799,14 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
     successful_statuses = {EVIDENCE_STATUS_COMPLETED, EVIDENCE_STATUS_PARTIAL}
     successful_source_count = sum(
         str(entry.get("status") or "").strip().lower() in successful_statuses
+        for entry in entries
+    )
+    pending_source_count = sum(
+        str(entry.get("status") or "").strip().lower() == EVIDENCE_STATUS_PENDING
+        for entry in entries
+    )
+    canceled_source_count = sum(
+        str(entry.get("status") or "").strip().lower() == EVIDENCE_STATUS_CANCELED
         for entry in entries
     )
     partial_coverage = bool(coverage_ledger.get("partial_coverage"))
@@ -1756,9 +1838,23 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
             reason = "no_target_prepared"
         partial_coverage = partial_coverage or successful_target_count < len(target_entries)
 
+    if pending_source_count:
+        should_reduce = False
+        reason = "pending_required_evidence"
+
+    all_sources_canceled = bool(canceled_source_count and canceled_source_count == len(entries))
+
     if not should_reduce:
         status = EVIDENCE_STATUS_FAILED
-        reason = reason or "no_successful_source"
+        reason = reason or (
+            "required_evidence_canceled"
+            if all_sources_canceled
+            else "no_successful_source"
+        )
+        if pending_source_count:
+            status = EVIDENCE_STATUS_PENDING
+        elif all_sources_canceled:
+            status = EVIDENCE_STATUS_CANCELED
     elif partial_coverage:
         status = EVIDENCE_STATUS_PARTIAL
     else:
@@ -1769,6 +1865,8 @@ def evaluate_mixed_source_mode_outcome(mode, coverage_ledger):
         "status": status,
         "should_reduce": should_reduce,
         "successful_source_count": successful_source_count,
+        "pending_source_count": pending_source_count,
+        "canceled_source_count": canceled_source_count,
         "partial_coverage": partial_coverage,
         "reason": reason,
     }
@@ -1910,11 +2008,16 @@ def build_mixed_source_evidence_handoff(
     if len(serialized_payload.encode("utf-8")) > MIXED_SOURCE_HANDOFF_MAX_BYTES:
         raise ValueError("Mixed-source evidence handoff exceeds its size bound")
 
-    partial_coverage_instruction = (
-        "State clearly that source coverage was partial and identify unavailable authorized source labels."
-        if coverage["partial_coverage"]
-        else "Do not claim that selected sources were omitted."
-    )
+    if coverage.get("pending_source_count"):
+        partial_coverage_instruction = (
+            "State clearly that required source evidence is still pending and do not treat pending sources as completed."
+        )
+    elif coverage["partial_coverage"]:
+        partial_coverage_instruction = (
+            "State clearly that source coverage was partial and identify unavailable authorized source labels."
+        )
+    else:
+        partial_coverage_instruction = "Do not claim that selected sources were omitted."
     if mode:
         emit_mixed_source_coverage_telemetry(
             telemetry_settings,
@@ -1930,6 +2033,11 @@ def build_mixed_source_evidence_handoff(
             "and tabular tool citations; do not convert computed table facts into unsupported narrative claims. "
             "When selection_mode is selected, current selected-source evidence supersedes prior document "
             "grounding; do not use prior source claims to fill missing current coverage. "
+            "This handoff is your starting evidence, not your only means of gathering evidence: if you have "
+            "actions available and this handoff does not contain what the question needs, call the appropriate "
+            "action to obtain it and reason over the handoff and the action results together before answering. "
+            "Never derive numeric conclusions from an indexed preview of a tabular source whose evidence status "
+            "is not completed; obtain those values from a computed tabular result instead. "
             f"{partial_coverage_instruction}\n\n{serialized_payload}"
         ),
         "mixed_source_coverage": coverage,

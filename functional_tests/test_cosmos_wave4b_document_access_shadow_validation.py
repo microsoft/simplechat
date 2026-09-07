@@ -28,6 +28,7 @@ import types
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import read_admin_settings_template
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -673,11 +674,7 @@ def test_wave4b_admin_routes_and_version_are_wired():
         "r",
         encoding="utf-8",
     ).read()
-    admin_template = open(
-        os.path.join(SINGLE_APP_DIR, "templates", "admin_settings.html"),
-        "r",
-        encoding="utf-8",
-    ).read()
+    admin_template = read_admin_settings_template()
     personal_route = open(os.path.join(SINGLE_APP_DIR, "route_backend_documents.py"), "r", encoding="utf-8").read()
     group_route = open(os.path.join(SINGLE_APP_DIR, "route_backend_group_documents.py"), "r", encoding="utf-8").read()
     public_route = open(os.path.join(SINGLE_APP_DIR, "route_external_public_documents.py"), "r", encoding="utf-8").read()

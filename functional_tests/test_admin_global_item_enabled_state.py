@@ -11,6 +11,7 @@ settings page exposes enable/disable controls for both item types.
 """
 
 from pathlib import Path
+from test_support.templates import read_admin_settings_template
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -38,7 +39,7 @@ def test_admin_global_item_enabled_state():
     admin_plugins_js = ADMIN_PLUGINS_JS.read_text(encoding="utf-8")
     admin_agents_js = ADMIN_AGENTS_JS.read_text(encoding="utf-8")
     plugin_common_js = PLUGIN_COMMON_JS.read_text(encoding="utf-8")
-    admin_settings_template = ADMIN_SETTINGS_TEMPLATE.read_text(encoding="utf-8")
+    admin_settings_template = read_admin_settings_template()
     agent_schema = AGENT_SCHEMA_FILE.read_text(encoding="utf-8")
     plugin_schema = PLUGIN_SCHEMA_FILE.read_text(encoding="utf-8")
 

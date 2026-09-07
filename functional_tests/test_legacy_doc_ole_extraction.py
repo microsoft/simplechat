@@ -34,6 +34,13 @@ FUNCTIONS_DOCUMENTS_PATH = os.path.join(
     "functions_documents.py",
 )
 
+SINGLE_APP_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "application",
+    "single_app",
+)
+
 
 def _load_functions_content_module():
     """Load functions_content with lightweight stubs for config-heavy imports."""
@@ -66,10 +73,19 @@ def _load_functions_content_module():
     sys.modules["functions_settings"] = settings_stub
     sys.modules["functions_logging"] = logging_stub
 
+    # functions_content imports functions_office_media, which only needs stdlib, PIL, and
+    # defusedxml, so it is imported for real rather than stubbed. The stubs above already sit in
+    # sys.modules and take precedence, so widening sys.path cannot pull in the Azure-heavy modules.
+    sys_path_extended = SINGLE_APP_DIR not in sys.path
+    if sys_path_extended:
+        sys.path.insert(0, SINGLE_APP_DIR)
+
     try:
         spec.loader.exec_module(module)
         return module
     finally:
+        if sys_path_extended:
+            sys.path.remove(SINGLE_APP_DIR)
         for module_key, original_module in original_modules.items():
             if original_module is None:
                 sys.modules.pop(module_key, None)

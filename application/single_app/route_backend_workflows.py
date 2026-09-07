@@ -34,7 +34,7 @@ from functions_file_sync import (
 )
 from functions_group import require_active_group
 from functions_public_workspaces import require_active_public_workspace
-from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, build_analyze_config
+from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, DOCUMENT_ACTION_TYPE_NONE, build_analyze_config
 from functions_thoughts import get_thoughts_for_message
 from functions_workflow_activity import build_workflow_activity_snapshot
 from functions_msgraph_pending_actions import list_msgraph_pending_actions, sanitize_msgraph_pending_action_for_client
@@ -324,18 +324,62 @@ def _collect_group_workflow_file_sync_sources(user_id, group_id, settings=None):
     ]
 
 
+def _force_group_document_action_scope(action_config, group_id):
+    """Keep a resumed group workflow document action inside the owning group workspace."""
+    action_config = dict(action_config) if isinstance(action_config, dict) else {'type': DOCUMENT_ACTION_TYPE_NONE}
+    if action_config.get('type') == DOCUMENT_ACTION_TYPE_NONE:
+        return action_config
+
+    action_config['doc_scope'] = 'group'
+    action_config['active_group_ids'] = [group_id]
+    action_config['active_public_workspace_id'] = []
+    return action_config
+
+
+def _narrow_analyze_action_to_documents(action_config, document_ids, group_ids, public_workspace_ids):
+    """Point an analyze action at a specific document set, or disable it when empty."""
+    action_config = action_config if isinstance(action_config, dict) else {}
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+        return None
+    if not document_ids:
+        return {'type': DOCUMENT_ACTION_TYPE_NONE}
+
+    narrowed_action = dict(action_config)
+    narrowed_action.update({
+        'document_ids': list(document_ids),
+        'doc_scope': 'all',
+        'active_group_ids': group_ids or list(action_config.get('active_group_ids') or []),
+        'active_public_workspace_id': public_workspace_ids or list(action_config.get('active_public_workspace_id') or []),
+    })
+    return narrowed_action
+
+
 def _build_resume_failed_workflow(workflow, failed_items):
     action_config = workflow.get('document_action') if isinstance(workflow.get('document_action'), dict) else {}
-    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE:
+    tasks = workflow.get('tasks') if isinstance(workflow.get('tasks'), list) else []
+    task_analyze_ids = {
+        _normalize_identifier(task.get('id'))
+        for task in tasks
+        if isinstance(task, dict)
+        and isinstance(task.get('document_action'), dict)
+        and task['document_action'].get('type') == DOCUMENT_ACTION_TYPE_ANALYZE
+    }
+    if action_config.get('type') != DOCUMENT_ACTION_TYPE_ANALYZE and not task_analyze_ids:
         raise ValueError('Resume failed items currently supports Analyze workflows.')
 
     document_ids = []
+    document_ids_by_task = {}
     group_ids = []
     public_workspace_ids = []
     for item in failed_items:
         document_id = _normalize_identifier(item.get('document_id'))
         if document_id and document_id not in document_ids:
             document_ids.append(document_id)
+        task_id = _normalize_identifier(item.get('task_id'))
+        if document_id and task_id:
+            task_documents = document_ids_by_task.setdefault(task_id, [])
+            if document_id not in task_documents:
+                task_documents.append(document_id)
         scope_type = _normalize_identifier(item.get('scope_type')).lower()
         scope_id = _normalize_identifier(item.get('scope_id'))
         if scope_type == FILE_SYNC_SCOPE_GROUP and scope_id and scope_id not in group_ids:
@@ -347,15 +391,33 @@ def _build_resume_failed_workflow(workflow, failed_items):
         raise ValueError('No failed document items are available to resume.')
 
     resume_workflow = dict(workflow)
-    resume_action = dict(action_config)
-    resume_action.update({
-        'document_ids': document_ids,
-        'doc_scope': 'all',
-        'active_group_ids': group_ids or list(action_config.get('active_group_ids') or []),
-        'active_public_workspace_id': public_workspace_ids or list(action_config.get('active_public_workspace_id') or []),
-    })
+    resume_action = _narrow_analyze_action_to_documents(
+        action_config,
+        document_ids,
+        group_ids,
+        public_workspace_ids,
+    ) or dict(action_config)
     resume_workflow['document_action'] = resume_action
     resume_workflow['analyze'] = build_analyze_config(resume_action)
+
+    if tasks:
+        # Task document actions take precedence at run time, so narrow them too or the
+        # resume would re-run every document the task originally targeted.
+        resume_tasks = []
+        for task in tasks:
+            resume_task = dict(task) if isinstance(task, dict) else {}
+            task_id = _normalize_identifier(resume_task.get('id'))
+            narrowed_task_action = _narrow_analyze_action_to_documents(
+                resume_task.get('document_action'),
+                document_ids_by_task.get(task_id, [] if document_ids_by_task else document_ids),
+                group_ids,
+                public_workspace_ids,
+            )
+            if narrowed_task_action is not None:
+                resume_task['document_action'] = narrowed_task_action
+            resume_tasks.append(resume_task)
+        resume_workflow['tasks'] = resume_tasks
+
     resume_workflow['file_sync'] = {
         'enabled': False,
         'wait_mode': 'complete',
@@ -1374,11 +1436,18 @@ def register_route_backend_workflows(bp):
             resume_workflow = _build_resume_failed_workflow(workflow, failed_items)
             resume_action = resume_workflow.get('document_action') if isinstance(resume_workflow.get('document_action'), dict) else {}
             if resume_action:
-                resume_action['doc_scope'] = 'group'
-                resume_action['active_group_ids'] = [group_id]
-                resume_action['active_public_workspace_id'] = []
-                resume_workflow['document_action'] = resume_action
-                resume_workflow['analyze'] = build_analyze_config(resume_action)
+                resume_workflow['document_action'] = _force_group_document_action_scope(resume_action, group_id)
+                resume_workflow['analyze'] = build_analyze_config(resume_workflow['document_action'])
+            if isinstance(resume_workflow.get('tasks'), list):
+                resume_workflow['tasks'] = [
+                    {
+                        **task,
+                        'document_action': _force_group_document_action_scope(task.get('document_action'), group_id),
+                    }
+                    if isinstance(task, dict) and isinstance(task.get('document_action'), dict)
+                    else task
+                    for task in resume_workflow['tasks']
+                ]
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
 

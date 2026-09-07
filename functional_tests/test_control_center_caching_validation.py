@@ -72,14 +72,14 @@ def validate_caching_implementation():
             validation_results.append(False)
             
         # Check for refresh endpoints
-        if '@app.route(\'/api/admin/control-center/refresh\', methods=[\'POST\'])' in content:
+        if '@bp.route(\'/api/admin/control-center/refresh\', methods=[\'POST\'])' in content:
             print("✅ Data refresh endpoint implemented")
             validation_results.append(True)
         else:
             print("❌ Data refresh endpoint missing")
             validation_results.append(False)
             
-        if '@app.route(\'/api/admin/control-center/refresh-status\', methods=[\'GET\'])' in content:
+        if '@bp.route(\'/api/admin/control-center/refresh-status\', methods=[\'GET\'])' in content:
             print("✅ Refresh status endpoint implemented")
             validation_results.append(True)
         else:

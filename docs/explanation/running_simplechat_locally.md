@@ -181,6 +181,53 @@ If you want to test the scheduler separately, run:
 python simplechat_scheduler.py
 ```
 
+## Logout Behavior Across Environments
+
+Logout takes one of two paths, chosen per request. Knowing which one you are on explains
+most unexpected logout behavior.
+
+- **Local logout** clears the Flask session and redirects to the app home page.
+- **Easy Auth logout** first redirects through the App Service platform endpoint
+  `/.auth/logout` so the platform sign-in session is cleared too, then returns to the
+  SimpleChat login page.
+
+SimpleChat picks Easy Auth logout only when the request carries the
+`X-MS-CLIENT-PRINCIPAL` headers that App Service Easy Auth injects into requests it
+intercepts. That gives the following behavior:
+
+| Where you are running | Easy Auth headers present | Logout path |
+| --- | --- | --- |
+| Local machine (`python app.py`) | No | Local logout |
+| App Service with Easy Auth enabled | Yes | Easy Auth logout |
+| App Service without Easy Auth enabled | No | Local logout |
+
+Running locally, you always get local logout, because `WEBSITE_HOSTNAME` is not set and no
+platform headers exist. There is nothing to configure for local development.
+
+### Troubleshooting a 404 on logout
+
+If logout lands on a 404 at `/.auth/logout`, the app believed Easy Auth was serving that
+host but the endpoint was not reachable. Work through the following:
+
+1. Run with `FLASK_DEBUG=1` and sign out again. The logout path decision is written to the
+   debug log, including the reason when local logout is chosen.
+2. Confirm whether Easy Auth is actually enabled for the App Service. Setting only the
+   `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting does not enable it.
+3. If Easy Auth is enabled, confirm that `/.auth/*` is routed through to the App Service
+   origin. A custom domain, gateway or front door that does not forward those paths will
+   return a 404 even though Easy Auth is running.
+
+If Easy Auth must stay enabled and `/.auth/*` cannot be routed, keep logout on the local
+path with:
+
+```bash
+DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT=true
+```
+
+Use that only when the routing issue cannot be fixed. While it is set, signing out no
+longer clears the App Service platform session, so the next sign-in can complete without
+prompting for credentials.
+
 ## Practical Guidance
 
 - Create `.venv` with Python 3.12 and select it in VS Code before installing dependencies.

@@ -31,16 +31,18 @@ from functions_authentication import *
 from functions_content import *
 from functions_documents import *
 from functions_latest_features_nav import should_hide_latest_features_nav
+from admin_settings_nav import ADMIN_NAV, get_landing_tab_id
 from functions_search import *
 from functions_settings import *
 from functions_mcp_server_config import is_mcp_ui_enabled
+from functions_rate_limit import build_rate_limit_error_payload
 from functions_appinsights import *
 from functions_activity_logging import *
 
 import threading
 import time
 from datetime import datetime
-from flask import Blueprint, g
+from flask import Blueprint, g, make_response
 from urllib.parse import urlparse
 
 from route_frontend_authentication import *
@@ -103,6 +105,7 @@ from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -174,7 +177,7 @@ from swagger_wrapper import register_swagger_routes
 register_swagger_routes(app)
 
 from flask_session import Session
-from redis import Redis
+import functions_redis_client
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
@@ -219,41 +222,18 @@ def configure_sessions(settings):
                 try:
                     if redis_auth_type == 'managed_identity':
                         log_event("Redis enabled using Managed Identity", level=logging.INFO)
-                        redis_client = app_settings_cache.create_redis_managed_identity_client(
-                            redis_url,
-                            settings=settings,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     elif redis_auth_type == 'key_vault':
                         log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
-                        from functions_keyvault import retrieve_secret_direct
-                        redis_key_secret_name = settings.get('redis_key', '').strip()
-                        redis_password = retrieve_secret_direct(redis_key_secret_name)
-                        if redis_password:
-                            redis_password = redis_password.strip()
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_password,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     else:
-                        redis_key = settings.get('redis_key', '').strip()
                         log_event("Redis enabled using Access Key", level=logging.INFO)
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_key,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
-                    
+
+                    redis_client = functions_redis_client.create_redis_client(
+                        settings=settings,
+                        credential_purpose=functions_redis_client.CREDENTIAL_PURPOSE_SESSION,
+                        socket_connect_timeout=5,
+                        socket_timeout=5
+                    )
+
                     # Test the connection
                     redis_client.ping()
                     log_event("✅ Redis connection successful", level=logging.INFO)
@@ -320,6 +300,10 @@ def initialize_application(force=False):
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
+        # basicConfig above is a no-op once Azure Monitor owns the root logger,
+        # and that same root handler stops Flask attaching its stderr handler,
+        # so unhandled tracebacks would otherwise never reach the container log.
+        ensure_console_error_logging(app.logger)
         ensure_default_global_agent_exists()
 
         start_background_tasks()
@@ -598,12 +582,15 @@ def inject_settings():
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
+        admin_nav=ADMIN_NAV,
+        admin_landing_tab=get_landing_tab_id(),
         latest_features_current_version=VERSION,
         latest_features_nav_hidden=latest_features_nav_hidden,
         latest_features_nav_hidden_by_development=IS_DEVELOPMENT,
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes,
+        model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 
@@ -1092,6 +1079,58 @@ def nl2br_filter(value):
 
 app.jinja_env.filters['nl2br'] = nl2br_filter
 
+
+# =================== Rate Limiting (429) Responses =====================
+def rate_limited_caller_wants_json():
+    """Return True when a rate limited caller expects JSON over a rendered page."""
+    path = request.path or ''
+    if path.startswith('/api/') or path.startswith('/external/'):
+        return True
+
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return True
+
+    accept = request.accept_mimetypes
+    return accept.accept_json and not accept.accept_html
+
+
+@app.errorhandler(429)
+def handle_rate_limited_request(error):
+    """Return the admin-configured message whenever a request is rate limited.
+
+    Views that build their own 429 body resolve the message themselves, so this
+    handler covers ``abort(429)`` and any 429 raised from within the stack.
+    """
+    settings = get_settings()
+    retry_after = getattr(error, 'retry_after', None)
+
+    if rate_limited_caller_wants_json():
+        response = jsonify(build_rate_limit_error_payload(settings, retry_after=retry_after))
+    else:
+        message = get_rate_limit_message(settings)
+        try:
+            response = make_response(render_template(
+                'errors/429.html',
+                rate_limit_message_html=markdown_filter(message),
+            ))
+        except Exception as render_error:
+            # The message still has to reach the user even if the shell fails
+            # to render, so fall back to the raw Markdown as plain text.
+            log_event(
+                f"[RATE_LIMIT] Failed to render the 429 page: {render_error}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            response = make_response(message)
+            response.mimetype = 'text/plain'
+
+    response.status_code = 429
+    if retry_after:
+        response.headers['Retry-After'] = str(retry_after)
+
+    return response
+
+
 public_app_bp = Blueprint('public_app', __name__)
 
 
@@ -1099,6 +1138,9 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
+        return redirect(url_for('frontend_authentication.login'))
+
     settings = get_settings()
     public_settings = sanitize_settings_for_user(settings)
 

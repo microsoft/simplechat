@@ -10,6 +10,11 @@ from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     resolve_model_endpoint_from_context,
 )
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_types import (
+    get_model_endpoint_api_type,
+    resolve_model_endpoint_request_model,
+)
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
@@ -42,7 +47,6 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
-import redis 
 import time
 import uuid
 
@@ -89,6 +93,8 @@ def _resolve_admin_settings_test_secrets(payload):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_document_intelligence_subscription_key')
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_document_intelligence_key')
+    elif test_type == 'content_understanding':
+        _resolve_test_payload_secret(payload, ('key',), settings, 'azure_content_understanding_key')
     elif test_type == 'redis':
         _resolve_test_payload_secret(payload, ('key',), settings, 'redis_key')
     elif test_type == 'web_search':
@@ -745,6 +751,9 @@ def register_route_backend_settings(bp):
             elif test_type == 'azure_doc_intelligence':
                 return _test_azure_doc_intelligence_connection(data)
 
+            elif test_type == 'content_understanding':
+                return _test_content_understanding_connection(data)
+
             elif test_type == 'multimodal_vision':
                 return _test_multimodal_vision_connection(data)
 
@@ -1389,11 +1398,13 @@ def _test_multimodal_vision_connection(payload):
 
     # Create a simple test image (1x1 red pixel PNG)
     test_image_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    is_custom_model_endpoint = False
 
     try:
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
         if multi_endpoint_selection:
             settings = get_settings()
+            identity_context = {'user_id': get_current_user_id()}
             model_context = {
                 'endpoint_id': str(multi_endpoint_selection.get('endpoint_id') or '').strip(),
                 'model_id': str(multi_endpoint_selection.get('model_id') or '').strip(),
@@ -1407,6 +1418,9 @@ def _test_multimodal_vision_connection(payload):
             resolved_endpoint = resolve_model_endpoint_from_context(settings, model_context)
             if not resolved_endpoint:
                 return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+            is_custom_model_endpoint = (
+                str(resolved_endpoint.get('provider') or '').strip().lower() == 'custom'
+            )
 
             resolved_models = resolved_endpoint.get('models', []) or []
             matched_model = next(
@@ -1420,18 +1434,14 @@ def _test_multimodal_vision_connection(payload):
                 matched_model = next(
                     (
                         model for model in resolved_models
-                        if str(model.get('deploymentName') or model.get('deployment') or '').strip() == model_context['model_deployment']
+                        if resolve_model_endpoint_request_model(resolved_endpoint, model) == model_context['model_deployment']
                     ),
                     None,
                 )
             if not matched_model:
                 return jsonify({'error': 'Selected vision model could not be resolved from saved settings'}), 400
 
-            vision_model = str(
-                matched_model.get('deploymentName')
-                or matched_model.get('deployment')
-                or model_context['model_deployment']
-            ).strip()
+            vision_model = resolve_model_endpoint_request_model(resolved_endpoint, matched_model)
             vision_model_name = str(matched_model.get('modelName') or vision_model).strip()
             connection = resolved_endpoint.get('connection', {}) or {}
             gpt_client, _ = build_model_endpoint_sync_chat_client(
@@ -1440,8 +1450,21 @@ def _test_multimodal_vision_connection(payload):
                 connection.get('endpoint'),
                 connection.get('openai_api_version') or connection.get('api_version'),
                 deployment_name=vision_model,
+                api_type=get_model_endpoint_api_type(resolved_endpoint),
+                anthropic_version=connection.get('anthropic_version') or '',
+                allow_private_custom_endpoints=bool(
+                    settings.get('allow_private_custom_model_endpoints', False)
+                ),
+                settings=settings,
+                endpoint_config=resolved_endpoint,
+                identity_context=identity_context,
             )
         elif enable_apim:
+            settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(
+                settings,
+                identity_context={'user_id': get_current_user_id()},
+            )
             apim_data = payload.get('apim', {})
             endpoint = apim_data.get('endpoint')
             api_version = apim_data.get('api_version')
@@ -1450,9 +1473,15 @@ def _test_multimodal_vision_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                api_key=subscription_key
+                api_key=subscription_key,
+                default_headers=extra_headers or None,
             )
         else:
+            settings = get_settings()
+            extra_headers = build_model_endpoint_identity_headers(
+                settings,
+                identity_context={'user_id': get_current_user_id()},
+            )
             direct_data = payload.get('direct', {})
             endpoint = direct_data.get('endpoint')
             api_version = direct_data.get('api_version')
@@ -1466,14 +1495,16 @@ def _test_multimodal_vision_connection(payload):
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
+                    azure_ad_token_provider=token_provider,
+                    default_headers=extra_headers or None,
                 )
             else:
                 api_key = direct_data.get('key')
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    api_key=api_key
+                    api_key=api_key,
+                    default_headers=extra_headers or None,
                 )
 
         # Determine which token parameter to use based on model type
@@ -1525,6 +1556,15 @@ def _test_multimodal_vision_connection(payload):
         }), 200
 
     except Exception as e:
+        if is_custom_model_endpoint:
+            log_event(
+                "[MODEL_ENDPOINT] Custom vision model test failed",
+                extra={"exception_type": type(e).__name__},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                'error': 'The Custom vision model test failed. Review the endpoint and model configuration.'
+            }), 500
         return jsonify({'error': f'Vision test failed: {str(e)}'}), 500
 
 def get_index_client() -> SearchIndexClient:
@@ -1560,6 +1600,11 @@ def _test_gpt_connection(payload):
         'role': 'system',
         'content': f"Testing access."
     }
+    settings = get_settings()
+    extra_headers = build_model_endpoint_identity_headers(
+        settings,
+        identity_context={'user_id': get_current_user_id()},
+    )
 
     # Decide GPT model
     if enable_apim:
@@ -1572,7 +1617,8 @@ def _test_gpt_connection(payload):
         gpt_client = AzureOpenAI(
             api_version=api_version,
             azure_endpoint=endpoint,
-            api_key=subscription_key
+            api_key=subscription_key,
+            default_headers=extra_headers or None,
         )
     else:
         direct_data = payload.get('direct', {})
@@ -1586,7 +1632,8 @@ def _test_gpt_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
+                azure_ad_token_provider=token_provider,
+                default_headers=extra_headers or None,
             )
         else:
             key = direct_data.get('key')
@@ -1594,7 +1641,8 @@ def _test_gpt_connection(payload):
             gpt_client = AzureOpenAI(
                 api_version=api_version,
                 azure_endpoint=endpoint,
-                api_key=key
+                api_key=key,
+                default_headers=extra_headers or None,
             )
 
     try:
@@ -1611,47 +1659,71 @@ def _test_gpt_connection(payload):
 
 def _test_redis_connection(payload):
     """
-    Attempts to connect to Azure Redis using key or managed identity auth.
-    Performs a simple SET/GET round-trip test.
+    Attempts to connect to Azure Cache for Redis or Azure Managed Redis using the
+    credentials supplied by the admin form, then performs a SET/GET round trip.
     """
+    import functions_redis_client
+
     redis_host = payload.get('endpoint', '').strip()
     redis_key = payload.get('key', '').strip()
     redis_auth_type = payload.get('auth_type', 'key').strip()
+    redis_service_type = payload.get('service_type', '').strip()
+    redis_port = payload.get('port', '').strip()
 
     if not redis_host:
         return jsonify({'error': 'Redis host is required'}), 400
 
-    try:
-        if redis_auth_type == 'managed_identity':
-            # Acquire token from managed identity for Redis scope
-            from config import get_redis_cache_infrastructure_endpoint
-            credential = DefaultAzureCredential()
-            redis_hostname = redis_host.split('.')[0]
-            cache_endpoint = get_redis_cache_infrastructure_endpoint(redis_hostname)
-            token = credential.get_token(cache_endpoint)
-            redis_password = token.token
-        elif redis_auth_type == 'key_vault':
-            if not redis_key:
-                return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
-            try:
-                from functions_keyvault import retrieve_secret_direct
-                redis_password = retrieve_secret_direct(redis_key)
-            except Exception as kv_err:
-                log_event(f"[REDIS_TEST] Key Vault retrieval failed for secret '{redis_key}': {str(kv_err)}", level="error")
-                return jsonify({'error': 'Failed to retrieve Redis key from Key Vault. Check Application Insights using "[REDIS_TEST]" for details.'}), 500
-        else:
-            if not redis_key:
-                return jsonify({'error': 'Redis key is required for key authentication'}), 400
-            redis_password = redis_key
+    if redis_auth_type == 'key_vault' and not redis_key:
+        return jsonify({'error': 'Key Vault secret name is required for Key Vault authentication'}), 400
+    if redis_auth_type == 'key' and not redis_key:
+        return jsonify({'error': 'Redis key is required for key authentication'}), 400
 
-        r = redis.Redis(
-            host=redis_host,
-            port=6380,
-            password=redis_password,
-            ssl=True,
+    settings = get_settings()
+    test_settings = dict(settings)
+    test_settings.update({
+        'redis_url': redis_host,
+        'redis_auth_type': redis_auth_type,
+        'redis_key': redis_key,
+        'redis_service_type': redis_service_type or 'auto',
+        'redis_port': redis_port,
+    })
+
+    try:
+        # streaming_credentials=False keeps this ad-hoc test from starting a background
+        # token refresh thread every time an admin clicks Test.
+        r = functions_redis_client.create_redis_client(
+            settings=test_settings,
+            streaming_credentials=False,
             socket_connect_timeout=5
         )
+    except ValueError as validation_error:
+        # The factory raises ValueError for missing host, key, or Key Vault secret name. The
+        # route already returns a specific 400 for each of those above, so anything reaching
+        # here is unexpected. Log the exception type and let the traceback carry the detail
+        # rather than interpolating a message that resolved credentials may have touched.
+        log_event(
+            f"[REDIS_TEST] Redis settings validation failed ({type(validation_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'error': 'Redis settings are incomplete. Check the host name, service, port, and credential fields.'
+        }), 400
+    except Exception as client_error:
+        # Client construction resolves credentials, so the message can carry Key Vault secret
+        # names, vault URIs, or token details. Record the type plus the traceback and keep
+        # both the log message and the response free of the resolved secret material.
+        log_event(
+            f"[REDIS_TEST] Redis client construction failed for auth type "
+            f"'{redis_auth_type}' ({type(client_error).__name__}).",
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+        return jsonify({
+            'error': 'Failed to build the Redis connection. Check Application Insights using "[REDIS_TEST]" for details.'
+        }), 500
 
+    try:
         test_key = "test_key_simplechat"
         test_value = "hello_redis"
         r.set(test_key, test_value, ex=10)
@@ -1971,12 +2043,46 @@ def _test_azure_doc_intelligence_connection(payload):
         time.sleep(10)
 
     if status == "succeeded":
-        if extraction_mode == "auto":
-            return jsonify({'message': 'Azure document intelligence Auto connection successful. Auto samples PDFs with Enhanced extraction during ingestion, then finishes with Standard or Enhanced.'}), 200
-        extraction_mode_label = "Enhanced" if extraction_mode == "layout" else "Standard"
-        return jsonify({'message': f'Azure document intelligence {extraction_mode_label} connection successful'}), 200
+        if test_extraction_mode == "layout":
+            return jsonify({'message': (
+                'Azure document intelligence connection successful. Standard extraction and the '
+                'Layout model used for Auto sampling and Enhanced fallback are both reachable.'
+            )}), 200
+        return jsonify({'message': 'Azure document intelligence Standard connection successful'}), 200
     else:
         return jsonify({'error': f"Document Intelligence error: {status}"}), 500
+
+def _test_content_understanding_connection(payload):
+    """Attempt to reach Azure AI Content Understanding using ephemeral settings."""
+    from functions_content_understanding import test_content_understanding_connection
+
+    config_override = {
+        'endpoint': payload.get('endpoint'),
+        'key': payload.get('key'),
+        'authentication_type': payload.get('authentication_type'),
+        'api_version': payload.get('api_version'),
+        'analyzer_id': payload.get('analyzer_id'),
+        'image_analyzer_id': payload.get('image_analyzer_id'),
+    }
+
+    sample_file_path = None
+    if payload.get('run_sample_analysis'):
+        candidate_path = os.path.join(current_app.root_path, 'static', 'test_files', 'test_document.pdf')
+        if os.path.exists(candidate_path):
+            sample_file_path = candidate_path
+
+    try:
+        is_ok, message = test_content_understanding_connection(
+            config_override,
+            sample_file_path=sample_file_path,
+        )
+    except Exception as e:
+        return jsonify({'error': f'Content Understanding connection error: {str(e)}'}), 500
+
+    if is_ok:
+        return jsonify({'message': message}), 200
+    return jsonify({'error': message}), 400
+
 
 def _test_key_vault_connection(payload):
     """Attempt to connect to Azure Key Vault using ephemeral settings."""

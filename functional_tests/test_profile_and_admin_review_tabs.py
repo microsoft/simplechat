@@ -198,20 +198,20 @@ def test_stats_and_export_endpoints_and_documentation():
     assert_markers(
         backend_feedback_route,
         [
-            '@app.route("/feedback/review/stats", methods=["GET"])',
-            '@app.route("/feedback/review/export", methods=["GET"])',
-            '@app.route("/feedback/my/stats", methods=["GET"])',
-            '@app.route("/feedback/my/export", methods=["GET"])',
+            '@bp.route("/feedback/review/stats", methods=["GET"])',
+            '@bp.route("/feedback/review/export", methods=["GET"])',
+            '@bp.route("/feedback/my/stats", methods=["GET"])',
+            '@bp.route("/feedback/my/export", methods=["GET"])',
         ],
         'backend feedback route',
     )
     assert_markers(
         backend_safety_route,
         [
-            "@app.route('/api/safety/logs/stats', methods=['GET'])",
-            "@app.route('/api/safety/logs/export', methods=['GET'])",
-            "@app.route('/api/safety/logs/my/stats', methods=['GET'])",
-            "@app.route('/api/safety/logs/my/export', methods=['GET'])",
+            "@bp.route('/api/safety/logs/stats', methods=['GET'])",
+            "@bp.route('/api/safety/logs/export', methods=['GET'])",
+            "@bp.route('/api/safety/logs/my/stats', methods=['GET'])",
+            "@bp.route('/api/safety/logs/my/export', methods=['GET'])",
         ],
         'backend safety route',
     )

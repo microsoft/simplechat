@@ -332,6 +332,15 @@
       background: var(--workflow-alert-accent, var(--bs-primary));
     }
 
+    .workflow-alert-modal-content[data-priority="critical"] {
+      --workflow-alert-accent: var(--bs-danger);
+      --workflow-alert-accent-rgb: var(--bs-danger-rgb);
+    }
+
+    .workflow-alert-modal-content[data-priority="critical"]::before {
+      width: 10px;
+    }
+
     .workflow-alert-modal-content[data-priority="high"] {
       --workflow-alert-accent: var(--bs-danger);
       --workflow-alert-accent-rgb: var(--bs-danger-rgb);
@@ -342,9 +351,15 @@
       --workflow-alert-accent-rgb: var(--bs-warning-rgb);
     }
 
-    .workflow-alert-modal-content[data-priority="low"] {
+    .workflow-alert-modal-content[data-priority="low"],
+    .workflow-alert-modal-content[data-priority="info"] {
       --workflow-alert-accent: var(--bs-info);
       --workflow-alert-accent-rgb: var(--bs-info-rgb);
+    }
+
+    .workflow-alert-modal-content[data-category="failure"] {
+      --workflow-alert-accent: var(--bs-danger);
+      --workflow-alert-accent-rgb: var(--bs-danger-rgb);
     }
 
     .workflow-alert-modal-header {
@@ -676,6 +691,13 @@
     const appSettings = {{ app_settings|tojson }};
     window.appSettings = appSettings;
     window.simplechatUserSettings = {{ user_settings.get('settings', {}) | tojson }};
+    window.simplechatModelEndpointApiTypes = {{ model_endpoint_api_types | default([]) | tojson }};
+    window.simplechatCustomApiTypeUsesModelName = function(apiType) {
+      const normalized = String(apiType || '').trim().toLowerCase().replace(/-/g, '_');
+      const descriptor = (window.simplechatModelEndpointApiTypes || [])
+        .find(entry => entry.value === normalized);
+      return descriptor ? Boolean(descriptor.usesModelName) : false;
+    };
     window.simplechatLatestFeaturesNav = {{ {
       'currentVersion': latest_features_current_version | default(config['VERSION']),
       'hiddenByDevelopment': latest_features_nav_hidden_by_development | default(false),

@@ -20,6 +20,7 @@ Fix 2: Added onclick="GroupManager.saveGlobalSettings()" to the save button.
 
 import sys
 import os
+from test_support.templates import compose_if_admin_settings
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,7 +38,7 @@ def test_form_field_name_matches_backend():
         )
         
         with open(template_path, 'r', encoding='utf-8') as f:
-            template_content = f.read()
+            template_content = compose_if_admin_settings(template_path, f.read())
         
         # Verify the form field exists with name="disable_group_creation"
         assert 'name="disable_group_creation"' in template_content, \
@@ -88,7 +89,7 @@ def test_control_center_toggle_exists():
         )
         
         with open(template_path, 'r', encoding='utf-8') as f:
-            template_content = f.read()
+            template_content = compose_if_admin_settings(template_path, f.read())
         
         # Verify the toggle exists
         assert 'id="disableGroupCreation"' in template_content, \

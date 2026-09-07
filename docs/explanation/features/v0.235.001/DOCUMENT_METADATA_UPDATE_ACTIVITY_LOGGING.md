@@ -242,9 +242,9 @@ The test validates:
 
 ## Related Documentation
 
-- [Document Creation Activity Logging](./DOCUMENT_CREATION_ACTIVITY_LOGGING.md)
-- [Document Deletion Activity Logging](./DOCUMENT_DELETION_ACTIVITY_LOGGING.md)
-- [Activity Logging Architecture](./ACTIVITY_LOGGING_ARCHITECTURE.md)
+- Document Creation Activity Logging
+- Document Deletion Activity Logging
+- Activity Logging Architecture
 
 ## Performance Considerations
 

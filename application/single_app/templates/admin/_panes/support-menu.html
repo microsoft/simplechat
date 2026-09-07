@@ -1,0 +1,55 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'support-menu' %} show active{% endif %}" id="support-menu" role="tabpanel" aria-labelledby="support-menu-tab">
+                <div class="card p-3 mb-3" id="support-menu-section">
+                    <h5>
+                        <i class="bi bi-life-preserver me-2"></i>Support
+                    </h5>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="enable_support_menu" name="enable_support_menu"
+                            {% if settings.enable_support_menu %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_support_menu">
+                            Enable Support Menu for End Users
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display a Support menu in navigation for signed-in users with the User role."></i>
+                    </div>
+                    <p class="text-muted small">When enabled, users can access Support destinations like Send Feedback and Latest Features directly from navigation.</p>
+
+                    <div id="support_menu_settings" {% if not settings.enable_support_menu %}style="display: none;"{% endif %}>
+                        <div class="mb-3">
+                            <label for="support_menu_name" class="form-label">Menu Name</label>
+                            <input type="text" class="form-control" id="support_menu_name" name="support_menu_name"
+                                   value="{{ settings.support_menu_name or 'Support' }}" placeholder="Support">
+                            <small class="form-text text-muted">This name will appear in user navigation as the Support menu title.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_send_feedback" name="enable_support_send_feedback"
+                                {% if settings.enable_support_send_feedback %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_send_feedback">
+                                Enable Send Feedback Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to prepare support feedback emails that route to your internal recipient."></i>
+                        </div>
+
+                        <div class="mb-3" id="support_feedback_recipient_group" {% if not settings.enable_support_send_feedback %}style="display: none;"{% endif %}>
+                            <label for="support_feedback_recipient_email" class="form-label">Support Recipient Email</label>
+                            <input type="email" class="form-control" id="support_feedback_recipient_email" name="support_feedback_recipient_email"
+                                   value="{{ settings.support_feedback_recipient_email or '' }}" placeholder="support@contoso.com">
+                            <small class="form-text text-muted">User Send Feedback drafts will be addressed to this internal email address.</small>
+                        </div>
+
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="enable_support_latest_features" name="enable_support_latest_features"
+                                {% if settings.enable_support_latest_features %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_latest_features">
+                                Enable Latest Features Destination
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show a user-facing Latest Features page from the Support menu."></i>
+                        </div>
+
+                        <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                            <p class="text-muted small mb-0">Choose which announcements end users see on the
+                                <a href="#user-facing-latest-features-section" data-admin-link="user-facing-latest-features-section">User-Facing Latest Features</a> tab.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>

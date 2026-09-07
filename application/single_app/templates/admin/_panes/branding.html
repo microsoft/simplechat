@@ -1,0 +1,165 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'branding' %} show active{% endif %}" id="branding" role="tabpanel" aria-labelledby="branding-tab">
+
+                 <p class="text-muted">
+                    Configure general application settings, including the application's title, logo, and landing page text.
+                </p>
+                <div class="card p-3 mb-3" id="branding-section">
+                    <h5>
+                        <i class="bi bi-palette me-2"></i>Branding
+                    </h5>
+                    <p class="text-muted small">
+                        Configure your application's title, logo, and branding elements.
+                    </p>
+                    <div class="mb-3">
+                        <label for="app_title" class="form-label">Application Title</label>
+                        <input type="text" class="form-control" id="app_title" name="app_title" value="{{ settings.app_title }}">
+                    </div>
+                    <h6 class="mt-3">Logo Settings</h6>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox" class="form-check-input" id="show_logo" name="show_logo"
+                            {% if settings.show_logo %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="show_logo">Show Logo</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Display the application logo in the header and navigation areas of the interface."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input type="checkbox" class="form-check-input" id="hide_app_title" name="hide_app_title"
+                            {% if settings.hide_app_title %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="hide_app_title">Hide Application Title</label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Hide the application title from the header and navigation, showing only the logo if enabled."></i>
+                    </div>
+                    <div class="form-group mb-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <label for="landing_page_logo_scale_percent" class="form-label mb-0">Main Page Logo Size</label>
+                            <span id="landing-page-logo-scale-value" class="small text-muted fw-semibold">{{ settings.landing_page_logo_scale_percent | default(100) }}%</span>
+                        </div>
+                        <input
+                            type="range"
+                            class="form-range"
+                            id="landing_page_logo_scale_percent"
+                            name="landing_page_logo_scale_percent"
+                            min="50"
+                            max="500"
+                            step="10"
+                            value="{{ settings.landing_page_logo_scale_percent | default(100) }}"
+                            aria-describedby="landing-page-logo-scale-help"
+                        />
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span>50%</span>
+                            <span>500%</span>
+                        </div>
+                        <small id="landing-page-logo-scale-help" class="form-text text-muted">
+                            Adjust the logo size on the home page only. This does not change the logo size in the top or sidebar navigation.
+                        </small>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="logo_file">Upload Custom Logo (Light Mode)</label>
+                        <input type="file" class="form-control" name="logo_file" id="logo_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in light mode and stored at up to 500px tall so the main page can render it sharply without keeping oversized assets in settings.</small>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="logo_dark_file">Upload Custom Logo (Dark Mode)</label>
+                        <input type="file" class="form-control" name="logo_dark_file" id="logo_dark_file" accept=".png,.jpg,.jpeg">
+                        <small class="form-text text-muted">This logo will be displayed in dark mode. If not provided, the light mode logo will be used in both themes. Dark logos are also stored at up to 500px tall.</small>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="favicon_file">Upload Custom Favicon</label>
+                        <input type="file" class="form-control" name="favicon_file" id="favicon_file" accept=".png,.jpg,.jpeg,.ico">
+                        <small class="form-text text-muted">Recommended: 16x16 or 32x32 pixel png or jpg or ico.</small>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="home-page-text-section">
+                    <h5>
+                        <i class="bi bi-house me-2"></i>Home Page Text
+                    </h5>
+                    <p class="text-muted small">Configure the text content displayed on your application's home page using Markdown formatting.</p>
+
+                    <div class="mb-3">
+                        <label for="landing_page_alignment" class="form-label">Markdown Alignment</label>
+                        <select class="form-select" id="landing_page_alignment" name="landing_page_alignment">
+                            <option value="left" {% if settings.landing_page_alignment == "left" or not settings.landing_page_alignment %}selected{% endif %}>Left</option>
+                            <option value="center" {% if settings.landing_page_alignment == "center" %}selected{% endif %}>Center</option>
+                            <option value="right" {% if settings.landing_page_alignment == "right" %}selected{% endif %}>Right</option>
+                        </select>
+                        <small class="form-text text-muted">Choose how the landing page markdown is aligned on the home page.</small>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            class="form-check-input"
+                            type="checkbox"
+                            id="toggleLandingPageEditor"
+                            name="enable_landing_page_editor"
+                            {% if settings.enable_landing_page_editor %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="toggleLandingPageEditor">
+                            Enable Markdown Editor
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the markdown editor for editing landing page content, otherwise text will be displayed as read-only preview."></i>
+                    </div>
+
+                    <div id="landingPageEditorContainer" style="display: none;">
+                        <textarea
+                            class="form-control"
+                            id="landing_page_text_editor"
+                            name="landing_page_text"
+                            rows="5"
+                        >{{ settings.landing_page_text }}</textarea>
+                    </div>
+
+                    <div
+                        id="landingPageMarkdownPreview"
+                        class="p-2 border rounded"
+                        style="white-space: pre-wrap; display: none;"
+                    ></div>
+                </div>
+
+                <div class="card p-3 mb-3" id="appearance-section">
+                    <h5>
+                        <i class="bi bi-brush me-2"></i>Appearance
+                    </h5>
+                    <p class="text-muted small">Configure the app appearance and theme settings.</p>
+
+                    <div class="mb-3">
+                        <label class="form-label">Default Theme</label>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_dark_mode_default"
+                                name="enable_dark_mode_default"
+                                {% if settings.enable_dark_mode_default %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_dark_mode_default">
+                                Enable Dark Mode by Default
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Set dark mode as the default theme for new users. Users can still toggle between themes individually."></i>
+                        </div>
+                        <p class="text-muted small">Users can still toggle dark mode individually from the navigation bar.</p>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Default Navigation</label>
+                        <div class="form-group form-check form-switch mb-3">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="enable_left_nav_default"
+                                name="enable_left_nav_default"
+                                {% if settings.enable_left_nav_default %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2" for="enable_left_nav_default">
+                                Enable Left Nav by Default
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show the left navigation sidebar by default for new users. Users can still toggle the sidebar visibility individually."></i>
+                        </div>
+                        <p class="text-muted small">Users can still toggle the left navigation sidebar individually from the header.</p>
+                    </div>
+                </div>
+
+
+
+
+
+
+            </div>

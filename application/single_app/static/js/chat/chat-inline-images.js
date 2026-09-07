@@ -246,13 +246,13 @@ function normalizeWorkspaceCitationImageItem(rawCitation, index) {
     };
 }
 
-function extractWorkspaceCitationImageItems(hybridCitations = [], seenKeys = new Set()) {
+function extractWorkspaceCitationImageItems(citedHybridCitations = [], seenKeys = new Set()) {
     const items = [];
-    if (!Array.isArray(hybridCitations) || hybridCitations.length === 0) {
+    if (!Array.isArray(citedHybridCitations) || citedHybridCitations.length === 0) {
         return items;
     }
 
-    hybridCitations.forEach((citation, index) => {
+    citedHybridCitations.forEach((citation, index) => {
         pushUniqueImageItem(items, seenKeys, normalizeWorkspaceCitationImageItem(citation, index));
     });
 
@@ -287,13 +287,13 @@ function normalizeWebCitationImageItem(rawCitation, index) {
     };
 }
 
-function extractLinkedImageItems(webCitations = [], seenKeys = new Set()) {
+function extractLinkedImageItems(citedWebCitations = [], seenKeys = new Set()) {
     const items = [];
-    if (!Array.isArray(webCitations) || webCitations.length === 0) {
+    if (!Array.isArray(citedWebCitations) || citedWebCitations.length === 0) {
         return items;
     }
 
-    webCitations.forEach((citation, index) => {
+    citedWebCitations.forEach((citation, index) => {
         pushUniqueImageItem(items, seenKeys, normalizeWebCitationImageItem(citation, index));
     });
 
@@ -649,10 +649,17 @@ function createImageGalleryCard(result, messageId, index) {
     return { card };
 }
 
+/**
+ * Render inline image galleries for one assistant message.
+ *
+ * The workspace and linked galleries take the cited citation subsets, not the
+ * full retrieved sets, so images only appear when the response referenced them.
+ * Agent citations are executed tool results and are always rendered.
+ */
 export async function renderInlineImageGalleries(
     messageElement,
-    hybridCitations = [],
-    webCitations = [],
+    citedHybridCitations = [],
+    citedWebCitations = [],
     agentCitations = [],
     messageId = "",
     conversationId = ""
@@ -668,8 +675,8 @@ export async function renderInlineImageGalleries(
 
     container.querySelectorAll(".inline-image-gallery-card").forEach((card) => card.remove());
 
-    const hasHybridCitations = Array.isArray(hybridCitations) && hybridCitations.length > 0;
-    const hasWebCitations = Array.isArray(webCitations) && webCitations.length > 0;
+    const hasHybridCitations = Array.isArray(citedHybridCitations) && citedHybridCitations.length > 0;
+    const hasWebCitations = Array.isArray(citedWebCitations) && citedWebCitations.length > 0;
     const hasAgentCitations = Array.isArray(agentCitations) && agentCitations.length > 0;
     if (!hasHybridCitations && !hasWebCitations && !hasAgentCitations) {
         container.classList.toggle("d-none", container.children.length === 0);
@@ -680,7 +687,7 @@ export async function renderInlineImageGalleries(
     let galleryIndex = 0;
     const seenImageKeys = new Set();
 
-    const workspaceItems = extractWorkspaceCitationImageItems(hybridCitations, seenImageKeys);
+    const workspaceItems = extractWorkspaceCitationImageItems(citedHybridCitations, seenImageKeys);
     if (workspaceItems.length > 0 && remainingSlots > 0) {
         const workspaceGallery = buildImageGalleryResult(
             "Workspace images",
@@ -697,11 +704,11 @@ export async function renderInlineImageGalleries(
         }
     }
 
-    const linkedItems = extractLinkedImageItems(webCitations, seenImageKeys);
+    const linkedItems = extractLinkedImageItems(citedWebCitations, seenImageKeys);
     if (linkedItems.length > 0 && remainingSlots > 0) {
         const linkedGallery = buildImageGalleryResult(
             "Linked images",
-            "Direct image links returned with this response.",
+            "Image links cited in this response.",
             linkedItems.slice(0, remainingSlots),
             "Linked sources",
             linkedItems.length

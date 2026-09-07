@@ -2,9 +2,9 @@
 # test_mixed_source_manifest_contracts.py
 """
 Functional test for authorized mixed-source manifest and evidence contracts.
-Version: 0.250.160
+Version: 0.261.022
 Implemented in: 0.250.062; Phase 2 request/evidence coverage added in 0.250.064;
-XSD source partition coverage added in 0.250.160
+XSD source partition coverage added in 0.261.022
 
 This test ensures Phase 1 of #1056 resolves requested sources once through
 current authorization boundaries, preserves ordering, partitions mixed source

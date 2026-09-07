@@ -15,6 +15,7 @@ from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_azure_endpoint_validation import validate_azure_databricks_endpoint
 from functions_databricks_operations import (
     DATABRICKS_ALLOWED_READ_STATEMENTS,
     DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE,
@@ -154,6 +155,8 @@ class DatabricksPlugin(BasePlugin):
         parsed_endpoint = urlparse(self.endpoint)
         if parsed_endpoint.scheme != "https" or not parsed_endpoint.netloc:
             raise ValueError("Databricks action requires an HTTPS workspace URL endpoint.")
+        # Revalidated before any managed-identity token is minted for this workspace URL.
+        validate_azure_databricks_endpoint(self.endpoint)
         if not self.warehouse_id:
             raise ValueError("Databricks action requires additionalFields.warehouse_id.")
         if self.auth_type not in {"key", "identity", "servicePrincipal"}:
@@ -178,6 +181,8 @@ class DatabricksPlugin(BasePlugin):
                 client_secret=str(self._auth.get("key") or ""),
             )
             return credential.get_token(DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE).token
+        # Revalidate before minting an application-identity token for this workspace URL.
+        validate_azure_databricks_endpoint(self.endpoint)
         credential = DefaultAzureCredential()
         return credential.get_token(DATABRICKS_AZURE_COMMERCIAL_TOKEN_SCOPE).token
 

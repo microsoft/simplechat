@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://simplechat.local/schemas/model-capabilities.schema.json",
+  "title": "SimpleChat model capability catalog",
+  "description": "Schema for static/json/model_capabilities.json. The catalog is the source of truth for per-model capability answers, so that models are described by data rather than guessed at from their names.",
+  "type": "object",
+  "required": ["schemaVersion", "capabilityFields", "models"],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 2
+    },
+    "lastUpdated": {
+      "type": ["string", "null"]
+    },
+    "description": {
+      "type": "string"
+    },
+    "capabilityFields": {
+      "type": "object",
+      "description": "Human-readable description of every capability flag a model record may declare.",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "coverageNotes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/modelRecord"
+      }
+    }
+  },
+  "$defs": {
+    "modelRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "provider",
+        "displayName",
+        "aliases",
+        "family",
+        "lifecycle",
+        "capabilities"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "aliases": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "current",
+            "preview",
+            "limited-availability",
+            "legacy",
+            "deprecated",
+            "retired"
+          ]
+        },
+        "releaseDate": {
+          "type": ["string", "null"]
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilityMap"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputTokenLimit": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "outputTokenLimit": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "capabilityMap": {
+      "type": "object",
+      "description": "Every flag is required so that a model is never silently missing a capability answer.",
+      "required": [
+        "processesText",
+        "generatesText",
+        "processesImages",
+        "generatesImages",
+        "processesAudio",
+        "generatesAudio",
+        "processesVideo",
+        "generatesVideo",
+        "processesBinaryFiles",
+        "optimizedForCoding",
+        "toolCalling",
+        "structuredOutput",
+        "supportsStreaming",
+        "reasoning"
+      ],
+      "additionalProperties": {
+        "type": "boolean"
+      }
+    }
+  }
+}

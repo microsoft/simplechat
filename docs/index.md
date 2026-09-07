@@ -1,219 +1,113 @@
 ---
-layout: showcase-page
+layout: page
 title: "Simple Chat Documentation"
-description: "Azure-native documentation for deploying, operating, and extending Simple Chat with the same polished visual language as the latest-release experience."
-section: "Overview"
-accent: blue
-eyebrow: "Docs Overview"
-home_search: true
-hero_icons:
-  - bi-house-fill
-  - bi-stars
-  - bi-rocket-takeoff
-hero_pills:
-  - Azure OpenAI
-  - Retrieval-Augmented Generation
-  - Enterprise controls
-hero_links:
-  - label: "Start the guide"
-    url: /tutorials/
-    style: primary
-  - label: "Open API reference"
-    url: /reference/api_reference/
-    style: outline
+description: "Deploy, operate, and extend Simple Chat: an Azure-native chat platform with retrieval, workspaces, agents, and enterprise controls."
+section: "Start"
+hide_toc: false
 ---
 
-Simple Chat gives teams an Azure-native way to deploy, ground, govern, and extend AI experiences without stitching together a separate chat app, search layer, and admin plane.
+Simple Chat gives teams an Azure-native way to deploy, ground, govern, and
+extend AI experiences without stitching together a separate chat app, search
+layer, and admin plane.
 
-<section class="latest-release-section">
-  <div class="latest-release-section-header">
-    <div>
-      <div class="latest-release-section-kicker">Start here</div>
-      <h2>The shortest paths through the docs</h2>
-      <p>Use these entry points when you want guidance, API details, examples, and release history without hunting through the entire docs tree.</p>
-    </div>
-    <span class="latest-release-section-badge">Top routes</span>
-  </div>
+New here? Start with [what Simple Chat is]({{ '/start/about/' | relative_url }}), then
+pick a [deployment path]({{ '/start/deployment-options/' | relative_url }}).
 
-  <div class="latest-release-card-grid">
-    <article class="latest-release-card latest-release-accent--emerald">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-rocket-takeoff"></i></span>
-          <span class="latest-release-card-badge">Deployment</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/setup_instructions/' | relative_url }}">Getting Started</a></h3>
-        <p class="latest-release-card-summary">Pick the right deployment path, line up prerequisites, and follow the repo's recommended order of operations.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/setup_instructions/' | relative_url }}">Open guide</a>
-        </div>
-      </div>
-    </article>
+## Find what you need
 
-    <article class="latest-release-card latest-release-accent--blue">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-mortarboard"></i></span>
-          <span class="latest-release-card-badge">Guide</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/tutorials/' | relative_url }}">Tutorials</a></h3>
-        <p class="latest-release-card-summary">Follow guided product paths for first deployment, document upload, agents, and classification.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/tutorials/' | relative_url }}">Start learning</a>
-        </div>
-      </div>
-    </article>
+| I want to... | Go to |
+| --- | --- |
+| Understand what Simple Chat is | [About Simple Chat]({{ '/start/about/' | relative_url }}) |
+| Deploy it for the first time | [Choose a deployment path]({{ '/start/deployment-options/' | relative_url }}) |
+| Learn a task step by step | [Guides]({{ '/guides/' | relative_url }}) |
+| Configure a setting | [Admin settings]({{ '/admin/' | relative_url }}) |
+| See what the product can do | [Feature map]({{ '/features/' | relative_url }}) |
+| Look up an API | [API reference]({{ '/reference/api_reference/' | relative_url }}) |
+| See what changed | [Release notes]({{ '/explanation/release_notes/' | relative_url }}) |
+| Find something specific | [Search the docs]({{ '/search/' | relative_url }}) |
 
-    <article class="latest-release-card latest-release-accent--orange">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-grid-3x3-gap"></i></span>
-          <span class="latest-release-card-badge">Capabilities</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/features/' | relative_url }}">Features</a></h3>
-        <p class="latest-release-card-summary">See the core workspace experience, optional feature packs, platform services, and supported file types in one place.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/features/' | relative_url }}">Browse features</a>
-        </div>
-      </div>
-    </article>
+## Documentation sections
 
-    <article class="latest-release-card latest-release-accent--slate">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-braces"></i></span>
-          <span class="latest-release-card-badge">Reference</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/reference/api_reference/' | relative_url }}">API Reference</a></h3>
-        <p class="latest-release-card-summary">Find live Swagger endpoints, OpenAPI helper routes, and the right source of truth for route review.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/reference/api_reference/' | relative_url }}">Inspect APIs</a>
-        </div>
-      </div>
-    </article>
+### Start
 
-    <article class="latest-release-card latest-release-accent--teal">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-palette"></i></span>
-          <span class="latest-release-card-badge">Admin UI</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/how-to/admin_ui_settings/' | relative_url }}">Branding and Support Settings</a></h3>
-        <p class="latest-release-card-summary">Change logo, title, home page text, health checks, Swagger, classification banner, Support, external links, and system settings.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/how-to/admin_ui_settings/' | relative_url }}">Open how-to</a>
-        </div>
-      </div>
-    </article>
+Orientation and first deployment. Covers what Simple Chat is, the deployment
+options and their tradeoffs, the architecture, and the
+[FAQ]({{ '/start/faqs/' | relative_url }}).
 
-    <article class="latest-release-card latest-release-accent--teal">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-collection-play"></i></span>
-          <span class="latest-release-card-badge">Examples</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/explanation/scenarios/' | relative_url }}">Scenario Library</a></h3>
-        <p class="latest-release-card-summary">Browse workspace and agent scenarios that show how Simple Chat can be shaped for practical team workflows.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/explanation/scenarios/' | relative_url }}">View examples</a>
-        </div>
-      </div>
-    </article>
+### Guides
 
-    <article class="latest-release-card latest-release-accent--violet">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-clock-history"></i></span>
-          <span class="latest-release-card-badge">Changelog</span>
-        </div>
-        <h3 class="latest-release-card-title"><a href="{{ '/explanation/release_notes/' | relative_url }}">Release Notes</a></h3>
-        <p class="latest-release-card-summary">Track feature additions, UI improvements, and fixes by version when you need implementation history.</p>
-        <div class="latest-release-card-actions">
-          <a class="btn btn-primary btn-sm" href="{{ '/explanation/release_notes/' | relative_url }}">Read changelog</a>
-        </div>
-      </div>
-    </article>
-  </div>
-</section>
+Task-oriented, step-by-step instructions for users and admins. Each guide
+explains what the task does and why you would do it before listing the steps.
+See [tutorials]({{ '/guides/' | relative_url }}) and
+[how-to guides]({{ '/guides/' | relative_url }}).
 
-<section class="latest-release-section">
-  <div class="latest-release-section-header">
-    <div>
-      <div class="latest-release-section-kicker">Why teams use it</div>
-      <h2>One application, multiple working modes</h2>
-      <p>Simple Chat is opinionated about the hard parts: identity, grounding, document processing, and admin controls are already wired together.</p>
-    </div>
-    <span class="latest-release-section-badge">Azure-native</span>
-  </div>
+### Features
 
-  <div class="latest-release-card-grid">
-    <article class="latest-release-card latest-release-accent--blue">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-chat-dots"></i></span>
-          <span class="latest-release-card-badge">Chat + grounding</span>
-        </div>
-        <h3 class="latest-release-card-title">Context-aware AI conversations</h3>
-        <p class="latest-release-card-summary">Use Azure OpenAI with hybrid retrieval over personal, group, and public workspace content so responses stay tied to your own data.</p>
-      </div>
-    </article>
+What the product can do, including the
+[feature map]({{ '/features/' | relative_url }}),
+[latest release highlights]({{ '/latest-release/' | relative_url }}), and
+[worked scenarios]({{ '/explanation/scenarios/' | relative_url }}).
 
-    <article class="latest-release-card latest-release-accent--emerald">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-folder2-open"></i></span>
-          <span class="latest-release-card-badge">Documents</span>
-        </div>
-        <h3 class="latest-release-card-title">Document pipelines that stay searchable</h3>
-        <p class="latest-release-card-summary">Ingest PDFs, Office files, images, audio, and video through Azure AI services, then retrieve them with citations and optional metadata enrichment.</p>
-      </div>
-    </article>
+### Administration
 
-    <article class="latest-release-card latest-release-accent--orange">
-      <div class="latest-release-card-shell">
-        <div class="latest-release-card-top">
-          <span class="latest-release-card-icon" aria-hidden="true"><i class="bi bi-shield-check"></i></span>
-          <span class="latest-release-card-badge">Governance</span>
-        </div>
-        <h3 class="latest-release-card-title">Controls for enterprise rollouts</h3>
-        <p class="latest-release-card-summary">Layer on Entra ID roles, content safety, feedback review, conversation archiving, and operational logging without rebuilding the app.</p>
-      </div>
-    </article>
-  </div>
-</section>
+One page per [admin settings tab]({{ '/admin/' | relative_url }}), covering what
+each tab controls, why it matters, every setting and its default, prerequisites,
+and the common tasks admins perform there.
 
-<section class="latest-release-section">
-  <div class="latest-release-section-header">
-    <div>
-      <div class="latest-release-section-kicker">Architecture</div>
-      <h2>What sits behind the experience</h2>
-      <p>The platform runs on Azure App Service and composes search, storage, document processing, and conversation state into a single application surface.</p>
-    </div>
-    <span class="latest-release-section-badge">Reference view</span>
-  </div>
+### Deploy and operate
 
-  <div class="latest-release-note-panel latest-release-accent--slate">
-    <h3>Platform at a glance</h3>
-    <p>Core application state lives in Azure Cosmos DB, document retrieval runs through Azure AI Search, ingestion is handled by Azure AI Document Intelligence and related media services, and authentication uses Entra ID. That combination makes it practical to run Simple Chat as a governed internal tool instead of a demo-only sample.</p>
-  </div>
+[Deployment paths]({{ '/reference/deploy/' | relative_url }}) for Azure Developer
+CLI, Bicep, Terraform, Azure CLI, and manual setup, plus
+[networking]({{ '/guides/enterprise-networking/' | relative_url }}),
+[scaling]({{ '/application_scaling/' | relative_url }}),
+[upgrades]({{ '/guides/upgrade-paths/' | relative_url }}), and
+[troubleshooting]({{ '/troubleshooting/' | relative_url }}).
 
-  <div class="mt-3">
-    <img src="{{ '/images/architecture.png' | relative_url }}" alt="Architecture diagram showing Simple Chat running on Azure App Service with Azure OpenAI, AI Search, Cosmos DB, and storage services." />
-  </div>
-</section>
+### Reference
 
-<section class="latest-release-section">
-  <div class="latest-release-section-header">
-    <div>
-      <div class="latest-release-section-kicker">Contribute</div>
-      <h2>Working in the repo</h2>
-      <p>The docs, app, and deployers are all maintained together, so the contributor guide is the fastest way to align with the expected workflow.</p>
-    </div>
-    <span class="latest-release-section-badge">Collaboration</span>
-  </div>
+[API reference]({{ '/reference/api_reference/' | relative_url }}), configuration
+reference, [application workflows]({{ '/reference/application-workflows/' | relative_url }}),
+and [release notes]({{ '/explanation/release_notes/' | relative_url }}).
 
-  <div class="latest-release-note-panel latest-release-accent--teal">
-    <h3>Want to make changes?</h3>
-    <p>Use the <a href="{{ '/contributing/' | relative_url }}">Contributing guide</a> for the fork-based workflow, target branch expectations, and local development references before you start editing code or docs.</p>
-  </div>
-</section>
+## What Simple Chat does
+
+### Context-aware AI conversations
+
+Uses Azure OpenAI with hybrid retrieval over personal, group, and public
+workspace content, so responses stay tied to your own data rather than to the
+model's general knowledge.
+
+### Document pipelines that stay searchable
+
+Ingests PDFs, Office files, images, audio, and video through Azure AI services,
+then retrieves them with citations and optional metadata enrichment.
+
+### Controls for enterprise rollouts
+
+Adds Entra ID roles, content safety, feedback review, conversation archiving,
+and operational logging without rebuilding the application.
+
+## Platform at a glance
+
+Core application state lives in Azure Cosmos DB. Document retrieval runs through
+Azure AI Search. Ingestion is handled by Azure AI Document Intelligence and
+related media services. Authentication uses Entra ID.
+
+That combination makes it practical to run Simple Chat as a governed internal
+tool rather than a demo-only sample.
+
+{% include media.html src="architecture.png"
+                      alt="Architecture diagram showing Simple Chat running on Azure App Service with Azure OpenAI, Azure AI Search, Cosmos DB, and storage services."
+                      title="Simple Chat architecture"
+                      caption="Simple Chat on Azure App Service, composing search, storage, document processing, and conversation state into one application." %}
+
+## Contributing
+
+The docs, application, and deployers are maintained together. Read the
+[contributing guide]({{ '/contributing/' | relative_url }}) for the fork-based
+workflow, target branch expectations, and local development setup before editing
+code or documentation.
+
+Documentation contributors should also check the
+[media status page]({{ '/contributing/media-status/' | relative_url }}), which
+lists every screenshot and video slot that still needs to be captured.

@@ -126,7 +126,7 @@ def test_route_enhanced_citations_unchanged():
         print("✅ serve_enhanced_citation_content function found")
         
         # Check that PDF endpoint is still there
-        if '@app.route("/api/enhanced_citations/pdf", methods=["GET"])' not in route_content:
+        if '@bp.route("/api/enhanced_citations/pdf", methods=["GET"])' not in route_content:
             print("❌ PDF endpoint missing")
             return False
         print("✅ PDF endpoint found")

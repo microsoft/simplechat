@@ -11,6 +11,7 @@ frontend (polling, streaming, toggle, rendering) components.
 
 import sys
 import os
+from test_support.templates import compose_if_admin_settings
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'application', 'single_app'))
 
@@ -289,7 +290,7 @@ def test_thoughts_admin_settings():
         )
 
         with open(html_file, 'r', encoding='utf-8') as f:
-            content = f.read()
+            content = compose_if_admin_settings(html_file, f.read())
 
         checks = {
             'enable_thoughts checkbox': 'id="enable_thoughts"' in content,

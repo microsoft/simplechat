@@ -1,0 +1,44 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'feedback-alerts' %} show active{% endif %}" id="feedback-alerts" role="tabpanel" aria-labelledby="feedback-alerts-tab">
+                <div class="card p-3 mb-3" id="user-feedback-section">
+                    <h5>
+                        <i class="bi bi-chat-square-heart me-2"></i>User Feedback
+                    </h5>
+                    <p class="text-muted">Enable user feedback (thumbs up/down) for AI responses.</p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_user_feedback"
+                            name="enable_user_feedback"
+                            {% if settings.enable_user_feedback %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_user_feedback">
+                            Enable User Feedback (Thumbs Up/Down)
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to provide thumbs up/down feedback on AI responses for quality monitoring and improvement."></i>
+                    </div>
+                </div>
+                <div class="card p-3 mb-3" id="desktop-notifications-section">
+                    <h5>
+                        <i class="bi bi-bell me-2"></i>Desktop Conversation Notifications
+                    </h5>
+                    <p class="text-muted">
+                        Allow users to receive an operating system notification when an AI response finishes while SimpleChat is open in a hidden or unfocused browser tab.
+                    </p>
+                    <div class="form-group form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_desktop_notifications"
+                            name="enable_desktop_notifications"
+                            {% if settings.enable_desktop_notifications %}checked{% endif %}
+                        >
+                        <label class="form-check-label ms-2" for="enable_desktop_notifications">
+                            Enable Desktop Conversation Notifications
+                        </label>
+                    </div>
+                    <p class="form-text text-muted mb-0">
+                        Users can turn notifications off from Profile. Browser permission is required, and notifications stop when the SimpleChat tab is closed.
+                    </p>
+                </div>
+            </div>

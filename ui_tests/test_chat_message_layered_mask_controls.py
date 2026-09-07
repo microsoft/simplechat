@@ -10,6 +10,7 @@ reload.
 """
 
 from pathlib import Path
+import sys
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -17,6 +18,10 @@ CHAT_MESSAGES_JS = ROOT_DIR / "application" / "single_app" / "static" / "js" / "
 CHAT_COLLABORATION_JS = ROOT_DIR / "application" / "single_app" / "static" / "js" / "chat" / "chat-collaboration.js"
 STYLES_CSS = ROOT_DIR / "application" / "single_app" / "static" / "css" / "styles.css"
 CONFIG_FILE = ROOT_DIR / "application" / "single_app" / "config.py"
+
+sys.path.insert(0, str(ROOT_DIR / "functional_tests"))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def read_text(path: Path) -> str:
@@ -112,4 +117,4 @@ def test_collaboration_mask_events_apply_to_visible_messages() -> None:
 
 def test_ui_mask_control_version_matches_config() -> None:
     """Verify UI test version tracking matches config.py."""
-    assert read_version() == "0.241.098"
+    assert_app_version_at_least("0.241.098")

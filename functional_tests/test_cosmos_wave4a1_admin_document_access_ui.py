@@ -20,6 +20,7 @@ reset confirmation, and the Wave 5B default read path.
 import os
 import sys
 from test_support.versioning import assert_app_version_at_least
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,8 +28,9 @@ SINGLE_APP_DIR = os.path.join(ROOT_DIR, "application", "single_app")
 
 
 def _read(relative_path):
-    with open(os.path.join(ROOT_DIR, relative_path), "r", encoding="utf-8") as file:
-        return file.read()
+    _path = os.path.join(ROOT_DIR, relative_path)
+    with open(_path, "r", encoding="utf-8") as file:
+        return compose_if_admin_settings(_path, file.read())
 
 
 def test_admin_template_exposes_safe_document_access_controls():

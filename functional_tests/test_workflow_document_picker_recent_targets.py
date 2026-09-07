@@ -2,8 +2,9 @@
 # test_workflow_document_picker_recent_targets.py
 """
 Functional test for workflow document picker and recent workflow document targets.
-Version: 0.241.188
+Version: 0.250.225
 Implemented in: 0.241.188
+Enhanced in: 0.250.225
 
 This test ensures workflow Search, Analyze, and Compare configuration uses the
 shared chat document picker instead of visible raw ID fields, and recent
@@ -167,12 +168,16 @@ def test_workflow_picker_javascript_contracts() -> None:
     assert 'window.addEventListener("chat:document-selection-changed"' in workflow_js
     assert 'window.addEventListener("chat:scope-changed"' in workflow_js
     assert 'const DOCUMENT_ACTION_SEARCH = "search";' in workflow_js
-    assert 'target_mode: documentActionType !== DOCUMENT_ACTION_NONE ? analysisTargetMode : DOCUMENT_ANALYSIS_TARGET_SELECTED' in workflow_js
-    assert 'recent_window_minutes: Number(rawRecentMinutes)' in workflow_js
-    assert 'documentActionType === DOCUMENT_ACTION_SEARCH && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED' in workflow_js
-    assert 'documentActionType === DOCUMENT_ACTION_COMPARISON && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_SELECTED' in workflow_js
-    assert 'documentActionType !== DOCUMENT_ACTION_NONE && analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT' in workflow_js
-    assert 'const targetDocumentIds = analysisTargetMode === DOCUMENT_ANALYSIS_TARGET_RECENT' in workflow_js
+    # Recent-target support now lives in the shared per-task serializer and validator.
+    assert 'function serializeWorkflowDocumentAction(' in workflow_js
+    assert 'target_mode: targetMode,' in workflow_js
+    assert 'recent_window_minutes: Number(rawRecentMinutes),' in workflow_js
+    assert 'const isRecentMode = targetMode === DOCUMENT_ANALYSIS_TARGET_RECENT;' in workflow_js
+    assert 'actionType === DOCUMENT_ACTION_SEARCH && isSelectedMode' in workflow_js
+    assert 'actionType === DOCUMENT_ACTION_COMPARISON && isSelectedMode' in workflow_js
+    assert 'const isSelectedMode = actionPayload.target_mode === DOCUMENT_ANALYSIS_TARGET_SELECTED;' in workflow_js
+    assert 'Recent document window must be between 1 and 1440 minutes.' in workflow_js
+    assert 'const pickerDocumentIds = isRecentMode ? [] : getWorkflowPickerSelectedDocumentIds();' in workflow_js
     assert 'setEffectiveScopes(pickerScopes, {' in workflow_js
     assert 'force: workflowWorkspaceConfig.scope === "group"' in workflow_js
     assert 'if (docDropdownButton)' in chat_documents_js

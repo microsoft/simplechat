@@ -84,7 +84,7 @@ def test_agent_modal_msgraph_capabilities(playwright):
             """
             async () => {
                 await window.agentModalStepper.showModal();
-                window.agentModalStepper.goToStep(4);
+                window.agentModalStepper.goToStep(window.agentModalStepper.getStepNumber('actions'));
             }
             """
         )

@@ -343,8 +343,8 @@ Tests:
 
 ## Related Documentation
 - [Azure Speech Service Documentation](https://docs.microsoft.com/azure/cognitive-services/speech-service/)
-- [Speech-to-Text Feature](./SPEECH_TO_TEXT.md)
-- [Agent Integration](./AGENT_ORCHESTRATION.md)
+- Speech-to-Text Feature
+- Agent Integration
 
 ## Support and Feedback
 For issues, feature requests, or feedback, please contact the development team or file an issue in the project repository.

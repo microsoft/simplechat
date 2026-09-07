@@ -1,0 +1,180 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'control-center-config' %} show active{% endif %}" id="control-center-config" role="tabpanel" aria-labelledby="control-center-config-tab">
+                <p class="text-muted">
+                    Configure Control Center access and permissions for administrators.
+                </p>
+
+                <div class="card p-4 mb-4 border-primary shadow-sm" id="control-center-auto-refresh-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-primary text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-arrow-repeat fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-calendar-check me-2"></i>Automatic Data Refresh
+                                </h4>
+                                <p class="text-muted mb-0 small">Run the Control Center metrics refresh overnight on a daily timezone-aware schedule</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            role="switch"
+                            id="control_center_auto_refresh_enabled"
+                            name="control_center_auto_refresh_enabled"
+                            {% if settings.control_center_auto_refresh_enabled %}checked{% endif %}
+                        />
+                        <label class="form-check-label ms-2 fw-bold" for="control_center_auto_refresh_enabled">
+                            Enable Daily Control Center Refresh
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Automatically refresh cached Control Center metrics once per day. Execution timestamps are stored in UTC."></i>
+                    </div>
+
+                    <div id="control-center-auto-refresh-inputs" class="row g-3 {% if not settings.control_center_auto_refresh_enabled %}d-none{% endif %}">
+                        <div class="col-md-4">
+                            <label for="control_center_auto_refresh_time" class="form-label">
+                                Refresh Time ({{ settings.control_center_auto_refresh_timezone or 'America/New_York' }})
+                            </label>
+                            <input
+                                type="time"
+                                class="form-control"
+                                id="control_center_auto_refresh_time"
+                                name="control_center_auto_refresh_time"
+                                value="{{ settings.control_center_auto_refresh_time or '02:00' }}"
+                            />
+                            <input
+                                type="hidden"
+                                id="control_center_auto_refresh_timezone"
+                                name="control_center_auto_refresh_timezone"
+                                value="{{ settings.control_center_auto_refresh_timezone or 'America/New_York' }}"
+                            />
+                            <div class="form-text">
+                                Your browser timezone is <span id="control-center-auto-refresh-viewer-timezone">local time</span>.
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Next scheduled refresh:</label>
+                            <div
+                                id="control-center-auto-refresh-next-run"
+                                class="form-control-plaintext text-info fw-bold"
+                                data-next-run-utc="{{ settings.control_center_auto_refresh_next_run or '' }}"
+                            >
+                                {% if settings.control_center_auto_refresh_next_run %}
+                                    Loading local time...
+                                {% else %}
+                                    Will be calculated when saved
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Control Center Overview Card -->
+                <div class="card p-4 mb-4 border-success shadow-sm" id="control-center-overview-section">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div class="d-flex align-items-center">
+                            <div class="bg-success text-white rounded-circle p-3 me-3" style="width: 50px; height: 50px; display: flex; align-items: center; justify-content: center;">
+                                <i class="bi bi-speedometer2 fs-4"></i>
+                            </div>
+                            <div>
+                                <h4 class="mb-1">
+                                    <i class="bi bi-gear-wide-connected me-2"></i>Control Center Access
+                                </h4>
+                                <p class="text-muted mb-0 small">Manage who can access Control Center features and administrative tools</p>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-outline-success btn-sm" data-bs-toggle="modal" data-bs-target="#controlCenterRolesInfoModal">
+                            <i class="bi bi-question-circle me-1"></i>Role Setup Guide
+                        </button>
+                    </div>
+
+                    <div class="alert alert-info mb-4">
+                        <i class="bi bi-info-circle-fill me-2"></i>
+                        <strong>About Control Center:</strong> The Control Center is a powerful administrative dashboard that provides user management, group oversight, public workspace control, and detailed activity monitoring. Use role-based access controls below to delegate administrative responsibilities.
+                    </div>
+
+                    <!-- ControlCenterAdmin Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_admin"
+                                name="require_member_of_control_center_admin"
+                                {% if settings.require_member_of_control_center_admin %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_admin">
+                                <i class="bi bi-shield-fill-check me-1"></i> Require ControlCenterAdmin App Role
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            Required app role value: <code>ControlCenterAdmin</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only users assigned this role can access the Control Center and all management features. Regular Admins will lose access.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-people-fill me-1"></i> User Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-collection me-1"></i> Group Management
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis me-2">
+                                <i class="bi bi-folder2-open me-1"></i> Public Workspaces
+                            </span>
+                            <span class="badge bg-success-subtle text-success-emphasis">
+                                <i class="bi bi-clock-history me-1"></i> Activity Logs
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- ControlCenterDashboardReader Role -->
+                    <div class="mb-4">
+                        <div class="form-check form-switch mb-2">
+                            <input
+                                type="checkbox"
+                                class="form-check-input"
+                                id="require_member_of_control_center_dashboard_reader"
+                                name="require_member_of_control_center_dashboard_reader"
+                                {% if settings.require_member_of_control_center_dashboard_reader %}checked{% endif %}
+                            >
+                            <label class="form-check-label ms-2 fw-bold" for="require_member_of_control_center_dashboard_reader">
+                                <i class="bi bi-eye me-1"></i> Allow ControlCenterDashboardReader App Role
+                            </label>
+                        </div>
+                        <p class="text-muted small ms-4 ps-3 mb-2">
+                            Dashboard-only app role value: <code>ControlCenterDashboardReader</code>. Assign this role to users or groups in the Enterprise App before enabling dashboard-only access. Users assigned <code>ControlCenterAdmin</code> can also access the dashboard when Control Center app-role enforcement is enabled.
+                        </p>
+                        <div class="ms-4 ps-3">
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-speedometer2 me-1"></i> Dashboard Statistics
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis me-2">
+                                <i class="bi bi-graph-up me-1"></i> Activity Trends
+                            </span>
+                            <span class="badge bg-info-subtle text-info-emphasis">
+                                <i class="bi bi-bar-chart-line me-1"></i> Usage Metrics
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-warning-subtle border-warning mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+                        <strong>Important:</strong> Configure these roles in your identity provider (Entra ID). When role requirements are enabled, standard Admins without the specific roles will be denied access to Control Center features.
+                    </div>
+
+                    <!-- Best Practices -->
+                    <div class="border-top pt-3">
+                        <h5 class="mb-3">
+                            <i class="bi bi-lightbulb-fill me-2"></i>Best Practices
+                        </h5>
+                        <ul class="text-muted small">
+                            <li><code>ControlCenterAdmin</code>: Grant to IT administrators who need full control over users, groups, and workspaces</li>
+                            <li><code>ControlCenterDashboardReader</code>: Grant to managers, compliance officers, or stakeholders who need visibility into platform usage without administrative powers</li>
+                            <li><strong>Separation of Duties:</strong> Enable role requirements if you need to restrict Control Center access from general application admins</li>
+                            <li><strong>Audit Trail:</strong> All Control Center actions are logged in Activity Logs for compliance and security auditing</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>

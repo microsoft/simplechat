@@ -315,9 +315,9 @@ The test validates:
 
 ## Related Documentation
 
-- [Group Status Change Activity Logging](./GROUP_STATUS_CHANGE_ACTIVITY_LOGGING.md)
-- [Document Creation Activity Logging](./DOCUMENT_CREATION_ACTIVITY_LOGGING.md)
-- [Activity Logging Architecture](./ACTIVITY_LOGGING_ARCHITECTURE.md)
+- Group Status Change Activity Logging
+- Document Creation Activity Logging
+- Activity Logging Architecture
 
 ## Performance Considerations
 

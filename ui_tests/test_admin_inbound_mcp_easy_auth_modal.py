@@ -2,7 +2,7 @@
 """
 UI test for the inbound MCP Easy Auth verification modal.
 
-Version: 0.250.098
+Version: 0.261.002
 Implemented in: 0.250.072
 Cloud-aware script improvements implemented in: 0.250.073
 Script copy and authsettingsV2 GET fix implemented in: 0.250.074
@@ -14,6 +14,7 @@ Protected-resource metadata aliases implemented in: 0.250.087
 Easy Auth restart reminder implemented in: 0.250.088
 Personal workflow execution tool implemented in: 0.250.090
 Inbound MCP object-list settings implemented in: 0.250.091
+Inbound MCP disabled-state guidance implemented in: 0.261.002
 
 This test ensures enabling inbound MCP from Admin Settings requires the Easy Auth
 exclusion modal, keeps the runtime gate disabled on failed verification, and
@@ -125,16 +126,16 @@ def test_admin_inbound_mcp_easy_auth_modal_blocks_until_verified():
 
     try:
         page.route("**/api/admin/settings/inbound-mcp/easy-auth-check", fulfill_verification)
-        response = page.goto(f"{BASE_URL}/admin/settings#agents", wait_until="networkidle")
+        response = page.goto(f"{BASE_URL}/admin/settings#inbound-mcp", wait_until="networkidle")
         assert response is not None, "Expected a navigation response when loading admin settings."
 
         if response.status in SKIP_RESPONSE_CODES:
             pytest.skip(f"Admin settings page unavailable in this environment (HTTP {response.status}).")
         assert response.ok, f"Expected admin settings to load successfully, got HTTP {response.status}."
 
-        agents_tab = page.locator("#agents-tab")
-        if agents_tab.count() > 0:
-            agents_tab.click()
+        inbound_tab = page.locator("#inbound-mcp-tab")
+        if inbound_tab.count() > 0:
+            inbound_tab.click()
 
         enable_toggle = page.locator("#enable_inbound_mcp_server")
         if enable_toggle.count() == 0:

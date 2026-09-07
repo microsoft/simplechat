@@ -1,0 +1,274 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'logging' %} show active{% endif %}" id="logging" role="tabpanel" aria-labelledby="logging-tab">
+                <p class="text-muted">
+                    Configure logging settings for monitoring, debugging, and auditing purposes. These settings control various types of logging throughout the application including application insights, debug messages, and file processing events.
+                </p>
+
+                <div class="card p-3 mb-3" id="application-insights-section">
+                    <h5>
+                        <i class="bi bi-graph-up me-2"></i>Application Insights Logging
+                    </h5>
+                    <p class="text-muted">Enable global logging to Application Insights for all agents and orchestration events.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_appinsights_global_logging" name="enable_appinsights_global_logging" {% if settings.enable_appinsights_global_logging %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_appinsights_global_logging">
+                            Enable Application Insights Global Logging
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable global logging to Application Insights for all agents and orchestration events."></i>
+                    </div>
+                    <div class="alert alert-warning mt-3" role="alert">
+                        <strong>Note:</strong> Changing this setting requires an application restart to take effect.
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="debug-logging-section">
+                    <h5>
+                        <i class="bi bi-bug me-2"></i>Debug Logging
+                    </h5>
+                    <p class="text-muted">Control debug print statements across the application for development and troubleshooting.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging" name="enable_debug_logging" {% if settings.enable_debug_logging %}checked{% endif %} onchange="toggleTimeControls('debug')">
+                        <label class="form-check-label ms-2" for="enable_debug_logging">
+                            Enable Debug Logging
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable debug print statements across the application for troubleshooting and development."></i>
+                    </div>
+
+                    <!-- Time-based turnoff controls for Debug Logging -->
+                    <div id="debug-time-controls" class="mt-3" style="{% if not settings.enable_debug_logging %}display: none;{% endif %}">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="enable_debug_logging_timer" name="enable_debug_logging_timer" {% if settings.debug_logging_timer_enabled %}checked{% endif %} onchange="toggleTimerInputs('debug')">
+                            <label class="form-check-label ms-2" for="enable_debug_logging_timer">
+                                Enable Time-based Auto Turnoff
+                            </label>
+                            <i class="bi bi-clock ms-2" data-bs-toggle="tooltip" title="Automatically disable debug logging after a specified time period to manage cost and risk."></i>
+                        </div>
+
+                        <div id="debug-timer-inputs" class="row g-3" style="{% if not settings.debug_logging_timer_enabled %}display: none;{% endif %}">
+                            <div class="col-md-4">
+                                <label for="debug_timer_value" class="form-label">Duration</label>
+                                <input type="number" class="form-control" id="debug_timer_value" name="debug_timer_value" min="1" max="120" value="{{ settings.debug_timer_value or 1 }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="debug_timer_unit" class="form-label">Time Unit</label>
+                                <select class="form-select" id="debug_timer_unit" name="debug_timer_unit">
+                                    <option value="minutes" {% if settings.debug_timer_unit == 'minutes' %}selected{% endif %}>Minutes (1-120)</option>
+                                    <option value="hours" {% if settings.debug_timer_unit == 'hours' %}selected{% endif %}>Hours (1-24)</option>
+                                    <option value="days" {% if settings.debug_timer_unit == 'days' %}selected{% endif %}>Days (1-7)</option>
+                                    <option value="weeks" {% if settings.debug_timer_unit == 'weeks' %}selected{% endif %}>Weeks (1-52)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Will turn off at:</label>
+                                <div id="debug-turnoff-time" class="form-control-plaintext text-info fw-bold">
+                                    {% if settings.debug_logging_turnoff_time %}
+                                        {% if settings.debug_logging_turnoff_time is string %}
+                                            {{ settings.debug_logging_turnoff_time }}
+                                        {% else %}
+                                            {{ settings.debug_logging_turnoff_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                        {% endif %}
+                                    {% else %}
+                                        Will be calculated when saved
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info mt-2" role="alert">
+                        <strong>Info:</strong> This controls all DEBUG print statements throughout the application. Useful for development and troubleshooting. Tokens and keys will be collected during this process.
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="file-processing-logs-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-text me-2"></i>File Process Logging
+                    </h5>
+                    <p class="text-muted">Enable logging of file processing events for debugging and auditing purposes. Logs are stored in the file_processing container in Cosmos DB.</p>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs" name="enable_file_processing_logs" {% if settings.enable_file_processing_logs %}checked{% endif %} onchange="toggleTimeControls('file')">
+                        <label class="form-check-label ms-2" for="enable_file_processing_logs">
+                            Enable File Processing Logs
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Toggle to enable or disable logging of file processing events for debugging and auditing purposes."></i>
+                    </div>
+
+                    <!-- Time-based turnoff controls for File Processing Logs -->
+                    <div id="file-time-controls" class="mt-3" style="{% if not settings.enable_file_processing_logs %}display: none;{% endif %}">
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" role="switch" id="enable_file_processing_logs_timer" name="enable_file_processing_logs_timer" {% if settings.file_processing_logs_timer_enabled %}checked{% endif %} onchange="toggleTimerInputs('file')">
+                            <label class="form-check-label ms-2" for="enable_file_processing_logs_timer">
+                                Enable Time-based Auto Turnoff
+                            </label>
+                            <i class="bi bi-clock ms-2" data-bs-toggle="tooltip" title="Automatically disable file processing logs after a specified time period to manage cost and risk."></i>
+                        </div>
+
+                        <div id="file-timer-inputs" class="row g-3" style="{% if not settings.file_processing_logs_timer_enabled %}display: none;{% endif %}">
+                            <div class="col-md-4">
+                                <label for="file_timer_value" class="form-label">Duration</label>
+                                <input type="number" class="form-control" id="file_timer_value" name="file_timer_value" min="1" max="120" value="{{ settings.file_timer_value or 1 }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="file_timer_unit" class="form-label">Time Unit</label>
+                                <select class="form-select" id="file_timer_unit" name="file_timer_unit">
+                                    <option value="minutes" {% if settings.file_timer_unit == 'minutes' %}selected{% endif %}>Minutes (1-120)</option>
+                                    <option value="hours" {% if settings.file_timer_unit == 'hours' %}selected{% endif %}>Hours (1-24)</option>
+                                    <option value="days" {% if settings.file_timer_unit == 'days' %}selected{% endif %}>Days (1-7)</option>
+                                    <option value="weeks" {% if settings.file_timer_unit == 'weeks' %}selected{% endif %}>Weeks (1-52)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Will turn off at:</label>
+                                <div id="file-turnoff-time" class="form-control-plaintext text-info fw-bold">
+                                    {% if settings.file_processing_logs_turnoff_time %}
+                                        {% if settings.file_processing_logs_turnoff_time is string %}
+                                            {{ settings.file_processing_logs_turnoff_time }}
+                                        {% else %}
+                                            {{ settings.file_processing_logs_turnoff_time.strftime('%Y-%m-%d %H:%M:%S') }}
+                                        {% endif %}
+                                    {% else %}
+                                        Will be calculated when saved
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="my-4" />
+                    <section aria-labelledby="file-processing-log-cleanup-heading" data-ignore-settings-change="true">
+                        <h6 id="file-processing-log-cleanup-heading">Delete stored logs</h6>
+                        <p class="text-muted small">
+                            Permanently remove file processing logs from Cosmos DB. One month is treated as 30 days.
+                        </p>
+                        <div class="row g-3 align-items-end">
+                            <div class="col-sm-4">
+                                <label for="file-processing-log-cleanup-age" class="form-label">Delete logs older than</label>
+                                <input
+                                    type="number"
+                                    class="form-control"
+                                    id="file-processing-log-cleanup-age"
+                                    min="1"
+                                    step="1"
+                                    value="30"
+                                    aria-describedby="file-processing-log-cleanup-age-feedback"
+                                />
+                                <div id="file-processing-log-cleanup-age-feedback" class="invalid-feedback">
+                                    Enter a whole number greater than zero.
+                                </div>
+                            </div>
+                            <div class="col-sm-3">
+                                <label for="file-processing-log-cleanup-unit" class="form-label">Age unit</label>
+                                <select class="form-select" id="file-processing-log-cleanup-unit">
+                                    <option value="days" selected>Days</option>
+                                    <option value="weeks">Weeks</option>
+                                    <option value="months">Months (30 days)</option>
+                                </select>
+                            </div>
+                            <div class="col-sm-5 d-flex flex-wrap gap-2">
+                                <button type="button" class="btn btn-outline-danger" id="delete-old-file-processing-logs-btn">
+                                    <i class="bi bi-trash me-1" aria-hidden="true"></i>Delete older logs
+                                </button>
+                                <button type="button" class="btn btn-danger" id="delete-all-file-processing-logs-btn">
+                                    <i class="bi bi-trash3 me-1" aria-hidden="true"></i>Delete all logs
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+                <div class="card p-3 mb-3" id="health-check-section">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-heart-pulse me-2"></i>Health Check
+                        </h5>
+                        <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#healthCheckInfoModal">
+                            <i class="bi bi-info-circle me-1"></i>Configuration Guide
+                        </button>
+                    </div>
+                    <p class="text-muted mb-3">Configure health check endpoint for external monitoring systems.</p>
+
+                    <div class="row g-3">
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100 bg-body-tertiary-subtle">
+                                <div class="d-flex align-items-start justify-content-between gap-2">
+                                    <div>
+                                        <h6 class="mb-1">Authenticated Endpoint</h6>
+                                        <p class="text-muted small mb-0">Use when your monitoring system can reach a protected route and you want the endpoint governed by the normal app access boundary.</p>
+                                    </div>
+                                    <span class="badge text-bg-primary">Protected</span>
+                                </div>
+                                <div class="form-check form-switch mt-3 mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_external_healthcheck"
+                                        name="enable_external_healthcheck"
+                                        {% if settings.enable_external_healthcheck %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_external_healthcheck">
+                                        Enable /external/healthcheck
+                                    </label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the authenticated /external/healthcheck endpoint for external monitoring systems."></i>
+                                </div>
+                                <p class="text-muted small mb-0">Best for internal monitors or diagnostics tooling that already authenticates to the application.</p>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="border rounded p-3 h-100 border-warning-subtle bg-warning-subtle">
+                                <div class="d-flex align-items-start justify-content-between gap-2">
+                                    <div>
+                                        <h6 class="mb-1">Unauthenticated Endpoint</h6>
+                                        <p class="text-muted small mb-0">Use when a platform health probe cannot sign in and only needs a lightweight availability response.</p>
+                                    </div>
+                                    <span class="badge text-bg-warning">No Auth</span>
+                                </div>
+                                <div class="form-check form-switch mt-3 mb-2">
+                                    <input
+                                        type="checkbox"
+                                        class="form-check-input"
+                                        id="enable_no_auth_external_healthcheck"
+                                        name="enable_no_auth_external_healthcheck"
+                                        {% if settings.enable_no_auth_external_healthcheck %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" for="enable_no_auth_external_healthcheck">
+                                        Enable /external/healthcheckz
+                                    </label>
+                                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable the unauthenticated /external/healthcheckz endpoint for probes that cannot authenticate."></i>
+                                </div>
+                                <div class="alert alert-warning small mb-0" role="alert">
+                                    <strong>Security note:</strong> This route is intentionally unauthenticated. Only enable it for trusted health probes or controlled network paths.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card p-3 mb-3" id="swagger-section">
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-file-earmark-code me-2"></i>API Documentation
+                        </h5>
+                        <div class="btn-group" role="group">
+                            <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#swaggerInfoModal">
+                                <i class="bi bi-info-circle me-1"></i>Why Enable Swagger?
+                            </button>
+                            <a href="/swagger" class="btn btn-primary btn-sm" target="_blank">
+                                <i class="bi bi-box-arrow-up-right me-1"></i>Open Swagger UI
+                            </a>
+                        </div>
+                    </div>
+                    <p class="text-muted mb-3">Configure automatic OpenAPI/Swagger documentation for API endpoints.</p>
+
+                    <div class="form-check form-switch mb-2">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_swagger"
+                            name="enable_swagger"
+                            {% if settings.enable_swagger %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_swagger">
+                            Enable Swagger/OpenAPI Documentation (/swagger)
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable automatic API documentation with Swagger UI interface for testing and exploring endpoints."></i>
+                    </div>
+                    <p class="text-muted small mb-0">
+                        Provides interactive API documentation, endpoint testing, and schema validation.
+                        Useful for developers, API integration, and system troubleshooting.
+                    </p>
+                </div>
+            </div>

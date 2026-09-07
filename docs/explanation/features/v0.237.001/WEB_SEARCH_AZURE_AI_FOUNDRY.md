@@ -172,7 +172,7 @@ When consent is accepted, the following information is logged:
 
 ## Related Features
 
-- [Azure AI Foundry Agent Support](AZURE_AI_FOUNDRY_AGENT_SUPPORT.md)
+- Azure AI Foundry Agent Support
 - Agent-based chat with real-time information
 
 ## Dependencies

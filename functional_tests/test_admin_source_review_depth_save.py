@@ -12,6 +12,7 @@ overridden by an unrelated duplicate field earlier in the form.
 
 import os
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -27,7 +28,7 @@ ADMIN_TEMPLATE = os.path.join(
 def read_admin_template():
     """Read the Admin Settings template for static regression checks."""
     with open(ADMIN_TEMPLATE, "r", encoding="utf-8") as template_file:
-        return template_file.read()
+        return compose_if_admin_settings(ADMIN_TEMPLATE, template_file.read())
 
 
 def test_source_review_depth_has_single_form_field():
@@ -40,9 +41,11 @@ def test_source_review_depth_has_single_form_field():
         f"Expected exactly one source_review_max_depth form field, found {depth_field_name_count}."
     )
 
+    # Bound the Latest Features visibility block by its own container rather
+    # than by a neighbouring card, so the check survives cards moving between
+    # tabs during information architecture work.
     latest_features_start = template_content.index('id="support_latest_features_settings"')
-    external_links_start = template_content.index('id="external-links-section"')
-    latest_features_section = template_content[latest_features_start:external_links_start]
+    latest_features_section = template_content[latest_features_start:latest_features_start + 8000]
 
     assert 'name="source_review_max_depth"' not in latest_features_section, (
         "Latest Features visibility controls must not post source_review_max_depth."

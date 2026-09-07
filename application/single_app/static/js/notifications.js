@@ -179,24 +179,43 @@
 
     function getWorkflowAlertPriorityBadgeClass(priority) {
         const normalizedPriority = String(priority || '').trim().toLowerCase();
-        if (normalizedPriority === 'high') {
+        if (normalizedPriority === 'critical' || normalizedPriority === 'high') {
             return 'text-bg-danger';
         }
         if (normalizedPriority === 'medium') {
             return 'text-bg-warning';
         }
-        if (normalizedPriority === 'low') {
+        if (normalizedPriority === 'low' || normalizedPriority === 'info') {
             return 'text-bg-info';
         }
         return 'text-bg-secondary';
     }
 
-    function formatWorkflowAlertPriorityLabel(priority) {
+    function formatWorkflowAlertPriorityLabel(priority, category) {
         const normalizedPriority = String(priority || '').trim().toLowerCase();
+        const normalizedCategory = String(category || '').trim().toLowerCase();
         if (!normalizedPriority) {
-            return 'ALERT';
+            return normalizedCategory === 'failure' ? 'FAILURE' : 'ALERT';
+        }
+        if (normalizedCategory === 'failure') {
+            return `${normalizedPriority.toUpperCase()} FAILURE`;
+        }
+        if (normalizedPriority === 'info') {
+            return 'INFO';
         }
         return `${normalizedPriority.toUpperCase()} PRIORITY`;
+    }
+
+    function getWorkflowAlertCategory(notification) {
+        const metadata = notification?.metadata || {};
+        const category = String(metadata.category || notification?.category || 'alert').trim().toLowerCase();
+        return category === 'failure' ? 'failure' : 'alert';
+    }
+
+    function getWorkflowAlertDelivery(notification) {
+        const metadata = notification?.metadata || {};
+        const delivery = String(metadata.delivery || notification?.delivery || '').trim().toLowerCase();
+        return delivery === 'notify_only' ? 'notify_only' : 'popup';
     }
 
     function formatWorkflowTriggeredTime(isoString) {
@@ -342,7 +361,7 @@
         }
 
         const normalizedNotificationTitle = normalizeWorkflowAlertText(notification?.title || '');
-        const strippedNotificationTitle = normalizedNotificationTitle.replace(/^(low|medium|high)\s+priority\s+workflow\s+alert:\s*/i, '').trim();
+        const strippedNotificationTitle = normalizedNotificationTitle.replace(/^(info|low|medium|high|critical)\s+priority\s+workflow\s+alert:\s*/i, '').trim();
         if (strippedNotificationTitle) {
             return strippedNotificationTitle;
         }
@@ -440,10 +459,14 @@
 
         if (workflowAlertModalContent) {
             workflowAlertModalContent.dataset.priority = priority || 'medium';
+            workflowAlertModalContent.dataset.category = getWorkflowAlertCategory(notification);
         }
         if (workflowAlertPriorityBadge) {
             workflowAlertPriorityBadge.className = `badge text-uppercase ${getWorkflowAlertPriorityBadgeClass(priority)}`;
-            workflowAlertPriorityBadge.textContent = formatWorkflowAlertPriorityLabel(priority);
+            workflowAlertPriorityBadge.textContent = formatWorkflowAlertPriorityLabel(
+                priority,
+                getWorkflowAlertCategory(notification),
+            );
         }
         if (workflowAlertTitle) {
             workflowAlertTitle.textContent = alertTitle || workflowName || 'Workflow alert';
@@ -512,6 +535,10 @@
                 return;
             }
             if (queuedIds.has(notification.id) || activeWorkflowAlert?.id === notification.id || hasShownWorkflowAlert(notification.id)) {
+                return;
+            }
+            // Quiet severities stay in the notification bell instead of interrupting.
+            if (getWorkflowAlertDelivery(notification) === 'notify_only') {
                 return;
             }
 

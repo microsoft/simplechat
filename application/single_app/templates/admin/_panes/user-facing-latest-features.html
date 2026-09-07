@@ -1,0 +1,65 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'user-facing-latest-features' %} show active{% endif %}" id="user-facing-latest-features" role="tabpanel" aria-labelledby="user-facing-latest-features-tab">
+                <div class="card p-3 mb-3" id="user-facing-latest-features-section">
+                    <h5>
+                        <i class="bi bi-megaphone me-2"></i>User-Facing Latest Features
+                    </h5>
+                    <p class="text-muted small">Choose which recent features are shared on the user Latest Features page. Deployment and Redis start unchecked because they are mainly admin-facing rollout and infrastructure topics.</p>
+                    <div class="alert alert-info py-2 px-3 small" role="note">
+                        These choices only take effect while <strong>Enable Latest Features Destination</strong> is turned on under
+                        <a href="#support-menu-section" data-admin-link="support-menu-section">Support Menu</a>.
+                    </div>
+
+                    <div id="support_latest_features_settings" {% if not settings.enable_support_latest_features %}style="display: none;"{% endif %}>
+                        <div class="form-check form-switch mb-3">
+                            <input class="form-check-input" type="checkbox" id="enable_support_latest_feature_documentation_links" name="enable_support_latest_feature_documentation_links"
+                                {% if settings.enable_support_latest_feature_documentation_links %}checked{% endif %}>
+                            <label class="form-check-label ms-2" for="enable_support_latest_feature_documentation_links">
+                                Show Simple Chat Documentation Guide Links
+                            </label>
+                            <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Show public documentation guide buttons alongside the in-app Latest Features shortcuts. This is disabled by default."></i>
+                            <small class="form-text text-muted d-block mt-1">When enabled, user-facing Latest Features cards can show public guide buttons in addition to the direct in-app shortcuts.</small>
+                        </div>
+                        {% for release_group in support_latest_feature_release_groups %}
+                        {% set checklist_collapse_id = release_group.collapse_id ~ 'Checklist' %}
+                        <div class="card border-0 bg-body-tertiary mb-3">
+                            <div class="card-body p-3">
+                                <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+                                    <div>
+                                        <h6 class="mb-1">{{ release_group.label }}{% if release_group.release_version %}<span class="badge bg-light text-dark ms-2">v{{ release_group.release_version }}</span>{% endif %}</h6>
+                                        <p class="text-muted small mb-0">{{ release_group.description }}</p>
+                                    </div>
+                                    {% if not release_group.default_expanded %}
+                                    <button
+                                        type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        data-bs-toggle="collapse"
+                                        data-bs-target="#{{ checklist_collapse_id }}"
+                                        aria-expanded="false"
+                                        aria-controls="{{ checklist_collapse_id }}"
+                                    >
+                                        Show {{ release_group.label }}
+                                    </button>
+                                    {% endif %}
+                                </div>
+                                <div {% if not release_group.default_expanded %}class="collapse mt-3" id="{{ checklist_collapse_id }}"{% else %}class="mt-3"{% endif %}>
+                                    <div class="row g-2">
+                                        {% for feature in release_group.features %}
+                                        <div class="col-md-6">
+                                            <div class="form-check border rounded p-3 h-100">
+                                                <input class="form-check-input" type="checkbox" id="support_latest_feature_{{ feature.id }}" name="support_latest_feature_{{ feature.id }}"
+                                                    {% if settings.support_latest_features_visibility.get(feature.id, true) %}checked{% endif %}>
+                                                <label class="form-check-label ms-2" for="support_latest_feature_{{ feature.id }}">
+                                                    <span class="fw-semibold d-block">{{ feature.title }}</span>
+                                                    <span class="text-muted small">{{ feature.summary }}</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>

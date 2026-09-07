@@ -245,6 +245,7 @@ def check_logging_timers_once():
 def check_expired_approvals_once():
     """Auto-deny expired approval requests and return the affected count."""
     from functions_approvals import auto_deny_expired_approvals
+    from functions_simplechat_operations import auto_deny_expired_generated_file_approvals
 
     lock_document = acquire_distributed_task_lock('approval_expiry', lease_seconds=1800)
     if not lock_document:
@@ -255,6 +256,18 @@ def check_expired_approvals_once():
         denied_count = auto_deny_expired_approvals()
         if denied_count > 0:
             print(f"Auto-denied {denied_count} expired approval request(s).")
+
+        try:
+            expired_file_count = auto_deny_expired_generated_file_approvals()
+            if expired_file_count > 0:
+                print(f"Auto-denied {expired_file_count} expired generated file approval(s).")
+        except Exception as exc:
+            # Staged file expiry must never take down the Control Center approval sweep.
+            print(f"Error expiring staged generated file approvals: {exc}")
+            log_event(
+                f"Error expiring staged generated file approvals: {exc}",
+                level=logging.ERROR,
+            )
     finally:
         release_distributed_task_lock(lock_document)
 
@@ -705,7 +718,10 @@ def run_file_sync_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('file_sync_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_file_sync_sources_once()
+                due_sources = check_due_file_sync_sources_once()
+                debug_print(f"File Sync scheduler tick processed {len(due_sources or [])} source(s).")
+            else:
+                debug_print('Skipping File Sync scheduler tick because another worker holds the lease.')
         except Exception as exc:
             print(f"Error in File Sync scheduler check: {exc}")
             log_event(f"[FILE_SYNC] Error in scheduler check: {exc}", level=logging.ERROR)
@@ -723,7 +739,14 @@ def run_tabular_generated_output_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('tabular_generated_output_scheduler_scan', lease_seconds=120)
             if lock_document:
-                check_due_tabular_generated_output_runs_once()
+                processed_run_ids = check_due_tabular_generated_output_runs_once()
+                debug_print(
+                    f"Tabular generated-output scheduler tick processed {len(processed_run_ids or [])} run(s)."
+                )
+            else:
+                debug_print(
+                    'Skipping tabular generated-output scheduler tick because another worker holds the lease.'
+                )
         except Exception as exc:
             print(f"Error in tabular generated-output scheduler check: {exc}")
             log_event(f"[TABULAR_GENERATED_OUTPUT] Error in scheduler check: {exc}", level=logging.ERROR)
@@ -741,7 +764,10 @@ def run_data_management_scheduler_loop(app=None):
         try:
             lock_document = acquire_distributed_task_lock('data_management_scheduler_scan', lease_seconds=300)
             if lock_document:
-                check_due_data_management_jobs_once(app=app)
+                due_jobs = check_due_data_management_jobs_once(app=app)
+                debug_print(f"Data Management scheduler tick processed {len(due_jobs or [])} job(s).")
+            else:
+                debug_print('Skipping Data Management scheduler tick because another worker holds the lease.')
         except Exception as exc:
             print(f"Error in Data Management scheduler check: {exc}")
             log_event(f"[DATA_MANAGEMENT] Error in scheduler check: {exc}", level=logging.ERROR)

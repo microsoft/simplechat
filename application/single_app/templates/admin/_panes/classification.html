@@ -1,0 +1,45 @@
+            <div class="tab-pane fade{% if admin_landing_tab == 'classification' %} show active{% endif %}" id="classification" role="tabpanel" aria-labelledby="classification-tab">
+                <div class="card mb-3 p-3" id="document-classification-section">
+                    <h5>
+                        <i class="bi bi-tags me-2"></i>Document Classification
+                    </h5>
+                    <p class="text-muted">
+                        Enable this feature to allow users to classify documents uploaded to their workspaces using predefined categories.
+                    </p>
+                    <div class="form-group form-check form-switch mb-3">
+                        <input
+                            type="checkbox"
+                            class="form-check-input"
+                            id="enable_document_classification"
+                            name="enable_document_classification"
+                            {% if settings.enable_document_classification %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_document_classification">
+                            Enable Document Classification
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Allow users to classify uploaded documents with predefined categories for better organization and search filtering."></i>
+                    </div>
+
+
+                    <div id="document_classification_settings" {% if not settings.enable_document_classification %}style="display: none;"{% endif %}>
+                        <h6>Classification Categories</h6>
+                        <p class="text-muted small">Define the labels and corresponding colors for document classification.</p>
+                        <table class="table table-sm table-bordered">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 50%;">Label</th>
+                                    <th style="width: 30%;">Color</th>
+                                    <th style="width: 20%;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="classification-categories-tbody">
+
+                            </tbody>
+                        </table>
+                        <button type="button" id="add-classification-btn" class="btn btn-success btn-sm mt-2">
+                            <i class="bi bi-plus-circle"></i> Add New Category
+                        </button>
+
+                        <input type="hidden" name="document_classification_categories_json" id="document_classification_categories_json">
+                    </div>
+                </div>
+            </div>

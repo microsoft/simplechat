@@ -38,7 +38,7 @@ def test_route_exposes_agent_citation_artifact_endpoint():
 
     route_source = read_file_text(ROUTE_FILE)
     required_snippets = [
-        "@app.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])",
+        "@bp.route('/api/conversation/<conversation_id>/agent-citation/<artifact_id>', methods=['GET'])",
         'build_message_artifact_payload_map',
         "artifact_payload_map.get(str(artifact_id or ''))",
         "return jsonify({'citation': citation})",

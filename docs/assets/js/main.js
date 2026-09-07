@@ -6,9 +6,6 @@
 (function() {
     "use strict";
 
-    let cachedSearchIndex = null;
-    let searchIndexPromise = null;
-
     function createIcon(iconClass) {
         const icon = document.createElement("i");
         icon.className = iconClass;
@@ -194,206 +191,6 @@
         });
     }
 
-    function normalizeSearchIndex(items) {
-        if (!Array.isArray(items)) {
-            return [];
-        }
-
-        return items.filter(function(item) {
-            return item && item.title && item.url;
-        });
-    }
-
-    function getNavigationSearchIndex() {
-        return Array.from(document.querySelectorAll(".docs-sidebar-link, .docs-topbar-link")).map(function(link) {
-            return {
-                title: link.textContent.trim(),
-                description: "",
-                keywords: "",
-                section: "Navigation",
-                url: link.href
-            };
-        });
-    }
-
-    function getEmbeddedSearchIndex() {
-        const searchDataElement = document.getElementById("docs-search-data");
-        if (!searchDataElement) {
-            return [];
-        }
-
-        try {
-            return normalizeSearchIndex(JSON.parse(searchDataElement.textContent));
-        } catch (error) {
-            return [];
-        }
-    }
-
-    function getSearchIndex() {
-        if (cachedSearchIndex) {
-            return Promise.resolve(cachedSearchIndex);
-        }
-
-        const embeddedIndex = getEmbeddedSearchIndex();
-        if (embeddedIndex.length > 0) {
-            cachedSearchIndex = embeddedIndex;
-            return Promise.resolve(cachedSearchIndex);
-        }
-
-        if (searchIndexPromise) {
-            return searchIndexPromise;
-        }
-
-        const searchIndexUrl = window.siteSettings?.searchIndexUrl;
-        if (!searchIndexUrl || typeof fetch !== "function") {
-            cachedSearchIndex = getNavigationSearchIndex();
-            return Promise.resolve(cachedSearchIndex);
-        }
-
-        searchIndexPromise = fetch(searchIndexUrl, { headers: { Accept: "application/json" } })
-            .then(function(response) {
-                if (!response.ok) {
-                    throw new Error("Search index request failed");
-                }
-                return response.json();
-            })
-            .then(function(items) {
-                cachedSearchIndex = normalizeSearchIndex(items);
-                return cachedSearchIndex;
-            })
-            .catch(function() {
-                cachedSearchIndex = getNavigationSearchIndex();
-                return cachedSearchIndex;
-            });
-
-        return searchIndexPromise;
-    }
-
-    function createSearchResult(item) {
-        const result = document.createElement("a");
-        result.className = "docs-search-result";
-        result.href = item.url;
-        result.setAttribute("role", "option");
-
-        const title = document.createElement("span");
-        title.className = "docs-search-result-title";
-        title.textContent = item.title;
-
-        const meta = document.createElement("span");
-        meta.className = "docs-search-result-meta";
-        meta.textContent = item.section || "Docs";
-
-        const description = document.createElement("span");
-        description.className = "docs-search-result-description";
-        description.textContent = item.description || "Open this documentation page.";
-
-        result.appendChild(title);
-        result.appendChild(meta);
-        result.appendChild(description);
-        return result;
-    }
-
-    function renderSearchResults(searchInput, resultsContainer) {
-        const query = searchInput.value.trim().toLowerCase();
-        resultsContainer.replaceChildren();
-
-        if (query.length < 2) {
-            resultsContainer.classList.add("d-none");
-            return;
-        }
-
-        getSearchIndex().then(function(searchIndex) {
-            if (searchInput.value.trim().toLowerCase() !== query) {
-                return;
-            }
-
-            resultsContainer.replaceChildren();
-            const matches = searchIndex.map(function(item) {
-                const title = item.title.toLowerCase();
-                const description = (item.description || "").toLowerCase();
-                const keywords = (item.keywords || "").toLowerCase();
-                const section = (item.section || "").toLowerCase();
-                const searchableText = `${title} ${description} ${keywords} ${section}`;
-                let score = 10;
-
-                if (title === query) {
-                    score = 0;
-                } else if (title.startsWith(query)) {
-                    score = 1;
-                } else if (title.includes(query)) {
-                    score = 2;
-                } else if (keywords.includes(query)) {
-                    score = 3;
-                } else if (section.includes(query)) {
-                    score = 4;
-                } else if (description.includes(query)) {
-                    score = 5;
-                }
-
-                return { item, score, searchableText };
-            }).filter(function(result) {
-                return result.searchableText.includes(query);
-            }).sort(function(firstResult, secondResult) {
-                if (firstResult.score !== secondResult.score) {
-                    return firstResult.score - secondResult.score;
-                }
-                return firstResult.item.title.localeCompare(secondResult.item.title);
-            }).slice(0, 8).map(function(result) {
-                return result.item;
-            });
-
-            if (matches.length === 0) {
-                const emptyState = document.createElement("div");
-                emptyState.className = "docs-search-empty";
-                emptyState.textContent = "No matching docs found.";
-                resultsContainer.appendChild(emptyState);
-            } else {
-                matches.forEach(function(item) {
-                    resultsContainer.appendChild(createSearchResult(item));
-                });
-            }
-
-            resultsContainer.classList.remove("d-none");
-        });
-    }
-
-    function initSearch() {
-        const searchInputs = document.querySelectorAll("[data-docs-search='true']");
-
-        searchInputs.forEach(function(searchInput) {
-            const searchRoot = searchInput.closest(".docs-search");
-            const resultsContainer = searchRoot ? searchRoot.querySelector("[data-docs-search-results='true']") : null;
-
-            if (!resultsContainer) {
-                return;
-            }
-
-            let searchTimeout;
-
-            searchInput.addEventListener("input", function() {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(function() {
-                    renderSearchResults(searchInput, resultsContainer);
-                }, 120);
-            });
-
-            searchInput.addEventListener("keydown", function(event) {
-                if (event.key === "Escape") {
-                    searchInput.value = "";
-                    resultsContainer.classList.add("d-none");
-                }
-            });
-        });
-
-        document.addEventListener("click", function(event) {
-            if (!event.target.closest(".docs-search")) {
-                document.querySelectorAll("[data-docs-search-results='true']").forEach(function(resultsContainer) {
-                    resultsContainer.classList.add("d-none");
-                });
-            }
-        });
-    }
-
     function buildOnThisPage() {
         const tocContainers = document.querySelectorAll("[data-docs-toc='true']");
         if (tocContainers.length === 0) {
@@ -437,7 +234,6 @@
         initSmoothScrolling();
         addHeadingAnchors();
         addCopyButtonsToCodeBlocks();
-        initSearch();
         buildOnThisPage();
 
         document.addEventListener("themeChanged", function() {
@@ -463,7 +259,6 @@
         addCopyButtonsToCodeBlocks,
         initTooltips,
         initPopovers,
-        initSearch,
         buildOnThisPage
     };
 })();

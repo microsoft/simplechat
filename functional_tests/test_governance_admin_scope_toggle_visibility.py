@@ -11,6 +11,7 @@ scope toggle even when the matching primary feature switch is disabled.
 
 import os
 import sys
+from test_support.templates import compose_if_admin_settings
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,7 +20,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 def _read(*parts):
     path = os.path.join(ROOT_DIR, *parts)
     with open(path, "r", encoding="utf-8") as handle:
-        return handle.read()
+        return compose_if_admin_settings(path, handle.read())
 
 
 GOVERNANCE_SCOPE_CONTROLS = {

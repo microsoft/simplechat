@@ -16,10 +16,10 @@ hero_pills:
   - Native Python notes included
 hero_links:
   - label: "Getting Started"
-    url: /setup_instructions/
+    url: /start/deployment-options/
     style: primary
   - label: "Upgrade paths"
-    url: /how-to/upgrade_paths/
+    url: /guides/upgrade-paths/
     style: secondary
 ---
 
@@ -67,6 +67,6 @@ This section is the deployment decision map. Use it after you already understand
 
 ## Related guides
 
-- [Setup Instructions](../../setup_instructions.md)
-- [Upgrade Paths](../../how-to/upgrade_paths.md)
-- [Special Deployment Scenarios](../../setup_instructions_special.md)
+- [Setup Instructions]({{ '/start/deployment-options/' | relative_url }})
+- [Upgrade Paths]({{ '/guides/upgrade-paths/' | relative_url }})
+- [Special Deployment Scenarios]({{ '/deploy/special-scenarios/' | relative_url }})
