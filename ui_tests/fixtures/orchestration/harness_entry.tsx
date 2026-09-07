@@ -11,12 +11,13 @@
 
 import { createElement, StrictMode, type ComponentProps, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 import * as orchestrationStore from '../../../application/v2_ui/src/stores/orchestrationStore';
 import * as chatStore from '../../../application/v2_ui/src/stores/chatStore';
 import * as bootstrapStore from '../../../application/v2_ui/src/stores/bootstrapStore';
 import * as collaborationStore from '../../../application/v2_ui/src/stores/collaborationStore';
+import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
 import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
@@ -29,7 +30,6 @@ import { OrchestrationRunView } from '../../../application/v2_ui/src/components/
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
-import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
 
 function PromptExperience() {
@@ -54,6 +54,21 @@ function ContextWorkflow() {
     );
 }
 
+function ApprovalPreferenceWorkflow() {
+    return (
+        <>
+            <nav aria-label="Test navigation">
+                <Link to="/chat">Return to chat</Link>
+                <Link to="/away">Leave chat</Link>
+            </nav>
+            <Routes>
+                <Route path="/chat" element={<Composer />} />
+                <Route path="/away" element={<p>Away from chat</p>} />
+            </Routes>
+        </>
+    );
+}
+
 type ComponentName =
     | 'OrchestrationPlanCard'
     | 'ElicitationCard'
@@ -63,6 +78,7 @@ type ComponentName =
     | 'MessageList'
     | 'Composer'
     | 'PromptExperience'
+    | 'ApprovalPreferenceWorkflow'
     | 'ContextWorkflow';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +91,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     MessageList,
     Composer,
     PromptExperience,
+    ApprovalPreferenceWorkflow,
     ContextWorkflow,
 };
 
@@ -156,6 +173,13 @@ function reset(): void {
         drawerMode: null,
         messages: [],
     });
+    userSettingsStore.useUserSettingsStore.setState({
+        settings: {},
+        loading: false,
+        error: null,
+        saving: false,
+        saveError: null,
+    });
     try {
         window.localStorage.clear();
     } catch {
@@ -176,6 +200,7 @@ const harness = {
         chat: chatStore,
         bootstrap: bootstrapStore,
         collaboration: collaborationStore,
+        userSettings: userSettingsStore,
     },
     controller,
     plan,

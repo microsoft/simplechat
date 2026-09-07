@@ -30,6 +30,7 @@ from functions_message_visual_styles import (
     VisualStyleError,
     sanitize_visual_style,
 )
+from functions_orchestration_schema import APPROVAL_MODES
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -514,6 +515,7 @@ def register_route_backend_users(bp):
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
+                    'orchestrationApprovalMode',
                     'aiNoticeDismissal',
                     'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
                     'conversationContentsDrawerEnabled',
@@ -566,6 +568,11 @@ def register_route_backend_users(bp):
 
 
                 settings_to_update = dict(settings_to_update)
+
+                if "orchestrationApprovalMode" in settings_to_update:
+                    approval_mode = settings_to_update["orchestrationApprovalMode"]
+                    if not isinstance(approval_mode, str) or approval_mode not in APPROVAL_MODES:
+                        return jsonify({"error": "Invalid orchestration approval mode"}), 400
 
                 if "sidebarToggleStyle" in settings_to_update:
                     sidebar_toggle_style = str(settings_to_update.get("sidebarToggleStyle") or "large").strip().lower()
