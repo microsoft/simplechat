@@ -491,7 +491,20 @@ item["enable_semantic_kernel"] = False
 item["enable_appinsights_global_logging"] = True
 
 # Scale > Redis Cache
-# todo support redis cache configuration
+# Only written when this deployment provisioned a cache, so an operator-configured
+# external Redis is not overwritten when deployRedisCache is false.
+redis_cache_host_name = (var_redisCacheHostName or "").strip()
+if redis_cache_host_name:
+    item["enable_redis_cache"] = True
+    item["redis_url"] = redis_cache_host_name
+    item["redis_auth_type"] = var_redisAuthenticationType
+    # The application uses different service-type identifiers than the Bicep redisCacheKind parameter.
+    item["redis_service_type"] = (
+        "azure_managed_redis" if var_redisCacheKind == "managed" else "azure_cache_for_redis"
+    )
+    item["redis_port"] = var_redisCachePort
+    # Empty under managed identity, which also clears a stale key from an earlier key-auth deployment.
+    item["redis_key"] = core_service_keys.get("redis_key", "")
 
 # Workspaces > Metadata Extraction
 item["enable_extract_meta_data"] = True
