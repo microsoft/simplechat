@@ -1,8 +1,8 @@
 # test_orchestration_model_selection.py
 """
 Functional regressions for authorized orchestration model selection and SDK parameters.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.103
+Implemented in: 0.261.103
 
 Exercises the real selection/binding code with endpoint authorization and client creation
 replaced at their existing boundaries. No Azure resources or credentials are used.
@@ -436,5 +436,5 @@ class ModelSelectionTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.102')
+    assert_app_version_at_least('0.261.103')
     unittest.main()

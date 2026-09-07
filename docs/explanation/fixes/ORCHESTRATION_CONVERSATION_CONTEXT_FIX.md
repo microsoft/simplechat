@@ -1,9 +1,9 @@
 # Orchestration Conversation Context Fix
 
-**Version: 0.261.102** (tracked in `application/single_app/config.py`)
+**Version: 0.261.103** (tracked in `application/single_app/config.py`)
 
 **Conversation continuity fixed in version: 0.261.096**
-**Follow-up resolver compatibility fixed in version: 0.261.102**
+**Follow-up resolver compatibility fixed in version: 0.261.103**
 
 ## Issue
 
@@ -39,7 +39,7 @@ validator required a string even though no question was needed. First turns
 without history bypass this completion, which explains the second-question
 pattern.
 
-### Changes in 0.261.102
+### Changes in 0.261.103
 
 `functions_orchestration_planner.py` now explicitly requests an empty clarification
 string when no question is needed and canonicalizes an unused JSON `null` to that
@@ -69,11 +69,11 @@ logger preserves that allowlisted diagnostic field; raw IDs, prompts, model
 responses, and credentials are not included in these diagnostics.
 
 The corresponding configuration version update is
-`application/single_app/config.py`: **0.261.101 -> 0.261.102**.
+`application/single_app/config.py`: **0.261.102 -> 0.261.103**.
 No deployment-configuration change, UI change, new capability setting, or
 conversation-data migration is needed.
 
-### Related model-routing correction in 0.261.102
+### Related model-routing correction in 0.261.103
 
 The resolver failure and the unexpected GPT-4o choice had separate causes. The
 model-routing correction now honors the manual selection or admin default throughout

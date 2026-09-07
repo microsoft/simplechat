@@ -1,9 +1,9 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.102
+Version: 0.261.103
 Implemented in: 0.261.096
-Resolver response compatibility and bounded recovery: 0.261.102
+Resolver response compatibility and bounded recovery: 0.261.103
 
 Exercises the real history, resolution, triage, and adapter code with external
 model/search/analysis boundaries replaced. No Azure resources or credentials are used.
@@ -601,5 +601,5 @@ class AdapterTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.102')
+    assert_app_version_at_least('0.261.103')
     unittest.main()

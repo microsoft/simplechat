@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.102** (tracked in `application/single_app/config.py`)
+**Version: 0.261.103** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -8,9 +8,10 @@
 **Research selection and multi-query execution updated in version: 0.261.099**
 **Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
-**Follow-up resolver compatibility fixed in version: 0.261.102**
-**Selected/default model routing fixed in version: 0.261.102**
+**Follow-up resolver compatibility fixed in version: 0.261.103**
+**Selected/default model routing fixed in version: 0.261.103**
 **Approval preference persistence fixed in version: 0.261.101**
+**Conversational plan editing implemented in version: 0.261.102**
 
 ## Overview
 
@@ -107,7 +108,7 @@ These rules apply to Auto, countdown, and manual approval. They do not introduce
 summaries or cross-conversation memory. First turns without history and simple
 acknowledgments do not require a resolution completion.
 
-Since **0.261.102**, an unused `clarification: null` in the resolver's JSON is
+Since **0.261.103**, an unused `clarification: null` in the resolver's JSON is
 accepted as "no clarification needed", just like an empty string. It does not
 discard the rest of a valid follow-up or require another model call. A request
 whose relationship is `clarification` still needs a nonempty question.
@@ -414,9 +415,9 @@ answer.
 
 ## API
 
-Two endpoints, deliberately separate. The plan is durable between them, so a dropped
-connection cannot lose it, editing is straightforward, and the existing 24,600-line chat
-route is untouched.
+Planning and execution are deliberately separate requests. The plan is durable between
+them, so a dropped connection cannot lose it. Editor operations revise that saved plan
+without starting its steps or adding messages to the main conversation.
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
@@ -424,6 +425,9 @@ route is untouched.
 | `/api/v2/orchestration/run` | POST | Executes an approved plan, streaming step progress and the answer. |
 | `/api/v2/orchestration/cancel/<run_id>` | POST | Asks a running plan to stop. |
 | `/api/v2/orchestration/runs` | GET | Every run in a conversation, oldest first, for the drawer's map view. |
+| `/api/v2/orchestration/runs/<run_id>/editor` | GET | Current editor state and paged revision history. |
+| `/api/v2/orchestration/runs/<run_id>/edit` | POST | Hold an unexecuted plan for manual approval before editing. |
+| `/api/v2/orchestration/runs/<run_id>/revisions` | POST | Ask the planner for a change, answer its question, restore a version, or discard a pending change. |
 | `/api/v2/orchestration/runs/<run_id>/steps` | GET | One run's steps, for expanding a row in the map view. |
 
 Cancellation is recorded on the run rather than signalled in process memory. The run is a
@@ -447,6 +451,23 @@ and `orchestration_synthesis`, each carrying `activity.lane_key = "orchestration
 
 Three event types are genuinely new, because nothing existing meant the same thing:
 `orchestration_plan`, `orchestration_elicitation` and `orchestration_step`.
+
+## Editing before execution
+
+**Review** remains the plan drawer with narrowing-only step and document controls.
+**Edit** opens a full-screen preview, scoped planner conversation, and revision history.
+The planner can add, remove, or revise steps, but only within current capability and
+source permissions. The browser never constructs an executable plan.
+
+Opening Edit stops a countdown and saves a manual-approval hold. Closing or reloading
+does not restart the timer: the current version needs an explicit **Run**. Conditional
+version checks prevent an old tab from approving a superseded plan or editing one that
+has already started.
+
+The revised task guides the actual execution and final answer, while the original user
+message remains unchanged. Failed changes preserve the last valid version. See
+[V2 Orchestration Plan Editing](V2_ORCHESTRATION_PLAN_EDITING.md) and the
+[user guide]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
 
 ## Clarifying questions
 
@@ -552,6 +573,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_action_catalog.py` | Metadata-only action discovery, scoped references and fresh authorization |
 | `functions_orchestration_actions.py` | Isolated, bounded execution of one selected action |
 | `functions_orchestration_planner.py` | Follow-up resolution, triage, plan synthesis, elicitation, re-planning |
+| `functions_orchestration_plan_editing.py` | Scoped plan changes, current source checks, and revised execution requests |
+| `functions_orchestration_plan_revisions.py` | Durable edit holds, conditional revision publication, history, and execution claims |
 | `functions_orchestration_adapters.py` | Capability adapters over existing functions |
 | `functions_orchestration_executor.py` | Step engine, budgets, cancellation, re-authorization |
 | `functions_orchestration_runs.py` | Run and step persistence |
@@ -573,7 +596,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
    turns it off again for anyone who wants the classic composer.
 4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
-5. Review the resulting plan; approve, adjust, or cancel it.
+5. Review the resulting plan. Use **Edit** to discuss changes with the planner, then
+   explicitly run the accepted version or cancel the plan.
 6. Watch progress in the Plan panel of the right-hand drawer.
 
 Anything selected inside the manual controls is passed as a seed and constrains the plan,
@@ -608,6 +632,8 @@ to the front.
 | `functional_tests/test_orchestration_plan_schema.py` | Unknown and disabled capabilities, document authorization, argument coercion and bounds, cycles, step caps, narrowing-only edits, approval states |
 | `functional_tests/test_v2_orchestration_approval_persistence.py` | Current-user approval preference round-trips, enum validation, and runtime preference resolution and save ordering |
 | `ui_tests/test_v2_orchestration_approval_persistence.py` | Approval selection across navigation and fresh browser contexts, administrator precedence, loading/retry, save failures, and pending writes |
+| `functional_tests/test_orchestration_plan_revision_store.py` | Durable edit holds, atomic publication, stale approvals, idempotent submissions, and revision history |
+| `functional_tests/test_orchestration_plan_revision_routes.py` | Conversational add/remove/restore, clarification, error recovery, preserved original messages, and revised-task execution |
 | `functional_tests/test_orchestration_elicitation_schema.py` | The MCP flat-object restriction, paging staying outside the schema, response validation |
 | `functional_tests/test_orchestration_elicitation_context.py` | Authoritative pending questions, accepted context, and the real plan/answer/run handoff |
 | `functional_tests/test_v2_elicitation_answers.py` | Primitive answers, single/multiple files, alternate sources, readiness, and answer-local prompt resolution |

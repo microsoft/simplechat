@@ -2,8 +2,9 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.250.055
+Version: 0.261.102
 Implemented in: 0.242.069
+Plan editor policy coverage: 0.261.102
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -291,6 +292,24 @@ def test_public_routes_are_explicitly_listed() -> None:
     )
 
 
+def test_plan_editor_routes_keep_the_orchestration_security_policy() -> None:
+    """Every editor operation stays on the authenticated orchestration Blueprint."""
+    expected = {
+        "/api/v2/orchestration/runs/<run_id>/editor": "orchestration_plan_editor",
+        "/api/v2/orchestration/runs/<run_id>/edit": "orchestration_begin_plan_edit",
+        "/api/v2/orchestration/runs/<run_id>/revisions": "orchestration_revise_plan",
+    }
+    routes = {
+        route.path: route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path in expected
+    }
+    assert set(routes) == set(expected)
+    for path, route in routes.items():
+        assert route.function_name == expected[path]
+        assert route.route_target == "bp"
+        assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
 if __name__ == "__main__":
     tests = [
         test_route_policy_inventory_assets_and_version_are_current,
@@ -299,6 +318,7 @@ if __name__ == "__main__":
         test_registered_route_blueprints_have_policy_classification,
         test_explicit_app_route_exemptions_have_expected_security,
         test_public_routes_are_explicitly_listed,
+        test_plan_editor_routes_keep_the_orchestration_security_policy,
     ]
     results = []
     for test in tests:

@@ -214,6 +214,7 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
     return {
         plan_id: asString(source.plan_id),
         run_id: asString(source.run_id),
+        edit_version: typeof source.edit_version === 'string' ? source.edit_version : undefined,
         turn_id: asString(source.turn_id),
         revision: typeof source.revision === 'number' ? source.revision : 0,
         conversation_id: asString(source.conversation_id),

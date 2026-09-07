@@ -95,6 +95,13 @@ override is allowed but preferences cannot be loaded, orchestration waits for a 
 rather than risking a different approval mode. The draft remains editable, and
 ordinary chat is still available by switching Orchestrate off.
 
+From version **0.261.102**, opening **Edit** on a pending plan stops the countdown and
+saves a manual-approval hold for that plan. It stays paused after the editor closes or
+the conversation reloads; an explicit **Run** is required. This intervention does not
+change the deployment default or the user's approval preference. Immediate Auto plans
+still start without an editing window. See
+[Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -257,7 +264,7 @@ Selects the model that writes plans.
 
 Planning is a short, structured task rather than a conversational one, so a smaller and
 faster deployment usually does it well and costs less per message than the model that
-writes the answer. Since **0.261.102**, leaving all planner fields blank uses the model
+writes the answer. Since **0.261.103**, leaving all planner fields blank uses the model
 chosen in **Manual controls** first, then the administrator's default model connection,
 rather than an unrelated legacy GPT deployment. Classic chat/APIM settings remain the
 fallback when no model-connection selection or default applies.
@@ -269,6 +276,8 @@ the requesting user. A deployment-only override uses the classic chat/APIM conne
 
 The answer choice is saved with the plan and checked again when it runs. Changing the
 admin default during approval does not switch that answer to a different model.
+Plan edits and editor questions retain that saved choice, unless a separate planner
+is configured; the separate planner never replaces the saved answer model.
 If the saved model is no longer available to the user, execution stops with a model
 availability error rather than silently falling back to GPT-4o.
 

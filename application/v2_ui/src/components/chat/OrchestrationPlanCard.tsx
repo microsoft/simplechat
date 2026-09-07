@@ -14,12 +14,16 @@
 // is drawn to reflect. See `orchestrationStore.ts` and `InlineImageProposal.tsx`.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Eye, ListChecks, Loader2, TriangleAlert, X } from 'lucide-react';
+import { Check, Eye, ListChecks, Loader2, PenLine, TriangleAlert, X } from 'lucide-react';
 import { GlassButton } from '../ui/primitives';
 import { useChatStore } from '../../stores/chatStore';
 import {
     selectEdits,
+    selectCanEditPlan,
+    selectHasPlanHold,
     selectPlan,
+    selectPlanEditor,
+    selectPlanRunBlocked,
     selectStepRuntime,
     useOrchestrationStore,
 } from '../../stores/orchestrationStore';
@@ -33,6 +37,7 @@ import {
 import {
     approveAndRunPlan,
     dismissOrchestrationTurn,
+    openOrchestrationPlanEditor,
 } from '../../lib/orchestrationController';
 import type { CostClass, OrchestrationPlan } from '../../lib/orchestration';
 
@@ -104,6 +109,10 @@ export function OrchestrationPlanCard({
 }) {
     const plan = useOrchestrationStore((state) => selectPlan(state, conversationId, turnId));
     const edits = useOrchestrationStore((state) => selectEdits(state, conversationId, turnId));
+    const editor = useOrchestrationStore((state) => selectPlanEditor(state, conversationId, turnId));
+    const held = useOrchestrationStore((state) => selectHasPlanHold(state, conversationId, turnId));
+    const canEdit = useOrchestrationStore((state) => selectCanEditPlan(state, conversationId, turnId));
+    const runBlocked = useOrchestrationStore((state) => selectPlanRunBlocked(state, conversationId, turnId));
     const stepRuntime = useOrchestrationStore((state) =>
         selectStepRuntime(state, conversationId, turnId),
     );
@@ -135,7 +144,7 @@ export function OrchestrationPlanCard({
         [historyMap, conversationId, turnId],
     );
 
-    const isTimed = plan?.approval.mode === 'timed';
+    const isTimed = plan?.approval.mode === 'timed' && !held;
     const awaitingApproval =
         plan !== null &&
         !runInFlight &&
@@ -165,7 +174,7 @@ export function OrchestrationPlanCard({
                 setRemainingMs(0);
                 if (!expiredRef.current) {
                     expiredRef.current = true;
-                    void approveAndRunPlan({ conversationId, turnId });
+                    void approveAndRunPlan({ conversationId, turnId, automatic: true });
                 }
                 window.clearInterval(id);
                 return;
@@ -233,7 +242,7 @@ export function OrchestrationPlanCard({
     // Awaiting approval (manual or timed), or approved-but-not-yet-running for the brief instant
     // before the run registers. The blocking state: this is the only place the card takes space.
     const cost = highestCost(editedPlan ?? plan);
-    const runnable = editedPlan ? isPlanRunnable(editedPlan) : false;
+    const runnable = editedPlan ? isPlanRunnable(editedPlan) && !runBlocked : false;
     const repairs = plan.validation.repairs;
     const remainingSeconds = Math.ceil(remainingMs / 1000);
 
@@ -275,7 +284,19 @@ export function OrchestrationPlanCard({
                 </div>
             ) : null}
 
-            <div className="mt-3 flex items-center gap-2">
+            {held ? (
+                <p className="mt-2 text-xs text-text-3" role="status">
+                    {editor?.loading ? 'Saving the manual-approval hold…'
+                        : editor?.state || plan.edit_version ? 'Manual approval required — this plan will not run automatically.'
+                        : 'Approval paused in this tab. Open Edit to retry saving the hold.'}
+                </p>
+            ) : null}
+            {editor?.error ? (
+                <p role="alert" className="alert mt-2 rounded-xl bg-danger-soft px-2.5 py-2 text-xs text-danger">
+                    {editor.error}
+                </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
                 {runTimed ? (
                     <span
                         className="flex items-center gap-1.5 text-xs text-text-3"
@@ -286,7 +307,7 @@ export function OrchestrationPlanCard({
                         <span className="tabular-nums">Runs in {remainingSeconds}s</span>
                     </span>
                 ) : null}
-                <div className="ml-auto flex items-center gap-2">
+                <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
                     <GlassButton
                         size="sm"
                         variant="ghost"
@@ -305,15 +326,26 @@ export function OrchestrationPlanCard({
                         <Eye size={14} />
                         Review
                     </GlassButton>
+                    {canEdit ? (
+                        <GlassButton
+                            size="sm"
+                            variant="subtle"
+                            onClick={() => void openOrchestrationPlanEditor({ conversationId, turnId })}
+                            aria-label="Edit the plan"
+                        >
+                            <PenLine size={14} />
+                            Edit
+                        </GlassButton>
+                    ) : null}
                     <GlassButton
                         size="sm"
                         variant="primary"
                         disabled={!runnable}
                         onClick={() => void approveAndRunPlan({ conversationId, turnId })}
-                        aria-label="Approve and run the plan"
+                        aria-label={held ? 'Run the saved plan' : 'Approve and run the plan'}
                     >
                         <Check size={14} />
-                        Approve
+                        {held ? 'Run' : 'Approve'}
                     </GlassButton>
                 </div>
             </div>

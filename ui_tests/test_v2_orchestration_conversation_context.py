@@ -1,9 +1,9 @@
 # test_v2_orchestration_conversation_context.py
 """
 Browser regressions for orchestration follow-up and clarification transport.
-Version: 0.261.102
+Version: 0.261.103
 Implemented in: 0.261.096
-Model selection transport and live answer attribution: 0.261.102
+Model selection transport and live answer attribution: 0.261.103
 
 Runs the shipped controller, stores, elicitation card, and approval card in the
 existing local Playwright harness. HTTP/SSE is stubbed here; the companion
@@ -222,5 +222,5 @@ class ConversationTransportTests(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    assert_app_version_at_least('0.261.102')
+    assert_app_version_at_least('0.261.103')
     unittest.main()
