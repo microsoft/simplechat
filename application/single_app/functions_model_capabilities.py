@@ -1,5 +1,5 @@
 # functions_model_capabilities.py
-"""Resolve catalog-backed model capabilities and reasoning effort.
+"""Resolve catalog-backed model capabilities, reasoning effort, and token limits.
 
 Multi-Modal Vision Analysis sends page images to a model, so it can only offer
 models that actually read them. Working that out used to be a regular expression
@@ -27,6 +27,10 @@ nothing read it. It does now, in three tiers:
 3. **The name heuristic.** Kept for a model in neither of the above, because
    refusing to guess at all would hide working models from an existing
    deployment. Reported as inferred rather than known, so a caller can say so.
+
+Token limits deliberately do not use that heuristic. Only exact catalog
+identities, declared snapshots, and authorized deployment constraints establish
+capacity; unknown limits stay unknown.
 """
 
 import json
@@ -49,6 +53,25 @@ MODEL_IDENTIFIER_FIELDS = (
 )
 REASONING_IDENTIFIER_FIELDS = ("modelName", "behavior_name", "deploymentName", "deployment")
 REASONING_EFFORTS = frozenset(("none", "minimal", "low", "medium", "high", "xhigh"))
+TOKEN_LIMIT_IDENTIFIER_FIELDS = (
+    "modelName", "behavior_name", "model_name", "model",
+    "deploymentName", "deployment_name", "model_deployment", "deployment", "name",
+)
+TOKEN_LIMIT_FIELDS = {
+    "context_window_tokens": (
+        "contextWindow", "context_window", "context_window_tokens",
+        "maxContextTokens", "max_context_tokens", "contextLength", "context_length",
+    ),
+    "max_input_tokens": (
+        "maxInputTokens", "max_input_tokens", "inputTokenLimit", "input_token_limit",
+    ),
+    "max_output_tokens": (
+        "maxOutputTokens", "max_output_tokens", "outputTokenLimit", "output_token_limit",
+        "responseLength", "response_length", "maxCompletionTokens", "max_completion_tokens",
+        "maxTokens", "max_tokens",
+    ),
+}
+TOKEN_LIMIT_CONTAINER_FIELDS = ("tokenLimits", "token_limits", "limits")
 
 # Fields an explicit administrator decision may be recorded under. The camelCase
 # spelling is what the Model Endpoints editor writes; the snake_case one is
@@ -107,8 +130,12 @@ def load_model_capability_catalog(force_refresh=False):
                 capabilities = dict(capabilities)
                 if isinstance(model.get("reasoningPolicy"), Mapping):
                     capabilities["reasoningPolicy"] = model["reasoningPolicy"]
+                if isinstance(model.get("tokenLimits"), Mapping):
+                    capabilities["tokenLimits"] = model["tokenLimits"]
                 if not capabilities:
                     continue
+                capabilities["_model_id"] = model.get("id")
+                capabilities["_provider"] = model.get("provider")
 
                 for identifier in [model.get("id")] + list(model.get("aliases") or []):
                     normalized = _normalize_model_identifier(identifier)
@@ -219,13 +246,13 @@ def resolve_model_reasoning_effort(model_name, requested_effort):
     return resolution
 
 
-def _model_identifiers(model):
+def _model_identifiers(model, fields=MODEL_IDENTIFIER_FIELDS):
     """Return the names a model record might be known by."""
     if isinstance(model, str):
         return [model]
     if isinstance(model, Mapping):
-        return [model.get(field) for field in MODEL_IDENTIFIER_FIELDS]
-    return [getattr(model, field, None) for field in MODEL_IDENTIFIER_FIELDS]
+        return [model.get(field) for field in fields]
+    return [getattr(model, field, None) for field in fields]
 
 
 def get_model_catalog_capabilities(model):
@@ -254,6 +281,170 @@ def get_model_catalog_capabilities(model):
                 continue
             return dict(catalog[snapshot.group(1)])
     return None
+
+
+def _model_field(record, field):
+    return record.get(field) if isinstance(record, Mapping) else getattr(record, field, None)
+
+
+def _positive_token_limit(value):
+    """Accept integers and decimal form values without truncating floats or bools."""
+    if isinstance(value, str):
+        value = value.strip()
+        if not re.fullmatch(r"[0-9]+", value):
+            return None
+        try:
+            value = int(value)
+        except ValueError:
+            return None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
+def _token_limit_containers(record):
+    if record is None or isinstance(record, (str, bytes)):
+        return []
+    containers = [record]
+    for field in TOKEN_LIMIT_CONTAINER_FIELDS:
+        nested = _model_field(record, field)
+        if isinstance(nested, Mapping):
+            containers.append(nested)
+    return containers
+
+
+def _token_limit_provider(provider):
+    normalized = _normalize_model_identifier(provider) if isinstance(provider, str) else ""
+    if normalized in ("aoai", "azure-openai", "azureopenai"):
+        return "azure-openai"
+    if normalized in (
+        "azure", "aifoundry", "new-foundry", "foundry", "azure-ai-foundry", "microsoft-foundry",
+    ):
+        return "azure"
+    return "anthropic" if normalized == "claude" else normalized
+
+
+def _token_limit_catalog_record(identifier):
+    """Resolve declared snapshots only; a plausible date is not verified metadata."""
+    normalized = _normalize_model_identifier(identifier)
+    if not normalized:
+        return {}
+    catalog = load_model_capability_catalog()
+    if normalized in catalog:
+        return catalog[normalized]
+    for record in catalog.values():
+        limits = record.get("tokenLimits")
+        snapshots = limits.get("snapshots") if isinstance(limits, Mapping) else None
+        if not isinstance(snapshots, Mapping):
+            continue
+        for snapshot, overrides in snapshots.items():
+            if (
+                isinstance(snapshot, str) and _normalize_model_identifier(snapshot) == normalized
+                and isinstance(overrides, Mapping)
+            ):
+                return {
+                    **record,
+                    "_model_id": snapshot,
+                    "tokenLimits": {**limits, **overrides},
+                }
+    return {}
+
+
+def resolve_model_token_limits(model, *, provider=None, deployment_limits=None):
+    """Return independent, bounded token limits without invoking a model or tokenizer.
+
+    Version: 0.261.106
+    Implemented in: 0.261.106
+
+    The caller must authorize model records and deployment metadata first.
+    Canonical names take precedence even when unknown; configuration IDs and
+    display labels are never identities. A deployment name must itself exactly
+    match a catalog ID, declared alias, or explicitly documented snapshot.
+    ``modelVersion``/``model_version`` may pin a named model to a snapshot.
+
+    Positive integers and decimal strings are accepted in the record or the
+    ``deployment_limits`` argument, directly or under tokenLimits/token_limits/
+    limits. Every valid constraint can shrink, but never enlarge, a catalog or
+    provider ceiling. maxTokens/max_tokens are output limits, never context.
+    Input/output caps are bounded by a known context window, but neither is
+    subtracted from it or used to invent a missing context/input cap.
+
+    ``known`` means context and output ceilings are present; ``partial`` means
+    at least one limit or tokenizer is present; otherwise status is ``unknown``.
+    Input caps and tokenizer names are independently optional. Source is
+    catalog, configured, catalog+configured, or unknown. model_id is the
+    resolved catalog identity (including a pinned snapshot), otherwise None.
+    Deployment SKU, endpoint, beta-header, and request-specific restrictions
+    still apply; these ceilings do not promise live capacity or availability.
+    """
+    identifier = next((
+        value.strip() for value in _model_identifiers(model, TOKEN_LIMIT_IDENTIFIER_FIELDS)
+        if isinstance(value, str) and value.strip()
+    ), "")
+    version = next((
+        value.strip() for value in (
+            _model_field(model, "modelVersion"), _model_field(model, "model_version"),
+        ) if isinstance(value, str) and value.strip()
+    ), "")
+    if version and identifier and not identifier.endswith(f"-{version}"):
+        identifier = f"{identifier}-{version}"
+    record = _token_limit_catalog_record(identifier)
+    provider = (
+        _token_limit_provider(provider) or _token_limit_provider(_model_field(model, "provider"))
+    )
+    publisher = _token_limit_provider(record.get("_provider"))
+    if provider and publisher and not (
+        provider == publisher or provider == "azure"
+        or (provider == "azure-openai" and publisher == "openai")
+    ):
+        record = {}
+
+    catalog_limits = record.get("tokenLimits")
+    catalog_limits = catalog_limits if isinstance(catalog_limits, Mapping) else {}
+    catalog_containers = [catalog_limits]
+    provider_limits = catalog_limits.get("providerLimits")
+    if isinstance(provider_limits, Mapping):
+        provider_key = "azure" if provider == "azure-openai" else provider
+        if isinstance(provider_limits.get(provider_key), Mapping):
+            catalog_containers.append(provider_limits[provider_key])
+    configured_containers = (
+        _token_limit_containers(model) + _token_limit_containers(deployment_limits)
+    )
+    result = {field: None for field in TOKEN_LIMIT_FIELDS}
+    sources = set()
+    for field, spellings in TOKEN_LIMIT_FIELDS.items():
+        for source, containers in (
+            ("catalog", catalog_containers), ("configured", configured_containers),
+        ):
+            for container in containers:
+                for spelling in spellings:
+                    value = _positive_token_limit(_model_field(container, spelling))
+                    if value is not None:
+                        sources.add(source)
+                        result[field] = min(result[field], value) if result[field] else value
+
+    context = result["context_window_tokens"]
+    if context is not None:
+        for field in ("max_input_tokens", "max_output_tokens"):
+            if result[field] is not None:
+                result[field] = min(result[field], context)
+
+    result["tokenizer"] = None
+    for source, containers in (
+        ("catalog", catalog_containers), ("configured", configured_containers),
+    ):
+        for container in containers:
+            tokenizer = _model_field(container, "tokenizer")
+            if result["tokenizer"] is None and isinstance(tokenizer, str) and tokenizer.strip():
+                result["tokenizer"] = tokenizer.strip()
+                sources.add(source)
+    result["source"] = "+".join(
+        source for source in ("catalog", "configured") if source in sources
+    ) or "unknown"
+    result["model_id"] = record.get("_model_id")
+    result["status"] = (
+        "known" if context is not None and result["max_output_tokens"] is not None
+        else "partial" if sources else "unknown"
+    )
+    return result
 
 
 def _declared_vision_support(model):

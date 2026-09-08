@@ -2,7 +2,7 @@
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 1,
   "lastUpdated": "2026-09-08",
-  "description": "SimpleChat model capability catalog. Capability flags inform task-specific eligibility alongside provider adapters and publication policy. Optional reasoningPolicy data defines per-model effort choices and the application fallback for invalid selections, not the provider default; an absent reasoningPolicy is unknown. Reasoning-only entries do not establish vision or image generation support. Optional model token-limit fields are consumed by durable tabular batch planning when present.",
+  "description": "SimpleChat model capability catalog. Capability flags inform task-specific eligibility alongside provider adapters and publication policy. Optional reasoningPolicy data defines per-model effort choices and the application fallback for invalid selections, not the provider default; an absent reasoningPolicy is unknown. Reasoning-only entries do not establish vision or image generation support. Optional tokenLimits metadata supports shared token-limit resolution and durable tabular batch planning; missing limits remain unknown.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
     "generatesText": "Produces text output.",
@@ -18,7 +18,19 @@
     "toolCalling": "Supports function/tool calling or provider-equivalent tool use.",
     "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses."
   },
+  "tokenLimitFields": {
+    "contextWindow": "Verified combined context ceiling in tokens, not an input-only allowance.",
+    "maxInputTokens": "Separately documented input cap. Omitted when unverified; never calculated by subtracting maximum output from context.",
+    "maxOutputTokens": "Verified synchronous output ceiling, including reasoning tokens where the provider counts them.",
+    "tokenizer": "Documented tokenizer encoding name, omitted when no verified local encoding is known.",
+    "snapshots": "Explicit snapshot identifiers mapped to overrides of this model's tokenLimits. Empty objects inherit the verified limits; unlisted dates and deployment suffixes do not match.",
+    "providerLimits": "Additional provider-specific ceilings, intersected with the model limits. The azure key applies to Azure OpenAI and Foundry providers."
+  },
   "coverageNotes": [
+    "Token limits were implemented in SimpleChat 0.261.106 and verified against the cited official model/provider documentation on 2026-09-08. These are ceilings, not live availability, quota, output-size promises, or additive input/output allowances. Unpopulated entries are intentionally unknown.",
+    "Snapshot token limits are explicit: notably GPT-4o 2024-05-13 has a 4,096-token output cap, unlike later 16,384-token snapshots. Token-limit snapshots do not alter the existing vision or reasoning matching rules.",
+    "Azure deployment/API restrictions can be lower than publisher model limits. GPT-5.5's documented effective Responses budget is conservatively capped at 922,000 combined tokens for Azure providers. GPT-4.1 deployment-specific limits (including standard, provisioned, and batch restrictions) must be supplied as authorized deployment metadata; a catalog ceiling does not establish a deployment's actual capacity.",
+    "Claude limits describe synchronous Messages without optional long-context or extended-output beta allowances. Claude tokenizer names and separate input caps are not guessed. OpenAI encoding names come from the official tiktoken model mapping, not context-size or model-family guesses.",
     "OpenAI coverage includes GPT-5.x model IDs seen through Foundry, older Responses orchestration models, and direct GPT Image models.",
     "Image-generation tool metadata was checked against official model-specific Supported tools documentation on 2026-09-08. Generic function calling, image input, and inclusion in a Responses model list alone do not establish hosted image-generation support; a false or omitted flag means it is not verified for this integration.",
     "OpenAI model pages describe api.openai.com, not Azure deployment readiness. Azure requires its v1 Responses surface for the hosted image tool; the dated 2025-04-01-preview Responses contract is not equivalent to v1. Direct Images API versions are a separate contract.",
@@ -32,6 +44,12 @@
     "Microsoft coverage includes public Phi and MAI model cards with clear capability statements."
   ],
   "sources": [
+    {
+      "id": "openai-tiktoken-models",
+      "provider": "openai",
+      "title": "OpenAI tiktoken model-to-encoding map (verified 2026-09-08)",
+      "url": "https://raw.githubusercontent.com/openai/tiktoken/main/tiktoken/model.py"
+    },
     {
       "id": "azure-openai-reasoning",
       "provider": "microsoft",
@@ -297,6 +315,48 @@
       "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations"
     },
     {
+      "id": "anthropic-opus-4-8",
+      "provider": "anthropic",
+      "title": "Claude Opus 4.8 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/opus-4-8/overview"
+    },
+    {
+      "id": "anthropic-opus-4-7",
+      "provider": "anthropic",
+      "title": "Claude Opus 4.7 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/opus-4-7/overview"
+    },
+    {
+      "id": "anthropic-opus-4-6",
+      "provider": "anthropic",
+      "title": "Claude Opus 4.6 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/opus-4-6/overview"
+    },
+    {
+      "id": "anthropic-opus-4-5",
+      "provider": "anthropic",
+      "title": "Claude Opus 4.5 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/opus-4-5/overview"
+    },
+    {
+      "id": "anthropic-sonnet-4-6",
+      "provider": "anthropic",
+      "title": "Claude Sonnet 4.6 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/sonnet-4-6/overview"
+    },
+    {
+      "id": "anthropic-sonnet-4-5",
+      "provider": "anthropic",
+      "title": "Claude Sonnet 4.5 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/sonnet-4-5/overview"
+    },
+    {
+      "id": "anthropic-haiku-4-5",
+      "provider": "anthropic",
+      "title": "Claude Haiku 4.5 context and synchronous output limits",
+      "url": "https://platform.claude.com/docs/en/models/haiku-4-5/overview"
+    },
+    {
       "id": "meta-llama4",
       "provider": "meta",
       "title": "Llama 4 model card",
@@ -427,6 +487,15 @@
     },
     {
       "id": "gpt-5.6-sol",
+      "tokenLimits": {
+        "contextWindow": 1050000,
+        "maxInputTokens": 922000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-6", "azure-openai-gpt5", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5.6-sol-2026-07-09": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -457,6 +526,15 @@
     },
     {
       "id": "gpt-5.6-terra",
+      "tokenLimits": {
+        "contextWindow": 1050000,
+        "maxInputTokens": 922000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-6-terra", "azure-openai-gpt5", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5.6-terra-2026-07-09": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -487,6 +565,15 @@
     },
     {
       "id": "gpt-5.6-luna",
+      "tokenLimits": {
+        "contextWindow": 1050000,
+        "maxInputTokens": 922000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-6-luna", "azure-openai-gpt5", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5.6-luna-2026-07-09": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning", "luna-deployed-contract"]
@@ -517,6 +604,29 @@
     },
     {
       "id": "gpt-5.5",
+      "tokenLimits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-5", "openai-tiktoken-models"],
+        "providerLimits": {
+          "azure": {
+            "contextWindow": 922000,
+            "maxInputTokens": 922000,
+            "sourceIds": ["azure-openai-gpt5"],
+            "notes": ["Conservative effective combined Responses budget; the published model context is larger."]
+          }
+        },
+        "snapshots": {
+          "gpt-5.5-2026-04-23": {},
+          "gpt-5.5-2026-04-24": {
+            "contextWindow": 922000,
+            "maxInputTokens": 922000,
+            "sourceIds": ["azure-openai-gpt5", "openai-tiktoken-models"]
+          }
+        }
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -573,6 +683,17 @@
     },
     {
       "id": "gpt-5.4",
+      "tokenLimits": {
+        "contextWindow": 1050000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-4", "openai-tiktoken-models"],
+        "providerLimits": {
+          "azure": {"maxInputTokens": 922000, "sourceIds": ["azure-openai-gpt5"]}
+        },
+        "snapshots": {"gpt-5.4-2026-03-05": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -633,6 +754,15 @@
     },
     {
       "id": "gpt-5.4-mini",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxInputTokens": 272000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-4-mini", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5.4-mini-2026-03-17": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -663,6 +793,15 @@
     },
     {
       "id": "gpt-5.4-nano",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxInputTokens": 272000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-4-nano", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5.4-nano-2026-03-17": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -779,6 +918,17 @@
     },
     {
       "id": "gpt-5.2",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-2", "openai-tiktoken-models"],
+        "providerLimits": {
+          "azure": {"maxInputTokens": 272000, "sourceIds": ["azure-openai-gpt5"]}
+        },
+        "snapshots": {"gpt-5.2-2025-12-11": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high", "xhigh"], "default_effort": "low",
         "sourceIds": ["openai-gpt5-2"]
@@ -835,6 +985,17 @@
     },
     {
       "id": "gpt-5.1",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-1", "openai-tiktoken-models"],
+        "providerLimits": {
+          "azure": {"maxInputTokens": 272000, "sourceIds": ["azure-openai-gpt5"]}
+        },
+        "snapshots": {"gpt-5.1-2025-11-13": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["none", "low", "medium", "high"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning"]
@@ -981,6 +1142,15 @@
     },
     {
       "id": "gpt-5",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxInputTokens": 272000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5-2025-08-07": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["minimal", "low", "medium", "high"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning", "openai-gpt5"]
@@ -1071,6 +1241,15 @@
     },
     {
       "id": "gpt-5-mini",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxInputTokens": 272000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-mini", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5-mini-2025-08-07": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["minimal", "low", "medium", "high"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning", "openai-gpt5"]
@@ -1101,6 +1280,15 @@
     },
     {
       "id": "gpt-5-nano",
+      "tokenLimits": {
+        "contextWindow": 400000,
+        "maxInputTokens": 272000,
+        "maxOutputTokens": 128000,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt5-nano", "openai-tiktoken-models"],
+        "snapshots": {"gpt-5-nano-2025-08-07": {}}
+      },
       "reasoningPolicy": {
         "status": "supported", "efforts": ["minimal", "low", "medium", "high"], "default_effort": "low",
         "sourceIds": ["azure-openai-reasoning", "openai-gpt5"]
@@ -1157,6 +1345,24 @@
     },
     {
       "id": "gpt-4o",
+      "tokenLimits": {
+        "contextWindow": 128000,
+        "maxOutputTokens": 16384,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt4o", "azure-openai-gpt5", "openai-tiktoken-models"],
+        "providerLimits": {
+          "azure": {"maxInputTokens": 128000, "sourceIds": ["azure-openai-gpt5"]}
+        },
+        "snapshots": {
+          "gpt-4o-2024-08-06": {},
+          "gpt-4o-2024-11-20": {},
+          "gpt-4o-2024-05-13": {
+            "maxOutputTokens": 4096,
+            "sourceIds": ["azure-openai-gpt5", "openai-tiktoken-models"]
+          }
+        }
+      },
       "reasoningPolicy": {
         "status": "unsupported", "efforts": [], "default_effort": null,
         "sourceIds": ["openai-chat-completions"]
@@ -1187,6 +1393,17 @@
     },
     {
       "id": "gpt-4o-mini",
+      "tokenLimits": {
+        "contextWindow": 128000,
+        "maxOutputTokens": 16384,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt4o-mini", "openai-tiktoken-models"],
+        "providerLimits": {
+          "azure": {"maxInputTokens": 128000, "sourceIds": ["azure-openai-gpt5"]}
+        },
+        "snapshots": {"gpt-4o-mini-2024-07-18": {}}
+      },
       "provider": "openai",
       "displayName": "GPT-4o Mini",
       "aliases": [],
@@ -1213,6 +1430,14 @@
     },
     {
       "id": "gpt-4.1",
+      "tokenLimits": {
+        "contextWindow": 1047576,
+        "maxOutputTokens": 32768,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt4-1", "openai-tiktoken-models"],
+        "snapshots": {"gpt-4.1-2025-04-14": {}}
+      },
       "reasoningPolicy": {
         "status": "unsupported", "efforts": [], "default_effort": null,
         "sourceIds": ["openai-chat-completions"]
@@ -1243,6 +1468,14 @@
     },
     {
       "id": "gpt-4.1-mini",
+      "tokenLimits": {
+        "contextWindow": 1047576,
+        "maxOutputTokens": 32768,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt4-1-mini", "openai-tiktoken-models"],
+        "snapshots": {"gpt-4.1-mini-2025-04-14": {}}
+      },
       "provider": "openai",
       "displayName": "GPT-4.1 Mini",
       "aliases": [],
@@ -1269,6 +1502,14 @@
     },
     {
       "id": "gpt-4.1-nano",
+      "tokenLimits": {
+        "contextWindow": 1047576,
+        "maxOutputTokens": 32768,
+        "tokenizer": "o200k_base",
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["openai-gpt4-1-nano", "openai-tiktoken-models"],
+        "snapshots": {"gpt-4.1-nano-2025-04-14": {}}
+      },
       "provider": "openai",
       "displayName": "GPT-4.1 Nano",
       "aliases": [],
@@ -1594,6 +1835,12 @@
     },
     {
       "id": "claude-opus-5",
+      "tokenLimits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-models"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Opus 5",
       "aliases": [],
@@ -1619,6 +1866,12 @@
     },
     {
       "id": "claude-sonnet-5",
+      "tokenLimits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-models"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Sonnet 5",
       "aliases": [],
@@ -1644,6 +1897,12 @@
     },
     {
       "id": "claude-opus-4-8",
+      "tokenLimits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-opus-4-8"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Opus 4.8",
       "aliases": [],
@@ -1669,6 +1928,12 @@
     },
     {
       "id": "claude-opus-4-7",
+      "tokenLimits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-opus-4-7"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Opus 4.7",
       "aliases": [],
@@ -1694,6 +1959,12 @@
     },
     {
       "id": "claude-opus-4-6",
+      "tokenLimits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-opus-4-6"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Opus 4.6",
       "aliases": [],
@@ -1719,6 +1990,12 @@
     },
     {
       "id": "claude-opus-4-5-20251101",
+      "tokenLimits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-opus-4-5"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Opus 4.5",
       "aliases": ["claude-opus-4-5"],
@@ -1744,6 +2021,12 @@
     },
     {
       "id": "claude-sonnet-4-6",
+      "tokenLimits": {
+        "contextWindow": 1000000,
+        "maxOutputTokens": 128000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-sonnet-4-6"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Sonnet 4.6",
       "aliases": [],
@@ -1769,6 +2052,12 @@
     },
     {
       "id": "claude-sonnet-4-5-20250929",
+      "tokenLimits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-sonnet-4-5"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Sonnet 4.5",
       "aliases": ["claude-sonnet-4-5"],
@@ -1794,6 +2083,12 @@
     },
     {
       "id": "claude-haiku-4-5-20251001",
+      "tokenLimits": {
+        "contextWindow": 200000,
+        "maxOutputTokens": 64000,
+        "verifiedAt": "2026-09-08",
+        "sourceIds": ["anthropic-haiku-4-5"]
+      },
       "provider": "anthropic",
       "displayName": "Claude Haiku 4.5",
       "aliases": ["claude-haiku-4-5"],

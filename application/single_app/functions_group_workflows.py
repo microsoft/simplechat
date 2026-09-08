@@ -50,6 +50,7 @@ from functions_personal_workflows import (
 )
 from functions_settings import get_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
+from functions_workflow_result_store import delete_workflow_run_results
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
@@ -775,6 +776,7 @@ def list_group_workflow_run_items(run_id, limit=1000):
             query=(
                 'SELECT * FROM c '
                 'WHERE c.run_id = @run_id '
+                'AND (NOT IS_DEFINED(c.type) OR c.type != "workflow_result_chunk") '
                 'ORDER BY c.created_at ASC'
             ),
             parameters=[{'name': '@run_id', 'value': run_id}],
@@ -797,31 +799,28 @@ def delete_group_workflow(group_id, workflow_id):
     if not workflow:
         return False
 
-    cosmos_group_workflows_container.delete_item(item=workflow_id, partition_key=group_id)
-
-    runs = list_group_workflow_runs(group_id, workflow_id, limit=500)
+    runs = cosmos_group_workflow_runs_container.query_items(
+        query='SELECT c.id FROM c WHERE c.group_id = @group_id AND c.workflow_id = @workflow_id',
+        parameters=[{'name': '@group_id', 'value': group_id}, {'name': '@workflow_id', 'value': workflow_id}],
+        partition_key=group_id,
+    )
     for run in runs:
         run_id = run.get('id')
-        for item in list_group_workflow_run_items(run_id, limit=1000):
+        delete_workflow_run_results(workflow, run_id)
+        items = cosmos_group_workflow_run_items_container.query_items(
+            query='SELECT c.id FROM c WHERE c.run_id = @run_id',
+            parameters=[{'name': '@run_id', 'value': run_id}],
+            partition_key=run_id,
+        )
+        for item in items:
             try:
                 cosmos_group_workflow_run_items_container.delete_item(item=item.get('id'), partition_key=run_id)
             except exceptions.CosmosResourceNotFoundError:
                 continue
-            except Exception as exc:
-                log_event(
-                    f"[GROUP_WORKFLOW_STORE] Error deleting workflow run item {item.get('id')}: {exc}",
-                    extra={'group_id': group_id, 'workflow_id': workflow_id, 'run_id': run_id},
-                    level=logging.WARNING,
-                )
         try:
             cosmos_group_workflow_runs_container.delete_item(item=run.get('id'), partition_key=group_id)
         except exceptions.CosmosResourceNotFoundError:
             continue
-        except Exception as exc:
-            log_event(
-                f"[GROUP_WORKFLOW_STORE] Error deleting workflow run {run.get('id')}: {exc}",
-                extra={'group_id': group_id, 'workflow_id': workflow_id},
-                level=logging.WARNING,
-            )
 
+    cosmos_group_workflows_container.delete_item(item=workflow_id, partition_key=group_id)
     return True
