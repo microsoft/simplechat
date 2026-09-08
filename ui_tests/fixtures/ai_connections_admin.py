@@ -1,8 +1,8 @@
 # ai_connections_admin.py
 """
 Closed API fixtures for shared AI Connections admin browser tests.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Reuse the built-SPA and local/Azure browser fixtures. All requests are intercepted;
 no Azure inference, authentication, or settings services are called.

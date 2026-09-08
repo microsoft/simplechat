@@ -22,9 +22,11 @@ import { useChatStore } from '../stores/chatStore';
 import {
     isResumablePlanStatus,
     selectActiveTurn,
+    selectPlan,
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
 import { fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps } from './orchestration';
+import { refreshOrchestrationPlanEditor } from './orchestrationController';
 import type { Json } from './orchestration';
 
 /** How many runs to ask for. Matches the store's per-conversation history cap. */
@@ -134,6 +136,7 @@ async function restorePendingApproval(conversationId: string): Promise<void> {
         return;
     }
     if (useChatStore.getState().activeConversationId !== conversationId) {
+        consideredConversations.delete(conversationId);
         return;
     }
 
@@ -145,6 +148,10 @@ async function restorePendingApproval(conversationId: string): Promise<void> {
         { readOnly: false },
     );
     useOrchestrationStore.getState().setActiveTurn(conversationId, newest.turnId);
+    const restored = selectPlan(useOrchestrationStore.getState(), conversationId, newest.turnId);
+    if (restored?.edit_version) {
+        await refreshOrchestrationPlanEditor({ conversationId, turnId: newest.turnId }, newest.runId);
+    }
 }
 
 /**

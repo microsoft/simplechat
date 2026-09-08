@@ -1,4 +1,4 @@
-# Image Generation Through Responses-Capable Chat Models (v0.261.102)
+# Image Generation Through Responses-Capable Chat Models (v0.261.105)
 
 ## Overview
 
@@ -7,7 +7,7 @@ SimpleChat can generate images through either a dedicated Images operation or th
 single image-model selection in [Shared AI Connections](AI_CONNECTIONS_FRAMEWORK.md).
 Images can share a connection with chat or use a separate image-only resource.
 
-Implemented in version: **0.261.102** for shared bindings and the corrected Azure v1
+Implemented in version: **0.261.105** for shared bindings and the corrected Azure v1
 Responses contract. The initial Responses integration was introduced in **0.261.088**.
 Application versioning is recorded in `application/single_app/config.py`.
 

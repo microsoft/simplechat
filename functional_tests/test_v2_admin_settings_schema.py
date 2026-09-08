@@ -2,7 +2,7 @@
 # test_v2_admin_settings_schema.py
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.039
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A

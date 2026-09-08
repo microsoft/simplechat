@@ -1,8 +1,8 @@
 # test_admin_shared_ai_connections.py
 """
 Browser coverage for independent chat/image defaults and shared connection availability.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Exercise the real built SPA, production schema and protected API shapes without live services.
 """

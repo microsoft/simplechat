@@ -29,6 +29,7 @@ from model_endpoint_clients import (
     ModelEndpointBehavior,
     build_anthropic_chat_client,
     build_openai_style_chat_client,
+    create_completion_with_reasoning,
     extract_chat_completion_response_text,
     infer_model_endpoint_protocol,
     normalize_chat_completion_text,
@@ -38,6 +39,24 @@ from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
     should_run_fact_memory_autosave,
     user_requested_memory_update,
+)
+from functions_fact_memory_context import (
+    FACT_MEMORY_TYPE_FACT,
+    FACT_MEMORY_TYPE_INSTRUCTION,
+    FACT_MEMORY_TYPE_LEGACY_DESCRIBER,
+    _backfill_missing_fact_memory_embeddings,
+    _build_fact_memory_fact_payload,
+    _coerce_embedding_result,
+    _cosine_similarity,
+    _is_embedding_vector,
+    _normalize_fact_memory_item,
+    build_fact_memory_citation,
+    build_fact_memory_prompt_payload,
+    build_fact_memory_recall_payload,
+    build_instruction_memory_citation,
+    build_instruction_memory_payload,
+    normalize_fact_memory_type,
+    retrieve_relevant_fact_memory_entries,
 )
 from functions_model_endpoint_runtime import (
     MODEL_ENDPOINT_PROVIDER_ALLOWLIST,
@@ -492,12 +511,63 @@ def _prepare_conversation_context_for_invocation(
 
 
 def _resolve_reasoning_effort_for_model(reasoning_effort, model_name, provider=None, endpoint=None):
-    resolved_reasoning_effort = ModelEndpointBehavior(provider, model_name).resolve_reasoning_effort(reasoning_effort)
-    if str(reasoning_effort or '').strip() and not resolved_reasoning_effort:
-        debug_print(
-            f"[MODEL_ENDPOINT] Skipping reasoning_effort for {model_name}; live Foundry probes show this parameter is model-family specific."
+    return ModelEndpointBehavior(provider, model_name).resolve_reasoning_effort(reasoning_effort)
+
+
+def _resolve_legacy_chat_reasoning_model_name(settings, deployment):
+    """Never borrow direct-Azure model metadata for a same-named APIM deployment."""
+    if settings.get('enable_gpt_apim', False):
+        return deployment
+    selected_models = (settings.get('gpt_model', {}) or {}).get('selected', [])
+    model = next((
+        item for item in selected_models
+        if isinstance(item, dict) and item.get('deploymentName') == deployment
+    ), {})
+    return str(model.get('modelName') or '').strip() or deployment
+
+
+def _create_chat_completion_with_reasoning(create_callable, params, model_name, previous_resolution=None):
+    """Keep the actual effort when retrying an empty stream without streaming."""
+    request_params = dict(params)
+    if previous_resolution is not None:
+        effective = previous_resolution.get('effective_effort')
+        if effective is None:
+            request_params.pop('reasoning_effort', None)
+        else:
+            request_params['reasoning_effort'] = effective
+    response, resolution = create_completion_with_reasoning(create_callable, request_params, model_name)
+    if previous_resolution is not None:
+        resolution['requested_effort'] = previous_resolution.get('requested_effort')
+        resolution['adjustment_reason'] = (
+            resolution.get('adjustment_reason') or previous_resolution.get('adjustment_reason')
         )
-    return resolved_reasoning_effort
+    if resolution.get('adjustment_reason'):
+        log_event(
+            '[MODEL_ENDPOINT] Applied chat reasoning adjustment.',
+            extra={'reason': resolution['adjustment_reason'], 'stage': 'answer'},
+            debug_only=True,
+        )
+    return response, resolution
+
+
+def _build_chat_reasoning_metadata(resolution, requested_effort=None, model_name=None):
+    """Expose effective ordinary-chat settings without provider error details."""
+    if not isinstance(resolution, dict):
+        return {'reasoning_effort': None, 'reasoning_adjustments': []}
+    safe_resolution = {
+        'requested_effort': str(resolution['requested_effort'])[:32] if resolution.get('requested_effort') else None,
+        'effective_effort': resolution.get('effective_effort'),
+        'mode': resolution.get('mode'),
+        'adjustment_reason': resolution.get('adjustment_reason'),
+        'model_name': str(model_name or '')[:200],
+        'stage': 'answer',
+    }
+    return {
+        'reasoning_effort': safe_resolution['effective_effort'],
+        'requested_reasoning_effort': safe_resolution['requested_effort'],
+        'reasoning_mode': safe_resolution['mode'],
+        'reasoning_adjustments': [safe_resolution] if safe_resolution['adjustment_reason'] else [],
+    }
 
 
 def _apply_response_length_for_model(api_params, response_length, model_name, provider=None, response_length_parameter=None):
@@ -2088,9 +2158,6 @@ def _rollback_mixed_source_chat_publication(
     }
 
 
-FACT_MEMORY_TYPE_FACT = 'fact'
-FACT_MEMORY_TYPE_INSTRUCTION = 'instruction'
-FACT_MEMORY_TYPE_LEGACY_DESCRIBER = 'describer'
 INLINE_CHART_ID_PATTERN_TEMPLATE = '"chartId":"{}"'
 TABULAR_INLINE_CHART_MAX_POINTS = 12
 TABULAR_INLINE_CHART_MAX_CHARTS = 2
@@ -3110,148 +3177,6 @@ def _get_current_message_plugin_invocations(user_id, conversation_id):
         return []
 
 
-def normalize_fact_memory_type(memory_type):
-    normalized = str(memory_type or '').strip().lower()
-    if normalized == FACT_MEMORY_TYPE_LEGACY_DESCRIBER:
-        return FACT_MEMORY_TYPE_FACT
-    if normalized in {FACT_MEMORY_TYPE_FACT, FACT_MEMORY_TYPE_INSTRUCTION}:
-        return normalized
-    return FACT_MEMORY_TYPE_FACT
-
-
-def _normalize_fact_memory_item(fact_item):
-    normalized_item = dict(fact_item or {})
-    normalized_item['memory_type'] = normalize_fact_memory_type(normalized_item.get('memory_type'))
-    normalized_item['value'] = str(normalized_item.get('value') or '').strip()
-    return normalized_item
-
-
-def _is_embedding_vector(candidate):
-    return (
-        isinstance(candidate, list)
-        and bool(candidate)
-        and all(isinstance(value, (int, float)) for value in candidate)
-    )
-
-
-def _coerce_embedding_result(embedding_result):
-    if not embedding_result:
-        return None, None
-    if isinstance(embedding_result, tuple):
-        return embedding_result[0], embedding_result[1]
-    return embedding_result, None
-
-
-def _build_fact_memory_fact_payload(matched_facts):
-    fact_payload = []
-    for fact in matched_facts or []:
-        fact_payload.append({
-            'id': fact.get('id'),
-            'value': fact.get('value'),
-            'memory_type': normalize_fact_memory_type(fact.get('memory_type')),
-            'updated_at': fact.get('updated_at') or fact.get('created_at'),
-            'conversation_id': fact.get('conversation_id'),
-            'agent_id': fact.get('agent_id'),
-            'similarity': fact.get('similarity'),
-        })
-    return fact_payload
-
-
-def _cosine_similarity(left_vector, right_vector):
-    if not _is_embedding_vector(left_vector) or not _is_embedding_vector(right_vector):
-        return 0.0
-    if len(left_vector) != len(right_vector):
-        return 0.0
-
-    left_norm = sum(value * value for value in left_vector) ** 0.5
-    right_norm = sum(value * value for value in right_vector) ** 0.5
-    if left_norm == 0 or right_norm == 0:
-        return 0.0
-
-    dot_product = sum(left * right for left, right in zip(left_vector, right_vector))
-    return float(dot_product / (left_norm * right_norm))
-
-
-def _backfill_missing_fact_memory_embeddings(fact_store, facts):
-    missing_items = []
-    for fact in facts or []:
-        if fact.get('memory_type') != FACT_MEMORY_TYPE_FACT:
-            continue
-        if _is_embedding_vector(fact.get('value_embedding')):
-            continue
-        value = str(fact.get('value') or '').strip()
-        if not value:
-            continue
-        missing_items.append((fact, value))
-
-    if not missing_items:
-        return 0
-
-    try:
-        embedding_results = generate_embeddings_batch([value for _, value in missing_items])
-    except Exception as exc:
-        debug_print(f"[FACT_MEMORY] Failed to backfill memory embeddings: {exc}")
-        return 0
-
-    updated_count = 0
-    for (fact, _), embedding_result in zip(missing_items, embedding_results):
-        embedding_vector, token_usage = _coerce_embedding_result(embedding_result)
-        if not embedding_vector:
-            continue
-
-        updated_fact = fact_store.update_fact_embedding(
-            scope_id=fact.get('scope_id'),
-            fact_id=fact.get('id'),
-            value_embedding=embedding_vector,
-            embedding_model=(token_usage or {}).get('model_deployment_name') if isinstance(token_usage, dict) else None,
-        )
-        if updated_fact:
-            fact.update(updated_fact)
-        else:
-            fact['value_embedding'] = embedding_vector
-        updated_count += 1
-
-    return updated_count
-
-
-def build_instruction_memory_citation(applied_facts):
-    fact_payload = _build_fact_memory_fact_payload(applied_facts)
-    return {
-        'tool_name': 'Instruction Memory',
-        'function_name': 'apply_instructions',
-        'plugin_name': 'fact_memory',
-        'function_arguments': make_json_serializable({
-            'memory_type': FACT_MEMORY_TYPE_INSTRUCTION,
-            'applied_count': len(fact_payload),
-        }),
-        'function_result': make_json_serializable({
-            'facts': fact_payload,
-        }),
-        'timestamp': datetime.utcnow().isoformat(),
-        'success': True,
-    }
-
-
-def build_fact_memory_citation(query_text, matched_facts, search_mode):
-    fact_payload = _build_fact_memory_fact_payload(matched_facts)
-    return {
-        'tool_name': 'Fact Memory Recall',
-        'function_name': 'search_facts',
-        'plugin_name': 'fact_memory',
-        'function_arguments': make_json_serializable({
-            'query': str(query_text or '').strip(),
-            'search_mode': search_mode,
-            'match_count': len(fact_payload),
-            'memory_type': FACT_MEMORY_TYPE_FACT,
-        }),
-        'function_result': make_json_serializable({
-            'facts': fact_payload,
-        }),
-        'timestamp': datetime.utcnow().isoformat(),
-        'success': True,
-    }
-
-
 def _normalize_requested_scope_ids(*scope_values):
     """Normalize single-value and list-based scope ids into a de-duplicated list."""
     normalized_values = []
@@ -3745,294 +3670,6 @@ def _resolve_or_create_authorized_personal_conversation(user_id, conversation_id
 
     conversation_item = _authorize_personal_conversation_access(user_id, conversation_id)
     return conversation_item, conversation_id
-
-
-def build_instruction_memory_payload(
-    scope_id,
-    scope_type,
-    enabled=True,
-    result_limit=8,
-):
-    payload = {
-        'context_messages': [],
-        'citation': None,
-        'thought_content': None,
-        'thought_detail': None,
-        'matched_facts': [],
-        'total_available': 0,
-    }
-    if not enabled or not scope_id or not scope_type:
-        return payload
-
-    fact_store = FactMemoryStore()
-    instruction_facts = [
-        _normalize_fact_memory_item(fact)
-        for fact in fact_store.list_facts(
-            scope_type=scope_type,
-            scope_id=scope_id,
-            memory_type=FACT_MEMORY_TYPE_INSTRUCTION,
-        )
-    ]
-    payload['total_available'] = len(instruction_facts)
-
-    applied_facts = []
-    for fact in instruction_facts:
-        if not fact.get('value'):
-            continue
-        applied_facts.append(fact)
-        if len(applied_facts) >= max(1, int(result_limit or 8)):
-            break
-
-    if not applied_facts:
-        return payload
-
-    instruction_lines = [f"- {fact.get('value')}" for fact in applied_facts]
-    instruction_block = "\n".join(instruction_lines)
-    payload['matched_facts'] = applied_facts
-    payload['context_messages'].append({
-        'role': 'system',
-        'content': (
-            'Apply these saved user instruction memories to every response in this conversation. '
-            'Treat them like durable user-specific response preferences unless the user overrides them in the current message.\n'
-            f"<Instruction Memory>\n{instruction_block}\n</Instruction Memory>"
-        )
-    })
-    payload['citation'] = build_instruction_memory_citation(applied_facts)
-    payload['thought_content'] = (
-        f"Applied {len(applied_facts)} instruction "
-        f"{'memory' if len(applied_facts) == 1 else 'memories'}"
-    )
-    payload['thought_detail'] = ' | '.join(
-        str(fact.get('value') or '').strip()[:80]
-        for fact in applied_facts[:3]
-        if str(fact.get('value') or '').strip()
-    )
-    return payload
-
-
-def retrieve_relevant_fact_memory_entries(
-    scope_id,
-    scope_type,
-    query_text=None,
-    conversation_id=None,
-    agent_id=None,
-    enabled=True,
-    result_limit=4,
-):
-    result = {
-        'matched_facts': [],
-        'search_mode': 'disabled',
-        'total_available': 0,
-        'query_text': str(query_text or '').strip(),
-        'embedding_backfill_count': 0,
-    }
-    if not enabled or not scope_id or not scope_type:
-        return result
-
-    query_text = result['query_text']
-    if not query_text:
-        result['search_mode'] = 'missing_query'
-        return result
-
-    fact_store = FactMemoryStore()
-    query_kwargs = {
-        'scope_type': scope_type,
-        'scope_id': scope_id,
-            'memory_type': FACT_MEMORY_TYPE_FACT,
-    }
-    if conversation_id:
-        query_kwargs['conversation_id'] = conversation_id
-    if agent_id:
-        query_kwargs['agent_id'] = agent_id
-
-    facts = [
-        _normalize_fact_memory_item(fact)
-        for fact in fact_store.list_facts(**query_kwargs)
-    ]
-    result['total_available'] = len(facts)
-    if not facts:
-        result['search_mode'] = 'empty'
-        return result
-
-    result['embedding_backfill_count'] = _backfill_missing_fact_memory_embeddings(fact_store, facts)
-
-    try:
-        query_embedding_result = generate_embedding(query_text)
-    except Exception as exc:
-        debug_print(f"[FACT_MEMORY] Failed to generate query embedding: {exc}")
-        result['search_mode'] = 'embedding_unavailable'
-        return result
-
-    query_embedding, _ = _coerce_embedding_result(query_embedding_result)
-    if not query_embedding:
-        result['search_mode'] = 'embedding_unavailable'
-        return result
-
-    candidates = []
-    for fact in facts:
-        value = str(fact.get('value') or '').strip()
-        embedding_vector = fact.get('value_embedding')
-        if not value or not _is_embedding_vector(embedding_vector):
-            continue
-
-        similarity = _cosine_similarity(query_embedding, embedding_vector)
-        if similarity <= 0:
-            continue
-
-        normalized_fact = dict(fact)
-        normalized_fact['similarity'] = round(similarity, 6)
-        candidates.append(normalized_fact)
-
-    if not candidates:
-        result['search_mode'] = 'embedding'
-        return result
-
-    candidates.sort(
-        key=lambda fact: (
-            float(fact.get('similarity') or 0.0),
-            str(fact.get('updated_at') or fact.get('created_at') or ''),
-        ),
-        reverse=True,
-    )
-    safe_limit = max(1, int(result_limit or 4))
-    result['matched_facts'] = candidates[:safe_limit]
-    result['search_mode'] = 'embedding'
-    return result
-
-
-def build_fact_memory_recall_payload(
-    scope_id,
-    scope_type,
-    query_text=None,
-    conversation_id=None,
-    agent_id=None,
-    enabled=True,
-    include_metadata=False,
-    result_limit=4,
-):
-    retrieval = retrieve_relevant_fact_memory_entries(
-        scope_id=scope_id,
-        scope_type=scope_type,
-        query_text=query_text,
-        conversation_id=conversation_id,
-        agent_id=agent_id,
-        enabled=enabled,
-        result_limit=result_limit,
-    )
-
-    payload = {
-        'context_messages': [],
-        'citation': None,
-        'thought_content': None,
-        'thought_detail': None,
-        **retrieval,
-    }
-    matched_facts = retrieval.get('matched_facts', [])
-
-    if not matched_facts:
-        if retrieval.get('total_available', 0) > 0 and enabled:
-            payload['thought_content'] = 'Fact memory search found no relevant facts'
-            payload['thought_detail'] = (
-                f"mode={retrieval.get('search_mode', 'embedding')}; "
-                f"query={str(query_text or '').strip()[:80]}; "
-                f"available={retrieval.get('total_available', 0)}"
-            )
-        return payload
-
-    if include_metadata:
-        payload['context_messages'].append({
-            'role': 'system',
-            'content': (
-                f"<Conversation Metadata>\n<Scope ID: {scope_id}>\n<Scope Type: {scope_type}>\n"
-                f"<Conversation ID: {conversation_id}>\n<Agent ID: {agent_id}>\n</Conversation Metadata>"
-            )
-        })
-
-    fact_lines = [f"- {fact.get('value')}" for fact in matched_facts if fact.get('value')]
-    if fact_lines:
-        fact_block = "\n".join(fact_lines)
-        payload['context_messages'].append({
-            'role': 'system',
-            'content': (
-                'Retrieved saved facts relevant to the current request. '
-                'Use them only when they directly help answer the user.\n'
-                f"<Fact Memory>\n{fact_block}\n</Fact Memory>"
-            )
-        })
-
-    fact_preview = ' | '.join(
-        str(fact.get('value') or '').strip()[:80]
-        for fact in matched_facts[:3]
-        if str(fact.get('value') or '').strip()
-    )
-    payload['citation'] = build_fact_memory_citation(
-        query_text=query_text,
-        matched_facts=matched_facts,
-        search_mode=retrieval.get('search_mode', 'embedding'),
-    )
-    payload['thought_content'] = (
-        f"Fact memory search found {len(matched_facts)} relevant "
-        f"{'fact' if len(matched_facts) == 1 else 'facts'}"
-    )
-    payload['thought_detail'] = (
-        f"mode={retrieval.get('search_mode', 'embedding')}; "
-        f"query={str(query_text or '').strip()[:80]}; "
-        f"matched={len(matched_facts)} of {retrieval.get('total_available', 0)}; "
-        f"values={fact_preview}"
-    )
-    return payload
-
-
-def build_fact_memory_prompt_payload(
-    scope_id,
-    scope_type,
-    query_text=None,
-    conversation_id=None,
-    agent_id=None,
-    enabled=True,
-    include_metadata=False,
-    instruction_limit=8,
-    fact_limit=4,
-):
-    instruction_payload = build_instruction_memory_payload(
-        scope_id=scope_id,
-        scope_type=scope_type,
-        enabled=enabled,
-        result_limit=instruction_limit,
-    )
-    recall_payload = build_fact_memory_recall_payload(
-        scope_id=scope_id,
-        scope_type=scope_type,
-        query_text=query_text,
-        conversation_id=conversation_id,
-        agent_id=agent_id,
-        enabled=enabled,
-        include_metadata=include_metadata,
-        result_limit=fact_limit,
-    )
-
-    context_messages = []
-    thoughts = []
-    citations = []
-
-    for payload in (instruction_payload, recall_payload):
-        context_messages.extend(payload.get('context_messages', []))
-        if payload.get('thought_content'):
-            thoughts.append({
-                'step_type': 'fact_memory',
-                'content': payload['thought_content'],
-                'detail': payload.get('thought_detail'),
-            })
-        if payload.get('citation'):
-            citations.append(payload['citation'])
-
-    return {
-        'context_messages': context_messages,
-        'thoughts': thoughts,
-        'citations': citations,
-        'instruction_payload': instruction_payload,
-        'recall_payload': recall_payload,
-    }
 
 
 def persist_agent_citation_artifacts(
@@ -14266,6 +13903,7 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
         model_icon,
         model_response_length,
         model_response_length_parameter,
+        str(model_cfg.get('modelName') or '').strip() or deployment,
     )
 
 
@@ -14980,7 +14618,7 @@ def register_route_backend_chats(bp):
                 'model_id': data.get('model_id'),
                 'model_endpoint_id': data.get('model_endpoint_id'),
                 'model_provider': data.get('model_provider'),
-                'reasoning_effort': data.get('reasoning_effort') if data.get('reasoning_effort') not in (None, '', 'none') else None,
+                'reasoning_effort': data.get('reasoning_effort') if data.get('reasoning_effort') not in (None, '') else None,
                 'streaming': bool(streaming_enabled),
             },
             'chat_context': {
@@ -16480,6 +16118,7 @@ def register_route_backend_chats(bp):
             classifications_to_send = data.get('classifications')  # Extract classifications parameter from request
             chat_type = data.get('chat_type', 'user')  # 'user' or 'group', default to 'user'
             reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+            reasoning_resolution = None
 
             # Check if this is a retry or edit request (both work the same way - reuse existing user message)
             retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
@@ -16742,6 +16381,7 @@ def register_route_backend_chats(bp):
             gpt_model_icon = None
             gpt_response_length = None
             gpt_response_length_parameter = None
+            gpt_reasoning_model_name = None
             tabular_model_context = None
             enable_gpt_apim = settings.get('enable_gpt_apim', False)
             should_use_default_model = (
@@ -16783,6 +16423,7 @@ def register_route_backend_chats(bp):
                         gpt_model_icon,
                         gpt_response_length,
                         gpt_response_length_parameter,
+                        gpt_reasoning_model_name,
                     ) = multi_endpoint_config
                 elif enable_gpt_apim:
                     # read raw comma-delimited deployments
@@ -16870,6 +16511,9 @@ def register_route_backend_chats(bp):
                     raise ValueError("GPT Client or Model could not be initialized.")
 
                 if not image_gen_enabled:
+                    if not gpt_reasoning_model_name:
+                        gpt_reasoning_model_name = _resolve_legacy_chat_reasoning_model_name(settings, gpt_model)
+
                     tabular_model_context = build_model_endpoint_context(
                         provider=gpt_provider,
                         endpoint=gpt_endpoint,
@@ -17366,7 +17010,7 @@ def register_route_backend_chats(bp):
                     'model_provider': gpt_provider or data.get('model_provider'),
                     'model_icon': gpt_model_icon,
                     'response_length': gpt_response_length,
-                    'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                    'reasoning_effort': reasoning_effort or None,
                     'streaming': 'Disabled'
                 }
 
@@ -19891,7 +19535,7 @@ def register_route_backend_chats(bp):
 
             thought_tracker.add_thought('generation', f"Sending to '{gpt_model}'")
             def invoke_gpt_fallback():
-                nonlocal conversation_history_for_api
+                nonlocal conversation_history_for_api, reasoning_resolution
                 conversation_history_for_api, _ = _prepare_conversation_context_for_invocation(
                     conversation_history_for_api,
                     agent_citations_list,
@@ -19920,61 +19564,10 @@ def register_route_backend_chats(bp):
                     response_length_parameter=gpt_response_length_parameter,
                 )
 
-                request_reasoning_effort = _resolve_reasoning_effort_for_model(
-                    reasoning_effort,
-                    gpt_model,
-                    provider=gpt_provider,
-                    endpoint=gpt_endpoint,
+                api_params['reasoning_effort'] = reasoning_effort
+                response, reasoning_resolution = _create_chat_completion_with_reasoning(
+                    gpt_client.chat.completions.create, api_params, gpt_reasoning_model_name,
                 )
-                if request_reasoning_effort:
-                    api_params['reasoning_effort'] = request_reasoning_effort
-                    debug_print(f"Using reasoning effort: {request_reasoning_effort}")
-
-                try:
-                    response = gpt_client.chat.completions.create(**api_params)
-                except Exception as e:
-                    error_str = str(e).lower()
-                    if request_reasoning_effort and (
-                        'reasoning_effort' in error_str or
-                        'unrecognized request argument' in error_str or
-                        'invalid_request_error' in error_str
-                    ):
-                        debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
-                        api_params.pop('reasoning_effort', None)
-                        response = gpt_client.chat.completions.create(**api_params)
-                    elif (
-                        gpt_provider in ('aifoundry', 'new_foundry')
-                        and 'api version not supported' in error_str
-                        and infer_model_endpoint_protocol(gpt_provider, gpt_endpoint, gpt_model) == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
-                    ):
-                        debug_print("Foundry API version not supported. Retrying with fallback versions...")
-                        api_params.pop('reasoning_effort', None)
-                        fallback_versions = get_foundry_api_version_candidates(gpt_api_version, settings)
-                        response = None
-                        last_error = None
-                        for candidate in fallback_versions:
-                            if candidate == gpt_api_version:
-                                continue
-                            try:
-                                debug_print(f"[SK_CHAT] Foundry retry api_version={candidate}")
-                                retry_client = build_streaming_multi_endpoint_client(
-                                    gpt_auth or {},
-                                    gpt_provider,
-                                    gpt_endpoint,
-                                    candidate,
-                                    deployment_name=gpt_model,
-                                    settings=settings,
-                                    identity_context={'user_id': user_id},
-                                )
-                                response = retry_client.chat.completions.create(**api_params)
-                                break
-                            except Exception as retry_exc:
-                                last_error = retry_exc
-                                debug_print(f"[SK_CHAT] Foundry retry failed for api_version={candidate}: {retry_exc}")
-                        if response is None and last_error is not None:
-                            raise last_error
-                    else:
-                        raise
 
                 msg = response.choices[0].message.content
                 notice = None
@@ -20275,7 +19868,7 @@ def register_route_backend_chats(bp):
                 'agent_tags': agent_tags,
                 'metadata': {
                     'user_info': user_info_for_assistant,  # Track which user created this assistant message
-                    'reasoning_effort': reasoning_effort,
+                    **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                     'model_selection': {
                         'selected_model': actual_model_used,
                         'frontend_requested_model': frontend_gpt_model,
@@ -20351,7 +19944,7 @@ def register_route_backend_chats(bp):
                         additional_context={
                             'agent_name': agent_name,
                             'augmented': bool(system_messages_for_augmentation),
-                            'reasoning_effort': reasoning_effort
+                            **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                         }
                     )
                 except Exception as log_error:
@@ -20369,6 +19962,13 @@ def register_route_backend_chats(bp):
                 # Update the model selection in metadata to show actual model used
                 if 'metadata' in user_message_doc and 'model_selection' in user_message_doc['metadata']:
                     user_message_doc['metadata']['model_selection']['selected_model'] = actual_model_used
+                    if reasoning_resolution is not None:
+                        user_message_doc['metadata'].update(_build_chat_reasoning_metadata(
+                            reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
+                        ))
+                        user_message_doc['metadata']['model_selection'].update(_build_chat_reasoning_metadata(
+                            reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
+                        ))
                     cosmos_messages_container.upsert_item(user_message_doc)
 
             except Exception as e:
@@ -20723,6 +20323,7 @@ def register_route_backend_chats(bp):
                 classifications_to_send = data.get('classifications')
                 chat_type = data.get('chat_type', 'user')
                 reasoning_effort = data.get('reasoning_effort')  # Extract reasoning effort for reasoning models
+                reasoning_resolution = None
                 request_agent_info = data.get('agent_info')
 
                 debug_print(
@@ -21142,6 +20743,7 @@ def register_route_backend_chats(bp):
                 gpt_model_icon = None
                 gpt_response_length = None
                 gpt_response_length_parameter = None
+                gpt_reasoning_model_name = None
                 tabular_model_context = None
                 enable_gpt_apim = settings.get('enable_gpt_apim', False)
                 should_use_default_model = (
@@ -21181,6 +20783,7 @@ def register_route_backend_chats(bp):
                             gpt_model_icon,
                             gpt_response_length,
                             gpt_response_length_parameter,
+                            gpt_reasoning_model_name,
                         ) = streaming_multi_endpoint_config
                     elif enable_gpt_apim:
                         raw = settings.get('azure_apim_gpt_deployment', '')
@@ -21249,6 +20852,9 @@ def register_route_backend_chats(bp):
                     if not gpt_client or not gpt_model:
                         yield f"data: {json.dumps({'error': 'Failed to initialize AI model'})}\n\n"
                         return
+
+                    if not gpt_reasoning_model_name:
+                        gpt_reasoning_model_name = _resolve_legacy_chat_reasoning_model_name(settings, gpt_model)
 
                     tabular_model_context = build_model_endpoint_context(
                         provider=gpt_provider,
@@ -21713,7 +21319,7 @@ def register_route_backend_chats(bp):
                         'model_provider': gpt_provider or data.get('model_provider'),
                         'model_icon': gpt_model_icon,
                         'response_length': gpt_response_length,
-                        'reasoning_effort': reasoning_effort if reasoning_effort and reasoning_effort != 'none' else None,
+                        'reasoning_effort': reasoning_effort or None,
                         'streaming': 'Enabled'
                     }
 
@@ -21811,7 +21417,7 @@ def register_route_backend_chats(bp):
                 user_thread_id = response_message_context.get('thread_id')
                 user_previous_thread_id = response_message_context.get('previous_thread_id')
 
-                def serialize_thought_event(step_type, content, step_index, message_id=None, detail=None, activity=None, progress=None):
+                def serialize_thought_event(step_type, content, step_index, message_id=None, detail=None, activity=None, progress=None, reasoning_adjustments=None):
                     payload = {
                         'type': 'thought',
                         'message_id': message_id or assistant_message_id,
@@ -21826,13 +21432,18 @@ def register_route_backend_chats(bp):
                         payload['activity'] = activity
                     if isinstance(progress, dict) and progress:
                         payload['progress'] = progress
+                    if reasoning_adjustments:
+                        payload['reasoning_adjustments'] = reasoning_adjustments
 
                     return f"data: {json.dumps(payload)}\n\n"
 
-                def emit_thought(step_type, content, detail=None):
+                def emit_thought(step_type, content, detail=None, reasoning_adjustments=None):
                     """Add a thought to Cosmos and return an SSE event string."""
                     thought_tracker.add_thought(step_type, content, detail)
-                    return serialize_thought_event(step_type, content, thought_tracker.current_index - 1, detail=detail)
+                    return serialize_thought_event(
+                        step_type, content, thought_tracker.current_index - 1,
+                        detail=detail, reasoning_adjustments=reasoning_adjustments,
+                    )
 
                 def publish_live_plugin_thought(thought_payload):
                     if not callable(publish_background_event):
@@ -23540,7 +23151,7 @@ def register_route_backend_chats(bp):
                             'metadata': {
                                 **cancel_metadata,
                                 'token_usage': token_usage_data,
-                                'reasoning_effort': reasoning_effort,
+                                **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                                 'model_selection': {
                                     'selected_model': final_model_used if use_agent_streaming else gpt_model,
                                     'frontend_requested_model': frontend_gpt_model,
@@ -23637,7 +23248,11 @@ def register_route_backend_chats(bp):
                             'agent_name': agent_name_used if use_agent_streaming else None,
                             'agent_icon': agent_icon_used if use_agent_streaming else None,
                             'agent_tags': agent_tags_used if use_agent_streaming else [],
-                            'metadata': {**cancel_metadata, 'token_usage': token_usage_data},
+                            'metadata': {
+                                **cancel_metadata,
+                                'token_usage': token_usage_data,
+                                **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
+                            },
                             'thoughts_enabled': thought_tracker.enabled,
                         },
                     )
@@ -24015,34 +23630,21 @@ def register_route_backend_chats(bp):
                             response_length_parameter=gpt_response_length_parameter,
                         )
 
-                        request_reasoning_effort = _resolve_reasoning_effort_for_model(
-                            reasoning_effort,
-                            gpt_model,
-                            provider=gpt_provider,
-                            endpoint=gpt_endpoint,
-                        )
-                        if request_reasoning_effort:
-                            stream_params['reasoning_effort'] = request_reasoning_effort
-                            debug_print(f"Using reasoning effort: {request_reasoning_effort}")
+                        stream_params['reasoning_effort'] = reasoning_effort
 
                         final_model_used = gpt_model
 
-                        try:
-                            stream = gpt_client.chat.completions.create(**stream_params)
-                        except Exception as e:
-                            # Check if error is related to reasoning_effort parameter
-                            error_str = str(e).lower()
-                            if request_reasoning_effort and (
-                                'reasoning_effort' in error_str or
-                                'unrecognized request argument' in error_str or
-                                'invalid_request_error' in error_str
-                            ):
-                                debug_print(f"Reasoning effort not supported by {gpt_model}, retrying without reasoning_effort...")
-                                # Retry without reasoning_effort
-                                stream_params.pop('reasoning_effort', None)
-                                stream = gpt_client.chat.completions.create(**stream_params)
-                            else:
-                                raise
+                        stream, reasoning_resolution = _create_chat_completion_with_reasoning(
+                            gpt_client.chat.completions.create, stream_params, gpt_reasoning_model_name,
+                        )
+                        reasoning_metadata = _build_chat_reasoning_metadata(
+                            reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
+                        )
+                        if reasoning_metadata['reasoning_adjustments']:
+                            yield emit_thought(
+                                'generation', 'Reasoning setting adjusted for the selected model.',
+                                reasoning_adjustments=reasoning_metadata['reasoning_adjustments'],
+                            )
 
                         for chunk in stream:
                             if stream_cancel_requested():
@@ -24092,21 +23694,20 @@ def register_route_backend_chats(bp):
                                 for key, value in stream_params.items()
                                 if key not in {'stream', 'stream_options'}
                             }
-                            fallback_params.pop('reasoning_effort', None)
-                            try:
-                                fallback_response = gpt_client.chat.completions.create(**fallback_params)
-                            except Exception as fallback_error:
-                                fallback_error_str = str(fallback_error).lower()
-                                if request_reasoning_effort and (
-                                    'reasoning_effort' in fallback_error_str or
-                                    'unrecognized request argument' in fallback_error_str or
-                                    'invalid_request_error' in fallback_error_str
-                                ):
-                                    debug_print(f"Reasoning effort not supported by {gpt_model} in non-streaming retry; retrying without reasoning_effort...")
-                                    fallback_params.pop('reasoning_effort', None)
-                                    fallback_response = gpt_client.chat.completions.create(**fallback_params)
-                                else:
-                                    raise
+                            previous_reasoning_resolution = reasoning_resolution
+                            fallback_response, reasoning_resolution = _create_chat_completion_with_reasoning(
+                                gpt_client.chat.completions.create, fallback_params, gpt_reasoning_model_name,
+                                previous_resolution=reasoning_resolution,
+                            )
+                            if reasoning_resolution != previous_reasoning_resolution:
+                                reasoning_metadata = _build_chat_reasoning_metadata(
+                                    reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
+                                )
+                                if reasoning_metadata['reasoning_adjustments']:
+                                    yield emit_thought(
+                                        'generation', 'Reasoning setting adjusted for the selected model.',
+                                        reasoning_adjustments=reasoning_metadata['reasoning_adjustments'],
+                                    )
 
                             fallback_content = extract_chat_completion_response_text(fallback_response)
                             if fallback_content:
@@ -24321,7 +23922,7 @@ def register_route_backend_chats(bp):
                         'agent_icon': agent_icon_used if use_agent_streaming else None,
                         'agent_tags': agent_tags_used if use_agent_streaming else [],
                         'metadata': {
-                            'reasoning_effort': reasoning_effort,
+                            **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                             'model_selection': {
                                 'selected_model': final_model_used if use_agent_streaming else gpt_model,
                                 'frontend_requested_model': frontend_gpt_model,
@@ -24402,7 +24003,7 @@ def register_route_backend_chats(bp):
                                 additional_context={
                                     'agent_name': agent_name_used if use_agent_streaming else None,
                                     'augmented': bool(system_messages_for_augmentation),
-                                    'reasoning_effort': reasoning_effort
+                                    **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                                 }
                             )
                             debug_print(f"✅ Logged streaming chat token usage: {token_usage_data.get('total_tokens')} tokens")
@@ -24425,6 +24026,13 @@ def register_route_backend_chats(bp):
                             user_message_doc['metadata']['model_selection']['response_length'] = gpt_response_length
                         if selected_agent_metadata:
                             user_message_doc.setdefault('metadata', {})['agent_selection'] = selected_agent_metadata
+                        if reasoning_resolution is not None:
+                            user_message_doc['metadata'].update(_build_chat_reasoning_metadata(
+                                reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
+                            ))
+                            user_message_doc['metadata'].setdefault('model_selection', {}).update(_build_chat_reasoning_metadata(
+                                reasoning_resolution, reasoning_effort, gpt_reasoning_model_name,
+                            ))
                         cosmos_messages_container.upsert_item(user_message_doc)
                     except Exception as e:
                         debug_print(f"Warning: Could not update streaming user message metadata: {e}")
@@ -24611,7 +24219,7 @@ def register_route_backend_chats(bp):
                                 'incomplete': True,
                                 'error': 'rate_limited' if stream_rate_limited else 'stream_interrupted',
                                 'error_message': stream_failure_message,
-                                'reasoning_effort': reasoning_effort,
+                                **_build_chat_reasoning_metadata(reasoning_resolution, reasoning_effort, gpt_reasoning_model_name),
                                 'history_context': history_debug_info,
                                 'capability_usage': build_streaming_capability_usage(),
                                 'source_review': compact_source_review_result_for_metadata(source_review_result),

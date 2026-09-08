@@ -1,8 +1,8 @@
 # test_collaboration_image_error_contract.py
 """
 Functional test for the shared image editor's error/status contract.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Execute the production image-operation exception handler with real error types
 and response mapping. Existing route-policy tests cover its authorization guards.

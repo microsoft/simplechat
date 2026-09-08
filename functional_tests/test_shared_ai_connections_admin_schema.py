@@ -1,8 +1,8 @@
 # test_shared_ai_connections_admin_schema.py
 """
 Schema coverage for shared image defaults and retained legacy compatibility fields.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 """
 
 from test_support.app_stubs import import_app_module

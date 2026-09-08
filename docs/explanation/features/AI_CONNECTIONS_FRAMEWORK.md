@@ -1,4 +1,4 @@
-# Shared AI Connections Framework (v0.261.102)
+# Shared AI Connections Framework (v0.261.105)
 
 ## Overview
 
@@ -7,7 +7,7 @@ generation. Administrators configure a resource and its authentication once, pub
 appropriate models, and choose a separate default for each task. An image-only resource
 can remain separate from the chat resource without needing a second endpoint manager.
 
-Implemented in version: **0.261.102**. Application versioning remains in
+Implemented in version: **0.261.105**. Application versioning remains in
 `application/single_app/config.py`.
 
 Associated issue: [#1436 — Unify AI connections and fix GPT image generation](https://github.com/microsoft/simplechat/issues/1436).

@@ -4,7 +4,7 @@ title: "Configure AI connections"
 description: "Configure shared AI resources once, publish compatible models, and choose independent chat and image defaults."
 section: "Guides"
 audience: admin
-version: "0.261.102"
+version: "0.261.105"
 ---
 
 ## What this does
@@ -14,7 +14,7 @@ image generation select models from that shared source instead of keeping separa
 copies of the same endpoint and key. Rotating a shared connection's credential then
 updates the connection used by both tasks.
 
-Implemented in version: **0.261.102**.
+Implemented in version: **0.261.105**.
 [Issue #1436](https://github.com/microsoft/simplechat/issues/1436) tracks the shared
 connection and GPT image-generation changes.
 

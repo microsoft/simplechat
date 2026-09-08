@@ -1,9 +1,10 @@
 # test_orchestration_elicitation_context.py
 """
 Behavioral coverage for persisted inline clarification and execution context.
-Version: 0.261.099
+Version: 0.261.104
 Implemented in: 0.261.096
 Conversation-context, prompt-snapshot, and action integration: 0.261.099
+Atomic revision-store fixture isolation: 0.261.103
 
 Drives the actual Flask plan/answer/run handlers, planner normalization, Cosmos state
 helpers, source manifest, document-context resolver, executor, and adapters. Only external
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import test_orchestration_conversation_context_routes as server_context_tests  # noqa: E402
 from test_support.app_stubs import APP_ROOT, stubbed_config  # noqa: E402
+from test_support.orchestration_research import _definitions  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -123,6 +125,8 @@ def installed_modules(stubs):
         'functions_orchestration_registry', 'functions_orchestration_runs',
         'functions_orchestration_executor', 'functions_orchestration_adapters',
         'functions_orchestration_planner', 'functions_orchestration_events',
+        'functions_orchestration_models', 'functions_orchestration_plan_revisions',
+        'functions_orchestration_plan_editing',
     }
     originals = {name: sys.modules.get(name) for name in names}
     for name in names:
@@ -341,6 +345,9 @@ class ElicitationContextTests(unittest.TestCase):
             ),
             'functions_agent_catalog': module(
                 'functions_agent_catalog', build_accessible_agent_catalog=lambda *args, **kwargs: [],
+                build_agent_catalog_key=_definitions(
+                    'functions_agent_catalog.py', names={'build_agent_catalog_key'},
+                )['build_agent_catalog_key'],
             ),
         }
         self.stack.enter_context(installed_modules(stubs))
@@ -750,6 +757,30 @@ class ElicitationContextTests(unittest.TestCase):
                 self.assertEqual(expected, found)
 
     def test_real_plan_answer_run_preserves_original_and_rich_context(self):
+        self.settings.update(enable_semantic_kernel=True, allow_user_agents=True)
+        agent = {'id': 'main-agent', 'name': 'main-agent', 'scope_type': 'personal', 'scope_id': 'owner'}
+        self.stack.enter_context(patch.object(
+            sys.modules['functions_agent_catalog'], 'build_accessible_agent_catalog', return_value=[agent],
+        ))
+        agent_tasks = []
+
+        async def invoke_agent(selected, task, **kwargs):
+            self.assertEqual(selected['name'], 'main-agent')
+            agent_tasks.append(task)
+            return {'response': 'Agent considered the selected context.', 'citations': []}
+
+        self.stack.enter_context(patch.object(
+            self.route, 'capture_execution_identity', return_value=types.SimpleNamespace(user_id='owner'),
+        ))
+        self.stack.enter_context(patch.dict(sys.modules, {
+            'agent_delegation_runtime': module(
+                'agent_delegation_runtime', invoke_scoped_agent=invoke_agent,
+                delegation_citations=lambda _budget: [],
+            ),
+            'semantic_kernel_plugins.plugin_invocation_logger': module(
+                'semantic_kernel_plugins.plugin_invocation_logger', get_plugin_logger=lambda: None,
+            ),
+        }))
         original_prompt = {'id': 'main', 'name': 'Main prompt', 'content': 'Original prompt wording'}
         elicitation = self.begin(
             question(generic=True), prompt_info=original_prompt,
@@ -764,7 +795,16 @@ class ElicitationContextTests(unittest.TestCase):
         self.assertEqual(0, self.store.next_turn_index('conv', 'owner'))
         self.assertEqual(0, len(self.messages.items))
 
-        self.model_outputs.append(planned(['own']))
+        model_plan = planned(['own'])
+        model_plan['steps'].insert(-1, {
+            'step_id': 'selected-agent', 'capability_id': 'agent_invoke',
+            'arguments': {
+                'agent_name': 'main-agent',
+                'task': 'Review the selected document and prioritize accessibility.',
+            },
+        })
+        model_plan['steps'][-1].setdefault('depends_on', []).append('selected-agent')
+        self.model_outputs.append(model_plan)
         payload = self.reply_payload(
             elicitation,
             {'files': [], 'style': 'brief', 'sections': ['risks', 'actions'], 'approved': False, 'count': 0},
@@ -797,9 +837,9 @@ class ElicitationContextTests(unittest.TestCase):
         self.assertEqual(['own'], record['answered_questions'][0]['answer']['files'])
         self.assertIs(False, record['answered_questions'][0]['answer']['approved'])
         self.assertEqual(0, record['answered_questions'][0]['answer']['count'])
-        for context in self.builder_contexts[-2:]:
-            self.assertIn('prioritize accessibility', context['user_request'])
-            self.assertEqual(1, len(context['clarifications']))
+        self.assertEqual(2, len(self.builder_contexts))
+        self.assertIn('prioritize accessibility', self.builder_contexts[-1]['user_request'])
+        self.assertEqual(1, len(self.builder_contexts[-1]['clarifications']))
         self.assertEqual(1, len(self.messages.items))
 
         duplicate = event_document(self.post_reply(payload), 'orchestration_plan')
@@ -807,7 +847,9 @@ class ElicitationContextTests(unittest.TestCase):
         self.assertEqual(1, len(self.messages.items))
         self.assertEqual(2, len(self.planner_contexts))
         self.assertEqual(1, len(self.store.list_conversation_runs('conv', 'owner')))
-        frames(self.run_plan(plan))
+        self.assert_run_completed(plan)
+        self.assertEqual(1, len(agent_tasks))
+        self.assertIn('prioritize accessibility', agent_tasks[0])
         self.assertEqual(['own'], self.document_reads)
         self.assertEqual('personal', self.analysis_calls[0]['doc_scope'])
         self.assertIn('prioritize accessibility', self.analysis_calls[0]['prompt'])
@@ -843,7 +885,7 @@ class ElicitationContextTests(unittest.TestCase):
                 self.assertIn(f'Content of the {role} upload.', json.dumps(self.answer_prompts))
                 self.assertEqual('chat', self.executed_contexts[-1].elicitation_references[0]['scope']['kind'])
 
-    def test_primitive_only_legacy_reply_and_trivial_continuation(self):
+    def test_primitive_only_legacy_reply_reaches_planner_and_preserves_false_values(self):
         self.settings['chat_orchestration_ledger_max_runs'] = 0
         raw = {
             'kind': 'elicitation', 'message': 'Choose the response preferences.',
@@ -863,9 +905,11 @@ class ElicitationContextTests(unittest.TestCase):
         for key in ('elicitation_id', 'elicitation_revision', 'elicitation_submission_id'):
             payload.pop(key)
         payload['elicitation'] = {'requested_schema': {'properties': {}}}
-        with patch.object(self.route, 'triage_request', return_value='trivial'):
-            plan = event_document(self.post_reply(payload), 'orchestration_plan')
-        self.assertEqual(1, len(self.planner_contexts), 'A trivial continuation must not spend another planner call')
+        self.model_outputs.append({
+            'kind': 'plan', 'steps': [{'capability_id': 'respond', 'arguments': {}}],
+        })
+        plan = event_document(self.post_reply(payload), 'orchestration_plan')
+        self.assertEqual(2, len(self.planner_contexts), 'The planner must consider the accepted clarification')
         self.assertEqual(1, plan['revision'])
         record = self.store.get_orchestration_run(plan['run_id'], 'owner', 'conv')
         self.assertIs(False, record['answered_questions'][0]['answer']['approved'])
@@ -903,9 +947,9 @@ class ElicitationContextTests(unittest.TestCase):
         self.assertEqual(2, plan['revision'])
         record = self.store.get_orchestration_run(plan['run_id'], 'owner', 'conv')
         self.assertEqual(2, len(record['answered_questions']))
-        for context in self.builder_contexts[-2:]:
-            self.assertIn('First clarification wording.', context['user_request'])
-            self.assertIn('Second clarification wording.', context['user_request'])
+        self.assertEqual(3, len(self.builder_contexts))
+        self.assertIn('First clarification wording.', self.builder_contexts[-1]['user_request'])
+        self.assertIn('Second clarification wording.', self.builder_contexts[-1]['user_request'])
         stale = {**first_payload, 'elicitation_submission_id': 'late-answer'}
         self.assertEqual(409, self.post_reply(stale).status_code)
         changed_retry = deepcopy(second_payload)
@@ -963,7 +1007,12 @@ class ElicitationContextTests(unittest.TestCase):
         elicitation = self.begin(
             selected_document_ids=['group-doc'], doc_scope='group', active_group_ids=['group-a'],
         )
-        self.model_outputs.append(planned(['public-doc', 'another-public-doc']))
+        model_plan = planned(['group-doc', 'public-doc'])
+        more = planned(['another-public-doc'])['steps'][0]
+        more['step_id'] = 'gather-more'
+        model_plan['steps'].insert(-1, more)
+        model_plan['steps'][-1]['depends_on'].append('gather-more')
+        self.model_outputs.append(model_plan)
         payload = self.reply_payload(elicitation, context={'files': {'references': [
             reference('public-doc', scope_kind='public', scope_id='public-a'),
             reference('another-public-doc', scope_kind='public', scope_id='public-b'),
@@ -977,7 +1026,7 @@ class ElicitationContextTests(unittest.TestCase):
         frames(self.run_plan(plan))
         self.assertEqual(['public-a', 'public-b'], self.analysis_calls[0]['active_public_workspace_id'])
         self.assertEqual('public-a', self.executed_contexts[0].active_public_workspace_id)
-        self.assertEqual(['public-doc', 'another-public-doc'], self.document_reads)
+        self.assertEqual(['group-doc', 'public-doc', 'another-public-doc'], self.document_reads)
 
     def test_unapproved_shares_failed_processing_and_non_file_messages_are_rejected(self):
         elicitation = self.begin()

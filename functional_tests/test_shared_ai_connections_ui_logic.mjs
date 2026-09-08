@@ -1,6 +1,6 @@
 // test_shared_ai_connections_ui_logic.mjs
-// Version: 0.261.102
-// Implemented in: 0.261.102
+// Version: 0.261.105
+// Implemented in: 0.261.105
 // Shared selection identity, technical metadata, publication policy and safe transport.
 
 import assert from 'node:assert/strict';

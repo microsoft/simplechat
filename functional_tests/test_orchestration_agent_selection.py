@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_agent_selection.py
 """
 Functional test for orchestration agent selection.
-Version: 0.261.089
+Version: 0.261.104
 Implemented in: 0.261.087
 
 An agent's configuration is not all equally safe to show a planner. Its naming fields are
@@ -18,11 +18,14 @@ caller passing raw records cannot leak through it.
 import ast
 import os
 import sys
+import types
+from unittest.mock import Mock, patch
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from test_support.app_stubs import APP_ROOT, stubbed_app_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_support.orchestration_research import _definitions  # noqa: E402
 
 CONTEXT = 'functions_orchestration_context.py'
 ROUTE = 'route_backend_orchestration.py'
@@ -56,6 +59,22 @@ FULL_AGENT = {
 def _tree(module):
     with open(os.path.join(APP_ROOT, module), encoding='utf-8') as handle:
         return ast.parse(handle.read())
+
+
+def _catalog_stub(builder):
+    module = types.ModuleType('functions_agent_catalog')
+    module.build_accessible_agent_catalog = builder
+    module.build_agent_catalog_key = _definitions(
+        'functions_agent_catalog.py', names={'build_agent_catalog_key'},
+    )['build_agent_catalog_key']
+    return module
+
+
+def _agent_settings():
+    from functions_orchestration_registry import get_capability
+
+    descriptor = get_capability('agent_invoke')
+    return {key: True for key in (*descriptor['settings_gates'], *descriptor['settings_gates_any'])}
 
 
 def test_projection_withholds_agent_internals():
@@ -175,15 +194,23 @@ def test_a_seeded_agent_is_a_hard_constraint():
             # A seeded agent must narrow the catalog. The user has already made the choice
             # this catalog exists to inform, so offering alternatives invites the planner to
             # overrule them -- the same reason a seeded document turns off the candidate probe.
-            catalog = resolve_agent_catalog(
-                'user-1',
-                seeds={'agent': {'name': 'chosen_one', 'display_name': 'Chosen One'}},
-            )
+            actual = {
+                'id': 'agent-1', 'name': 'chosen_one', 'display_name': 'Current name',
+                'scope_type': 'personal', 'scope_id': 'user-1',
+            }
+            builder = Mock(return_value=[actual, {**actual, 'id': 'agent-2', 'name': 'another'}])
+            with patch.dict(sys.modules, {'functions_agent_catalog': _catalog_stub(builder)}):
+                catalog = resolve_agent_catalog(
+                    'user-1', settings=_agent_settings(),
+                    seeds={'agent': {'name': 'chosen_one', 'display_name': 'Untrusted client name'}},
+                )
             names = [a.get('name') for a in (catalog or [])]
             assert names == ['chosen_one'], (
                 f"a seeded agent must be the only one offered, got {names}. A user who "
                 f"picked an agent has stated a constraint, not a preference."
             )
+            assert catalog[0]['display_name'] == 'Current name'
+            builder.assert_called_once()
 
         print("  ok  a user-selected agent is the only one offered")
         return True
@@ -194,30 +221,22 @@ def test_a_seeded_agent_is_a_hard_constraint():
         return False
 
 
-def test_catalog_resolution_fails_soft():
-    """A catalog lookup that raises degrades to 'no agents', never breaks planning."""
-    print("Testing that catalog resolution fails soft...")
+def test_catalog_resolution_failure_is_explicit():
+    """A failed lookup cannot impersonate a successful empty authorized catalog."""
+    print("Testing that catalog failure is explicit...")
     try:
-        tree = _tree(CONTEXT)
-        target = None
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == 'resolve_agent_catalog':
-                target = node
-        assert target is not None, 'resolve_agent_catalog not found'
+        with stubbed_app_imports():
+            from functions_orchestration_context import CatalogResolutionError, resolve_agent_catalog
 
-        handlers = [n for n in ast.walk(target) if isinstance(n, ast.ExceptHandler)]
-        assert handlers, (
-            'resolve_agent_catalog must handle a failing lookup. It is a multi-query Cosmos '
-            'traversal; a transient failure there must cost the plan its agents, not the '
-            'user their answer.'
-        )
-        for handler in handlers:
-            raises = [n for n in ast.walk(handler) if isinstance(n, ast.Raise)]
-            assert not raises, (
-                'the catalog handler re-raises; planning must continue without agents'
-            )
-
-        print("  ok  a failed lookup degrades to no agents")
+            builder = Mock(side_effect=RuntimeError('PRIVATE_STORAGE_DETAIL'))
+            with patch.dict(sys.modules, {'functions_agent_catalog': _catalog_stub(builder)}):
+                try:
+                    resolve_agent_catalog('user-1', settings=_agent_settings())
+                except CatalogResolutionError as exc:
+                    assert 'PRIVATE_STORAGE_DETAIL' not in exc.message
+                else:
+                    raise AssertionError('A failed lookup was treated as an empty catalog.')
+        print("  ok  a failed lookup is not an authorization decision")
         return True
     except Exception as e:
         print(f"Test failed: {e}")
@@ -274,7 +293,7 @@ if __name__ == "__main__":
         test_nameless_agents_are_dropped,
         test_projection_is_applied_where_the_context_is_built,
         test_a_seeded_agent_is_a_hard_constraint,
-        test_catalog_resolution_fails_soft,
+        test_catalog_resolution_failure_is_explicit,
         test_route_resolves_the_catalog_once_per_plan,
     ]
     results = []

@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_registry_contract.py
 """
 Functional test for the chat orchestration capability registry.
-Version: 0.261.085
+Version: 0.261.104
 Implemented in: 0.261.085
 
 The registry is the only capability information the planner model ever sees, and it is
@@ -20,15 +20,24 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from test_support.app_stubs import stubbed_app_imports  # noqa: E402
+from test_support.orchestration_research import stubbed_orchestration_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
+
+def _settings(**values):
+    return {
+        'document_action_capabilities': {
+            'analyze': {'enabled': False}, 'comparison': {'enabled': False},
+        },
+        **values,
+    }
 
 
 def test_descriptors_are_well_formed():
     """Every descriptor carries the fields the planner and validator both rely on."""
     print("Testing orchestration capability descriptors...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_registry as registry
 
             required_fields = (
@@ -86,17 +95,17 @@ def test_gates_withhold_capabilities():
     """A capability whose settings gate is off must not be offered."""
     print("Testing orchestration capability gating...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_registry as registry
 
             # Nothing enabled: only the terminal capability survives, because a plan has
             # to be able to end even in a deployment with everything switched off.
-            bare = registry.resolve_available_capability_ids({})
+            bare = registry.resolve_available_capability_ids(_settings())
             assert bare == [registry.TERMINAL_CAPABILITY_ID], (
                 f"An empty deployment offered {bare}"
             )
 
-            with_web = registry.resolve_available_capability_ids({'enable_web_search': True})
+            with_web = registry.resolve_available_capability_ids(_settings(enable_web_search=True))
             assert registry.CAPABILITY_WEB_SEARCH in with_web
             assert registry.CAPABILITY_DOCUMENT_SEARCH not in with_web, (
                 "Document search must need a workspace to search"
@@ -106,7 +115,7 @@ def test_gates_withhold_capabilities():
             for workspace_key in (
                 'enable_user_workspace', 'enable_group_workspaces', 'enable_public_workspaces'
             ):
-                ids = registry.resolve_available_capability_ids({workspace_key: True})
+                ids = registry.resolve_available_capability_ids(_settings(**{workspace_key: True}))
                 assert registry.CAPABILITY_DOCUMENT_SEARCH in ids, (
                     f"{workspace_key} alone should permit document search"
                 )
@@ -124,10 +133,10 @@ def test_administrator_narrowing():
     """The enabled-capability list narrows the registry without breaking plans."""
     print("Testing orchestration capability narrowing...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_registry as registry
 
-            settings = {'enable_user_workspace': True, 'enable_web_search': True}
+            settings = _settings(enable_user_workspace=True, enable_web_search=True)
             full = registry.resolve_available_capability_ids(settings)
 
             # No opinion means everything, not nothing. An administrator who has never
@@ -154,23 +163,24 @@ def test_administrator_narrowing():
 
 
 def test_planner_projection_hides_internals():
-    """Gates, adapters and caps are the application's business, not the model's."""
+    """Gate internals stay private; outputs and limits help the model choose feasible work."""
     print("Testing orchestration planner projection...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_registry as registry
 
-            settings = {'enable_user_workspace': True, 'enable_web_search': True}
+            settings = _settings(enable_user_workspace=True, enable_web_search=True)
             available = registry.resolve_available_capabilities(settings)
             projection = registry.build_planner_capability_projection(available)
 
             assert projection, "The projection was empty"
             leaked = {'gate', 'settings_gates', 'settings_gates_any', 'adapter',
-                      'max_per_plan', 'document_action_type', 'requires_scope'}
+                      'document_action_type', 'requires_scope'}
             for entry in projection:
                 overlap = leaked & set(entry.keys())
                 assert not overlap, f"Planner projection leaked {sorted(overlap)}"
                 assert entry['when_to_use'], "Guidance is what the planner chooses on"
+                assert 'produces' in entry and 'max_per_plan' in entry
 
             client = registry.build_capability_client_projection(available)
             for entry in client:

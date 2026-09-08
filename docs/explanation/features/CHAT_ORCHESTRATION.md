@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.101** (tracked in `application/single_app/config.py`)
+**Version: 0.261.104** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -8,7 +8,11 @@
 **Research selection and multi-query execution updated in version: 0.261.099**
 **Direct action access implemented in version: 0.261.098**
 **Conversation continuity implemented in version: 0.261.096**
+**Follow-up resolver compatibility fixed in version: 0.261.103**
+**Selected/default model routing fixed in version: 0.261.103**
 **Approval preference persistence fixed in version: 0.261.101**
+**Conversational plan editing implemented in version: 0.261.102**
+**Capability-aware planning and reasoning compatibility fixed in version: 0.261.104**
 
 ## Overview
 
@@ -63,8 +67,10 @@ enablement lives in a nested capability record rather than a flag.
   spend the planner's whole context on file names. A cheap search probe using the user's
   contextualized request is aggregated to distinct documents instead. When the user has
   already selected documents, no probe runs.
-- **Seeds as constraints.** Anything chosen in the composer narrows the plan rather than
-  suggesting to it.
+- **Positive requirements and resource filters.** Supported selected tools, documents,
+  and agents must be used by the initial plan. Unchecked controls are neutral, not
+  permission denials. Other enabled, authorized capabilities remain available.
+  Workspace, tag, and document filters still bound source access.
 - **Accessible actions by description.** Where action access is enabled, the planner
   receives safe metadata for governed actions, not credentials, connection settings or
   every action's function schemas. Scoped references distinguish actions with the same
@@ -75,6 +81,11 @@ enablement lives in a nested capability record rather than a flag.
 - **The run ledger.** A compact, byte-bounded activity summary covering earlier searches,
   produced artifacts, and answered questions. It helps avoid unnecessary repeated work,
   but does not replace message history or prove that source evidence is available.
+- **Saved memory.** Since **0.261.104**, enabled Fact Memory supplies up to eight instruction
+  memories and four relevant embedded facts for planning, planner edits, and answering.
+  Current instructions take precedence. Private conversations use the caller's memory, or
+  the first active group's authorized memory in group/all source mode. Shared conversations,
+  including owner-held hidden source records, do not receive saved memory.
 
 #### Conversational follow-ups
 
@@ -102,8 +113,82 @@ the same context. Changes to the referenced messages or their visibility require
 plan; newly appended turns do not enter an older run.
 
 These rules apply to Auto, countdown, and manual approval. They do not introduce rolling
-summaries or cross-conversation memory. First turns without history and simple
+summaries or cross-conversation transcript lookup. Existing scoped saved memories are
+separate from this history window. First turns without history and simple
 acknowledgments do not require a resolution completion.
+
+Saved memory recall is read-only: it does not autosave facts or fill missing embeddings.
+Unavailable fact search is identified explicitly; query embeddings may still require a
+model call. Only audience and scope markers are retained with the plan or cached
+clarification, not the raw memory prompt. Current settings, membership, and audience are
+checked again before final synthesis; the recalled scope is reauthorized after the model
+call before publication. Questions and replays also enforce those boundaries.
+Answers preserve memory citations. See the
+[capability-context fix](../fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md#read-only-saved-memory)
+for scope and availability details.
+
+Since **0.261.103**, an unused `clarification: null` in the resolver's JSON is
+accepted as "no clarification needed", just like an empty string. It does not
+discard the rest of a valid follow-up or require another model call. A request
+whose relationship is `clarification` still needs a nonempty question.
+
+Other malformed resolver output gets at most one corrective completion using
+the same bounded history, original request, and clarification answers. Both
+completions count toward the successful turn's token usage. Unknown message IDs,
+invalid required field types, and inconsistent relationships remain invalid:
+the application never drops history or starts a new topic merely to make a
+response pass validation. Persistent failure produces an interpretation error,
+distinct from an inaccessible or changed conversation.
+
+Refused, filtered, absent, or incomplete completions are not retried as malformed
+JSON. The resolver does not mistake provider failures for unsupported JSON formatting; only
+an explicit unsupported-response-format error uses the existing no-format
+compatibility fallback. The plan generator uses the same narrow format-error rule.
+Model failures are surfaced, not converted into an answer-only plan. No new
+model setting or API version is required.
+
+#### Model selection
+
+The answer model comes from **Manual controls** when one is selected, otherwise from
+the administrator's default model connection. Classic single-endpoint or APIM settings
+remain the fallback only when no connection-based selection or default applies.
+The selected deployment, provider, endpoint ID and model ID are resolved together:
+changing only the deployment on a legacy client could send it to the wrong endpoint.
+
+The authorized answer choice is saved with the plan, including a resolved admin default.
+Changing the default while approval is pending does not retarget that run. The model is
+authorized again at execution, so a disabled, removed or inaccessible selection produces
+an error instead of silently switching to another model.
+
+Without a dedicated planner override, the same selection handles conversational
+resolution, plan generation and research review as well as the answer. A configured
+planner deployment or endpoint remains separate and does not override the answer model.
+Planner endpoint selections use the existing planner model/endpoint/provider settings and
+the caller's normal model access checks. A deployment-only planner override retains the
+classic single-endpoint/APIM connection.
+
+Planning resolves its client on the request thread after restoring canonical turn state,
+with authenticated streaming context retained for endpoint authorization. Execution
+captures bindings before starting its worker, and direct actions receive the actual
+answer model identity.
+GPT-5-family completions use `max_completion_tokens`, omit unsupported temperature,
+and retain compatible manual reasoning effort. A positive configured model response
+length governs answer calls; otherwise reasoning completions have an 8192-token budget
+floor so reasoning does not consume the entire smaller visible-output allowance.
+Anthropic completion flags are normalized at the protocol boundary, so successful
+Claude follow-ups pass the same strict checks while truncation and refusal remain failures.
+
+Both chat interfaces consume a canonical, per-model reasoning policy. A configured
+model ID is a preference identity, not a model family. An unsupported stored effort
+uses the policy's supported application default with a visible notice; Luna Minimal
+becomes Low. Explicit supported None is sent unchanged. Unknown support or a narrowly
+classified provider rejection uses the model-managed default and reports that honestly,
+without switching deployments. See the
+[reasoning compatibility fix]({{ '/explanation/fixes/ORCHESTRATION_REASONING_LEVEL_COMPATIBILITY_FIX/' | relative_url }}).
+
+The saved assistant message and terminal stream identify the model that actually answered.
+The existing V2 renderer displays that name. Empty, refused, filtered or failed answer
+completions produce an error rather than a success-shaped empty turn.
 
 #### What the context picker contributes
 
@@ -175,17 +260,22 @@ documents directly whenever they are already known.
 
 ### Plan
 
-`functions_orchestration_planner.py` triages first. The point of triage is to stop a
-conversational question costing a planning round trip, so triage itself is heuristic rather
-than a model call — doing it with a model would spend exactly the round trip it saves. The
-heuristics are biased towards planning: a false positive costs one cheap call, while a
-false negative answers a document question without looking at the documents.
+Every Orchestrate request reaches `functions_orchestration_planner.py`, including short
+questions and acknowledgments. The planner returns a plan or an elicitation. There is
+no keyword/length shortcut that decides retrieval is unnecessary before the model sees
+the available capabilities. This deliberately adds a planning call to requests that
+previously bypassed it; ordinary chat is unchanged by that orchestration policy.
 
-Where a plan is needed, the planner returns either a plan or an elicitation.
+The context separates available capabilities, their actual unavailability reasons,
+positive user requirements, and authorized resources. Descriptors include outputs and
+per-plan limits, and the context carries the current UTC time. A model's claim that a
+feature is unavailable is not an authorization decision. Discovery failures surface as
+failures instead of silently replacing a catalog with an empty list.
 
-When eligible actions are available, short questions also reach planning: message length
-cannot distinguish a general question from a ticket-status lookup. The existing fast
-path remains when direct actions are disabled or unavailable.
+Initial plans cannot silently drop selected operations or documents. A subsequent
+reviewed edit can narrow them, with a visible warning. Planned Web use is kept separate
+from original Web selection during restoration. Current access and feature gates are
+checked again before execution.
 
 `functions_orchestration_schema.py` holds both contracts and the validator. **Planner
 output is treated as untrusted input.** A plan naming a capability that does not exist,
@@ -358,9 +448,9 @@ answer.
 
 ## API
 
-Two endpoints, deliberately separate. The plan is durable between them, so a dropped
-connection cannot lose it, editing is straightforward, and the existing 24,600-line chat
-route is untouched.
+Planning and execution are deliberately separate requests. The plan is durable between
+them, so a dropped connection cannot lose it. Editor operations revise that saved plan
+without starting its steps or adding messages to the main conversation.
 
 | Endpoint | Method | Purpose |
 | --- | --- | --- |
@@ -368,6 +458,9 @@ route is untouched.
 | `/api/v2/orchestration/run` | POST | Executes an approved plan, streaming step progress and the answer. |
 | `/api/v2/orchestration/cancel/<run_id>` | POST | Asks a running plan to stop. |
 | `/api/v2/orchestration/runs` | GET | Every run in a conversation, oldest first, for the drawer's map view. |
+| `/api/v2/orchestration/runs/<run_id>/editor` | GET | Current editor state and paged revision history. |
+| `/api/v2/orchestration/runs/<run_id>/edit` | POST | Hold an unexecuted plan for manual approval before editing. |
+| `/api/v2/orchestration/runs/<run_id>/revisions` | POST | Ask the planner for a change, answer its question, restore a version, or discard a pending change. |
 | `/api/v2/orchestration/runs/<run_id>/steps` | GET | One run's steps, for expanding a row in the map view. |
 
 Cancellation is recorded on the run rather than signalled in process memory. The run is a
@@ -391,6 +484,23 @@ and `orchestration_synthesis`, each carrying `activity.lane_key = "orchestration
 
 Three event types are genuinely new, because nothing existing meant the same thing:
 `orchestration_plan`, `orchestration_elicitation` and `orchestration_step`.
+
+## Editing before execution
+
+**Review** remains the plan drawer with narrowing-only step and document controls.
+**Edit** opens a full-screen preview, scoped planner conversation, and revision history.
+The planner can add, remove, or revise steps, but only within current capability and
+source permissions. The browser never constructs an executable plan.
+
+Opening Edit stops a countdown and saves a manual-approval hold. Closing or reloading
+does not restart the timer: the current version needs an explicit **Run**. Conditional
+version checks prevent an old tab from approving a superseded plan or editing one that
+has already started.
+
+The revised task guides the actual execution and final answer, while the original user
+message remains unchanged. Failed changes preserve the last valid version. See
+[V2 Orchestration Plan Editing](V2_ORCHESTRATION_PLAN_EDITING.md) and the
+[user guide]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
 
 ## Clarifying questions
 
@@ -495,11 +605,14 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_orchestration_context.py` | Candidate documents, accessible agent/action metadata, seeds, bounded history snapshots, signals, run ledger |
 | `functions_action_catalog.py` | Metadata-only action discovery, scoped references and fresh authorization |
 | `functions_orchestration_actions.py` | Isolated, bounded execution of one selected action |
-| `functions_orchestration_planner.py` | Follow-up resolution, triage, plan synthesis, elicitation, re-planning |
+| `functions_orchestration_planner.py` | Follow-up resolution, capability-aware plan synthesis, elicitation, re-planning |
+| `functions_orchestration_plan_editing.py` | Scoped plan changes, current source checks, and revised execution requests |
+| `functions_orchestration_plan_revisions.py` | Durable edit holds, conditional revision publication, history, and execution claims |
 | `functions_orchestration_adapters.py` | Capability adapters over existing functions |
 | `functions_orchestration_executor.py` | Step engine, budgets, cancellation, re-authorization |
 | `functions_orchestration_runs.py` | Run and step persistence |
 | `functions_orchestration_events.py` | Stream event builders |
+| `functions_orchestration_models.py` | Authorized model selection, endpoint clients, completion parameters and safe model metadata |
 | `route_backend_orchestration.py` | The V2 endpoints, conversation and message persistence |
 | `application/v2_ui/src/components/chat/ComposerEditor.tsx` | Shared context-aware editing for messages and inline answers |
 | `application/v2_ui/src/lib/elicitationAnswers.ts` | Primitive answer construction, required-field validation, and answer-local context |
@@ -516,7 +629,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
    controls**; file upload and voice input stay where they are. The **Orchestrate** toggle
    turns it off again for anyone who wants the classic composer.
 4. Ask a question. If an inline clarification appears, answer it using choices, text, references, or uploads, then select **Finish**.
-5. Review the resulting plan; approve, adjust, or cancel it.
+5. Review the resulting plan. Use **Edit** to discuss changes with the planner, then
+   explicitly run the accepted version or cancel the plan.
 6. Watch progress in the Plan panel of the right-hand drawer.
 
 Anything selected inside the manual controls is passed as a seed and constrains the plan,
@@ -551,12 +665,15 @@ to the front.
 | `functional_tests/test_orchestration_plan_schema.py` | Unknown and disabled capabilities, document authorization, argument coercion and bounds, cycles, step caps, narrowing-only edits, approval states |
 | `functional_tests/test_v2_orchestration_approval_persistence.py` | Current-user approval preference round-trips, enum validation, and runtime preference resolution and save ordering |
 | `ui_tests/test_v2_orchestration_approval_persistence.py` | Approval selection across navigation and fresh browser contexts, administrator precedence, loading/retry, save failures, and pending writes |
+| `functional_tests/test_orchestration_plan_revision_store.py` | Durable edit holds, atomic publication, stale approvals, idempotent submissions, and revision history |
+| `functional_tests/test_orchestration_plan_revision_routes.py` | Conversational add/remove/restore, clarification, error recovery, preserved original messages, and revised-task execution |
 | `functional_tests/test_orchestration_elicitation_schema.py` | The MCP flat-object restriction, paging staying outside the schema, response validation |
 | `functional_tests/test_orchestration_elicitation_context.py` | Authoritative pending questions, accepted context, and the real plan/answer/run handoff |
 | `functional_tests/test_v2_elicitation_answers.py` | Primitive answers, single/multiple files, alternate sources, readiness, and answer-local prompt resolution |
 | `ui_tests/test_v2_elicitation_composer.py` | Real editor interactions, choices with context, uploads, retries, draft isolation, and responsive rendering |
 | `functional_tests/test_orchestration_run_ledger.py` | Run and byte bounds, oldest-first compaction, honest truncation, answered questions carrying forward |
 | `functional_tests/test_orchestration_invoke_prompt_contract.py` | The model-call convention: the route's closure must accept what the adapters and the document functions actually pass, and must count token usage |
+| `functional_tests/test_orchestration_model_selection.py` | Manual/default precedence, independent planner connections, authorization, unavailable models, legacy/APIM compatibility, protocol parameters and client ownership |
 | `functional_tests/test_orchestration_executor.py` | Step ordering, dependency skipping, cancellation, budget caps, re-authorization |
 | `functional_tests/test_orchestration_phase_ordering.py` | Knowledge sorts before reasoning, a plan gathering after answering is repaired, a backwards dependency is dropped with a note |
 | `functional_tests/test_orchestration_adapter_contract.py` | Every capability resolves to an adapter, every adapter matches the executor's call signature, no adapter touches Flask state, and identity is captured on the request thread |
@@ -567,9 +684,9 @@ to the front.
 | `functional_tests/test_orchestration_action_planning.py` | Default-off action gating, short requests, validated action inputs, and retained agent selections |
 | `functional_tests/test_orchestration_action_runtime.py` | One-action loading, bounded function calls, model authorization, cancellation, usage and resource cleanup |
 | `functional_tests/test_orchestration_context_picker.py` | Picked tags reach the seeds and both search paths under the parameter `hybrid_search` really takes; a tag scopes the probe rather than replacing it; a picked document reaches the planner and the approval card by name; a browser-supplied name cannot widen access; search citations carry the workspace a document came from; a step can read what an earlier step found, an unusable reference is repaired or dropped, and a run-time document still respects the configured ceiling |
-| `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, follow-up resolution, contextualized adapters, synthesis roles, and URL provenance |
-| `functional_tests/test_orchestration_conversation_context_routes.py` | Owned server history across HTTP/SSE planning and execution, all approval modes, clarification, retries, stale sources, and legacy cutoffs |
-| `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification transport, cancellation, original-turn continuity, all approval modes, and navigation |
+| `functional_tests/test_orchestration_conversation_context.py` | Message eligibility, bounds, snapshot validation, nullable unused clarifications, strict response validation, bounded repair, token accounting, provider/refusal handling, contextualized adapters, synthesis roles, and URL provenance |
+| `functional_tests/test_orchestration_conversation_context_routes.py` | New and existing conversations across HTTP/SSE planning and execution, all approval modes, null clarifications, bounded recovery, model selection and attribution, revocation, completion failures, stream cleanup, stale sources and legacy cutoffs |
+| `ui_tests/test_v2_orchestration_conversation_context.py` | Matching clarification/model transport, cancellation, original-turn continuity, all approval modes, visible answer model names and navigation |
 
 Research-selection evaluation distinguishes contract coverage from model behaviour. A
 mocked plan proves that the application preserves an allowed choice; it does not prove
@@ -583,11 +700,13 @@ research-selection rate is not itself a quality improvement.
 - **A full page reload does not automatically restore the inline interview.** Drafts survive
   paging and navigation within the current browser session; reload recovery is a separate
   capability.
-- **Recent context only.** There is no orchestration rolling summary or cross-chat memory.
-  A reference outside the retained window may need clarification.
-- **Automatic per-step model routing is not implemented.** Planning uses its configured
-  model. Direct action execution honors an explicitly selected, available chat model or
-  the deployment defaults; it does not select models by task capability or cost.
+- **Recent transcript context only.** There is no orchestration rolling summary or
+  cross-chat transcript lookup. A reference outside the retained window may need
+  clarification. Enabled scoped fact memories are a separate, bounded source of context.
+- **Automatic per-step model routing is not implemented.** Planning and research use the
+  selected/default answer model unless a dedicated planner override is configured.
+  Direct action execution receives the answer selection. Models are not selected
+  dynamically by task capability or cost; configured agents retain their own model behavior.
 - **No output-phase workflow.** Existing MCP, OpenAPI and other action types can now
   gather knowledge directly, but the `output` phase remains empty. There are no dedicated
   output scheduling, workspace placement or delivery steps. Actions retain their existing
@@ -609,5 +728,6 @@ research-selection rate is not itself a quality improvement.
 - [Orchestration settings](../../admin/orchestration.md)
 - [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
 - [Conversation context fix](../fixes/ORCHESTRATION_CONVERSATION_CONTEXT_FIX.md)
+- [Model selection fix](../fixes/ORCHESTRATION_MODEL_SELECTION_FIX.md)
 - `docs/explanation/release_notes.md`
 - [Deep research selection and execution fix](../fixes/ORCHESTRATION_DEEP_RESEARCH_SELECTION_FIX.md)

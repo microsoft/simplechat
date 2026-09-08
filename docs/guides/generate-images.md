@@ -4,7 +4,7 @@ title: "Generate images"
 description: "Use the chat Image control to request AI-generated images."
 section: "Guides"
 audience: user
-version: "0.261.102"
+version: "0.261.105"
 ---
 
 ## What this does

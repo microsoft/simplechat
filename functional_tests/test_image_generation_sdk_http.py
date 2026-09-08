@@ -1,8 +1,8 @@
 # test_image_generation_sdk_http.py
 """
 Functional tests for image URLs, authentication, payloads, and output with the real OpenAI SDK.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Uses the application's pinned openai==1.109.1 client and httpx.MockTransport. Only
 HTTP is mocked: request construction, auth_headers, multipart encoding, response parsing,

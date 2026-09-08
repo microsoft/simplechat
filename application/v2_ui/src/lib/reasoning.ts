@@ -1,77 +1,27 @@
 // reasoning.ts
-// Which reasoning effort levels a model accepts, and which one is in effect.
-//
-// Mirrors getModelSupportedLevels and getCurrentModelReasoningEffort in
-// static/js/chat/chat-reasoning.js. Offering a level a model rejects produces a request the
-// endpoint has to strip, and hiding a level a model does support silently removes a
-// capability, so the mapping is kept in step with the existing client rather than guessed.
-//
-// The chosen level is stored per model in the `reasoningEffortSettings` user setting, which
-// the classic interface already owns. Sharing the setting means sharing how a model is keyed
-// in it, so both interfaces have to agree on the fallback order below.
+// Policy comes from the authorized server catalog; preference keys remain shared with classic.
 
-export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high';
-
-/**
- * The stored per-model map, `{ 'gpt-5-mini': 'medium' }`.
- *
- * Values are read back as plain strings because the map is shared with another client and
- * with whatever an older release wrote; an unrecognised level is discarded on resolution
- * rather than trusted.
- */
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type ReasoningEffortSettings = Record<string, string>;
 
+export interface ReasoningCapabilities {
+    status: 'supported' | 'unsupported' | 'unknown';
+    efforts: ReasoningEffort[];
+    default_effort: ReasoningEffort | null;
+}
+
+export interface ReasoningResolution {
+    requested_effort: string | null;
+    effective_effort: string | null;
+    mode: 'explicit' | 'model_default';
+    adjustment_reason: string | null;
+    stage?: 'planner' | 'answer';
+    model_name?: string;
+}
+
 export const ALL_REASONING_LEVELS: ReasoningEffort[] = [
-    'none',
-    'minimal',
-    'low',
-    'medium',
-    'high',
+    'none', 'minimal', 'low', 'medium', 'high', 'xhigh',
 ];
-
-export function getModelSupportedLevels(modelName?: string): ReasoningEffort[] {
-    if (!modelName) {
-        return ALL_REASONING_LEVELS;
-    }
-
-    const name = modelName.toLowerCase();
-
-    // Models with no reasoning support at all.
-    if (
-        name.includes('gpt-4o') ||
-        name.includes('gpt-4.1') ||
-        name.includes('gpt-5-chat') ||
-        name.includes('gpt-5-codex')
-    ) {
-        return ['none'];
-    }
-
-    if (name.includes('gpt-5-pro')) {
-        return ['high'];
-    }
-
-    // The 5.1 series skips 'low'.
-    if (name.includes('gpt-5.1')) {
-        return ['none', 'minimal', 'medium', 'high'];
-    }
-
-    if (name.includes('gpt-5')) {
-        return ['minimal', 'low', 'medium', 'high'];
-    }
-
-    // o-series reasoning models.
-    if (/\bo[0-9]/.test(name)) {
-        return ['low', 'medium', 'high'];
-    }
-
-    return ALL_REASONING_LEVELS;
-}
-
-/** True when the model offers a real choice worth surfacing a control for. */
-export function supportsReasoning(modelName?: string): boolean {
-    const levels = getModelSupportedLevels(modelName);
-    return levels.length > 1 || (levels.length === 1 && levels[0] !== 'none');
-}
 
 export const REASONING_LABELS: Record<ReasoningEffort, string> = {
     none: 'None',
@@ -79,17 +29,19 @@ export const REASONING_LABELS: Record<ReasoningEffort, string> = {
     low: 'Low',
     medium: 'Medium',
     high: 'High',
+    xhigh: 'XHigh',
 };
 
-/**
- * How a model is identified in the stored map.
- *
- * `model_id` first, then the deployment name, matching `getCurrentModelName()` in
- * chat-reasoning.js. The order matters twice over. It decides the key a level is stored
- * under, so a level chosen in one interface is found again by the other. It also decides
- * which name the level set is derived from, and a deployment an administrator named
- * `chat-prod` says nothing about reasoning support where its model id `gpt-5-mini` does.
- */
+export function getModelSupportedLevels(policy?: ReasoningCapabilities): ReasoningEffort[] {
+    return policy?.status === 'supported' && Array.isArray(policy.efforts)
+        ? policy.efforts.filter((level) => ALL_REASONING_LEVELS.includes(level))
+        : [];
+}
+
+export function supportsReasoning(policy?: ReasoningCapabilities): boolean {
+    return getModelSupportedLevels(policy).length > 0;
+}
+
 export function reasoningModelKey(
     model: { model_id?: unknown; deployment_name?: unknown } | undefined,
     fallback?: string,
@@ -100,38 +52,98 @@ export function reasoningModelKey(
     return modelId || deployment || (fallback ?? '').trim();
 }
 
-/**
- * The level in effect for a model, given what has been stored for it.
- *
- * Mirrors `getCurrentModelReasoningEffort()`: a model always has an effective level, so the
- * control shows a real value rather than an empty placeholder, and a stored level that the
- * current model does not accept is ignored instead of being sent and stripped.
- */
-export function resolveReasoningEffort(
-    modelName: string | undefined,
+export function resolveReasoningSelection(
+    modelKey: string | undefined,
     saved?: ReasoningEffortSettings,
-): ReasoningEffort {
-    const levels = getModelSupportedLevels(modelName);
-
-    // gpt-5-pro takes `high` and nothing else, so a stored value cannot override it.
-    if (modelName && modelName.toLowerCase().includes('gpt-5-pro')) {
-        return 'high';
-    }
-
-    const stored = modelName ? saved?.[modelName] : undefined;
-    if (stored && levels.includes(stored as ReasoningEffort)) {
-        return stored as ReasoningEffort;
-    }
-
-    return levels.includes('low') ? 'low' : levels[0];
+    policy?: ReasoningCapabilities,
+): ReasoningResolution {
+    const requested = modelKey ? saved?.[modelKey] || null : null;
+    const levels = getModelSupportedLevels(policy);
+    const fallback = levels.includes('low')
+        ? 'low'
+        : levels.includes(policy?.default_effort as ReasoningEffort)
+          ? policy!.default_effort
+          : null;
+    const effective = levels.includes(requested as ReasoningEffort) ? requested : fallback;
+    return {
+        requested_effort: requested,
+        effective_effort: effective,
+        mode: effective === null ? 'model_default' : 'explicit',
+        adjustment_reason: requested && requested !== effective ? 'unsupported_effort' : null,
+    };
 }
 
-/**
- * The value to send with a request, or undefined when nothing should be sent.
- *
- * Mirrors `getCurrentReasoningEffort()`, which returns null for `none`: the level is a real
- * choice in the picker but not a parameter the endpoint takes.
- */
-export function requestReasoningEffort(level: string | undefined): string | undefined {
-    return !level || level === 'none' ? undefined : level;
+export function resolveReasoningEffort(
+    modelKey: string | undefined,
+    saved?: ReasoningEffortSettings,
+    policy?: ReasoningCapabilities,
+): ReasoningEffort | undefined {
+    const effective = resolveReasoningSelection(modelKey, saved, policy).effective_effort;
+    return effective === null ? undefined : effective as ReasoningEffort;
+}
+
+/** Omitted and explicitly supported None are different provider requests. */
+export function requestReasoningEffort(
+    level: string | undefined,
+    policy?: ReasoningCapabilities,
+): string | undefined {
+    return getModelSupportedLevels(policy).includes(level as ReasoningEffort) ? level : undefined;
+}
+
+export function normalizeReasoningAdjustments(
+    value: unknown, previous: ReasoningResolution[] = [],
+): ReasoningResolution[] {
+    const entries = [...previous, ...(Array.isArray(value) ? value : [])];
+    const resolutions = entries.filter((item): item is ReasoningResolution =>
+        item !== null && typeof item === 'object' &&
+        (item.adjustment_reason === null || typeof item.adjustment_reason === 'string') &&
+        (item.mode === 'explicit' || item.mode === 'model_default') &&
+        (item.requested_effort === null || typeof item.requested_effort === 'string') &&
+        (item.effective_effort === null || typeof item.effective_effort === 'string'),
+    );
+    const latest = new Map<string, ReasoningResolution>();
+    for (const resolution of resolutions) {
+        const stage = resolution.stage === 'planner' || resolution.stage === 'answer' ? resolution.stage : '';
+        const modelName = typeof resolution.model_name === 'string' ? resolution.model_name : '';
+        latest.set(JSON.stringify([stage, modelName]), resolution);
+    }
+    return [...latest.values()].filter((resolution) => Boolean(resolution.adjustment_reason));
+}
+
+/** Merge only the public reasoning projection, preserving other message metadata. */
+export function reasoningMetadataForEvent(event: {
+    metadata?: Record<string, unknown>;
+    reasoning_effort?: string | null;
+    requested_reasoning_effort?: string | null;
+    reasoning_mode?: 'explicit' | 'model_default';
+    reasoning_adjustments?: ReasoningResolution[];
+}, previousAdjustments: ReasoningResolution[] = []): Record<string, unknown> | undefined {
+    if (event.reasoning_effort === undefined && event.requested_reasoning_effort === undefined &&
+        event.reasoning_mode === undefined && event.reasoning_adjustments === undefined &&
+        previousAdjustments.length === 0) {
+        return event.metadata;
+    }
+    return {
+        ...event.metadata,
+        ...(event.reasoning_effort !== undefined ? { reasoning_effort: event.reasoning_effort } : {}),
+        ...(event.requested_reasoning_effort !== undefined
+            ? { requested_reasoning_effort: event.requested_reasoning_effort } : {}),
+        ...(event.reasoning_mode !== undefined ? { reasoning_mode: event.reasoning_mode } : {}),
+        ...(event.reasoning_adjustments !== undefined || previousAdjustments.length > 0
+            ? { reasoning_adjustments: normalizeReasoningAdjustments(
+                event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments,
+                previousAdjustments,
+            ) } : {}),
+    };
+}
+
+function effortLabel(effort: string | null): string {
+    return REASONING_LABELS[effort as ReasoningEffort] ?? (effort ? 'Saved effort' : 'Model default');
+}
+
+/** Never display provider errors or adjustment_reason text supplied in an event. */
+export function reasoningAdjustmentMessage(resolution: ReasoningResolution, modelName?: string): string {
+    const stage = resolution.stage === 'planner' ? 'Planner: ' : resolution.stage === 'answer' ? 'Answer: ' : '';
+    const effective = resolution.mode === 'model_default' ? 'Model default' : effortLabel(resolution.effective_effort);
+    return `${stage}${effortLabel(resolution.requested_effort)} could not be used${modelName ? ` for ${modelName}` : ''}; using ${effective}.`;
 }

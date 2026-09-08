@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.059
 
 Global model endpoints were the only scope without per-resource routes. They were

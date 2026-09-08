@@ -22,6 +22,7 @@
 // re-plans. What is persisted is the minimum needed to recognise a run that is already running.
 
 import { create } from 'zustand';
+import { normalizeReasoningAdjustments } from '../lib/reasoning';
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
 import {
     applyPlanEdits,
@@ -38,6 +39,7 @@ import type {
     OrchestrationStep,
     PersistedRunStep,
     PersistedRunSummary,
+    PlanEditorState,
     PlanEdits,
     PlanStatus,
     RunStreamEvent,
@@ -228,6 +230,48 @@ const EMPTY_STEP_RUNTIME: StepRuntimeMap = {};
 const EMPTY_HISTORY: readonly RunHistoryEntry[] = [];
 const EMPTY_RUNS: readonly TrackedRun[] = [];
 
+export interface PlanEditorTarget {
+    conversationId: string;
+    turnId: string;
+}
+
+/** Browser-only drafts and request state outlive the modal, not the server's revision record. */
+export interface PlanEditorSession {
+    state: PlanEditorState | null;
+    loading: boolean;
+    submitting: boolean;
+    cancellationStatus: 'idle' | 'cancelling' | 'failed';
+    blocked: boolean;
+    error: string | null;
+    instruction: string;
+    pendingDraft: ElicitationDraft | null;
+    submission: { id: string; fingerprint: string } | null;
+    tab: 'ask' | 'history';
+    previewRunId: string | null;
+    previewPlan: OrchestrationPlan | null;
+    previewLoading: boolean;
+    historyLoading: boolean;
+}
+
+function newPlanEditorSession(): PlanEditorSession {
+    return {
+        state: null,
+        loading: false,
+        submitting: false,
+        cancellationStatus: 'idle',
+        blocked: false,
+        error: null,
+        instruction: '',
+        pendingDraft: null,
+        submission: null,
+        tab: 'ask',
+        previewRunId: null,
+        previewPlan: null,
+        previewLoading: false,
+        historyLoading: false,
+    };
+}
+
 interface OrchestrationState {
     /** The current plan per turn, keyed by `scopeKey`. */
     plans: Record<string, OrchestrationPlan>;
@@ -283,9 +327,25 @@ interface OrchestrationState {
      * card, and so a fresh submit simply overwrites the one turn a conversation shows inline.
      */
     activeTurns: Record<string, string>;
+    /** Presence immediately pauses automatic approval, even before the hold POST completes. */
+    planEditors: Record<string, PlanEditorSession>;
+    editorTarget: PlanEditorTarget | null;
+    setEditorTarget: (target: PlanEditorTarget | null) => void;
+    updatePlanEditor: (
+        conversationId: string,
+        turnId: string,
+        update: (session: PlanEditorSession) => PlanEditorSession,
+    ) => void;
+    adoptPlanEditor: (
+        conversationId: string,
+        turnId: string,
+        editor: PlanEditorState,
+        options?: { retainLocalEdits?: boolean },
+    ) => boolean;
 
     /** Adopt a plan for a turn, replacing any pending question and re-seeding on a new revision. */
     setPlan: (conversationId: string, turnId: string, plan: unknown) => void;
+    mergeReasoningAdjustments: (conversationId: string, turnId: string, adjustments: unknown) => void;
     /** Forget a turn's plan. */
     clearPlan: (conversationId: string, turnId: string) => void;
 
@@ -354,6 +414,8 @@ interface OrchestrationState {
     beginRun: (record: Omit<TrackedRun, 'resumed'>) => boolean;
     /** Forget a run, recording how it ended in the conversation's history. */
     endRun: (runId: string, outcome: RunOutcome) => void;
+    /** A rejected approval never executed and must not become a completed/failed run. */
+    releaseRunAttempt: (runId: string) => void;
     /** Adopt run records restored from storage after a reload. */
     restoreRuns: (records: TrackedRun[]) => void;
 
@@ -415,6 +477,99 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     pinnedRunId: null,
     visibleConversationId: null,
     activeTurns: {},
+    planEditors: {},
+    editorTarget: null,
+
+    setEditorTarget: (editorTarget) => set({ editorTarget }),
+
+    updatePlanEditor: (conversationId, turnId, update) => {
+        const key = scopeKey(conversationId, turnId);
+        set((state) => ({
+            planEditors: {
+                ...state.planEditors,
+                [key]: update(state.planEditors[key] ?? newPlanEditorSession()),
+            },
+        }));
+    },
+
+    adoptPlanEditor: (conversationId, turnId, editor, options) => {
+        const plan = normalizePlan(editor?.plan);
+        if (!plan?.plan_id || !plan.run_id || typeof editor.version !== 'string' || !editor.version
+            || plan.conversation_id !== conversationId || plan.turn_id !== turnId) {
+            return false;
+        }
+        const key = scopeKey(conversationId, turnId);
+        const current = get().plans[key];
+        if ((current && current.revision > plan.revision)
+            || Object.values(get().inFlight).some((run) =>
+                run.conversationId === conversationId && run.turnId === turnId)
+            || (get().history[conversationId] ?? []).some((run) => run.turnId === turnId)) {
+            return false;
+        }
+        const canonical = { ...plan, edit_version: editor.version };
+        set((state) => {
+            const previous = state.planEditors[key] ?? newPlanEditorSession();
+            const pending = editor.pending;
+            const sameQuestion = pending && previous.pendingDraft?.elicitationId === pending.elicitation_id
+                && previous.pendingDraft.revision === (pending.revision ?? 0);
+            const runtime: StepRuntimeMap = {};
+            for (const step of canonical.steps) {
+                runtime[step.step_id] = { status: step.status, summary: '' };
+            }
+            const readOnlyTurns = { ...state.readOnlyTurns };
+            if (isResumablePlanStatus(canonical.status)) {
+                delete readOnlyTurns[key];
+            } else {
+                readOnlyTurns[key] = true;
+            }
+            return {
+                plans: { ...state.plans, [key]: canonical },
+                // Unlike setPlan, this adopts the authoritative overlay in the same update.
+                // Unsaved Review changes may survive reopening only against the identical
+                // server version. A stale tab must adopt the server's overlay instead.
+                edits: {
+                    ...state.edits,
+                    [key]: options?.retainLocalEdits && current?.run_id === canonical.run_id
+                        && current.edit_version === editor.version
+                        && previous.state?.version === editor.version
+                        ? state.edits[key] ?? editor.edits : editor.edits,
+                },
+                stepRuntime: { ...state.stepRuntime, [key]: runtime },
+                readOnlyTurns,
+                planEditors: {
+                    ...state.planEditors,
+                    [key]: {
+                        ...previous,
+                        state: { ...editor, plan: canonical },
+                        blocked: false,
+                        cancellationStatus: previous.cancellationStatus === 'cancelling'
+                            ? 'cancelling' : 'idle',
+                        pendingDraft: pending
+                            ? sameQuestion ? previous.pendingDraft : createElicitationDraft(pending)
+                            : null,
+                        previewRunId: null,
+                        previewPlan: null,
+                        previewLoading: false,
+                    },
+                },
+            };
+        });
+        return true;
+    },
+
+    mergeReasoningAdjustments: (conversationId, turnId, adjustments) => {
+        if (!Array.isArray(adjustments) || !adjustments.length) return;
+        const key = scopeKey(conversationId, turnId);
+        set((state) => {
+            const plan = state.plans[key];
+            if (!plan) return {};
+            const merged = normalizeReasoningAdjustments([
+                ...(plan.reasoning_adjustments ?? []), ...adjustments,
+            ]);
+            if (JSON.stringify(merged) === JSON.stringify(plan.reasoning_adjustments ?? [])) return {};
+            return { plans: { ...state.plans, [key]: { ...plan, reasoning_adjustments: merged } } };
+        });
+    },
 
     setPlan: (conversationId, turnId, rawPlan) => {
         if (!conversationId || !turnId) {
@@ -466,12 +621,16 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     clearPlan: (conversationId, turnId) => {
         const key = scopeKey(conversationId, turnId);
         set((state) => {
-            if (!(key in state.plans)) {
-                return {};
-            }
             const plans = { ...state.plans };
+            const planEditors = { ...state.planEditors };
             delete plans[key];
-            return { plans };
+            delete planEditors[key];
+            return {
+                plans,
+                planEditors,
+                editorTarget: state.editorTarget?.conversationId === conversationId
+                    && state.editorTarget.turnId === turnId ? null : state.editorTarget,
+            };
         });
     },
 
@@ -693,6 +852,13 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         return true;
     },
 
+    releaseRunAttempt: (runId) => {
+        const inFlight = { ...get().inFlight };
+        delete inFlight[runId];
+        set({ inFlight });
+        saveRuns(Object.values(inFlight));
+    },
+
     endRun: (runId, outcome) => {
         const run = get().inFlight[runId];
         if (!run) {
@@ -880,7 +1046,11 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         if (get().visibleConversationId === conversationId) {
             return;
         }
-        set({ visibleConversationId: conversationId });
+        set((state) => ({
+            visibleConversationId: conversationId,
+            editorTarget: state.editorTarget?.conversationId === conversationId
+                ? state.editorTarget : null,
+        }));
     },
 
     setActiveTurn: (conversationId, turnId) => {
@@ -903,6 +1073,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                 activeTurns: { ...state.activeTurns, [conversationId]: turnId },
                 elicitations,
                 elicitationDrafts,
+                editorTarget: state.editorTarget?.conversationId === conversationId
+                    && state.editorTarget.turnId !== turnId ? null : state.editorTarget,
             };
         });
     },
@@ -929,6 +1101,11 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         for (const key of Object.keys(get().elicitations)) {
             busy.add(conversationOfScope(key));
         }
+        for (const [key, editor] of Object.entries(get().planEditors)) {
+            if (editor.submitting || isResumablePlanStatus(get().plans[key]?.status)) {
+                busy.add(conversationOfScope(key));
+            }
+        }
 
         set((state) => {
             let removed = false;
@@ -938,6 +1115,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             const edits: Record<string, PlanEdits> = {};
             const stepRuntime: Record<string, StepRuntimeMap> = {};
             const readOnlyTurns: Record<string, true> = {};
+            const planEditors: Record<string, PlanEditorSession> = {};
 
             const keep = (map: Record<string, unknown>, into: Record<string, unknown>) => {
                 for (const [key, value] of Object.entries(map)) {
@@ -955,6 +1133,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             keep(state.edits, edits as Record<string, unknown>);
             keep(state.stepRuntime, stepRuntime as Record<string, unknown>);
             keep(state.readOnlyTurns, readOnlyTurns as Record<string, unknown>);
+            keep(state.planEditors, planEditors as Record<string, unknown>);
 
             // `activeTurns` is keyed by conversation, not `scopeKey`, so it is pruned on the plain
             // id. Dropping it in step with the plan it points at stops MessageList holding a turn
@@ -995,6 +1174,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
                       edits,
                       stepRuntime,
                       readOnlyTurns,
+                      planEditors,
                       activeTurns,
                       hydratedHistory,
                       hydration,
@@ -1007,6 +1187,54 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 /* -------------------------------------------------------------------------- */
 /* Reading                                                                     */
 /* -------------------------------------------------------------------------- */
+
+export function selectPlanEditor(
+    state: OrchestrationState,
+    conversationId: string,
+    turnId: string,
+): PlanEditorSession | null {
+    return state.planEditors[scopeKey(conversationId, turnId)] ?? null;
+}
+
+export function selectHasPlanHold(
+    state: OrchestrationState,
+    conversationId: string,
+    turnId: string,
+): boolean {
+    return Boolean(selectPlanEditor(state, conversationId, turnId)
+        || selectPlan(state, conversationId, turnId)?.edit_version);
+}
+
+export function selectCanEditPlan(
+    state: OrchestrationState,
+    conversationId: string,
+    turnId: string,
+): boolean {
+    const plan = selectPlan(state, conversationId, turnId);
+    return Boolean(plan && isResumablePlanStatus(plan.status)
+        && plan.approval.state === 'pending'
+        && !state.readOnlyTurns[scopeKey(conversationId, turnId)]
+        && !Object.values(state.inFlight).some((run) =>
+            run.conversationId === conversationId && run.turnId === turnId)
+        && !(state.history[conversationId] ?? []).some((run) => run.turnId === turnId));
+}
+
+export function selectPlanRunBlocked(
+    state: OrchestrationState,
+    conversationId: string,
+    turnId: string,
+): boolean {
+    const editor = selectPlanEditor(state, conversationId, turnId);
+    const plan = selectPlan(state, conversationId, turnId);
+    return Boolean(state.readOnlyTurns[scopeKey(conversationId, turnId)]
+        || (plan?.edit_version && !editor?.state)
+        || (editor && (!editor.state || editor.loading || editor.submitting || editor.blocked
+            || editor.cancellationStatus !== 'idle'
+            || editor.state.busy || editor.state.pending
+            || editor.state.version !== plan?.edit_version
+            || (editor.previewRunId && state.editorTarget?.conversationId === conversationId
+                && state.editorTarget.turnId === turnId))));
+}
 
 /** The plan for a turn, or null. */
 export function selectPlan(

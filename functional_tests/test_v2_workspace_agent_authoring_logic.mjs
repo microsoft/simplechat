@@ -1,5 +1,5 @@
 // test_v2_workspace_agent_authoring_logic.mjs
-// Version: 0.261.102
+// Version: 0.261.105
 // Implemented in: 0.261.096
 // Executes native agent draft, model, action, knowledge, template, and command behavior.
 

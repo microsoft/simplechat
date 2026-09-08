@@ -1,8 +1,8 @@
 # test_admin_shared_ai_connections_classic.py
 """
 Classic shared connection manager, image selection, recovery and saved-test workflows.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 """
 
 import copy

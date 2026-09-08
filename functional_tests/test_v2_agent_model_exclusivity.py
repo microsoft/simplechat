@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+# test_v2_agent_model_exclusivity.py
 """
 Functional test for V2 agent / model / reasoning exclusivity.
 
-Version: 0.261.034
+Version: 0.261.104
 Implemented in: 0.261.034
 
 In the V2 chat composer the Model, Agent and Reasoning pickers were all independently live.
@@ -128,8 +128,8 @@ def test_an_agent_supplies_its_own_model_and_takes_no_reasoning_level():
             "reasoning effort is resolved per model"
         )
         # It only ever lands on the direct-model call parameters.
-        assert "api_params['reasoning_effort'] = request_reasoning_effort" in route
-        assert "stream_params['reasoning_effort'] = request_reasoning_effort" in route
+        assert "response, reasoning_resolution = _create_chat_completion_with_reasoning(" in route
+        assert "stream, reasoning_resolution = _create_chat_completion_with_reasoning(" in route
 
         print("  ok  the agent path takes neither the picked model nor a reasoning level")
         return True
@@ -281,7 +281,7 @@ def test_the_composer_wires_the_rule_into_the_toolbar():
         assert "modelPickerInactive: boolean;" in gating
         assert "showReasoning: boolean;" in gating
         assert "modelPickerInactive: agentActive," in gating
-        assert "showReasoning: !agentActive && !imageGenerationActive," in gating
+        assert "showReasoning: !agentActive && (!imageGenerationActive || Boolean(input.orchestrating))," in gating
 
         composer = read(V2_SRC, "components", "chat", "Composer.tsx")
 

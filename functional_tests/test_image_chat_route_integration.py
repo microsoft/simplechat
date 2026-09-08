@@ -1,8 +1,8 @@
 # test_image_chat_route_integration.py
 """
 Functional test for the actual /api/chat Image-mode request path.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Registers the complete production chat handler with its original Flask route decorator.
 Local normalization, metadata, threading, title, image binding, SDK, and persistence logic

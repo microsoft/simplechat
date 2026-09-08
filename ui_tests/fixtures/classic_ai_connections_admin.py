@@ -1,8 +1,8 @@
 # classic_ai_connections_admin.py
 """
 Classic admin panes with real local scripts and a closed capability API boundary.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 """
 
 import json

@@ -17,10 +17,14 @@
 //   - `model_endpoint_id` requires `model_id` or `model_deployment`.
 // So the fields are sent as a set or not at all.
 
+import type { ReasoningCapabilities } from './reasoning';
+
 /** Catalog record fields, as produced by `_build_chat_model_catalog`. */
 export interface ModelCatalogEntry {
     selection_key?: string;
     model_id?: string;
+    model_name?: string;
+    reasoning_capabilities?: ReasoningCapabilities;
     deployment_name?: string;
     endpoint_id?: string;
     provider?: string;

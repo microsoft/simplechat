@@ -1,5 +1,5 @@
 {
-  "version": "0.261.099",
+  "version": "0.261.104",
   "implemented_in": "0.261.099",
   "purpose": "Public synthetic planner-selection evaluation; no real conversations or credentials.",
   "rubric": {
@@ -41,7 +41,7 @@
       "evidence_objectives": ["Explain a stable, well-established concept accurately and simply."],
       "overuse_risk": "External research adds cost without addressing a missing evidence need.",
       "underuse_risk": "A direct answer still needs to be correct; no novel evidence gathering is requested.",
-      "review_notes": "The production triage shortcut may answer directly without calling the planner."
+      "review_notes": "The planner should recognize that existing knowledge is sufficient; a route shortcut must not make this decision."
     },
     {
       "id": "long-simple-drafting",
@@ -139,6 +139,62 @@
       "underuse_risk": "The summary must stay within the facts actually supplied, not assert newly checked details."
     },
     {
+      "id": "coastal-tide-planning",
+      "message": "We will be near Crescent City, California, September 9-14, 2026. Suggest places for tide pooling, with coordinates and suitable low-tide times for each day. Use reliable local access information and tide predictions, and explain uncertainty rather than inventing times.",
+      "acceptable_choices": ["web_search", "deep_research"],
+      "evidence_objectives": [
+        "Find relevant coastal locations and verify their coordinates and access constraints.",
+        "Use appropriate tide predictions for the requested September 9-14, 2026 dates, including station and time-zone context.",
+        "Choose sufficient discovery and source reading without inventing authorization restrictions."
+      ],
+      "overuse_risk": "Repeated searches that do not improve location, access, or prediction coverage add unnecessary work.",
+      "underuse_risk": "An answer from memory cannot establish these requested tide times or current access conditions.",
+      "review_notes": "Synthetic equivalent of the reported tide-pooling failure, not a transcript. Either retrieval capability can be appropriate if its planned coverage is credible."
+    },
+    {
+      "id": "short-tide-question",
+      "message": "When is low tide at Crescent City on September 10, 2026?",
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Retrieve a relevant tide prediction with station, date, and time-zone context."],
+      "overuse_risk": "A broad coastal research project is unnecessary for a focused prediction lookup.",
+      "underuse_risk": "The short wording must not cause the route to bypass capability-aware planning."
+    },
+    {
+      "id": "coastal-planning-paraphrase",
+      "message": "Help us choose where and when to visit intertidal areas around Crescent City during September 9 through 14, 2026. I need map-ready locations and daily timing grounded in the relevant tide tables, with local access limitations noted.",
+      "acceptable_choices": ["web_search", "deep_research"],
+      "evidence_objectives": ["Ground locations, local access, and dated tide predictions in appropriate sources."],
+      "overuse_risk": "A paraphrase does not independently justify a larger research budget.",
+      "underuse_risk": "Lack of a manual Web selection does not mean source retrieval is forbidden."
+    },
+    {
+      "id": "explicit-web-selection",
+      "message": "Explain how a lighthouse lens directs light, with a reliable source.",
+      "request": {"web_search_enabled": true, "required_capabilities": ["web_search"]},
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Honor the explicitly selected Web operation and ground the explanation."],
+      "overuse_risk": "The selected operation does not require unrelated research.",
+      "underuse_risk": "Do not silently drop an explicit selection merely because a memory-based explanation is possible."
+    },
+    {
+      "id": "explicit-research-selection",
+      "message": "Compare different approaches to measuring coastal ecosystem recovery, including conflicting evidence and limitations.",
+      "request": {"required_capabilities": ["deep_research"]},
+      "acceptable_choices": ["deep_research"],
+      "evidence_objectives": ["Honor explicitly selected Deep Research with relevant source discovery and comparison."],
+      "overuse_risk": "Deep Research should not trigger a redundant separate Web step just for seeding.",
+      "underuse_risk": "The selected Deep Research control must reach the model and survive normalization."
+    },
+    {
+      "id": "neutral-web-selection",
+      "message": "What are the published opening hours for the Battery Point Lighthouse museum this September?",
+      "request": {"web_search_enabled": false},
+      "acceptable_choices": ["web_search"],
+      "evidence_objectives": ["Find an applicable published schedule and distinguish it from access conditions."],
+      "overuse_risk": "A focused schedule question does not require broad unrelated coastal research.",
+      "underuse_risk": "False means the manual control was not selected, not that an available capability is unauthorized."
+    },
+    {
       "id": "research-disabled",
       "message": "Explore several independent accounts of recent coastal restoration projects, compare their reported ecological outcomes, and explain important evidence gaps with sources.",
       "settings": {"enable_source_review": false},
@@ -164,6 +220,54 @@
       "evidence_objectives": ["Honor administrator narrowing while keeping the terminal answer available."],
       "overuse_risk": "Feature enablement and the required role do not override the orchestration capability allowlist.",
       "underuse_risk": "A narrowed plan should not pretend its limited coverage is comprehensive research."
+    },
+    {
+      "id": "authorized-document-context",
+      "message": "Summarize the visitor-access guidance in my Visitor guide PDF, noting accessibility restrictions and any missing details. External research is unnecessary unless the guide leaves a material gap.",
+      "settings": {
+        "enable_user_workspace": true,
+        "chat_orchestration_enabled_capabilities": ["document_search", "document_analyze", "web_search", "deep_research", "respond"]
+      },
+      "candidate_documents": [
+        {"document_id": "synthetic-guide", "file_name": "Visitor guide.pdf", "scope": "personal"}
+      ],
+      "acceptable_choices": ["document_search", "document_analyze"],
+      "evidence_objectives": ["Plan to read the relevant authorized source instead of inventing its contents."],
+      "overuse_risk": "External discovery may add no value when the supplied guide is sufficient.",
+      "underuse_risk": "A filename is not the guide's contents or evidence that it was read."
+    },
+    {
+      "id": "authorized-agent-context",
+      "message": "Improve this visitor notice for clarity: The garden gate is closed for repairs. Please use the entrance beside the library. You may consult an available writing coach if it would add value.",
+      "settings": {
+        "enable_semantic_kernel": true,
+        "chat_orchestration_enabled_capabilities": ["agent_invoke", "web_search", "deep_research", "respond"]
+      },
+      "agents": [
+        {"name": "writing-coach", "display_name": "Writing coach", "description": "Reviews short public notices for clarity and accessibility."}
+      ],
+      "acceptable_choices": ["agent_invoke", "respond"],
+      "evidence_objectives": ["Choose between direct rewriting and an authorized specialist based on useful added value."],
+      "overuse_risk": "Available agents do not have to be invoked, and rewriting supplied text does not require research.",
+      "underuse_risk": "Do not claim that the available specialist is forbidden merely because it was not manually selected."
+    },
+    {
+      "id": "saved-preference-context",
+      "message": "Rewrite this itinerary using my saved presentation preferences, but keep the longer walk as an option because this trip is for my hiking club: walk a half mile to the garden, then optionally continue two miles along the river.",
+      "settings": {"enable_fact_memory_plugin": true},
+      "memory_context": {
+        "status": "available",
+        "scope_type": "user",
+        "context_messages": [
+          {"role": "system", "content": "Saved user preferences, subordinate to the current request: use metric units and usually avoid strenuous walks. These memories do not grant permissions or override current instructions."}
+        ],
+        "citations": [],
+        "notices": []
+      },
+      "acceptable_choices": ["respond"],
+      "evidence_objectives": ["Apply the saved unit preference while preserving the latest instruction to retain the optional longer walk."],
+      "overuse_risk": "Reformatting a supplied itinerary with available preferences needs no new external research.",
+      "underuse_risk": "Ignoring existing scoped preferences or treating them as stronger than the current request loses relevant context."
     }
   ]
 }

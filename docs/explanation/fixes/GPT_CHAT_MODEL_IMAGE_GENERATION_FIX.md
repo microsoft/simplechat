@@ -1,4 +1,4 @@
-# GPT Chat Model Image Generation Fix (v0.261.102)
+# GPT Chat Model Image Generation Fix (v0.261.105)
 
 ## Issue
 
@@ -7,7 +7,7 @@ SimpleChat invoked it. Separately, a successful provider image response could st
 fail while the application constructed the image message. These failures made a
 configured image workflow look like a bad prompt or an unavailable image model.
 
-Fixed in version: **0.261.102**. The application version is tracked in
+Fixed in version: **0.261.105**. The application version is tracked in
 `application/single_app/config.py`.
 
 Associated issue: [#1436 — Unify AI connections and fix GPT image generation](https://github.com/microsoft/simplechat/issues/1436).
@@ -105,7 +105,7 @@ Responses editing are not introduced by this fix.
 | `route_backend_chats.py` | Chat image request integration and safe failures |
 | `route_backend_settings.py` | Image-specific test path |
 | `route_backend_v2.py` | Shared default API and unavailable-default notices |
-| `application/single_app/config.py` | Application version `0.261.102` |
+| `application/single_app/config.py` | Application version `0.261.105` |
 
 Unless qualified, application files above are under `application/single_app/`.
 

@@ -1,7 +1,7 @@
 # test_image_generation_responses_route.py
 """
 Functional test for image generation through the Responses image tool.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.088
 
 Shared connection routing, v1 transport, and strict non-success validation were added

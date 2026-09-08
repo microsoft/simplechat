@@ -7,6 +7,7 @@ from functions_content import *
 from functions_settings import *
 from functions_agent_catalog import build_accessible_agent_catalog
 from functions_ai_connections import filter_model_endpoints_by_capability
+from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -485,6 +486,10 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
         return {
             'selection_key': selection_key,
             'model_id': model_id,
+            'model_name': _normalize_chat_model_value(option.get('model_name')),
+            'reasoning_capabilities': resolve_model_reasoning_policy(
+                option.get('model_name') or deployment_name
+            ),
             'display_name': display_name,
             'deployment_name': deployment_name,
             'endpoint_id': _normalize_chat_model_value(option.get('endpoint_id')),
@@ -534,12 +539,46 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             if deployment_name == normalized_preferred_model_deployment:
                 return serialize_option(option)
 
-    return serialize_option(sorted_options[0])
+    # Legacy/APIM clients historically use the configured first deployment, not alphabetical order.
+    default_option = valid_options[0] if not any(option.get('scope_type') for option in valid_options) else sorted_options[0]
+    return serialize_option(default_option)
+
+
+def _chat_model_reasoning_metadata(model):
+    model_name = next((
+        model[field].strip() for field in REASONING_IDENTIFIER_FIELDS
+        if isinstance(model.get(field), str) and model[field].strip()
+    ), '')
+    return {
+        'model_name': model_name,
+        'reasoning_capabilities': resolve_model_reasoning_policy(model),
+    }
 
 
 def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
     if not settings.get('enable_multi_model_endpoints', False):
-        return []
+        if settings.get('enable_gpt_apim', False):
+            models = [
+                {'deploymentName': name.strip(), 'modelName': name.strip()}
+                for name in str(settings.get('azure_apim_gpt_deployment') or '').split(',')
+                if name.strip()
+            ]
+        else:
+            models = (settings.get('gpt_model') or {}).get('selected', [])
+        catalog = []
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            deployment = _normalize_chat_model_value(model.get('deploymentName'))
+            if deployment:
+                reasoning_metadata = _chat_model_reasoning_metadata(model)
+                catalog.append({
+                    'selection_key': deployment,
+                    'deployment_name': deployment,
+                    'display_name': reasoning_metadata['model_name'],
+                    **reasoning_metadata,
+                })
+        return catalog
 
     catalog = []
 
@@ -567,6 +606,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
                 catalog.append({
                     'selection_key': selection_key,
                     'model_id': model_id,
+                    **_chat_model_reasoning_metadata(model),
                     'display_name': display_name,
                     'deployment_name': deployment_name,
                     'endpoint_id': endpoint_id,

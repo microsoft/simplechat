@@ -69,6 +69,11 @@ import {
     resolveSendTarget,
 } from '../lib/mentions';
 import { buildSelectionFields } from '../lib/chatRequestSelection';
+import {
+    normalizeReasoningAdjustments,
+    reasoningMetadataForEvent,
+    type ReasoningResolution,
+} from '../lib/reasoning';
 import { promptSelectionMetadata } from '../lib/promptRequest';
 import type { RunStreamEvent } from '../lib/orchestration';
 import {
@@ -106,6 +111,7 @@ import type { VisualStyle } from '../lib/visualPalettes';
 import type {
     AgentOption,
     ChatMessage,
+    ChatStreamEvent,
     ChatStreamRequest,
     CollaborationConversation,
     CollaborationMessage,
@@ -248,6 +254,7 @@ interface ChatState {
 
     streaming: boolean;
     streamingContent: string;
+    streamingReasoningAdjustments: ReasoningResolution[];
     thoughts: ThoughtEntry[];
     streamError: string | null;
     streamAuthUrl: string | null;
@@ -812,6 +819,8 @@ function buildStreamHandlers(
      */
     pendingUserMessageId?: string | null,
 ): ChatStreamHandlers {
+    const completionMetadata = (event: ChatStreamEvent) =>
+        reasoningMetadataForEvent(event, getState().streamingReasoningAdjustments);
     return {
         onUserMessagePersisted: (event) => {
             const persistedId = String(event.user_message_id ?? event.message_id ?? '').trim();
@@ -837,11 +846,16 @@ function buildStreamHandlers(
                 typeof event.content === 'string'
                     ? event.content
                     : String(event.thought ?? '');
-            if (!content || !isCurrent()) {
+            const adjustmentUpdates = event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments;
+            const hasAdjustmentUpdates = Array.isArray(adjustmentUpdates) && adjustmentUpdates.length > 0;
+            if (!isCurrent() || (!content && !hasAdjustmentUpdates)) {
                 return;
             }
             set((state) => ({
-                thoughts: [
+                streamingReasoningAdjustments: normalizeReasoningAdjustments(
+                    adjustmentUpdates, state.streamingReasoningAdjustments,
+                ),
+                thoughts: content ? [
                     ...state.thoughts,
                     {
                         id: `${state.thoughts.length}`,
@@ -858,7 +872,7 @@ function buildStreamHandlers(
                         stepIndex:
                             typeof event.step_index === 'number' ? event.step_index : undefined,
                     },
-                ],
+                ] : state.thoughts,
             }));
         },
         onConversationMetadata: (event) => {
@@ -886,7 +900,7 @@ function buildStreamHandlers(
                 model_deployment_name: event.model_deployment_name,
                 agent_display_name: event.agent_display_name,
                 augmented: event.augmented,
-                metadata: event.metadata,
+                metadata: completionMetadata(event),
                 // Carried onto the finished message so the reasoning steps stay
                 // available after the stream ends instead of disappearing with the
                 // streaming placeholder.
@@ -904,6 +918,7 @@ function buildStreamHandlers(
                 ),
                 streaming: false,
                 streamingContent: '',
+                streamingReasoningAdjustments: [],
                 reconnectPhase: null,
             }));
         },
@@ -923,13 +938,14 @@ function buildStreamHandlers(
                             role: 'assistant',
                             content: accumulated,
                             timestamp: new Date().toISOString(),
+                            metadata: completionMetadata(_event),
                             thoughts:
                                 state.thoughts.length > 0 ? [...state.thoughts] : undefined,
                         },
                     ],
                 }));
             }
-            set({ streaming: false, streamingContent: '', reconnectPhase: null });
+            set({ streaming: false, streamingContent: '', streamingReasoningAdjustments: [], reconnectPhase: null });
         },
         onError: (message, event) => {
             if (!isCurrent()) {
@@ -938,6 +954,7 @@ function buildStreamHandlers(
             set({
                 streaming: false,
                 streamingContent: '',
+                streamingReasoningAdjustments: [],
                 reconnectPhase: null,
                 streamError: message,
                 streamAuthUrl: foundryAuthUrl(event),
@@ -964,6 +981,7 @@ function buildStreamHandlers(
             set({
                 streamingContent: '',
                 thoughts: [],
+                streamingReasoningAdjustments: [],
                 reconnectPhase: 'reconnected',
                 streamError: null,
                 streamAuthUrl: null,
@@ -1099,6 +1117,7 @@ async function resumeChatStream(conversationId: string): Promise<boolean> {
         streaming: true,
         streamingContent: '',
         thoughts: [],
+        streamingReasoningAdjustments: [],
         streamError: null,
         streamAuthUrl: null,
         reconnectPhase: 'connecting',
@@ -1512,6 +1531,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     streaming: false,
     streamingContent: '',
     thoughts: [],
+    streamingReasoningAdjustments: [],
     streamError: null,
     streamAuthUrl: null,
     reconnectPhase: null,
@@ -1609,6 +1629,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             messagesError: null,
             streamingContent: '',
             thoughts: [],
+            streamingReasoningAdjustments: [],
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,
@@ -1787,6 +1808,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             messagesError: null,
             streamingContent: '',
             thoughts: [],
+            streamingReasoningAdjustments: [],
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,
@@ -2282,6 +2304,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 streaming: willStream,
                 streamingContent: '',
                 thoughts: [],
+                streamingReasoningAdjustments: [],
                 streamError: null,
                 streamAuthUrl: null,
                 reconnectPhase: null,
@@ -2508,6 +2531,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 streaming: true,
                 streamingContent: '',
                 thoughts: [],
+                streamingReasoningAdjustments: [],
                 streamError: null,
                 streamAuthUrl: null,
                 reconnectPhase: null,
@@ -2569,6 +2593,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 streaming: false,
                 streamingContent: '',
                 thoughts: [],
+                streamingReasoningAdjustments: [],
                 reconnectPhase: null,
             });
             return;
@@ -2633,7 +2658,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             web_search_citations:
                 event.web_search_citations as ChatMessage['web_search_citations'],
             agent_citations: event.agent_citations as ChatMessage['agent_citations'],
-            metadata: event.metadata,
+            metadata: reasoningMetadataForEvent(event),
             thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
         };
         set((state) => {
@@ -2828,6 +2853,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streaming: true,
             streamingContent: '',
             thoughts: [],
+            streamingReasoningAdjustments: [],
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,
@@ -2878,6 +2904,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             streaming: true,
             streamingContent: '',
             thoughts: [],
+            streamingReasoningAdjustments: [],
             streamError: null,
             streamAuthUrl: null,
             reconnectPhase: null,

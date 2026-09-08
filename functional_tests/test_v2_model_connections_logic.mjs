@@ -1,7 +1,7 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.102
+// Version: 0.261.105
 // Implemented in: 0.261.059
 //
 // The classic connection editor decided which fields a provider and auth type needed by

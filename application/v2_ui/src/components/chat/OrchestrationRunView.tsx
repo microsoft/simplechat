@@ -1,4 +1,5 @@
 // OrchestrationRunView.tsx
+import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -19,10 +20,13 @@ import { Archive, FileText, Lock, RotateCcw, X } from 'lucide-react';
 import { Toggle } from '../ui/primitives';
 import {
     selectEdits,
+    selectCanEditPlan,
     selectIsReadOnly,
     selectPlan,
     selectStepRuntime,
+    selectPlanEditor,
     useOrchestrationStore,
+    type StepRuntimeMap,
 } from '../../stores/orchestrationStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import {
@@ -37,12 +41,17 @@ import { ORCHESTRATION_PHASES } from '../../lib/orchestration';
 import type {
     CostClass,
     Json,
+    OrchestrationPlan,
+    PlanEdits,
     OrchestrationPhase,
     OrchestrationPlanAction,
     OrchestrationStep,
     StepStatus,
 } from '../../lib/orchestration';
 import { useDocumentTitles } from '../../lib/documentTitles';
+
+const PREVIEW_EDITS: PlanEdits = { disabled_step_ids: [], removed_document_ids: {} };
+const PREVIEW_RUNTIME: StepRuntimeMap = {};
 
 const statusTone: Record<StepStatus, string> = {
     pending: 'bg-surface-3 text-text-3',
@@ -104,15 +113,25 @@ function readableArguments(step: OrchestrationStep): Array<[string, string]> {
 export function OrchestrationRunView({
     conversationId,
     turnId,
+    previewPlan,
+    previewRuntime,
 }: {
     conversationId: string;
     turnId: string;
+    /** A display-only plan; history previews never replace the live execution target. */
+    previewPlan?: OrchestrationPlan;
+    previewRuntime?: StepRuntimeMap;
 }) {
-    const plan = useOrchestrationStore((state) => selectPlan(state, conversationId, turnId));
-    const edits = useOrchestrationStore((state) => selectEdits(state, conversationId, turnId));
-    const stepRuntime = useOrchestrationStore((state) =>
+    const storedPlan = useOrchestrationStore((state) => selectPlan(state, conversationId, turnId));
+    const storedEdits = useOrchestrationStore((state) => selectEdits(state, conversationId, turnId));
+    const storedRuntime = useOrchestrationStore((state) =>
         selectStepRuntime(state, conversationId, turnId),
     );
+    const canEdit = useOrchestrationStore((state) => selectCanEditPlan(state, conversationId, turnId));
+    const editor = useOrchestrationStore((state) => selectPlanEditor(state, conversationId, turnId));
+    const plan = previewPlan ?? storedPlan;
+    const edits = previewPlan ? PREVIEW_EDITS : storedEdits;
+    const stepRuntime = previewPlan ? previewRuntime ?? PREVIEW_RUNTIME : storedRuntime;
     const disableStep = useOrchestrationStore((state) => state.disableStep);
     const enableStep = useOrchestrationStore((state) => state.enableStep);
     const removeDocument = useOrchestrationStore((state) => state.removeDocument);
@@ -237,7 +256,8 @@ export function OrchestrationRunView({
     // A stored plan is a record of what happened, not a proposal. Its status is adopted verbatim,
     // so one written down while it still awaited approval would otherwise offer to narrow steps
     // that were settled long ago, on a device that is not the one being asked.
-    const editable = planRequiresApproval(plan) && !readOnly;
+    const editable = planRequiresApproval(plan) && !readOnly && !previewPlan && canEdit
+        && !editor?.loading && !editor?.submitting && !editor?.state?.busy && !editor?.state?.pending;
     const disabledStepIds = new Set(edits.disabled_step_ids);
 
     const renderStep = (step: OrchestrationStep, displayNumber: number) => {
@@ -250,7 +270,10 @@ export function OrchestrationRunView({
         const summary = stepRuntime[step.step_id]?.summary ?? '';
         const removed = new Set(edits.removed_document_ids[step.step_id] ?? []);
         const removable = new Set(stepRemovableDocumentIds(step));
-        const documents = stepDocumentIds(step);
+        const explicitDocuments = stepDocumentIds(step);
+        const documents = step.capability_id === 'document_search' && explicitDocuments.length === 0
+            ? [...planInputDocuments].filter(([, document]) => document.selectedByUser).map(([id]) => id)
+            : explicitDocuments;
         const args = readableArguments(step);
         // A step can defer its documents to whatever an earlier step finds, so it may have
         // none of its own to show.
@@ -379,7 +402,7 @@ export function OrchestrationRunView({
                                                     yours
                                                 </span>
                                             ) : null}
-                                            {isRemoved ? (
+                                            {isRemoved && editable ? (
                                                 <button
                                                     type="button"
                                                     onClick={() =>
@@ -458,7 +481,8 @@ export function OrchestrationRunView({
 
     return (
         <div className="space-y-3 p-3">
-            {readOnly ? (
+            <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
+            {readOnly && !previewPlan ? (
                 <p className="flex items-center gap-1.5 rounded-lg border border-edge bg-surface-2 px-2 py-1.5 text-[11px] text-text-3">
                     <Archive size={12} className="shrink-0" />
                     A record of a run from this conversation. It cannot be changed or re-run.

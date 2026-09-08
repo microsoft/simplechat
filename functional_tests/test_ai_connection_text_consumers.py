@@ -1,8 +1,8 @@
 # test_ai_connection_text_consumers.py
 """Behavioral regression tests for shared AI Connection text-consumer guards.
 
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Execute the real consumer function bodies with the real import-safe capability
 module. SDK, credential, settings-store, and authorization seams stay in memory;
@@ -28,7 +28,11 @@ APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_ROOT))
 # Only the pure capability modules are imported after establishing the app path.
 import functions_ai_connections as connections
-from functions_model_capabilities import is_vision_capable_model
+from functions_model_capabilities import (
+    REASONING_IDENTIFIER_FIELDS,
+    is_vision_capable_model,
+    resolve_model_reasoning_policy,
+)
 
 
 def model(name="gpt-4o", **overrides):
@@ -81,6 +85,8 @@ def load_boundaries(filename, names, extra=None, *, constants=(), register_chat=
         "require_model_capability": connections.require_model_capability,
         "supports_model_capability": connections.supports_model_capability,
         "filter_model_endpoints_by_capability": connections.filter_model_endpoints_by_capability,
+        "REASONING_IDENTIFIER_FIELDS": REASONING_IDENTIFIER_FIELDS,
+        "resolve_model_reasoning_policy": resolve_model_reasoning_policy,
         "resolve_capability_model_selection": connections.resolve_capability_model_selection,
         "register_capability_client_factory": connections.register_capability_client_factory,
         "normalize_model_endpoints": lambda values: (deepcopy(values), False),
@@ -127,7 +133,9 @@ class AIConnectionTextConsumerTests(unittest.TestCase):
         shared = endpoint(records)
         original = deepcopy(shared)
         governance_checks = []
-        helpers = load_boundaries("route_frontend_chats.py", {"_build_chat_model_catalog"}, {
+        helpers = load_boundaries("route_frontend_chats.py", {
+            "_build_chat_model_catalog", "_chat_model_reasoning_metadata",
+        }, {
             "_filter_chat_model_endpoints_by_governance": lambda user, values, feature: (
                 governance_checks.append((user, feature)) or values
             ),

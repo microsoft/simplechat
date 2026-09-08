@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for conversation summary model endpoint protocol routing.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.241.182
 
 This test ensures export summary intros and Chat Details summary generation can

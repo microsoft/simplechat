@@ -1,8 +1,8 @@
 # test_ai_connection_text_model_choices.py
 """Browser regressions for Classic agent, workflow, and task model choices.
 
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 All app routes and assets are fulfilled from this checkout. The shared browser
 fixture supports local/Azure Playwright; local execution requires no Azure calls.

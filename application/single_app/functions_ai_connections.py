@@ -146,14 +146,11 @@ def _model_name(model):
         return model.strip().lower().replace("_", "-")
     if not isinstance(model, Mapping):
         return ""
-    return str(
-        model.get("modelName")
-        or model.get("deploymentName")
-        or model.get("deployment")
-        or model.get("name")
-        or model.get("id")
-        or ""
-    ).strip().lower().replace("_", "-")
+    for field_name in ("modelName", "behavior_name", "deploymentName", "deployment", "name"):
+        value = model.get(field_name)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower().replace("_", "-")
+    return str(model.get("id") or "").strip().lower().replace("_", "-")
 
 
 def _declared_flag(model, *names):
@@ -198,14 +195,17 @@ def resolve_model_capability(model, capability, provider="aoai"):
     direct_image = bool(_DIRECT_IMAGE_PATTERN.search(name))
     if capability == CHAT_CAPABILITY:
         underlying_is_named = isinstance(model, str) or (
-            isinstance(model, Mapping) and bool(str(model.get("modelName") or "").strip())
+            isinstance(model, Mapping) and any(
+                isinstance(model.get(field_name), str) and model[field_name].strip()
+                for field_name in ("modelName", "behavior_name")
+            )
         )
         if direct_image or (underlying_is_named and _NON_CHAT_PATTERN.search(name)):
             return _support(False, "model", "This model is not supported by the text-chat adapter.")
         declared = _declared_flag(model, "supportsChat", "supports_chat")
         if declared is not None:
             return _support(declared, "declared", "" if declared else "Chat is not supported by this model.", "chat")
-        if catalog is not None:
+        if catalog is not None and "generatesText" in catalog:
             supported = bool(catalog.get("generatesText"))
             return _support(supported, "catalog", "" if supported else "This model does not produce text.", "chat")
         # Existing manually named chat deployments must not disappear on upgrade.

@@ -1,8 +1,8 @@
 # evaluate_orchestration_research_planning.py
 """
-Small, opt-in paired evaluation of research-selection guidance.
+Small, opt-in paired evaluation of research-selection guidance and context.
 
-Version: 0.261.099
+Version: 0.261.104
 Implemented in: 0.261.099
 
 Default invocation lists synthetic cases without network access. Capture BEFORE changing
@@ -13,10 +13,10 @@ planner guidance; capture never imports the application or constructs Azure/Cosm
 
 Live example (only against an explicitly approved evaluation deployment):
 
-    python scripts\\evaluate_orchestration_research_planning.py --mode live --baseline .\\research-baseline.json --output .\\research-comparison.json --endpoint https://YOUR-EVAL.openai.azure.com --deployment YOUR-PLANNER --api-version 2024-10-21 --api-key-env SIMPLECHAT_EVAL_KEY --call-cap 30 --repeat 1
+    python scripts\\evaluate_orchestration_research_planning.py --mode live --baseline .\\research-baseline.json --output .\\research-comparison.json --endpoint https://YOUR-EVAL.openai.azure.com --deployment YOUR-PLANNER --api-version 2024-10-21 --api-key-env SIMPLECHAT_EVAL_KEY --case original-playlist --call-cap 4 --repeat 1
 
-Use --case original-playlist to select a case (repeat --case for several). All 11 cases
-need 22 primary requests per repetition; retries also consume the explicit call cap.
+Use --case original-playlist to select a case (repeat --case for several). Each case
+needs two primary requests per repetition; retries also consume the explicit call cap.
 Alternatively use --entra-token-env with an explicitly obtained evaluation bearer token.
 No default credential chain, application settings, real conversations, web searches,
 answer generation, or automatic model grading are used.
@@ -26,12 +26,12 @@ deployment and call_cap. The client must expose max_retries=0; SDK automatic ret
 would otherwise defeat request accounting. The production planner's response-format
 fallback is retained and counted. Do not inject a client with hidden transport retries.
 
-Both variants use the current production planner/context/normalizer and identical
-synthetic availability, deployment and parameters. Only the captured system prompt and
-capability guidance differ. Triage is recorded, but every case exercises the planner,
-including cases the production route might answer without a planning call. This measures
-planner selection, not end-to-end answer quality. Review the rubric for overuse AND
-underuse, not an arbitrary research rate. Mock tests establish contracts only.
+Both variants use the current production planner/normalizer and identical synthetic
+availability, deployment and parameters. Each uses its captured real model-facing context,
+system prompt and capability guidance. Snapshots are data, never executable source.
+Every case exercises the planner, as production now does. This measures planner selection,
+not end-to-end answer quality. Review the rubric for overuse AND underuse, not an arbitrary
+research rate. Mock tests establish contracts only.
 
 Outputs never overwrite an existing file. Provider failures and exhausted budgets are
 explicit unsuccessful outcomes with nonzero CLI exit status, not successful direct-answer
@@ -60,6 +60,7 @@ if str(REPO_ROOT) not in sys.path:
 # Direct script execution needs the repository path before this offline support import.
 from functional_tests.test_support.orchestration_research import (  # noqa: E402
     capture_baseline,
+    OfflineBadRequestError,
     case_inputs,
     load_case_suite,
     planner_runtime,
@@ -150,6 +151,10 @@ class CountedPlannerClient:
             status = getattr(exc, "status_code", None)
             if isinstance(status, int) and 100 <= status <= 599:
                 event["http_status"] = status
+            bad_request_type = getattr(sys.modules.get("openai"), "BadRequestError", OfflineBadRequestError)
+            if isinstance(bad_request_type, type) and isinstance(exc, bad_request_type):
+                # Only the production classifier decides whether JSON-format recovery is valid.
+                raise
             raise EvaluationProviderFailure("The evaluation planner request failed.") from None
         finally:
             event["duration_ms"] = round((time.perf_counter() - started) * 1000, 3)
@@ -182,8 +187,8 @@ def _validate_comparison(baseline, candidate, suite, case_ids, call_cap, repetit
         raise EvaluationConfigurationError("Supply an explicit positive integer call cap.")
     if type(repetitions) is not int or repetitions < 1:
         raise EvaluationConfigurationError("Repetitions must be a positive integer.")
-    if not isinstance(baseline, dict) or baseline.get("schema_version") != 1:
-        raise EvaluationConfigurationError("A captured schema-version-1 baseline is required.")
+    if not isinstance(baseline, dict) or baseline.get("schema_version") != 2:
+        raise EvaluationConfigurationError("A schema-version-2 baseline with captured contexts is required.")
     if not _text(baseline.get("planner_system_prompt")):
         raise EvaluationConfigurationError("The baseline has no captured planner prompt.")
     if baseline.get("parameters") != candidate["parameters"]:
@@ -193,9 +198,10 @@ def _validate_comparison(baseline, candidate, suite, case_ids, call_cap, repetit
         raise EvaluationConfigurationError("The baseline has no valid capability projection.")
     if any(not _text(item.get(name)) for item in original for name in ("summary", "when_to_use")):
         raise EvaluationConfigurationError("The baseline capability guidance is incomplete.")
-    # Only descriptive guidance may differ in this paired selection comparison.
+    # Planner-facing descriptions, outputs and newly exposed limits may change, not
+    # the executable capability identity, arguments, phase or cost.
     without_guidance = lambda entries: [
-        {key: value for key, value in item.items() if key not in ("summary", "when_to_use")}
+        {key: item.get(key) for key in ("id", "label", "phase", "inputs", "cost")}
         for item in entries
     ]
     if without_guidance(original) != without_guidance(candidate["capabilities"]):
@@ -205,6 +211,15 @@ def _validate_comparison(baseline, candidate, suite, case_ids, call_cap, repetit
     if not selected or len(set(selected)) != len(selected) or not set(selected) <= all_ids:
         raise EvaluationConfigurationError("Select distinct case IDs from the committed synthetic suite.")
     cases = [case for case in suite["cases"] if case["id"] in selected]
+    for case in cases:
+        captured = (baseline.get("contexts") or {}).get(case["id"])
+        if not isinstance(captured, dict) or captured.get("message") != case["message"]:
+            raise EvaluationConfigurationError("The baseline is missing a selected case's captured context.")
+        if (
+            (baseline.get("case_inputs_sha256") or {}).get(case["id"])
+            != candidate["case_inputs_sha256"][case["id"]]
+        ):
+            raise EvaluationConfigurationError("Baseline and candidate synthetic case inputs must match.")
     if call_cap < 2 * len(cases) * repetitions:
         raise EvaluationConfigurationError("The call cap cannot cover the requested paired primary calls.")
     return cases
@@ -223,16 +238,23 @@ def _run_variant(runtime, suite, case, snapshot, client, deployment, variant, re
     raw_proposals = []
     message_digests = []
     original_call = planner["_call_planner"]
+    original_messages = planner["build_planner_messages"]
     client.labels = {"case_id": case["id"], "variant": variant, "repetition": repetition}
 
-    def observed_call(configured_client, configured_deployment, messages):
+    def captured_messages(current_context, replan_hint=None, edit_context=None):
+        captured = copy.deepcopy(snapshot["contexts"][case["id"]])
+        captured["capabilities"] = copy.deepcopy(current_context["capabilities"])
+        return original_messages(captured, replan_hint=replan_hint, edit_context=edit_context)
+
+    def observed_call(configured_client, configured_deployment, messages, **kwargs):
         message_digests.append(_digest(messages))
-        reply, usage = original_call(configured_client, configured_deployment, messages)
+        reply, usage = original_call(configured_client, configured_deployment, messages, **kwargs)
         raw_proposals.append(copy.deepcopy(planner["extract_planner_json"](reply)))
         return reply, usage
 
     started = time.perf_counter()
     processing_failed = False
+    planner_failure = None
     with patch.dict(planner, {
         "PLANNER_SYSTEM_PROMPT": snapshot["planner_system_prompt"],
         "PLANNER_TEMPERATURE": snapshot["parameters"]["temperature"],
@@ -241,34 +263,42 @@ def _run_variant(runtime, suite, case, snapshot, client, deployment, variant, re
             copy.deepcopy(projection_by_id[item["id"]]) for item in capabilities
         ],
         "resolve_planner_client": lambda settings: (client, deployment),
+        "build_planner_messages": captured_messages,
         "_call_planner": observed_call,
     }):
         try:
             kind, document = planner["plan_request"](
                 case["message"], context, "synthetic-evaluation-conversation",
                 request_context["user_id"], settings=settings, request_context=request_context,
-                authorized_document_ids=[],
+                authorized_document_ids=[
+                    document["document_id"] for document in context.get("candidate_documents", [])
+                ],
+                seeds=runtime.context["resolve_seeds"](case.get("request") or {}),
             )
+        except EvaluationBudgetExceeded:
+            kind, document = "error", {}
+            planner_failure = "budget_exhausted"
+        except EvaluationProviderFailure:
+            kind, document = "error", {}
+            planner_failure = "provider_failure"
+        except planner["PlannerError"] as exc:
+            kind, document = "error", {}
+            planner_failure = {
+                "unparseable_plan": "unparseable_reply",
+                "repeated_elicitation": "elicitation_failure",
+                "model_request_failed": "provider_failure",
+            }.get(exc.reason, "validation_failure")
         except (ValueError, TypeError, AttributeError, KeyError, OverflowError):
             # Malformed model fields can fail beyond the normalizer's repair contract.
             # Keep request accounting and never persist a raw exception or claim success.
             kind, document = "error", {}
             processing_failed = True
     requests = client.requests[before:]
-    fallback = None
+    fallback = planner_failure
     if client.blocked_requests > blocked_before:
         fallback = "budget_exhausted"
     elif processing_failed:
         fallback = "planner_processing_error"
-    elif "planner_fallback_reason" in document:
-        if not raw_proposals:
-            fallback = "provider_failure"
-        elif not raw_proposals[-1]:
-            fallback = "unparseable_reply"
-        elif raw_proposals[-1].get("kind") == "elicitation":
-            fallback = "elicitation_fallback"
-        else:
-            fallback = "validation_fallback"
     recoveries = []
     if not fallback and any(item["status"] == "provider_error" for item in requests):
         recoveries.append("retry_without_response_format")
@@ -282,6 +312,7 @@ def _run_variant(runtime, suite, case, snapshot, client, deployment, variant, re
         "kind": kind,
         "outcome": fallback or kind,
         "fallback_classification": fallback,
+        "failure_classification": fallback,
         "recoveries": recoveries,
         "semantic_review_eligible": fallback is None,
         "proposals": [
@@ -300,6 +331,7 @@ def _run_variant(runtime, suite, case, snapshot, client, deployment, variant, re
         },
         "request_numbers": [item["request_number"] for item in requests],
         "message_sha256": message_digests,
+        "context_sha256": _digest(snapshot["contexts"][case["id"]]),
         "duration_ms": round((time.perf_counter() - started) * 1000, 3),
     }
 
@@ -313,7 +345,7 @@ def run_comparison(baseline, *, client, deployment, call_cap, repetitions=1, cas
     cases = _validate_comparison(baseline, candidate, suite, case_ids, call_cap, repetitions)
     counted = CountedPlannerClient(client, call_cap)
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "running",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "review_status": "not_reviewed",
@@ -328,6 +360,10 @@ def run_comparison(baseline, *, client, deployment, call_cap, repetitions=1, cas
             baseline["planner_system_prompt"] != candidate["planner_system_prompt"]
             or baseline["capabilities"] != candidate["capabilities"]
         ),
+        "context_changed": any(
+            baseline["contexts"][case["id"]] != candidate["contexts"][case["id"]]
+            for case in cases
+        ),
         "sdk_max_retries": 0,
         "request_accounting": "SDK completion-create attempts, including failures; automatic SDK retries disabled.",
         "call_cap": call_cap,
@@ -339,6 +375,7 @@ def run_comparison(baseline, *, client, deployment, call_cap, repetitions=1, cas
                 "source_sha256": snapshot.get("source_sha256"),
                 "prompt_sha256": _digest(snapshot["planner_system_prompt"]),
                 "projection_sha256": _digest(snapshot["capabilities"]),
+                "context_sha256": _digest(snapshot["contexts"]),
             }
             for name, snapshot in (("baseline", baseline), ("candidate", candidate))
         },
@@ -367,7 +404,7 @@ def run_comparison(baseline, *, client, deployment, call_cap, repetitions=1, cas
                 break
     if report["status"] == "running":
         if any(item["fallback_classification"] for item in report["results"]):
-            report["status"] = "completed_with_planner_fallbacks"
+            report["status"] = "completed_with_planner_failures"
         elif any(item["recoveries"] for item in report["results"]):
             report["status"] = "completed_with_recoveries"
         elif any(

@@ -1,8 +1,8 @@
 # test_ai_connection_defaults_api.py
 """
 Functional tests for capability-specific model-default API behavior.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Mount the actual route functions with isolated storage and authentication seams;
 exercise HTTP payloads without importing the application's Azure clients.

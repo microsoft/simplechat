@@ -5,7 +5,7 @@ description: "Configure shared chat and image connections, independent task defa
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.102"
+version: "0.261.105"
 ---
 
 

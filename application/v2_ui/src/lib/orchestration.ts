@@ -25,6 +25,7 @@ import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import { readSsePost } from './sse';
 import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
+import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
 // part of this contract's surface. Re-exported here (rather than making consumers reach into
@@ -184,6 +185,8 @@ export interface OrchestrationPlanAction {
 
 /** What the plan will act on, for the approval card. */
 export interface OrchestrationPlanInputs {
+    /** Original positive selections resolved by the server, never inferred from planned usage. */
+    required_capabilities?: string[];
     documents: OrchestrationPlanDocument[];
     /** Older plans do not carry action metadata. Match steps by action_ref, not by name. */
     actions?: OrchestrationPlanAction[];
@@ -202,8 +205,11 @@ export interface OrchestrationPlanInputs {
  * the name a second time from the browser.
  */
 export interface OrchestrationPlan {
+    reasoning_adjustments?: ReasoningResolution[];
     plan_id: string;
     run_id: string;
+    /** Conditional approval token for a manually held or revised plan. */
+    edit_version?: string;
     /**
      * The turn this plan answers, echoed from the plan request.
      *
@@ -322,6 +328,54 @@ export interface ElicitationFieldContext {
 
 export type ElicitationContext = Record<string, ElicitationFieldContext>;
 
+export interface PlanEditorHistoryEntry {
+    run_id: string;
+    plan_id: string;
+    revision: number;
+    created_at: string;
+    origin: 'original' | 'ai' | 'restore';
+    note: string;
+}
+
+/** Server-owned editor state. `edits` overlays the raw canonical plan. */
+export interface PlanEditorState {
+    plan: OrchestrationPlan;
+    version: string;
+    edits: PlanEdits;
+    chat: Array<{ role: 'user' | 'assistant'; content: string; timestamp: string }>;
+    history: PlanEditorHistoryEntry[];
+    next_before_revision: number | null;
+    pending: Elicitation | null;
+    busy: boolean;
+}
+
+export type PlanRevisionAction =
+    | { action: 'ask'; instruction: string }
+    | { action: 'restore'; source_run_id: string }
+    | {
+        action: 'answer';
+        elicitation_id: string;
+        elicitation_revision: number;
+        elicitation_response: ElicitationResponse;
+        elicitation_context?: ElicitationContext;
+    }
+    | { action: 'discard'; elicitation_id?: string; elicitation_revision?: number };
+
+export type PlanRevisionRequest = PlanRevisionAction & {
+    conversation_id: string;
+    expected_version: string;
+    submission_id: string;
+    edits?: PlanEdits;
+};
+
+export interface OrchestrationRequestError {
+    status?: number;
+    code?: string;
+    current_run_id?: string;
+}
+
+export const MAX_PLAN_INSTRUCTION_LENGTH = 2000;
+
 /* -------------------------------------------------------------------------- */
 /* Request bodies                                                              */
 /* -------------------------------------------------------------------------- */
@@ -339,7 +393,12 @@ export type ElicitationContext = Record<string, ElicitationFieldContext>;
  * client's store does; a re-plan of the same turn sends the same id. The server honours it and
  * echoes it back on the plan, rather than minting one of its own.
  */
-export interface OrchestrationPlanRequest {
+export interface OrchestrationSeeds {
+    required_capabilities?: string[];
+    [key: string]: unknown;
+}
+
+export interface OrchestrationPlanRequest extends OrchestrationSeeds {
     message: string;
     conversation_id?: string | null;
     turn_id?: string;
@@ -367,6 +426,7 @@ export interface OrchestrationRunRequest {
     plan_id?: string;
     conversation_id?: string | null;
     edits?: PlanEdits;
+    expected_version?: string;
     [key: string]: unknown;
 }
 
@@ -382,9 +442,11 @@ export interface OrchestrationRunRequest {
  * frame ends it too.
  */
 export interface PlanStreamEvent {
+    reasoning_adjustments?: ReasoningResolution[];
     type?: 'thought' | 'orchestration_plan' | 'orchestration_elicitation' | string;
     plan?: OrchestrationPlan;
     elicitation?: Elicitation;
+    editor?: PlanEditorState;
     done?: boolean;
     error?: string;
     details?: unknown;
@@ -425,13 +487,16 @@ export interface PlanStreamHandlers {
     onPlan?: (plan: OrchestrationPlan) => void;
     /** The planner asked a question instead of planning; the stream is over. */
     onElicitation?: (elicitation: Elicitation) => void;
+    /** Editor results never need to enter the main conversation's message dispatch. */
+    onEditor?: (editor: PlanEditorState) => void;
     /** An error frame arrived, or the transport failed. */
-    onError?: (message: string) => void;
+    onError?: (message: string, error?: OrchestrationRequestError) => void;
 }
 
 export interface PlanStreamResult {
     plan: OrchestrationPlan | null;
     elicitation: Elicitation | null;
+    editor: PlanEditorState | null;
     completed: boolean;
     cancelled: boolean;
     errored: boolean;
@@ -463,6 +528,8 @@ export interface RunStreamHandlers {
      * card and reload the thread, not to tell the user their run broke.
      */
     onAlreadyRun?: (message: string) => void;
+    /** A stale approval is still pending; do not treat it as a completed run. */
+    onConflict?: (message: string, error: OrchestrationRequestError) => void;
     /** An error frame arrived, or the transport failed. */
     onError?: (message: string, event?: RunStreamEvent) => void;
 }
@@ -474,6 +541,7 @@ export interface RunStreamResult {
     errored: boolean;
     /** The plan was already run elsewhere. Distinct from `errored`; see `onAlreadyRun`. */
     alreadyRun: boolean;
+    conflict?: OrchestrationRequestError;
 }
 
 export const ORCHESTRATION_PLAN_PATH = '/api/v2/orchestration/plan';
@@ -599,6 +667,51 @@ export async function fetchRunSteps(
     return Array.isArray(payload?.steps) ? payload.steps : [];
 }
 
+export async function beginPlanEdit(
+    runId: string,
+    body: {
+        conversation_id: string;
+        plan_id: string;
+        edits?: PlanEdits;
+        expected_version?: string;
+    },
+    signal?: AbortSignal,
+): Promise<PlanEditorState> {
+    const payload = await api.post<{ editor: PlanEditorState }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/edit`, body, signal,
+    );
+    return payload.editor;
+}
+
+export async function fetchPlanEditor(
+    runId: string,
+    conversationId: string,
+    options: { beforeRevision?: number; signal?: AbortSignal } = {},
+): Promise<PlanEditorState> {
+    const params = new URLSearchParams({ conversation_id: conversationId });
+    if (options.beforeRevision !== undefined) {
+        params.set('before_revision', String(options.beforeRevision));
+    }
+    const payload = await api.get<{ editor: PlanEditorState }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/editor?${params}`,
+        options.signal,
+    );
+    return payload.editor;
+}
+
+export function orchestrationErrorInfo(
+    payload: unknown,
+    status?: number,
+): OrchestrationRequestError {
+    const data = payload && typeof payload === 'object'
+        ? payload as Record<string, unknown> : {};
+    return {
+        status,
+        code: typeof data.code === 'string' ? data.code : undefined,
+        current_run_id: typeof data.current_run_id === 'string' ? data.current_run_id : undefined,
+    };
+}
+
 function errorDetails(payload: { details?: unknown; field_errors?: unknown }): string {
     const details = payload.field_errors ?? payload.details;
     if (Array.isArray(details)) {
@@ -616,9 +729,9 @@ function errorDetails(payload: { details?: unknown; field_errors?: unknown }): s
  * Open a POST SSE stream and hand back the response, or report why it could not open.
  *
  * A failure before the stream opens comes back as an ordinary JSON error, not an SSE frame, so
- * it is read here rather than in the framing loop. The HTTP status is reported alongside the
- * message because one of them is not a failure at all: a 409 from the run endpoint means the
- * plan was already run, which the caller reconciles rather than displays. An abort before the
+ * it is read here rather than in the framing loop. The error code and HTTP status accompany the
+ * safe message: an already-run conflict needs different recovery from a stale version or an
+ * edit in progress. An abort before the
  * response arrives is returned as a plain null with no error reported, so the caller can record
  * it as a cancellation rather than a failure -- pressing Stop before the first byte is not an
  * error.
@@ -627,7 +740,7 @@ async function openOrchestrationStream(
     path: string,
     body: unknown,
     signal: AbortSignal | undefined,
-    onError: (message: string, status?: number) => void,
+    onError: (message: string, error?: OrchestrationRequestError) => void,
 ): Promise<Response | null> {
     let response: Response;
     try {
@@ -641,16 +754,17 @@ async function openOrchestrationStream(
             body: JSON.stringify(body),
             signal,
         });
-    } catch (error) {
+    } catch {
         if (signal?.aborted) {
             return null;
         }
-        onError(error instanceof Error ? error.message : 'Network error');
+        onError('The request could not connect. Please try again.');
         return null;
     }
 
     if (!response.ok || !response.body) {
         let message = `Request failed with status ${response.status}`;
+        let info: OrchestrationRequestError = { status: response.status };
         try {
             const payload = (await response.json()) as {
                 error?: string;
@@ -660,10 +774,11 @@ async function openOrchestrationStream(
             if (payload?.error) {
                 message = [payload.error, errorDetails(payload)].filter(Boolean).join(' ');
             }
+            info = orchestrationErrorInfo(payload, response.status);
         } catch {
             /* Non-JSON error body; keep the status-based message. */
         }
-        onError(message, response.status);
+        onError(message, info);
         return null;
     }
 
@@ -682,21 +797,43 @@ export async function planOrchestration(
     handlers: PlanStreamHandlers,
     signal?: AbortSignal,
 ): Promise<PlanStreamResult> {
+    return readPlanStream(ORCHESTRATION_PLAN_PATH, body, handlers, signal);
+}
+
+export async function reviseOrchestrationPlan(
+    runId: string,
+    body: PlanRevisionRequest,
+    handlers: PlanStreamHandlers,
+    signal?: AbortSignal,
+): Promise<PlanStreamResult> {
+    return readPlanStream(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/revisions`,
+        body, handlers, signal,
+    );
+}
+
+async function readPlanStream(
+    path: string,
+    body: OrchestrationPlanRequest | PlanRevisionRequest,
+    handlers: PlanStreamHandlers,
+    signal?: AbortSignal,
+): Promise<PlanStreamResult> {
     const result: PlanStreamResult = {
         plan: null,
         elicitation: null,
+        editor: null,
         completed: false,
         cancelled: false,
         errored: false,
     };
 
     const response = await openOrchestrationStream(
-        ORCHESTRATION_PLAN_PATH,
+        path,
         body,
         signal,
-        (message) => {
+        (message, error) => {
             result.errored = true;
-            handlers.onError?.(message);
+            handlers.onError?.(message, error);
         },
     );
     if (!response) {
@@ -709,7 +846,10 @@ export async function planOrchestration(
     const onEvent = (event: PlanStreamEvent): boolean => {
         if (typeof event.error === 'string' && event.error) {
             result.errored = true;
-            handlers.onError?.([event.error, errorDetails(event)].filter(Boolean).join(' '));
+            handlers.onError?.(
+                [event.error, errorDetails(event)].filter(Boolean).join(' '),
+                orchestrationErrorInfo(event),
+            );
             return true;
         }
 
@@ -726,7 +866,20 @@ export async function planOrchestration(
         }
 
         if (event.type === 'orchestration_plan') {
+            result.editor = event.editor ?? null;
+            if (result.editor) {
+                handlers.onEditor?.(result.editor);
+            }
             result.plan = event.plan ?? null;
+            if (result.plan && event.reasoning_adjustments?.length) {
+                result.plan = {
+                    ...result.plan,
+                    reasoning_adjustments: normalizeReasoningAdjustments([
+                        ...(result.plan.reasoning_adjustments ?? []),
+                        ...event.reasoning_adjustments,
+                    ]),
+                };
+            }
             result.completed = true;
             if (result.plan) {
                 handlers.onPlan?.(result.plan);
@@ -735,6 +888,10 @@ export async function planOrchestration(
         }
 
         if (event.type === 'orchestration_elicitation') {
+            result.editor = event.editor ?? null;
+            if (result.editor) {
+                handlers.onEditor?.(result.editor);
+            }
             result.elicitation = event.elicitation ?? null;
             result.completed = true;
             if (result.elicitation) {
@@ -798,11 +955,20 @@ export async function runOrchestration(
         ORCHESTRATION_RUN_PATH,
         body,
         signal,
-        (message, status) => {
-            // 409 is the server's re-run guard, which is the whole reason approving a restored
-            // plan from a second device is safe. Reported as its own outcome so the caller can
-            // reconcile with the answer that already exists.
-            if (status === 409) {
+        (message, error) => {
+            if (error?.status === 409
+                && (error.code === 'plan_changed' || error.code === 'edit_in_progress')) {
+                result.errored = true;
+                result.conflict = error;
+                if (handlers.onConflict) {
+                    handlers.onConflict(message, error);
+                } else {
+                    handlers.onError?.(message);
+                }
+                return;
+            }
+            // Uncoded/legacy 409s and already_run retain the existing duplicate-run recovery.
+            if (error?.status === 409) {
                 result.alreadyRun = true;
                 handlers.onAlreadyRun?.(message);
                 return;

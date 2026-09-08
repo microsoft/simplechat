@@ -3,7 +3,7 @@
 #!/usr/bin/env python3
 """
 Functional test for group agent endpoint scope resolution.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.239.192
 
 This test ensures group agents resolve model endpoints from conversation or

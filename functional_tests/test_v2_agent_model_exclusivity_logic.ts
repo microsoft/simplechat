@@ -1,7 +1,7 @@
 // test_v2_agent_model_exclusivity_logic.ts
 // Behavioural checks for the V2 agent / model / reasoning exclusivity.
 //
-// Version: 0.261.034
+// Version: 0.261.104
 // Implemented in: 0.261.034
 //
 // The V2 interface has no unit test runner, and adding one would pull in a test framework for
@@ -27,6 +27,8 @@ import {
 } from '../application/v2_ui/src/lib/chatRequestSelection';
 import { resolveGating } from '../application/v2_ui/src/lib/composerGating';
 import type { ModelCatalogEntry } from '../application/v2_ui/src/lib/models';
+import type { ReasoningCapabilities } from '../application/v2_ui/src/lib/reasoning';
+import modelCatalog from '../application/single_app/static/json/model_capabilities.json';
 
 let failures = 0;
 function check(name: string, condition: boolean, detail?: unknown) {
@@ -39,6 +41,8 @@ function check(name: string, condition: boolean, detail?: unknown) {
 }
 
 /* ---- fixtures ---- */
+const reasoningPolicy = modelCatalog.models.find((model) => model.id === 'gpt-5')!
+    .reasoningPolicy as ReasoningCapabilities;
 
 /** Shaped like `_build_chat_model_catalog` output, including the per-endpoint selection key. */
 const MODELS: ModelCatalogEntry[] = [
@@ -49,6 +53,7 @@ const MODELS: ModelCatalogEntry[] = [
         endpoint_id: 'endpoint-a',
         provider: 'azure_openai',
         display_name: 'GPT-5 (East)',
+        reasoning_capabilities: reasoningPolicy,
     },
     {
         // The same deployment name on a second endpoint: why the key is not the name.
@@ -58,6 +63,7 @@ const MODELS: ModelCatalogEntry[] = [
         endpoint_id: 'endpoint-b',
         provider: 'azure_openai',
         display_name: 'GPT-5 (West)',
+        reasoning_capabilities: reasoningPolicy,
     },
 ];
 

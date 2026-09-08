@@ -1,8 +1,8 @@
 # test_ai_connection_image_migration.py
 """
 Functional coverage for automatic image-connection import.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Exercise the real migration builder and optimistic-concurrency coordinator without
 Azure services, including active-route preservation and non-destructive failure.

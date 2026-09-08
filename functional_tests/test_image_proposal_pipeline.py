@@ -1,7 +1,7 @@
 # test_image_proposal_pipeline.py
 """
 Functional test for opt-in chat image proposal pipeline.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.241.138
 
 This test ensures the reusable image proposal helpers normalize model-authored

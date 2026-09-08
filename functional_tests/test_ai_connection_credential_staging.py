@@ -1,8 +1,8 @@
 # test_ai_connection_credential_staging.py
 """
 Functional tests for credential isolation during concurrent image imports.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.105
+Implemented in: 0.261.105
 
 Run the real Key Vault save helper against an in-memory secret service. A losing
 settings writer must neither overwrite nor delete the winning writer's credential.
