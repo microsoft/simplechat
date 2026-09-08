@@ -209,7 +209,8 @@ export function buildDetailGroups(payload: Json | null | undefined): DetailGroup
     pushRow(generation, 'Model', root.model_deployment_name);
     pushRow(generation, 'Agent', root.agent_display_name || root.agent_name);
     pushRow(generation, 'Augmented', formatBoolean(root.augmented));
-    pushRow(generation, 'Reasoning effort', metadata.reasoning_effort);
+    pushRow(generation, 'Reasoning effort',
+        metadata.reasoning_mode === 'model_default' ? 'Model default' : metadata.reasoning_effort);
     if (generation.length > 0) {
         groups.push({ title: 'Generation', rows: generation });
     }

@@ -19,6 +19,7 @@ import { destroyInlineDiagrams, hydrateInlineDiagrams } from './chat-inline-diag
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
+import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -668,6 +669,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     attachStreamingStopButton(tempAiMessageId, streamContext);
     const streamStartedAt = Date.now();
     let accumulatedContent = '';
+    let reasoningAdjustments = [];
     let hasStreamedContent = false;
     let streamError = false;
     let streamCompleted = false;
@@ -734,6 +736,16 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+            if (Array.isArray(data.reasoning_adjustments) || Array.isArray(data.metadata?.reasoning_adjustments)) {
+                reasoningAdjustments = getMessageReasoningAdjustments(data, reasoningAdjustments);
+                renderMessageReasoningAdjustments(getStreamingMessageElement(tempAiMessageId), reasoningAdjustments);
+            }
+            if (data.done && reasoningAdjustments.length) {
+                data = {
+                    ...data,
+                    metadata: { ...(data.metadata || {}), reasoning_adjustments: reasoningAdjustments },
+                };
+            }
 
             if (data.error) {
                 if (data.user_message_id && data.message_persisted === true) {
@@ -1366,6 +1378,10 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             document.querySelector(`[data-message-id="${finalData.message_id}"]`),
             Boolean(String(partialContent || '').trim())
         );
+        renderMessageReasoningAdjustments(
+            getStreamingMessageElement(finalData.message_id),
+            getMessageReasoningAdjustments(finalData),
+        );
         notifyConversationDocumentsMayHaveChanged(
             finalData.conversation_id,
             false
@@ -1477,6 +1493,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     }
 
     if (existingFinalMessage) {
+        renderMessageReasoningAdjustments(existingFinalMessage, getMessageReasoningAdjustments(finalData));
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
         notifyConversationDocumentsMayHaveChanged(
             finalData.conversation_id,

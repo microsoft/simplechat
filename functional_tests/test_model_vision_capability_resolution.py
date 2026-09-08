@@ -2,7 +2,7 @@
 # test_model_vision_capability_resolution.py
 """
 Functional test for how the application decides a model can accept images.
-Version: 0.261.084
+Version: 0.261.104
 Implemented in: 0.261.084
 
 Multi-Modal Vision Analysis sends page images to a model, so it can only offer
@@ -45,13 +45,13 @@ is_vision_capable = capabilities_module.is_vision_capable_model
 
 
 def test_the_catalog_declares_vision_support_for_every_model():
-    """A model missing the field falls through to a guess it should not need."""
+    """Boolean capability records stay complete; reasoning-only records stay separate."""
     print("Testing catalog completeness...")
 
     assert_app_version_at_least("0.261.084")
 
     document = json.loads(CATALOG.read_text(encoding="utf-8"))
-    models = document.get("models") or []
+    models = [model for model in document.get("models") or [] if "capabilities" in model]
     assert models, "The capability catalog lists no models."
 
     missing = [
@@ -151,12 +151,12 @@ def test_an_unknown_model_still_falls_back_to_the_heuristic():
     """Refusing to guess would hide working models from existing deployments."""
     print("\nTesting the heuristic fallback...")
 
-    # The catalog covers current models; gpt-4o predates it and is not listed.
+    # gpt-4o has a reasoning-only record, not a vision declaration.
     # A great many deployments still run it, so the heuristic still has to
     # recognise it rather than the model disappearing from the picker.
     supports, source = resolve("gpt-4o")
     assert supports is True, (
-        "gpt-4o resolved as not vision-capable. It is absent from the catalog, "
+        "gpt-4o resolved as not vision-capable. It has no vision declaration, "
         "so the heuristic has to carry it, or existing deployments would lose "
         "the model they are using."
     )

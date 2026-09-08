@@ -1,8 +1,9 @@
 # test_orchestration_model_selection.py
 """
 Functional regressions for authorized orchestration model selection and SDK parameters.
-Version: 0.261.103
+Version: 0.261.104
 Implemented in: 0.261.103
+Canonical reasoning resolution and recovery: 0.261.104
 
 Exercises the real selection/binding code with endpoint authorization and client creation
 replaced at their existing boundaries. No Azure resources or credentials are used.
@@ -15,11 +16,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from openai import AuthenticationError, RateLimitError
+
 from test_orchestration_conversation_context import (
     LATEST, RESOLVED, fake_module, load_modules, winery_history,
 )
 from test_support.app_stubs import stubbed_config
 from test_support.versioning import assert_app_version_at_least
+from test_model_reasoning_capability_resolution import sdk_error
 
 
 TERRA_SELECTION = {
@@ -414,6 +418,305 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertEqual(self.client.chat.completions.create.call_args.kwargs, {
             'model': 'gpt-4o', 'messages': [], 'max_tokens': 1200, 'temperature': 0.3,
         })
+
+    def test_luna_uuid_and_custom_deployment_resolve_before_the_first_request(self):
+        model = self.endpoint['models'][0]
+        model.update(id='f8c476df-c951-499c-b87d-98fd02597780', modelName='gpt-5.6-luna',
+                     deploymentName='production-answer', displayName='GPT-5 Minimal')
+        selection = {**TERRA_SELECTION, 'model_id': model['id'], 'model_deployment': 'production-answer'}
+        binding = self.models.resolve_orchestration_model(
+            self.settings, user_id='user1', seeds={'model': selection, 'reasoning_effort': 'minimal'},
+        )
+        self.addCleanup(binding.close)
+        self.assertEqual(binding.reasoning_effort, 'minimal')
+        self.assertEqual(binding.reasoning_resolution, {
+            'requested_effort': 'minimal', 'effective_effort': 'low', 'mode': 'explicit',
+            'adjustment_reason': 'reasoning_effort_unsupported',
+        })
+        self.client.chat.completions.create.assert_not_called()
+        binding.create_completion(messages=[], max_tokens=1200, temperature=0)
+        parameters = self.client.chat.completions.create.call_args.kwargs
+        self.assertEqual(parameters['reasoning_effort'], 'low')
+        self.assertEqual(parameters['max_completion_tokens'], 8192)
+        self.assertEqual(parameters['model'], 'production-answer')
+        self.assertEqual(binding.reasoning_effort, 'minimal')
+
+    def test_none_and_explicit_omission_do_not_inherit_the_binding_effort(self):
+        binding = self.models.OrchestrationModel(self.client, 'gpt-5.6-luna', reasoning_effort='high')
+        for effort, expected in (('none', 'none'), (None, None), ('', None)):
+            binding.create_completion(messages=[], max_tokens=1200, reasoning_effort=effort)
+            self.assertEqual(
+                self.client.chat.completions.create.call_args.kwargs.get('reasoning_effort'), expected,
+            )
+            self.assertEqual(binding.reasoning_resolution['effective_effort'], expected)
+            self.assertEqual(binding.reasoning_effort, 'high')
+        binding.create_completion(messages=[], max_tokens=1200)
+        self.assertEqual(binding.reasoning_resolution['effective_effort'], 'high')
+
+    def test_provider_recovery_updates_resolution_without_changing_budget_or_selection(self):
+        binding = self.models.OrchestrationModel(
+            self.client, 'production-answer', behavior_name='gpt-5.6-luna',
+            reasoning_effort='minimal', response_length=2048,
+        )
+        self.client.chat.completions.create.side_effect = [sdk_error(), 'completion']
+        result = binding.create_completion(
+            messages=[{'role': 'user', 'content': 'answer'}], max_tokens=1200,
+            use_model_response_length=True, response_format={'type': 'json_object'},
+        )
+        self.assertEqual(result, 'completion')
+        first, retry = self.client.chat.completions.create.call_args_list
+        self.assertEqual(first.kwargs['reasoning_effort'], 'low')
+        self.assertEqual(retry.kwargs, {
+            key: value for key, value in first.kwargs.items() if key != 'reasoning_effort'
+        })
+        self.assertEqual(retry.kwargs['max_completion_tokens'], 2048)
+        self.assertEqual(binding.reasoning_effort, 'minimal')
+        self.assertEqual(binding.reasoning_resolution, {
+            'requested_effort': 'minimal', 'effective_effort': None, 'mode': 'model_default',
+            'adjustment_reason': 'reasoning_parameter_rejected',
+        })
+
+    def test_combined_reasoning_and_json_recovery_never_reintroduces_rejected_effort(self):
+        messages = [{'role': 'user', 'content': 'Return one JSON object.'}]
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content='{"steps": []}', refusal=None), finish_reason='stop',
+            )],
+            usage=SimpleNamespace(total_tokens=12),
+        )
+        for requested in ('minimal', 'low', 'none'):
+            with self.subTest(requested=requested):
+                binding = self.models.OrchestrationModel(
+                    self.client, 'custom-planner', behavior_name='gpt-5.6-luna',
+                    reasoning_effort=requested,
+                )
+                self.client.chat.completions.create.reset_mock()
+
+                def create(**parameters):
+                    if 'reasoning_effort' in parameters:
+                        raise sdk_error()
+                    if 'response_format' in parameters:
+                        raise sdk_error(param='response_format', code='unsupported_parameter')
+                    return response
+
+                self.client.chat.completions.create.side_effect = create
+                result, usage = self.modules.planner._call_planner(
+                    binding.as_planner_client(), binding.deployment, messages,
+                    max_tokens=1200, require_complete_response=True,
+                )
+                calls = self.client.chat.completions.create.call_args_list
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(calls[0].kwargs['reasoning_effort'], (
+                    'low' if requested == 'minimal' else requested
+                ))
+                self.assertEqual(calls[1].kwargs, {
+                    key: value for key, value in calls[0].kwargs.items() if key != 'reasoning_effort'
+                })
+                self.assertEqual(calls[2].kwargs, {
+                    key: value for key, value in calls[1].kwargs.items() if key != 'response_format'
+                })
+                for call in calls:
+                    self.assertIs(call.kwargs['messages'], messages)
+                    self.assertEqual(call.kwargs['model'], 'custom-planner')
+                    self.assertEqual(call.kwargs['max_completion_tokens'], 8192)
+                self.assertEqual(binding.reasoning_resolution, {
+                    'requested_effort': requested, 'effective_effort': None, 'mode': 'model_default',
+                    'adjustment_reason': 'reasoning_parameter_rejected',
+                })
+                self.assertEqual(binding.reasoning_effort, requested)
+                self.assertEqual(result, '{"steps": []}')
+                self.assertIs(usage, response.usage)
+
+    def test_recovery_state_survives_failed_retry_without_swallowing_unrelated_errors(self):
+        for error in (
+            sdk_error(param='messages', code='invalid_request_error'),
+            sdk_error(param='response_format', code='unsupported_parameter'),
+        ):
+            with self.subTest(parameter=error.param):
+                binding = self.models.OrchestrationModel(
+                    self.client, 'gpt-5.6-luna', reasoning_effort='minimal',
+                )
+                self.client.chat.completions.create.reset_mock()
+                self.client.chat.completions.create.side_effect = [sdk_error(), error]
+                with self.assertRaises(type(error)) as raised:
+                    binding.create_completion(messages=[], max_tokens=1200)
+                self.assertIs(raised.exception, error)
+                self.assertEqual(self.client.chat.completions.create.call_count, 2)
+                self.assertEqual(binding.reasoning_resolution, {
+                    'requested_effort': 'minimal', 'effective_effort': None, 'mode': 'model_default',
+                    'adjustment_reason': 'reasoning_parameter_rejected',
+                })
+                self.client.chat.completions.create.side_effect = None
+                for override, effective, reason in (
+                    ('none', 'none', None), ('high', 'high', None), (None, None, None),
+                    ('minimal', None, 'reasoning_parameter_rejected'),
+                ):
+                    binding.create_completion(
+                        messages=[], max_tokens=1200, reasoning_effort=override,
+                    )
+                    parameters = self.client.chat.completions.create.call_args.kwargs
+                    self.assertEqual(parameters.get('reasoning_effort'), effective)
+                    self.assertEqual(binding.reasoning_resolution, {
+                        'requested_effort': override, 'effective_effort': effective,
+                        'mode': 'model_default' if effective is None else 'explicit',
+                        'adjustment_reason': reason,
+                    })
+                self.assertEqual(binding.reasoning_effort, 'minimal')
+                fresh_binding = self.models.OrchestrationModel(
+                    self.client, 'gpt-5.6-luna', reasoning_effort='minimal',
+                )
+                fresh_binding.create_completion(messages=[], max_tokens=1200)
+                self.assertEqual(
+                    self.client.chat.completions.create.call_args.kwargs['reasoning_effort'], 'low',
+                )
+
+    def test_combined_recovery_does_not_loop_on_a_second_format_rejection(self):
+        binding = self.models.OrchestrationModel(
+            self.client, 'gpt-5.6-luna', reasoning_effort='low',
+        )
+        format_error = sdk_error(param='response_format', code='unsupported_parameter')
+        self.client.chat.completions.create.side_effect = [
+            sdk_error(), format_error, format_error,
+        ]
+        with self.assertRaises(type(format_error)) as raised:
+            self.modules.planner._call_planner(
+                binding.as_planner_client(), binding.deployment, [], max_tokens=1200,
+            )
+        self.assertIs(raised.exception, format_error)
+        calls = self.client.chat.completions.create.call_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertNotIn('reasoning_effort', calls[1].kwargs)
+        self.assertNotIn('reasoning_effort', calls[2].kwargs)
+        self.assertNotIn('response_format', calls[2].kwargs)
+        self.assertEqual(binding.reasoning_resolution['mode'], 'model_default')
+
+    def test_json_then_reasoning_recovery_preserves_the_same_three_attempt_bound(self):
+        binding = self.models.OrchestrationModel(
+            self.client, 'gpt-5.6-luna', reasoning_effort='low',
+        )
+        messages = [{'role': 'user', 'content': 'Return a JSON object.'}]
+        response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content='{}'))], usage=None,
+        )
+        self.client.chat.completions.create.side_effect = [
+            sdk_error(param='response_format', code='unsupported_parameter'), sdk_error(), response,
+        ]
+        result, _usage = self.modules.planner._call_planner(
+            binding.as_planner_client(), binding.deployment, messages, max_tokens=1200,
+        )
+        calls = self.client.chat.completions.create.call_args_list
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[1].kwargs, {
+            key: value for key, value in calls[0].kwargs.items() if key != 'response_format'
+        })
+        self.assertEqual(calls[2].kwargs, {
+            key: value for key, value in calls[1].kwargs.items() if key != 'reasoning_effort'
+        })
+        self.assertEqual(result, '{}')
+        self.assertEqual(binding.reasoning_resolution, {
+            'requested_effort': 'low', 'effective_effort': None, 'mode': 'model_default',
+            'adjustment_reason': 'reasoning_parameter_rejected',
+        })
+
+    def test_combined_recovery_propagates_auth_and_rate_errors_without_more_attempts(self):
+        for error_type, status in ((AuthenticationError, 401), (RateLimitError, 429)):
+            with self.subTest(status=status):
+                binding = self.models.OrchestrationModel(
+                    self.client, 'gpt-5.6-luna', reasoning_effort='low',
+                )
+                final_error = sdk_error(error_type, status=status)
+                self.client.chat.completions.create.reset_mock()
+                self.client.chat.completions.create.side_effect = [
+                    sdk_error(), sdk_error(param='response_format', code='unsupported_parameter'),
+                    final_error,
+                ]
+                with self.assertRaises(error_type) as raised:
+                    self.modules.planner._call_planner(
+                        binding.as_planner_client(), binding.deployment, [], max_tokens=1200,
+                    )
+                self.assertIs(raised.exception, final_error)
+                calls = self.client.chat.completions.create.call_args_list
+                self.assertEqual(len(calls), 3)
+                self.assertNotIn('reasoning_effort', calls[2].kwargs)
+                self.assertEqual(binding.reasoning_resolution['effective_effort'], None)
+                self.assertEqual(binding.reasoning_resolution['mode'], 'model_default')
+
+    def test_planner_override_resolves_its_own_policy_without_inheriting_answer_effort(self):
+        planner_endpoint = model_endpoint()
+        planner_endpoint['id'] = 'planner-endpoint'
+        planner_endpoint['models'] = [{
+            'id': 'planner-model', 'deploymentName': 'custom-planner', 'modelName': 'gpt-5-mini',
+        }]
+        self.settings.update({
+            'chat_orchestration_planner_model_endpoint_id': 'planner-endpoint',
+            'chat_orchestration_planner_model_id': 'planner-model',
+        })
+        self.runtime.resolve_model_endpoint_from_context.side_effect = [self.endpoint, planner_endpoint]
+        planner = self.resolve(TERRA_SELECTION, planner=True)
+        self.assertEqual(planner.reasoning_resolution['mode'], 'model_default')
+        planner.create_completion(messages=[], max_tokens=1200)
+        self.assertNotIn('reasoning_effort', self.client.chat.completions.create.call_args.kwargs)
+        planner.create_completion(messages=[], max_tokens=1200, reasoning_effort='minimal')
+        self.assertEqual(self.client.chat.completions.create.call_args.kwargs['reasoning_effort'], 'minimal')
+        self.assertEqual(planner.answer_model_selection(), TERRA_SELECTION)
+
+    def test_legacy_custom_deployment_uses_the_configured_canonical_name(self):
+        self.settings.update(enable_multi_model_endpoints=False, gpt_model={
+            'selected': [{'deploymentName': 'legacy-answer', 'modelName': 'gpt-5.6-luna'}]
+        })
+        binding = self.resolve({'model_deployment': 'legacy-answer'})
+        self.assertEqual(binding.reasoning_resolution['effective_effort'], 'high')
+        binding.create_completion(messages=[], max_tokens=1200)
+        self.assertEqual(
+            self.legacy_client.chat.completions.create.call_args.kwargs['max_completion_tokens'], 8192,
+        )
+
+    def test_legacy_planner_override_uses_its_own_canonical_record(self):
+        self.settings['gpt_model']['selected'].append({
+            'deploymentName': 'custom-planner', 'modelName': 'gpt-5-pro',
+        })
+        self.settings['chat_orchestration_planner_deployment'] = 'custom-planner'
+        binding = self.resolve(TERRA_SELECTION, planner=True)
+        self.assertEqual(binding.behavior_name, 'gpt-5-pro')
+        self.assertIsNone(binding.reasoning_resolution['effective_effort'])
+        binding.create_completion(messages=[], max_tokens=1200, reasoning_effort='low')
+        self.assertEqual(
+            self.legacy_client.chat.completions.create.call_args.kwargs['reasoning_effort'], 'high',
+        )
+        self.assertEqual(binding.answer_model_selection(), TERRA_SELECTION)
+
+    def test_apim_never_borrows_same_named_direct_aoai_model_metadata(self):
+        for deployment, direct_model, expected in (
+            ('custom-answer', 'gpt-5.6-luna', None),
+            ('gpt-5.6-luna', 'gpt-4o', 'high'),
+        ):
+            for planner in (False, True):
+                with self.subTest(deployment=deployment, planner=planner):
+                    self.settings.update(
+                        enable_multi_model_endpoints=False,
+                        enable_gpt_apim=True,
+                        azure_apim_gpt_deployment=deployment,
+                        chat_orchestration_planner_deployment=deployment if planner else '',
+                        gpt_model={'selected': [{
+                            'deploymentName': deployment, 'modelName': direct_model,
+                        }]},
+                    )
+                    binding = self.resolve({'model_deployment': deployment}, planner=planner)
+                    self.assertEqual(binding.behavior_name, '')
+                    binding.create_completion(
+                        messages=[], max_tokens=1200, reasoning_effort='high', temperature=0.3,
+                    )
+                    parameters = self.legacy_client.chat.completions.create.call_args.kwargs
+                    self.assertEqual(parameters['model'], deployment)
+                    self.assertEqual(parameters.get('reasoning_effort'), expected)
+                    self.assertEqual(binding.reasoning_resolution['effective_effort'], expected)
+                    if expected is None:
+                        self.assertEqual(parameters['max_tokens'], 1200)
+                        self.assertEqual(parameters['temperature'], 0.3)
+                        self.assertEqual(
+                            binding.reasoning_resolution['adjustment_reason'],
+                            'reasoning_capability_unknown',
+                        )
 
     def test_binding_cannot_be_retargeted_and_closes_its_sdk_client_once(self):
         binding = self.resolve(TERRA_SELECTION)

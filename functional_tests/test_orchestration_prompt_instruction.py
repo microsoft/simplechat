@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_prompt_instruction.py
 """
 Functional test for orchestration treating a selected prompt as an instruction.
-Version: 0.261.092
+Version: 0.261.104
 Implemented in: 0.261.092
 
 A saved prompt is a standing instruction: it says what kind of work this is. Orchestration used
@@ -15,7 +15,7 @@ Three things follow, and this test holds each of them:
 
   1. The planner is shown the prompt's wording, capped so an unbounded saved prompt cannot
      consume the planner's budget.
-  2. A selected prompt makes a request non-trivial, alongside a chosen document or agent.
+  2. Every request reaches planning, with or without a selected prompt, document or agent.
   3. The stored plan names the prompt rather than quoting it. The plan document is kept and
      shown, and the wording is already in the message the plan was built from.
 
@@ -34,6 +34,7 @@ APP_DIR = REPO_ROOT / "application" / "single_app"
 sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_support.orchestration_research import _definitions  # noqa: E402
 
 CONTEXT_PY = APP_DIR / "functions_orchestration_context.py"
 PLANNER_PY = APP_DIR / "functions_orchestration_planner.py"
@@ -102,7 +103,7 @@ def test_the_planner_is_shown_the_prompts_wording():
 
 
 def test_no_prompt_reads_as_no_prompt():
-    """`triage_request` tests this the same way it tests the other selections."""
+    """Absent selections are neutral, not made-up instructions."""
     print("Testing absent prompts...")
 
     module = _extract(CONTEXT_PY, {"_text", "_selected_prompt"})
@@ -121,9 +122,9 @@ def test_no_prompt_reads_as_no_prompt():
     return True
 
 
-def test_a_selected_prompt_makes_the_request_non_trivial():
-    """Reaching for stored instructions is a statement that this work has a shape."""
-    print("Testing triage...")
+def test_requests_reach_planning_with_or_without_selected_instructions():
+    """Neither message length nor an unchecked control may bypass planning."""
+    print("Testing the all-request planning contract...")
 
     module = _extract(
         PLANNER_PY,
@@ -137,26 +138,19 @@ def test_a_selected_prompt_makes_the_request_non_trivial():
     triage = module["triage_request"]
 
     bare = {"user_selected": {}}
-    assert triage("hi", bare) == "trivial", (
-        "a remark with nothing selected must still be trivial, or every message plans"
-    )
+    assert triage("hi", bare) == "simple"
 
     with_prompt = {"user_selected": {"prompt": {"name": "Quarterly review", "content": "..."}}}
-    assert triage("hi", with_prompt) == "complex", (
-        "a selected prompt must count as pointing at something, like a document or an agent"
-    )
+    assert triage("hi", with_prompt) == "simple"
 
-    # The signals it already honoured must not have been displaced by the new one.
     for signal, value in (
         ("documents", ["doc-1"]),
         ("agent", "Researcher"),
         ("web_search", True),
     ):
-        assert triage("hi", {"user_selected": {signal: value}}) == "complex", (
-            f"the existing {signal} signal must still make a request complex"
-        )
+        assert triage("hi", {"user_selected": {signal: value}}) == "simple"
 
-    print("  ok  a selected prompt makes the request complex")
+    print("  ok  selected instructions do not alter the all-request planning contract")
     return True
 
 
@@ -164,7 +158,8 @@ def test_the_stored_plan_names_the_prompt_rather_than_quoting_it():
     """The plan document is kept and shown; the wording is already in the message."""
     print("Testing plan inputs...")
 
-    module = _extract(SCHEMA_PY, {"build_plan_inputs"})
+    registry = _definitions("functions_orchestration_registry.py")
+    module = _definitions("functions_orchestration_schema.py", seed=registry)
     build_plan_inputs = module["build_plan_inputs"]
 
     seeds = {
@@ -194,7 +189,7 @@ if __name__ == "__main__":
         test_version_is_at_least_the_implementing_release,
         test_the_planner_is_shown_the_prompts_wording,
         test_no_prompt_reads_as_no_prompt,
-        test_a_selected_prompt_makes_the_request_non_trivial,
+        test_requests_reach_planning_with_or_without_selected_instructions,
         test_the_stored_plan_names_the_prompt_rather_than_quoting_it,
     ]
 

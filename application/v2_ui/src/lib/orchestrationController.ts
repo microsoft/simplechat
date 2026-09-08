@@ -31,6 +31,7 @@ import {
     type ElicitationResponse,
     type OrchestrationPlan,
     type OrchestrationPlanRequest,
+    type OrchestrationSeeds,
     type OrchestrationRunRequest,
     type OrchestrationRequestError,
     type PlanRevisionAction,
@@ -39,6 +40,7 @@ import {
 } from './orchestration';
 import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan } from './orchestrationPlan';
 import type { Json } from './types';
+import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { useChatStore } from '../stores/chatStore';
 import {
     selectEdits,
@@ -87,7 +89,7 @@ function makeTurnId(): string {
 interface TurnContext {
     message: string;
     approvalMode: ApprovalMode;
-    seeds: Record<string, unknown>;
+    seeds: OrchestrationSeeds;
     revision: number;
     pendingUserMessageId: string;
 }
@@ -124,9 +126,9 @@ export interface StartPlanParams {
     /**
      * Manual-control selections that constrain the plan rather than being ignored:
      * `selected_document_ids`, `agent_info`, the `model_*` quartet, `prompt_info`,
-     * `web_search_enabled`. Assembled by the composer; passed through to the plan request as-is.
+     * `required_capabilities` and legacy `web_search_enabled`. Unchecked controls are neutral.
      */
-    seeds?: Record<string, unknown>;
+    seeds?: OrchestrationSeeds;
 }
 
 /**
@@ -333,6 +335,7 @@ async function dispatchPlan(
     let produced = false;
     let errored = false;
     let failure = '';
+    let reasoningAdjustments: ReasoningResolution[] = [];
     const isCurrentRequest = () =>
         !controller.signal.aborted && activeControllers.get(currentConversationId) === controller;
     await planOrchestration(
@@ -340,6 +343,12 @@ async function dispatchPlan(
         {
             onThought: (event) => {
                 if (isCurrentRequest()) {
+                    reasoningAdjustments = normalizeReasoningAdjustments(
+                        event.reasoning_adjustments, reasoningAdjustments,
+                    );
+                    useOrchestrationStore.getState().mergeReasoningAdjustments(
+                        currentConversationId, currentTurnId, event.reasoning_adjustments,
+                    );
                     useChatStore.getState()
                         .pushOrchestrationThought(currentConversationId, event as RunStreamEvent);
                 }
@@ -359,7 +368,12 @@ async function dispatchPlan(
                 }
                 adoptServerTurnId(plan.turn_id);
                 context.revision = plan.revision ?? context.revision;
-                useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, plan);
+                useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, {
+                    ...plan,
+                    reasoning_adjustments: normalizeReasoningAdjustments([
+                        ...reasoningAdjustments, ...(plan.reasoning_adjustments ?? []),
+                    ]),
+                });
                 if (!selectPlan(useOrchestrationStore.getState(), currentConversationId, currentTurnId)) {
                     errored = true;
                     failure = 'The planner returned an invalid plan. Please try again.';
@@ -635,19 +649,29 @@ export async function approveAndRunPlan(params: {
     const result = await runOrchestration(
         runBody,
         {
-            onStep: (event) =>
-                useOrchestrationStore.getState().applyStepEvent(conversationId, turnId, event),
+            onStep: (event) => {
+                const current = useOrchestrationStore.getState();
+                current.applyStepEvent(conversationId, turnId, event);
+                current.mergeReasoningAdjustments(conversationId, turnId, event.reasoning_adjustments);
+            },
             // A run reports each step starting and finishing as a `thought`, the same event
             // planning uses, so it lands in the same place a planning thought does — feeding the
             // orchestration progress lane while the answer is still being assembled.
-            onThought: (event) =>
+            onThought: (event) => {
+                useOrchestrationStore.getState().mergeReasoningAdjustments(
+                    conversationId, turnId, event.reasoning_adjustments,
+                );
                 useChatStore
                     .getState()
-                    .pushOrchestrationThought(conversationId, event as RunStreamEvent),
+                    .pushOrchestrationThought(conversationId, event as RunStreamEvent);
+            },
             onContent: (_delta, accumulated) =>
                 useChatStore.getState().pushOrchestrationContent(conversationId, accumulated),
             onDone: (event, accumulated) => {
                 settled = true;
+                useOrchestrationStore.getState().mergeReasoningAdjustments(
+                    conversationId, turnId, event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments,
+                );
                 useChatStore.getState().settleOrchestrationTurn(conversationId, {
                     status: 'completed',
                     event,
@@ -991,6 +1015,13 @@ export async function submitPlanRevision(
             ...editor, submission: { id: submissionId, fingerprint },
         }));
         const result = await reviseOrchestrationPlan(requestPlan.run_id, body, {
+            onThought: (event) => {
+                if (isEditorRequestCurrent(target, controller)) {
+                    useOrchestrationStore.getState().mergeReasoningAdjustments(
+                        conversationId, turnId, event.reasoning_adjustments,
+                    );
+                }
+            },
             onError: (message, error) => { failure = message; info = error; },
         }, controller.signal);
         if (!isEditorRequestCurrent(target, controller)) {

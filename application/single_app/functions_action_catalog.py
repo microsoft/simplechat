@@ -140,6 +140,19 @@ def _assert_group_access(user_id, group_id):
     )
 
 
+def resolve_current_user_groups(user_id, user_groups=None):
+    """Resolve ID/record selectors to fresh, role-checked membership records."""
+    user_id = _require_actor(user_id)
+    groups = []
+    for group in _current_groups(user_id, user_groups):
+        try:
+            _assert_group_access(user_id, group["id"])
+        except (PermissionError, LookupError):
+            continue
+        groups.append(group)
+    return groups
+
+
 def _container(scope_type):
     # Raw reads avoid the ordinary getters' workspace-identity credential hydration.
     return getattr(import_module("config"), f"cosmos_{scope_type}_actions_container")
@@ -263,12 +276,8 @@ def build_accessible_action_catalog(user_id, *, settings=None, user_groups=None)
     if _scope_enabled(settings, "global"):
         scopes.append(("global", "global", "Global"))
     if _scope_enabled(settings, "group"):
-        for group in _current_groups(user_id, user_groups):
+        for group in resolve_current_user_groups(user_id, user_groups):
             group_id = group["id"]
-            try:
-                _assert_group_access(user_id, group_id)
-            except (PermissionError, LookupError):
-                continue
             scopes.append(("group", group_id, group.get("name") or "Group"))
 
     catalog = {}

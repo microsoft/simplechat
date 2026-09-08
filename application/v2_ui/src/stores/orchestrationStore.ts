@@ -22,6 +22,7 @@
 // re-plans. What is persisted is the minimum needed to recognise a run that is already running.
 
 import { create } from 'zustand';
+import { normalizeReasoningAdjustments } from '../lib/reasoning';
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
 import {
     applyPlanEdits,
@@ -344,6 +345,7 @@ interface OrchestrationState {
 
     /** Adopt a plan for a turn, replacing any pending question and re-seeding on a new revision. */
     setPlan: (conversationId: string, turnId: string, plan: unknown) => void;
+    mergeReasoningAdjustments: (conversationId: string, turnId: string, adjustments: unknown) => void;
     /** Forget a turn's plan. */
     clearPlan: (conversationId: string, turnId: string) => void;
 
@@ -553,6 +555,20 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
             };
         });
         return true;
+    },
+
+    mergeReasoningAdjustments: (conversationId, turnId, adjustments) => {
+        if (!Array.isArray(adjustments) || !adjustments.length) return;
+        const key = scopeKey(conversationId, turnId);
+        set((state) => {
+            const plan = state.plans[key];
+            if (!plan) return {};
+            const merged = normalizeReasoningAdjustments([
+                ...(plan.reasoning_adjustments ?? []), ...adjustments,
+            ]);
+            if (JSON.stringify(merged) === JSON.stringify(plan.reasoning_adjustments ?? [])) return {};
+            return { plans: { ...state.plans, [key]: { ...plan, reasoning_adjustments: merged } } };
+        });
     },
 
     setPlan: (conversationId, turnId, rawPlan) => {

@@ -7,6 +7,8 @@
 // an index signature rather than being modelled exhaustively, so a backend addition never
 // breaks the build.
 
+import type { ReasoningResolution } from './reasoning';
+
 export type Json = Record<string, unknown>;
 
 export interface Conversation {
@@ -890,6 +892,10 @@ export interface WorkspaceAvailability {
  * why almost everything here is optional.
  */
 export interface ChatStreamEvent {
+    reasoning_adjustments?: ReasoningResolution[];
+    reasoning_effort?: string | null;
+    requested_reasoning_effort?: string | null;
+    reasoning_mode?: 'explicit' | 'model_default';
     type?:
         | 'thought'
         | 'conversation_metadata'

@@ -2,7 +2,7 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.100
+Version: 0.261.104
 Implemented in: 0.261.099
 
 Only production definitions are executed, never their application imports. In particular,
@@ -22,7 +22,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from unittest.mock import patch
 
 
@@ -31,6 +31,21 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 CASE_FILE = Path(__file__).with_name("orchestration_research_cases.json")
 PLANNER_FILE = "functions_orchestration_planner.py"
 REGISTRY_FILE = "functions_orchestration_registry.py"
+
+
+class OfflineAPIError(RuntimeError):
+    """SDK-shaped error seam; importing the real SDK is unnecessary offline."""
+
+
+class OfflineBadRequestError(OfflineAPIError):
+    def __init__(self, message, *, body=None):
+        super().__init__(message)
+        self.body = body or {}
+        self.status_code = 400
+
+
+class OfflineAzureError(RuntimeError):
+    pass
 
 
 def _assignment(tree, name):
@@ -56,7 +71,7 @@ def _definitions(filename, seed=None, names=None):
                 body.append(node)
     namespace = {
         "json": json, "logging": logging, "re": re, "uuid": uuid, "hashlib": hashlib,
-        "Any": Any, "Dict": Dict, "List": List, "Optional": Optional,
+        "Any": Any, "Dict": Dict, "Iterable": Iterable, "List": List, "Optional": Optional,
         # Production telemetry is intentionally disabled for this isolated evaluation.
         "log_event": lambda *args, **kwargs: None,
         **(seed or {}),
@@ -66,6 +81,30 @@ def _definitions(filename, seed=None, names=None):
     if names is not None and set(names) - set(namespace):
         raise ValueError(f"Missing evaluation definitions in {filename}.")
     return namespace
+
+
+def document_action_policy_module():
+    """Load the actual pure settings policy without importing its execution engines."""
+    limits = _definitions("functions_document_analysis.py", names={
+        "CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS", "WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS",
+    })
+    module = types.ModuleType("functions_document_actions")
+    module.__dict__.update(_definitions(
+        "functions_document_actions.py", seed={**limits, "copy": copy},
+    ))
+    return module
+
+
+@contextmanager
+def stubbed_orchestration_imports():
+    """Use real document capability defaults, not an import failure as a disabled gate."""
+    # Keep this opt-in so tests of the document action engine can import their real subject.
+    from .app_stubs import stubbed_app_imports
+
+    with stubbed_app_imports(), patch.dict(sys.modules, {
+        "functions_document_actions": document_action_policy_module(),
+    }):
+        yield
 
 
 @contextmanager
@@ -79,38 +118,48 @@ def planner_runtime():
     }))
     registry = _definitions(REGISTRY_FILE)
     schema = _definitions("functions_orchestration_schema.py", seed=registry)
+    events = _definitions("functions_orchestration_events.py")
     delegation = _definitions("functions_agent_delegation.py", names={"AGENT_PLUGIN_TYPE"})
     catalog = _definitions("functions_action_catalog.py", seed=delegation)
     context = _definitions("functions_orchestration_context.py", seed={
         **registry, "build_action_planner_projection": catalog["build_action_planner_projection"],
-        "deepcopy": copy.deepcopy,
+        "deepcopy": copy.deepcopy, "datetime": datetime, "timezone": timezone,
     }, names={
         "SELECTED_PROMPT_LENGTH", "_text", "_string_list", "_history_text",
-        "_extract_urls", "_selected_prompt", "build_conversation_signals",
+        "_extract_urls", "_selected_prompt", "build_conversation_signals", "resolve_seeds",
         "build_planner_context", "conversation_reference_messages",
         "_elicitation_answer_text", "build_elicitation_user_request",
     })
     planner = _definitions(PLANNER_FILE, seed={
         **registry, **schema,
+        "build_model_reasoning_metadata": events["build_model_reasoning_metadata"],
         "conversation_reference_messages": context["conversation_reference_messages"],
+        "APIError": getattr(sys.modules.get("openai"), "APIError", OfflineAPIError),
+        "BadRequestError": getattr(sys.modules.get("openai"), "BadRequestError", OfflineBadRequestError),
+        "AzureError": OfflineAzureError,
     })
 
     def no_configured_client(settings):
         raise planner["PlannerError"]("No explicit evaluation client was supplied.")
 
     planner["resolve_planner_client"] = no_configured_client
-    with patch.dict(sys.modules, {"functions_source_review": review}):
+    with patch.dict(sys.modules, {
+        "functions_source_review": review,
+        "functions_document_actions": document_action_policy_module(),
+    }):
         yield types.SimpleNamespace(
             planner=planner, registry=registry, schema=schema, context=context,
         )
 
 
 def capture_baseline():
-    """Capture the actual current prompt/projection, without invoking capability gates."""
+    """Capture current guidance and real synthetic context, without resource access."""
     planner_source = (APP_ROOT / PLANNER_FILE).read_text(encoding="utf-8")
     registry_source = (APP_ROOT / REGISTRY_FILE).read_text(encoding="utf-8")
+    context_source = (APP_ROOT / "functions_orchestration_context.py").read_text(encoding="utf-8")
     planner_tree = ast.parse(planner_source)
     registry_tree = ast.parse(registry_source)
+    context_tree = ast.parse(context_source)
     config_tree = ast.parse((APP_ROOT / "config.py").read_text(encoding="utf-8"))
     registry = _definitions(REGISTRY_FILE)
     definitions = {}
@@ -119,23 +168,60 @@ def capture_baseline():
         ("build_planner_messages", planner_tree, planner_source),
         ("CAPABILITY_REGISTRY", registry_tree, registry_source),
         ("build_planner_capability_projection", registry_tree, registry_source),
+        ("build_planner_context", context_tree, context_source),
+        ("resolve_seeds", context_tree, context_source),
     ):
         node = next(
             (item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == name),
             None,
         )
         definitions[name] = ast.get_source_segment(source, node or _assignment(tree, name))
+    suite = load_case_suite()
+    with planner_runtime() as runtime:
+        contexts = {}
+        for case in suite["cases"]:
+            settings, caller, context = case_inputs(runtime, suite, case)
+
+            def capture_call(_client, _deployment, messages, **_kwargs):
+                contexts[case["id"]] = json.loads(messages[1]["content"])
+                # A renderable question ends planning without invoking any execution path.
+                return json.dumps({
+                    "kind": "elicitation", "message": "Synthetic capture only.",
+                    "requested_schema": {
+                        "type": "object", "properties": {"detail": {"type": "string"}},
+                    },
+                }), None
+
+            with patch.dict(runtime.planner, {
+                "resolve_planner_client": lambda _settings: (None, "synthetic-capture"),
+                "_call_planner": capture_call,
+            }):
+                runtime.planner["plan_request"](
+                    case["message"], context, "synthetic-capture", caller["user_id"],
+                    settings=settings, request_context=caller,
+                    seeds=runtime.context["resolve_seeds"](case.get("request") or {}),
+                )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "app_version": ast.literal_eval(_assignment(config_tree, "VERSION").value),
         "capture_method": (
-            "AST literal extraction and execution of registry definitions only; "
-            "no app imports or gates invoked"
+            "Offline production context/planner/registry definitions with synthetic inputs "
+            "and controlled completions; no application bootstrap or service access"
         ),
         "planner_system_prompt": ast.literal_eval(
             _assignment(planner_tree, "PLANNER_SYSTEM_PROMPT").value
         ),
+        "contexts": contexts,
+        "case_inputs_sha256": {
+            case["id"]: hashlib.sha256(
+                json.dumps(
+                    {"settings": suite["settings"], "roles": suite["user_roles"], "case": case},
+                    sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            for case in suite["cases"]
+        },
         "capabilities": registry["build_planner_capability_projection"](
             registry["CAPABILITY_REGISTRY"]
         ),
@@ -148,6 +234,7 @@ def capture_baseline():
         "source_sha256": {
             PLANNER_FILE: hashlib.sha256(planner_source.encode("utf-8")).hexdigest(),
             REGISTRY_FILE: hashlib.sha256(registry_source.encode("utf-8")).hexdigest(),
+            "functions_orchestration_context.py": hashlib.sha256(context_source.encode("utf-8")).hexdigest(),
         },
         "source_definitions": definitions,
     }
@@ -166,12 +253,18 @@ def case_inputs(runtime, suite, case):
         "user_id": "synthetic-evaluation-user",
         "user_roles": copy.deepcopy(case.get("user_roles", suite["user_roles"])),
         "message_urls": [],
-        "agent_catalog": [],
+        "agent_catalog": copy.deepcopy(case.get("agents", [])),
     }
     signals = runtime.context["build_conversation_signals"](
         case.get("prior_messages", []), case["message"],
     )
     context = runtime.context["build_planner_context"](
         case["message"], ledger=copy.deepcopy(case.get("earlier_runs")), signals=signals,
+        seeds=runtime.context["resolve_seeds"](case.get("request") or {}),
+        candidates=copy.deepcopy(case.get("candidate_documents", [])),
+        agents=request_context["agent_catalog"],
+        memory_context=copy.deepcopy(case.get("memory_context")),
     )
+    if "request_time_utc" in context:
+        context["request_time_utc"] = "2026-09-07T12:00:00+00:00"
     return settings, request_context, context

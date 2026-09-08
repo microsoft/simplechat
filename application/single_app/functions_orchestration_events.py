@@ -30,7 +30,7 @@ the same thing:
     plan card ticks specific steps by id, and reverse-engineering that from prose would be
     guesswork.
 
-Version: 0.261.102
+Version: 0.261.104
 """
 
 import json
@@ -176,6 +176,72 @@ def build_planning_thought(content, step_index=1, message_id=None, status='runni
     )
 
 
+def build_model_reasoning_metadata(model, stage='answer'):
+    """Allowlist the binding's actual resolution, never a planner's claimed settings."""
+    resolution = getattr(model, 'reasoning_resolution', None)
+    if not isinstance(resolution, dict):
+        return {}
+    metadata = {
+        'reasoning_effort': resolution.get('effective_effort'),
+        'requested_reasoning_effort': resolution.get('requested_effort'),
+        'reasoning_mode': resolution.get('mode'),
+        'reasoning_adjustments': [],
+    }
+    if resolution.get('adjustment_reason'):
+        metadata['reasoning_adjustments'].append({
+            key: resolution.get(key)
+            for key in ('requested_effort', 'effective_effort', 'mode', 'adjustment_reason')
+        })
+        metadata['reasoning_adjustments'][0].update({
+            'model_name': getattr(model, 'behavior_name', '') or getattr(model, 'deployment', ''),
+            'stage': stage,
+        })
+    return metadata
+
+
+def merge_reasoning_adjustments(*groups):
+    """Keep the latest observed resolution for each model's role in the run."""
+    adjustments = {}
+    for group in groups:
+        if not isinstance(group, (list, tuple)):
+            continue
+        for item in group or ():
+            if not isinstance(item, dict) or not item.get('adjustment_reason'):
+                continue
+            projected = {
+                field: item.get(field)
+                for field in (
+                    'requested_effort', 'effective_effort', 'mode', 'adjustment_reason',
+                    'model_name', 'stage',
+                )
+            }
+            if any(value is not None and not isinstance(value, str) for value in projected.values()):
+                continue
+            adjustments[(projected['stage'], projected['model_name'])] = projected
+    return list(adjustments.values())
+
+
+def build_reasoning_adjustment_event(adjustments):
+    """Use an existing visible thought frame, with structured notice metadata."""
+    messages = []
+    for item in adjustments:
+        requested = str(item.get('requested_effort') or 'model default').title()
+        effective = (
+            str(item['effective_effort']).title()
+            if item.get('effective_effort') is not None else 'Model default'
+        )
+        messages.append(
+            f"Reasoning adjusted from {requested} to {effective} for "
+            f"{item.get('model_name') or 'the selected model'}."
+        )
+    payload = build_thought_payload(
+        STEP_TYPE_PLANNING, ' '.join(messages), 0,
+        activity=build_activity(ACTIVITY_KIND_PLANNING, 'Reasoning setting adjusted', status='completed'),
+    )
+    payload['reasoning_adjustments'] = adjustments
+    return serialize_sse(payload)
+
+
 def build_step_thought(
     step,
     step_index,
@@ -287,6 +353,10 @@ def build_run_done_event(
     model_provider=None,
     model_endpoint_id=None,
     model_id=None,
+    reasoning_effort=None,
+    requested_reasoning_effort=None,
+    reasoning_mode=None,
+    reasoning_adjustments=None,
 ):
     """Terminal frame of the run endpoint.
 
@@ -311,12 +381,16 @@ def build_run_done_event(
         'generated_artifacts': list(artifacts or ()),
         'orchestration': plan_summary or {},
         'status': status,
+        'reasoning_adjustments': list(reasoning_adjustments or ()),
         **{
             key: value for key, value in {
                 'model_deployment_name': model_deployment_name,
                 'model_provider': model_provider,
                 'model_endpoint_id': model_endpoint_id,
                 'model_id': model_id,
+                'reasoning_effort': reasoning_effort,
+                'requested_reasoning_effort': requested_reasoning_effort,
+                'reasoning_mode': reasoning_mode,
             }.items() if value is not None
         },
     })

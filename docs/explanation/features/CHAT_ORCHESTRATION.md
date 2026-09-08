@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.103** (tracked in `application/single_app/config.py`)
+**Version: 0.261.104** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -12,6 +12,7 @@
 **Selected/default model routing fixed in version: 0.261.103**
 **Approval preference persistence fixed in version: 0.261.101**
 **Conversational plan editing implemented in version: 0.261.102**
+**Capability-aware planning and reasoning compatibility fixed in version: 0.261.104**
 
 ## Overview
 
@@ -66,8 +67,10 @@ enablement lives in a nested capability record rather than a flag.
   spend the planner's whole context on file names. A cheap search probe using the user's
   contextualized request is aggregated to distinct documents instead. When the user has
   already selected documents, no probe runs.
-- **Seeds as constraints.** Anything chosen in the composer narrows the plan rather than
-  suggesting to it.
+- **Positive requirements and resource filters.** Supported selected tools, documents,
+  and agents must be used by the initial plan. Unchecked controls are neutral, not
+  permission denials. Other enabled, authorized capabilities remain available.
+  Workspace, tag, and document filters still bound source access.
 - **Accessible actions by description.** Where action access is enabled, the planner
   receives safe metadata for governed actions, not credentials, connection settings or
   every action's function schemas. Scoped references distinguish actions with the same
@@ -78,6 +81,11 @@ enablement lives in a nested capability record rather than a flag.
 - **The run ledger.** A compact, byte-bounded activity summary covering earlier searches,
   produced artifacts, and answered questions. It helps avoid unnecessary repeated work,
   but does not replace message history or prove that source evidence is available.
+- **Saved memory.** Since **0.261.104**, enabled Fact Memory supplies up to eight instruction
+  memories and four relevant embedded facts for planning, planner edits, and answering.
+  Current instructions take precedence. Private conversations use the caller's memory, or
+  the first active group's authorized memory in group/all source mode. Shared conversations,
+  including owner-held hidden source records, do not receive saved memory.
 
 #### Conversational follow-ups
 
@@ -105,8 +113,19 @@ the same context. Changes to the referenced messages or their visibility require
 plan; newly appended turns do not enter an older run.
 
 These rules apply to Auto, countdown, and manual approval. They do not introduce rolling
-summaries or cross-conversation memory. First turns without history and simple
+summaries or cross-conversation transcript lookup. Existing scoped saved memories are
+separate from this history window. First turns without history and simple
 acknowledgments do not require a resolution completion.
+
+Saved memory recall is read-only: it does not autosave facts or fill missing embeddings.
+Unavailable fact search is identified explicitly; query embeddings may still require a
+model call. Only audience and scope markers are retained with the plan or cached
+clarification, not the raw memory prompt. Current settings, membership, and audience are
+checked again before final synthesis; the recalled scope is reauthorized after the model
+call before publication. Questions and replays also enforce those boundaries.
+Answers preserve memory citations. See the
+[capability-context fix](../fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md#read-only-saved-memory)
+for scope and availability details.
 
 Since **0.261.103**, an unused `clarification: null` in the resolver's JSON is
 accepted as "no clarification needed", just like an empty string. It does not
@@ -124,8 +143,9 @@ distinct from an inaccessible or changed conversation.
 Refused, filtered, absent, or incomplete completions are not retried as malformed
 JSON. The resolver does not mistake provider failures for unsupported JSON formatting; only
 an explicit unsupported-response-format error uses the existing no-format
-compatibility fallback. The separate plan generator retains its existing retry
-behavior. No new model setting or API version is required.
+compatibility fallback. The plan generator uses the same narrow format-error rule.
+Model failures are surfaced, not converted into an answer-only plan. No new
+model setting or API version is required.
 
 #### Model selection
 
@@ -157,6 +177,14 @@ length governs answer calls; otherwise reasoning completions have an 8192-token 
 floor so reasoning does not consume the entire smaller visible-output allowance.
 Anthropic completion flags are normalized at the protocol boundary, so successful
 Claude follow-ups pass the same strict checks while truncation and refusal remain failures.
+
+Both chat interfaces consume a canonical, per-model reasoning policy. A configured
+model ID is a preference identity, not a model family. An unsupported stored effort
+uses the policy's supported application default with a visible notice; Luna Minimal
+becomes Low. Explicit supported None is sent unchanged. Unknown support or a narrowly
+classified provider rejection uses the model-managed default and reports that honestly,
+without switching deployments. See the
+[reasoning compatibility fix]({{ '/explanation/fixes/ORCHESTRATION_REASONING_LEVEL_COMPATIBILITY_FIX/' | relative_url }}).
 
 The saved assistant message and terminal stream identify the model that actually answered.
 The existing V2 renderer displays that name. Empty, refused, filtered or failed answer
@@ -232,17 +260,22 @@ documents directly whenever they are already known.
 
 ### Plan
 
-`functions_orchestration_planner.py` triages first. The point of triage is to stop a
-conversational question costing a planning round trip, so triage itself is heuristic rather
-than a model call — doing it with a model would spend exactly the round trip it saves. The
-heuristics are biased towards planning: a false positive costs one cheap call, while a
-false negative answers a document question without looking at the documents.
+Every Orchestrate request reaches `functions_orchestration_planner.py`, including short
+questions and acknowledgments. The planner returns a plan or an elicitation. There is
+no keyword/length shortcut that decides retrieval is unnecessary before the model sees
+the available capabilities. This deliberately adds a planning call to requests that
+previously bypassed it; ordinary chat is unchanged by that orchestration policy.
 
-Where a plan is needed, the planner returns either a plan or an elicitation.
+The context separates available capabilities, their actual unavailability reasons,
+positive user requirements, and authorized resources. Descriptors include outputs and
+per-plan limits, and the context carries the current UTC time. A model's claim that a
+feature is unavailable is not an authorization decision. Discovery failures surface as
+failures instead of silently replacing a catalog with an empty list.
 
-When eligible actions are available, short questions also reach planning: message length
-cannot distinguish a general question from a ticket-status lookup. The existing fast
-path remains when direct actions are disabled or unavailable.
+Initial plans cannot silently drop selected operations or documents. A subsequent
+reviewed edit can narrow them, with a visible warning. Planned Web use is kept separate
+from original Web selection during restoration. Current access and feature gates are
+checked again before execution.
 
 `functions_orchestration_schema.py` holds both contracts and the validator. **Planner
 output is treated as untrusted input.** A plan naming a capability that does not exist,
@@ -572,7 +605,7 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_orchestration_context.py` | Candidate documents, accessible agent/action metadata, seeds, bounded history snapshots, signals, run ledger |
 | `functions_action_catalog.py` | Metadata-only action discovery, scoped references and fresh authorization |
 | `functions_orchestration_actions.py` | Isolated, bounded execution of one selected action |
-| `functions_orchestration_planner.py` | Follow-up resolution, triage, plan synthesis, elicitation, re-planning |
+| `functions_orchestration_planner.py` | Follow-up resolution, capability-aware plan synthesis, elicitation, re-planning |
 | `functions_orchestration_plan_editing.py` | Scoped plan changes, current source checks, and revised execution requests |
 | `functions_orchestration_plan_revisions.py` | Durable edit holds, conditional revision publication, history, and execution claims |
 | `functions_orchestration_adapters.py` | Capability adapters over existing functions |
@@ -667,8 +700,9 @@ research-selection rate is not itself a quality improvement.
 - **A full page reload does not automatically restore the inline interview.** Drafts survive
   paging and navigation within the current browser session; reload recovery is a separate
   capability.
-- **Recent context only.** There is no orchestration rolling summary or cross-chat memory.
-  A reference outside the retained window may need clarification.
+- **Recent transcript context only.** There is no orchestration rolling summary or
+  cross-chat transcript lookup. A reference outside the retained window may need
+  clarification. Enabled scoped fact memories are a separate, bounded source of context.
 - **Automatic per-step model routing is not implemented.** Planning and research use the
   selected/default answer model unless a dedicated planner override is configured.
   Direct action execution receives the answer selection. Models are not selected

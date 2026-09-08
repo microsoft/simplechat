@@ -1,7 +1,7 @@
 # test_orchestration_conversation_context.py
 """
 Functional regressions for bounded, conversation-aware orchestration.
-Version: 0.261.103
+Version: 0.261.104
 Implemented in: 0.261.096
 Resolver response compatibility and bounded recovery: 0.261.103
 
@@ -23,6 +23,7 @@ from openai import AuthenticationError, BadRequestError, RateLimitError
 
 from test_support.app_stubs import stubbed_app_imports, stubbed_config
 from test_support.versioning import assert_app_version_at_least
+from test_support.orchestration_research import document_action_policy_module
 
 
 LATEST = 'Which are open on Wednesdays?'
@@ -60,6 +61,10 @@ def fake_module(name, **values):
 
 
 def load_modules():
+    # These tests need actual policy behavior, not the document engine's Azure bootstrap.
+    policy = patch.dict(sys.modules, {'functions_document_actions': document_action_policy_module()})
+    policy.start()
+    unittest.addModuleCleanup(policy.stop)
     with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'):
         return SimpleNamespace(**{
             name: importlib.import_module(f'functions_orchestration_{name}')
@@ -252,14 +257,14 @@ class ResolutionTests(unittest.TestCase):
         self.assertEqual(result['resolved_message'], 'Explain Python generators.')
         self.assertEqual(result['message_ids'], [])
 
-    def test_factual_follow_up_is_not_trivial_but_transformation_can_be(self):
+    def test_factual_follow_up_and_transformation_both_reach_planning(self):
         planner = self.modules.planner
         result, _ = self.resolve()
         self.assertNotEqual(planner.triage_request(LATEST, {
             'request_resolution': result
         }), 'trivial')
         result['requires_retrieval'] = False
-        self.assertEqual(planner.triage_request('Put those in a table', {
+        self.assertNotEqual(planner.triage_request('Put those in a table', {
             'request_resolution': result
         }), 'trivial')
         self.assertNotEqual(planner.triage_request('Put those in a table', {

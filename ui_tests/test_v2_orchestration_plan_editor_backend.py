@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_editor_backend.py
 """
 Browser-to-Flask regression for editing and running an orchestration plan.
-Version: 0.261.103
+Version: 0.261.104
 Implemented in: 0.261.102
 Selected model continuity through editing and execution: 0.261.103
 
@@ -12,10 +12,12 @@ The shared browser fixture supports local Chromium and configured Azure Playwrig
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlsplit
+from unittest.mock import patch
 
 import pytest
 from playwright.sync_api import expect
@@ -26,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / 'functional_tests'))
 # Reuse the versioned HTTP fixture and the real-component browser harness.
 import test_orchestration_plan_revision_routes as backend_tests  # noqa: E402
 import test_v2_orchestration_plan_editor as editor_tests  # noqa: E402
+from test_model_reasoning_capability_resolution import sdk_error  # noqa: E402
 from test_v2_orchestration_plan_editor import (  # noqa: E402, F401
     connect_options,
     editor_assets,
@@ -40,7 +43,34 @@ pytestmark = pytest.mark.ui
 def integrated_editor(request, editor_browser, editor_assets):
     backend = backend_tests.PlanRevisionRouteTests()
     backend.setUp()
-    selection = backend.use_modern_models() if request.param == 'terra' else {}
+    selection = backend.use_modern_models() if request.param != 'legacy' else {}
+    if request.param == 'luna-stale':
+        selection.update(model_id='luna-model', model_deployment='gpt-5.6-luna')
+        backend.settings['enable_web_search'] = True
+        backend.provider_attempts = []
+        backend.web_queries = []
+        complete = backend.model.chat.completions.create
+
+        def reject_unsupported_effort(**kwargs):
+            backend.provider_attempts.append(kwargs)
+            if kwargs.get('reasoning_effort') == 'minimal':
+                raise sdk_error()
+            return complete(**kwargs)
+
+        def web_search(**kwargs):
+            backend.web_queries.append(kwargs['web_search_query_text'])
+            kwargs['system_messages_for_augmentation'].append({
+                'role': 'system', 'content': 'Web evidence: opening hours from the winery website.',
+            })
+            return True
+
+        backend.model.chat.completions.create = reject_unsupported_effort
+        boundary = backend_tests.context_routes.fake_module(
+            'route_backend_chats', perform_web_search=web_search,
+        )
+        patcher = patch.dict(sys.modules, {'route_backend_chats': boundary})
+        patcher.start()
+        backend.addCleanup(patcher.stop)
     context = editor_browser.new_context(viewport={'width': 1440, 'height': 900})
     page = context.new_page()
     errors = []
@@ -82,7 +112,11 @@ def integrated_editor(request, editor_browser, editor_assets):
     page.route('**/*', forward)
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
-        plan = backend.planned(approval_mode='timed', **selection)
+        plan = backend.planned(
+            approval_mode='manual' if request.param == 'luna-stale' else 'timed',
+            reasoning_effort='minimal' if request.param == 'luna-stale' else '',
+            **selection,
+        )
         seeded = SimpleNamespace(assets=editor_assets, editors={'conv1': {'plan': plan}})
         editor_tests.mount(page, seeded, 'conv1', 'turn1')
         record = backend.runs.read_item(plan['run_id'], 'conv1')
@@ -219,3 +253,45 @@ def test_stale_cancel_does_not_discard_another_tabs_new_question(integrated_edit
     assert discard['elicitation_id'] == newest['pending']['elicitation_id']
     assert discard['elicitation_id'] != old_question['elicitation_id']
     assert backend.editor(newest['plan']['run_id'])['pending'] is None
+
+
+@pytest.mark.parametrize('integrated_editor', ['luna-stale'], indirect=True)
+def test_stale_minimal_is_visibly_adjusted_before_editing_and_running_web_search(integrated_editor):
+    page, backend, requests, original = integrated_editor
+    notice = re.compile(r'Minimal.*Low', re.IGNORECASE | re.DOTALL)
+    expect(page.get_by_text(notice).first).to_be_visible()
+    assert original['reasoning_adjustments'][0]['effective_effort'] == 'low'
+    assert backend.runs.read_item(original['run_id'], 'conv1')['seeds']['reasoning_effort'] == 'minimal'
+
+    dialog = editor_tests.open_editor(page)
+    task = 'Add a web search for the latest winery opening hours.'
+    revised = backend_tests.revised_plan(task, searches=0)
+    revised['steps'].insert(0, {
+        'step_id': 'web', 'capability_id': 'web_search', 'title': 'Search current opening hours',
+        'arguments': {'query': task},
+    })
+    revised['steps'][-1]['depends_on'] = ['web']
+    backend.edit_responses.append(revised)
+    editor_tests.ask(page, task)
+    editor_tests.wait_revision(page, 1, 'conv1', 'turn1')
+    current = editor_tests.state(page, 'conv1', 'turn1')
+    assert current['plan']['inputs']['required_capabilities'] == []
+    assert current['plan']['inputs']['web'] is True
+    expect(dialog.get_by_text(notice).first).to_be_visible()
+
+    dialog.get_by_role('button', name='Run saved revision').click()
+    expect(dialog).to_have_count(0)
+    page.wait_for_function(
+        "() => window.OrchHarness.stores.chat.useChatStore.getState().messages.length === 2",
+    )
+    saved = backend.runs.read_item(current['plan']['run_id'], 'conv1')
+    assert saved['status'] == 'completed'
+    assert backend.web_queries == [task]
+    assert all(call['model'] == 'gpt-5.6-luna' for call in backend.provider_attempts)
+    assert all(call['reasoning_effort'] == 'low' for call in backend.provider_attempts)
+    assert 'Web evidence: opening hours' in json.dumps(backend.model.calls[-1]['messages'])
+    assistant = next(row for row in backend.messages.items.values() if row['id'] == saved['assistant_message_id'])
+    assert assistant['metadata']['reasoning_effort'] == 'low'
+    assert assistant['metadata']['requested_reasoning_effort'] == 'minimal'
+    assert {item['stage'] for item in assistant['metadata']['reasoning_adjustments']} == {'planner', 'answer'}
+    assert len([entry for entry in requests if entry['path'] == '/api/v2/orchestration/run']) == 1

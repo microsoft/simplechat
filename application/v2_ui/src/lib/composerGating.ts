@@ -34,6 +34,7 @@ export interface GatingInput {
     imageGenerationActive: boolean;
     /** True while an agent is selected in the composer. */
     agentActive: boolean;
+    orchestrating?: boolean;
 }
 
 export interface ControlGating {
@@ -84,10 +85,10 @@ export function resolveGating(input: GatingInput): ControlGating {
     // Read URLs needs both the capability and something to read.
     const showUrlAccess = enabled(features, 'enable_url_access') && hasUrls;
 
-    // Deep research needs a source to work from: the web, or URLs that have been provided.
+    // Orchestration research discovers its own sources. Ordinary chat keeps its source gate.
     const showDeepResearch =
         enabled(features, 'enable_source_review') &&
-        (webSearchActive || (urlAccessActive && hasUrls) || hasUrls);
+        (input.orchestrating || webSearchActive || (urlAccessActive && hasUrls) || hasUrls);
 
     return {
         showDocuments: true,
@@ -96,9 +97,9 @@ export function resolveGating(input: GatingInput): ControlGating {
         showUrlAccess,
         showDeepResearch,
         showFileUpload: enabled(features, 'enable_chat_file_uploads'),
-        disabledByImageGeneration: imageGenerationActive,
-        showModelPicker: !imageGenerationActive,
+        disabledByImageGeneration: imageGenerationActive && !input.orchestrating,
+        showModelPicker: !imageGenerationActive || Boolean(input.orchestrating),
         modelPickerInactive: agentActive,
-        showReasoning: !agentActive && !imageGenerationActive,
+        showReasoning: !agentActive && (!imageGenerationActive || Boolean(input.orchestrating)),
     };
 }

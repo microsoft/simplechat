@@ -21,7 +21,7 @@ rather than trusting the key.
 Shaped and styled after ``functions_personal_workflows.py`` so the run/step CRUD reads the
 same as the workflow-run CRUD it sits beside.
 
-Version: 0.261.102
+Version: 0.261.104
 """
 
 import hashlib
@@ -293,6 +293,7 @@ def create_orchestration_run(
         'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id', 'seeds',
         'answered_questions', 'conversation_context', 'request_resolution',
         'resolved_message', 'planning_token_usage', 'original_seeds', 'prompt_selection',
+        'memory_audience', 'memory_scope',
     ):
         if isinstance(turn_context, dict) and key in turn_context:
             record[key] = turn_context[key]
@@ -848,6 +849,9 @@ def prepare_elicitation_outcome(submission, kind, document, turn_context):
     """Durably choose IDs and output before any idempotent run/message writes."""
     current = _read_claimed_record(submission)
     outcome = {'kind': kind, 'document': deepcopy(document)}
+    for key in ('memory_audience', 'memory_scope'):
+        if key in turn_context:
+            outcome[key] = deepcopy(turn_context[key])
     updated = _replace_pending(current, {
         'prepared': {
             'submission': deepcopy(submission['claim']),

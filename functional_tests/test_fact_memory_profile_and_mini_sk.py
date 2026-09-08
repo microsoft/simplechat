@@ -1,7 +1,7 @@
 # test_fact_memory_profile_and_mini_sk.py
 """
 Functional test for profile fact memory recall and mini-SK fact-memory support.
-Version: 0.240.085
+Version: 0.261.104
 Implemented in: 0.240.077; 0.240.079; 0.240.081; 0.240.082; 0.240.083; 0.240.085
 
 This test ensures fact memory supports instruction/fact memory types,
@@ -23,6 +23,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
 STORE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'semantic_kernel_fact_memory_store.py')
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
+CONTEXT_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'functions_fact_memory_context.py')
 PROFILE_ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_frontend_profile.py')
 FEATURE_DOC = os.path.join(
     ROOT_DIR,
@@ -82,7 +83,7 @@ def load_store_class():
 
 def load_tabular_fact_memory_helpers():
     route_source = read_file_text(ROUTE_FILE)
-    parsed = ast.parse(route_source, filename=ROUTE_FILE)
+    parsed = ast.parse(read_file_text(CONTEXT_FILE) + '\n' + route_source, filename=CONTEXT_FILE)
     selected_nodes = []
     selected_constant_names = {
         'FACT_MEMORY_TYPE_FACT',
@@ -354,7 +355,7 @@ def test_route_sources_wire_chat_and_profile_fact_memory_paths():
     assert route_source.count('enabled=fact_memory_enabled') >= 3, route_source
     assert "settings.get('enable_fact_memory_plugin', False)" in route_source
     assert "user_settings.get('enable_agents', True)" in route_source
-    assert 'Fact Memory Recall' in route_source
+    assert 'Fact Memory Recall' in read_file_text(CONTEXT_FILE)
     assert 'Instruction Memory' in route_source
     assert "memory_type': 'instruction'" in route_source or 'FACT_MEMORY_TYPE_INSTRUCTION' in route_source
     assert "'fact_memory'" in route_source

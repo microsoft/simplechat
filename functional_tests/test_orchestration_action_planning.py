@@ -1,7 +1,7 @@
 # test_orchestration_action_planning.py
 """Functional coverage for knowledge-phase action planning and opt-in.
 
-Version: 0.261.098
+Version: 0.261.104
 Implemented in: 0.261.098
 
 Exercises the real registry, planner and validator with model/storage seams mocked.
@@ -12,10 +12,12 @@ import importlib
 import json
 import sys
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 from test_support.app_stubs import APP_ROOT, stubbed_config
+from test_support.orchestration_research import document_action_policy_module
 
 
 SETTINGS = {
@@ -36,9 +38,11 @@ ACTION = {
 }
 
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def modules():
-    with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'):
+    with stubbed_config(cognitive_services_scope='https://cognitiveservices.azure.com/.default'), patch.dict(
+        sys.modules, {'functions_document_actions': document_action_policy_module()},
+    ):
         yield SimpleNamespace(**{
             name: importlib.import_module(f'functions_orchestration_{name}')
             for name in ('registry', 'context', 'schema', 'planner')
@@ -105,11 +109,11 @@ def test_discovery_is_skipped_when_disabled_or_an_agent_was_selected(modules, mo
     ) == []
 
 
-def test_short_action_requests_reach_planning_without_changing_disabled_fast_path(modules):
+def test_short_requests_reach_planning_with_or_without_action_access(modules):
     question = 'Ticket 42 status?'
     context = modules.context.build_planner_context(question, actions=[ACTION])
     assert modules.planner.triage_request(question, context) != 'trivial'
-    assert modules.planner.triage_request(question, {}) == 'trivial'
+    assert modules.planner.triage_request(question, {}) != 'trivial'
 
 
 def test_normalized_plan_identifies_action_safely_and_keeps_phase_order(modules):
@@ -141,7 +145,7 @@ def test_planner_passes_both_action_and_agent_catalogs_to_validation(modules, mo
         'arguments': {'agent_name': 'specialist', 'task': 'Separate specialist task.'},
     })
     monkeypatch.setattr(modules.planner, 'resolve_planner_client', lambda settings: (None, 'planner'))
-    monkeypatch.setattr(modules.planner, '_call_planner', lambda *args: (json.dumps(plan), None))
+    monkeypatch.setattr(modules.planner, '_call_planner', lambda *args, **kwargs: (json.dumps(plan), None))
     context = modules.context.build_planner_context(
         'Gather findings.', agents=[{'name': 'specialist'}], actions=[ACTION],
     )
@@ -158,19 +162,28 @@ def test_planner_passes_both_action_and_agent_catalogs_to_validation(modules, mo
 
 def test_elicitation_retry_keeps_request_gates(modules, monkeypatch):
     replies = iter([json.dumps({'kind': 'elicitation'}), json.dumps(raw_plan())])
+    supplied = []
+
+    def complete(_client, _deployment, messages, *args, **kwargs):
+        assert kwargs['require_complete_response'] is True
+        supplied.append(json.loads(messages[1]['content']))
+        return next(replies), None
+
     monkeypatch.setattr(modules.planner, 'resolve_planner_client', lambda settings: (None, 'planner'))
-    monkeypatch.setattr(modules.planner, '_call_planner', lambda *args: (next(replies), None))
+    monkeypatch.setattr(modules.planner, '_call_planner', complete)
 
     def reject(*args, **kwargs):
         raise modules.schema.PlanValidationError('Unrenderable question')
 
     monkeypatch.setattr(modules.planner, 'normalize_elicitation', reject)
     context = modules.context.build_planner_context('Look up ticket 42.', actions=[ACTION])
-    _, result = modules.planner.plan_request(
-        'Look up ticket 42.', context, 'conversation', 'actor', settings=SETTINGS,
-        request_context={'action_catalog': []},
-    )
-    assert all(step['capability_id'] != 'action_invoke' for step in result['steps'])
+    with pytest.raises(modules.planner.PlannerError):
+        modules.planner.plan_request(
+            'Look up ticket 42.', context, 'conversation', 'actor', settings=SETTINGS,
+            request_context={'action_catalog': []},
+        )
+    assert len(supplied) == 2
+    assert all('action_invoke' not in item['capability_availability']['available'] for item in supplied)
 
 
 def test_route_combines_answer_and_action_usage_without_dropping_either():

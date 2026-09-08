@@ -1,7 +1,7 @@
 # test_orchestration_plan_revision_planner.py
 """
 Functional tests for the plan editor's strict planner contract.
-Version: 0.261.103
+Version: 0.261.104
 Implemented in: 0.261.102
 Authorized model routing through editor replanning: 0.261.103
 
@@ -13,6 +13,9 @@ import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+
+from httpx import Request
+from openai import APIError
 
 from test_orchestration_conversation_context import load_modules
 
@@ -145,7 +148,9 @@ class PlanRevisionPlannerTests(unittest.TestCase):
     def test_provider_failure_is_safe_and_does_not_fall_back(self):
         with (
             patch.object(self.planner, 'resolve_planner_client', return_value=(object(), 'planner')),
-            patch.object(self.planner, '_call_planner', side_effect=RuntimeError('PRIVATE_PROVIDER_DETAIL')),
+            patch.object(self.planner, '_call_planner', side_effect=APIError(
+                'PRIVATE_PROVIDER_DETAIL', request=Request('POST', 'https://model.example'), body=None,
+            )),
         ):
             with self.assertRaises(self.planner.PlannerError) as raised:
                 self.planner.plan_request(

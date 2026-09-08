@@ -5,7 +5,7 @@ Conditional pre-execution editing and execution claims for orchestration plans.
 Revision publication uses a transactional batch in the conversation partition. Neither
 an editor lease nor a browser approval may bypass the run's ETag boundary.
 
-Version: 0.261.102
+Version: 0.261.104
 """
 
 import hashlib
@@ -21,6 +21,8 @@ from azure.cosmos import exceptions
 
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event
+from functions_orchestration_events import merge_reasoning_adjustments
+from functions_orchestration_registry import required_capability_ids
 from functions_orchestration_schema import apply_plan_edits, summarize_plan
 
 
@@ -38,6 +40,7 @@ _RUNNABLE_STATUSES = _EDITABLE_STATUSES | {'approved'}
 _CONTEXT_FIELDS = (
     'seeds', 'answered_questions', 'request_resolution', 'resolved_message',
     'planning_token_usage', 'prompt_selection', 'edit_user_urls',
+    'reasoning_adjustments', 'memory_audience', 'memory_scope',
 )
 _IMMUTABLE_FIELDS = (
     'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id',
@@ -366,12 +369,21 @@ def _claim_is_active(claim):
         return True
 
 
-def _public_plan(plan):
+def _public_plan(plan, *, seeds=None, reasoning_adjustments=None):
     result = {key: deepcopy(plan[key]) for key in _PLAN_FIELDS if key in plan}
     result['steps'] = [
         {key: deepcopy(step[key]) for key in _STEP_FIELDS if key in step}
         for step in plan.get('steps') or []
     ]
+    result['reasoning_adjustments'] = merge_reasoning_adjustments(
+        plan.get('reasoning_adjustments'), reasoning_adjustments,
+    )
+    if not isinstance(result.get('inputs'), dict):
+        result['inputs'] = {}
+    if isinstance(seeds, dict):
+        result['inputs']['required_capabilities'] = required_capability_ids(seeds)
+    else:
+        result['inputs'].setdefault('required_capabilities', [])
     return result
 
 
@@ -430,7 +442,10 @@ def plan_editor_state(record, user_id, *, before_revision=None):
     ]
     pending = (record.get('edit_pending') or {}).get('elicitation')
     return {
-        'plan': _public_plan(record['plan']),
+        'plan': _public_plan(
+            record['plan'], seeds=record.get('seeds'),
+            reasoning_adjustments=record.get('reasoning_adjustments'),
+        ),
         'version': _version(record),
         'edits': deepcopy(record.get('edit_narrowing') or _normalize_edits(record['plan'], None)),
         'chat': _bounded_chat(record.get('edit_chat')),
@@ -723,6 +738,10 @@ def complete_plan_revision(
     }
     if isinstance(turn_context, dict) and 'planning_token_usage' in turn_context:
         updates['planning_token_usage'] = deepcopy(turn_context['planning_token_usage'])
+    if isinstance(turn_context, dict) and 'reasoning_adjustments' in turn_context:
+        updates['reasoning_adjustments'] = merge_reasoning_adjustments(
+            record.get('reasoning_adjustments'), turn_context['reasoning_adjustments'],
+        )
     result = _replace(record, updates)
     claim['completed'] = True
     return result

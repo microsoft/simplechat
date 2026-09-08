@@ -1,7 +1,7 @@
 # test_orchestration_plan_revision_routes.py
 """
 Functional tests for conversational, pre-execution plan revisions.
-Version: 0.261.103
+Version: 0.261.104
 Implemented in: 0.261.102
 Authorized model routing through revisions and clarification: 0.261.103
 
@@ -17,6 +17,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from azure.core.exceptions import AzureError
+from httpx import Request
+from openai import APIError
 
 import test_orchestration_conversation_context_routes as context_routes
 from test_orchestration_model_selection import TERRA_SELECTION
@@ -333,7 +335,15 @@ class PlanRevisionRouteTests(unittest.TestCase):
         editor = self.open_editor()
         invalid = revised_plan()
         invalid['steps'][0]['capability_id'] = 'not_enabled_or_registered'
-        for reply in (invalid, {'kind': 'plan', 'steps': []}, RuntimeError('provider-secret')):
+        provider_error = APIError(
+            'provider-secret', request=Request('POST', 'https://model.example'), body=None,
+        )
+        for reply in (
+            invalid, {'kind': 'plan', 'steps': []},
+            {'kind': 'plan', 'revised_request': 'Keep the current task.', 'steps': []},
+            {'kind': 'plan', 'revised_request': 'Keep the current task.', 'steps': 'not-a-list'},
+            provider_error,
+        ):
             with self.subTest(reply=type(reply).__name__):
                 self.edit_responses.append(reply)
                 _response, events, _body = self.request_revision(editor)

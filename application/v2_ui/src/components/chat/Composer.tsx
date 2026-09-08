@@ -2,7 +2,7 @@
 // The message input surface: textarea, send/stop control, model / agent / prompt pickers
 // and the capability toggles that map onto the /api/chat/stream request fields.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
@@ -33,7 +33,7 @@ import { sendCollaborationTyping } from '../../lib/collaboration';
 import { agentSelectionKey } from '../../lib/agents';
 import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestSelection';
 import { modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
-import { resolveGating } from '../../lib/composerGating';
+import { promptUrls, resolveGating } from '../../lib/composerGating';
 import { resolveDocumentScope } from '../../lib/documentScope';
 import {
     addContextItem,
@@ -84,9 +84,9 @@ import { chatWidthClass } from '../../lib/chatWidth';
 import {
     getModelSupportedLevels,
     reasoningModelKey,
-    resolveReasoningEffort,
+    resolveReasoningSelection,
+    reasoningAdjustmentMessage,
     REASONING_LABELS,
-    supportsReasoning,
     type ReasoningEffortSettings,
 } from '../../lib/reasoning';
 import { Dropdown, type DropdownOption } from '../ui/Dropdown';
@@ -285,6 +285,13 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         setOrchestrationOn((on) => !on);
     };
     const orchestrating = orchestrationOn && orchestrationAvailable;
+    const [excludeImageForThisMessage, setExcludeImageForThisMessage] = useState(false);
+    const imageSelectionNoticeId = useId();
+    const imageSelectionNoticeRef = useRef<HTMLDivElement>(null);
+    const imageSelectionBlocked = orchestrating && options.imageGeneration && !excludeImageForThisMessage;
+    useEffect(() => {
+        setExcludeImageForThisMessage(false);
+    }, [orchestrating, activeConversationId]);
 
     // The disclosure that hides the manual controls while orchestrating. Only reachable when the
     // administrator leaves them reachable; otherwise the planner owns every decision and there is
@@ -334,31 +341,42 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         [bootstrap, options.agentSelection],
     );
 
-    // Which controls are relevant right now. Deep research and Read URLs depend on what is
-    // currently typed, not only on what is enabled.
+    // A URL in an attached prompt is just as actionable as one typed underneath it.
+    const gatingPrompt = orchestrating
+        ? buildComposerDraftSubmission(draft, promptContext()).message
+        : text;
+    const hasPromptUrls = promptUrls(gatingPrompt).length > 0;
     const gating = useMemo(
         () =>
             resolveGating({
-                prompt: text,
+                prompt: gatingPrompt,
                 features: features as Record<string, unknown>,
                 webSearchActive: options.webSearch,
                 urlAccessActive: options.urlAccess,
                 imageGenerationActive: options.imageGeneration,
                 agentActive,
+                orchestrating,
             }),
         [
-            text,
+            gatingPrompt,
             features,
             options.webSearch,
             options.urlAccess,
             options.imageGeneration,
             agentActive,
+            orchestrating,
         ],
     );
 
-    // A control that stops being relevant must not leave its option set behind it, or the
-    // request would carry a capability the user can no longer see they enabled.
+    // No URLs means the draft no longer has a Read URLs selection. A capability losing
+    // authorization is different: keep that requirement visible for server validation.
     useEffect(() => {
+        if (orchestrating) {
+            if (!hasPromptUrls) {
+                setOptions((current) => current.urlAccess ? { ...current, urlAccess: false } : current);
+            }
+            return;
+        }
         setOptions((current) => {
             const next = { ...current };
             let changed = false;
@@ -372,7 +390,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             }
             return changed ? next : current;
         });
-    }, [gating.showUrlAccess, gating.showDeepResearch]);
+    }, [hasPromptUrls, gating.showUrlAccess, gating.showDeepResearch, orchestrating]);
 
     // Apply the server's preferred model once bootstrap resolves. Stored as the same
     // selection key the picker uses, so the full identity can be resolved from it.
@@ -545,45 +563,41 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         options.modelDeployment,
     );
 
-    // Both the offered levels and the key the chosen level is stored under come from this
-    // one name, so the classic interface finds the same entry in the shared map.
+    // Storage identity is deliberately separate from the authorized model's policy.
     const reasoningKey = reasoningModelKey(
         selectedModel,
-        modelOptions.find((option) => option.value === options.modelDeployment)?.label ||
-            options.modelDeployment,
+        options.modelDeployment,
     );
+    const reasoningPolicy = selectedModel?.reasoning_capabilities;
+    const pendingLevels = useRef<ReasoningEffortSettings>({});
+    const [reasoningNotice, setReasoningNotice] = useState<{
+        key: string; message: string; effectiveEffort: string | undefined;
+    } | null>(null);
 
     const reasoningLevels: DropdownOption[] = useMemo(() => {
-        if (!supportsReasoning(reasoningKey)) {
-            return [];
-        }
-        return getModelSupportedLevels(reasoningKey).map((level) => ({
+        return getModelSupportedLevels(reasoningPolicy).map((level) => ({
             value: level,
             label: REASONING_LABELS[level],
         }));
-    }, [reasoningKey]);
+    }, [reasoningPolicy]);
 
     // The level in effect is derived from the model and what has been stored for it, never
     // remembered on its own. A level chosen for one model must not follow the user to
     // another, and a model that offers no choice must not carry one into the request at all.
     //
-    // Nothing is derived without a model to derive it from. A single-endpoint deployment has
-    // no model catalog, so the offered levels are a guess and a default would attach a
-    // parameter to every request that the user never asked for. There the control stays
-    // opt-in for the session, as it was before.
+    // Without a published supported policy, use model default rather than inventing levels.
     //
     // Agent mode is deliberately not a condition here. It hides the control and drops the
     // level from the request in `buildSelectionFields`, which is where that rule lives; the
     // level stays derived from the model underneath, so clearing the agent brings it back.
-    const derivedReasoning =
-        reasoningKey && reasoningLevels.length > 0
-            ? resolveReasoningEffort(reasoningKey, reasoningEffortSettings)
-            : undefined;
+    const reasoningResolution = resolveReasoningSelection(
+        reasoningKey,
+        { ...reasoningEffortSettings, ...pendingLevels.current },
+        reasoningPolicy,
+    );
+    const derivedReasoning = reasoningResolution.effective_effort ?? undefined;
 
     useEffect(() => {
-        if (!reasoningKey) {
-            return;
-        }
         setOptions((current) =>
             current.reasoningEffort === derivedReasoning
                 ? current
@@ -599,8 +613,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * because a preference that quietly fails to save is the defect this change is fixing.
      * A map rather than a single entry, so choosing for two models in that window keeps both.
      */
-    const pendingLevels = useRef<ReasoningEffortSettings>({});
-
     const storeReasoningLevels = (levels: ReasoningEffortSettings) => {
         // Read at write time rather than from the render's closure, so a map that arrived
         // between the choice and the write is merged into rather than replaced.
@@ -621,8 +633,28 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [settingsLoaded]);
 
+    useEffect(() => {
+        if (!reasoningKey || !settingsLoaded || !reasoningResolution.adjustment_reason) {
+            return;
+        }
+        const message = reasoningAdjustmentMessage(
+            reasoningResolution, selectedModel?.model_name || selectedModel?.display_name,
+        );
+        setReasoningNotice((current) =>
+            current?.key === reasoningKey && current.message === message
+                ? current : { key: reasoningKey, message, effectiveEffort: derivedReasoning },
+        );
+        // Only correct entries with a known supported replacement. Unknown policies must not
+        // erase a saved preference, especially while a refreshed catalog is still arriving.
+        if (derivedReasoning && !pendingLevels.current[reasoningKey]) {
+            storeReasoningLevels({ [reasoningKey]: derivedReasoning });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reasoningKey, reasoningResolution.requested_effort, derivedReasoning, settingsLoaded, reasoningPolicy]);
+
     /** Store a chosen level against the current model, for both interfaces to read back. */
     const chooseReasoningLevel = (level: string | undefined) => {
+        setReasoningNotice(null);
         if (!level) {
             // Only reachable where the control is clearable, which is where no level is
             // stored, so there is nothing to clear but the session's own choice.
@@ -632,8 +664,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
         setOptions((current) => ({ ...current, reasoningEffort: level }));
 
-        // A single-endpoint deployment has no model catalog, so there is no identity to
-        // store the choice against. It still applies for the rest of the session.
+        // A catalog-less selection has no persistent identity to store against.
         if (!reasoningKey) {
             return;
         }
@@ -643,6 +674,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             return;
         }
 
+        pendingLevels.current = { ...pendingLevels.current, [reasoningKey]: level };
         if (settingsFailed) {
             // The map was never read, so writing would replace it. Saying so is better than
             // a control that appears to save and does not.
@@ -651,8 +683,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             );
             return;
         }
-
-        pendingLevels.current = { ...pendingLevels.current, [reasoningKey]: level };
     };
 
     /**
@@ -703,6 +733,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
     const submit = (allowUnfilled = false) => {
         if (streaming || !canPost || uploadsBlocked) {
+            return;
+        }
+        if (imageSelectionBlocked) {
+            imageSelectionNoticeRef.current?.focus();
             return;
         }
         if (orchestrating && approvalBlocked) {
@@ -768,6 +802,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         uploadConversationRef.current = null;
         setShowPromptWarning(false);
         setPromptReview({ instance: 0, request: 0 });
+        setExcludeImageForThisMessage(false);
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
@@ -799,12 +834,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * Assemble the seeds a plan request carries from the manual controls.
      *
      * These do not replace the planner's judgement, they constrain it: a document the user
-     * pinned, an agent or model they chose, a saved prompt, a web-search preference. Only the
-     * capabilities with a documented seed field travel — the planner owns image, deep research
-     * and URL access, so those toggles inform the classic path alone. `buildSelectionFields`
+     * pinned, an agent or model they chose, a saved prompt, a supported capability.
+     * Unchecked controls are neutral, not permission denials. `buildSelectionFields`
      * keeps the agent-XOR-model exclusivity the chat request already relies on.
      */
-    const buildOrchestrationSeeds = (promptInfo: Json | null = null): Record<string, unknown> => {
+    const buildOrchestrationSeeds = (message: string, promptInfo: Json | null = null): Record<string, unknown> => {
         const workspaces = contextScopes(contextItems);
         const scope = resolveDocumentScope({
             activeGroupId: bootstrap?.scope?.active_group_id,
@@ -815,6 +849,12 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
         const seeds: Record<string, unknown> = {
             web_search_enabled: options.webSearch,
+            required_capabilities: [
+                ...(options.documentSearch || contextItems.length > 0 ? ['document_search'] : []),
+                ...(options.webSearch ? ['web_search'] : []),
+                ...(options.deepResearch ? ['deep_research'] : []),
+                ...(options.urlAccess && promptUrls(message).length > 0 ? ['url_fetch'] : []),
+            ],
             selected_document_ids: contextDocumentIds(contextItems),
             // Names for those ids, so the planner can reason about "the Q3 contract" and the
             // approval card can be read. Display only -- the server authorizes from the ids.
@@ -866,7 +906,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             conversationId,
             message,
             approvalMode: effectiveApprovalMode,
-            seeds: buildOrchestrationSeeds(promptInfo),
+            seeds: buildOrchestrationSeeds(message, promptInfo),
         });
         clearDraft();
         stopTyping();
@@ -994,7 +1034,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
      * quoting an uploaded document and text from a document should not become part of the next
      * instruction without a deliberate act.
      */
-    const promptContext = () => {
+    function promptContext() {
         const ownMessages = messages.filter((message) => message.conversation_id === activeConversationId);
         const lastOfRole = (role: string) =>
             [...ownMessages].reverse().find((message) => message.role === role);
@@ -1009,7 +1049,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
             lastUserMessage: user ? messageToPlainText(user) : '',
             composerText: text,
             selectedDocuments: contextItems.filter((item) => item.kind === 'document').map((item) => item.label),
-        };
+        }
     };
 
     const attachPrompt = (prompt: PromptOption) => {
@@ -1104,6 +1144,73 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 {/* Above the input, matching the classic interface: the warning belongs
                     next to the message it is about, not below the send button. */}
                 <WebSearchNotice active={options.webSearch} />
+                {!agentActive && reasoningNotice?.key === reasoningKey &&
+                    reasoningNotice.effectiveEffort === derivedReasoning && (
+                    <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
+                        {reasoningNotice.message}
+                    </p>
+                )}
+                {imageSelectionBlocked && (
+                    <div
+                        id={imageSelectionNoticeId}
+                        ref={imageSelectionNoticeRef}
+                        role="alert"
+                        tabIndex={-1}
+                        className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn"
+                    >
+                        Image is selected, but Orchestrate cannot generate images.
+                        Choose how to send before continuing. Your regular Chat image preference is unchanged.
+                        <div className="mt-2 flex flex-wrap gap-3">
+                            <button
+                                type="button"
+                                className="font-medium underline"
+                                onClick={() => {
+                                    toggleOrchestration();
+                                    textareaRef.current?.focus();
+                                }}
+                            >
+                                Use regular Chat with Image
+                            </button>
+                            <button
+                                type="button"
+                                className="font-medium underline"
+                                onClick={() => {
+                                    setExcludeImageForThisMessage(true);
+                                    textareaRef.current?.focus();
+                                }}
+                            >
+                                Use Orchestrate without Image for this message
+                            </button>
+                        </div>
+                    </div>
+                )}
+                {orchestrating && options.imageGeneration && excludeImageForThisMessage && (
+                    <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
+                        This orchestration message will not generate images. Image remains selected for regular Chat.
+                    </p>
+                )}
+                {orchestrating && (
+                    (options.deepResearch && !gating.showDeepResearch) ||
+                    (options.webSearch && !gating.showWeb) ||
+                    (options.urlAccess && !gating.showUrlAccess)
+                ) && (
+                    <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
+                        A selected retrieval requirement is no longer available in the current controls.
+                        It will still be sent for server validation, not silently removed.
+                        <button
+                            type="button"
+                            className="ml-2 underline"
+                            onClick={() => setOptions((current) => ({
+                                ...current,
+                                deepResearch: gating.showDeepResearch && current.deepResearch,
+                                webSearch: gating.showWeb && current.webSearch,
+                                urlAccess: gating.showUrlAccess && current.urlAccess,
+                            }))}
+                        >
+                            Clear unavailable selections
+                        </button>
+                    </p>
+                )}
 
                 {orchestrating && approvalOverridable && (
                     <div className="space-y-1 text-xs">
@@ -1170,7 +1277,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         promptContext={promptContext()}
                         actionsRef={editorActionsRef}
                         showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
-                        submitDisabled={streaming || uploadsBlocked}
+                        submitDisabled={streaming || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
                         promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
                         onSendWithUnfilled={() => submit(true)}
                         knowledgeAgent={buildSelectionFields({
@@ -1381,7 +1488,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
 
                                 {gating.showImage && (
                                     <ToolToggle
-                                        active={options.imageGeneration}
+                                        active={options.imageGeneration && !orchestrating}
+                                        disabled={orchestrating}
                                         onClick={() =>
                                             setOptions((current) => ({
                                                 ...current,
@@ -1389,14 +1497,11 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                             }))
                                         }
                                         icon={<ImageIcon size={15} />}
-                                        label="Image"
+                                        label={orchestrating ? 'Image unavailable in Orchestrate' : 'Image'}
                                     />
                                 )}
 
-                                {/* Deep research sets both source_review_enabled and
-                                    deep_research_enabled, matching the existing client. It appears
-                                    only once there is something to research: web search, or URLs
-                                    in the prompt. */}
+                                {/* In Orchestrate this is a positive requirement, independent of Web. */}
                                 {gating.showDeepResearch && (
                                     <ToolToggle
                                         active={options.deepResearch}
@@ -1495,7 +1600,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || (orchestrating && approvalBlocked)}
+                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
+                                    aria-describedby={imageSelectionBlocked ? imageSelectionNoticeId : undefined}
                                     aria-label={
                                         shared && !streaming
                                             ? 'Send to this conversation'
