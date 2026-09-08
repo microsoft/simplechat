@@ -1154,10 +1154,23 @@ def _copy_legacy_group_messages_to_collaboration(source_conversation_id, collabo
 
 
 def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, owner_user, invited_participants=None):
-    source_conversation_doc = cosmos_group_conversations_container.read_item(
-        item=source_conversation_id,
-        partition_key=source_conversation_id,
-    )
+    source_container = cosmos_group_conversations_container
+    copy_source_messages = _copy_legacy_group_messages_to_collaboration
+    source_link_field = 'legacy_source_conversation_id'
+    try:
+        source_conversation_doc = source_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        # Group context can classify a conversation without moving its backing stores.
+        source_container = cosmos_conversations_container
+        copy_source_messages = _copy_legacy_personal_messages_to_collaboration
+        source_link_field = 'source_conversation_id'
+        source_conversation_doc = source_container.read_item(
+            item=source_conversation_id,
+            partition_key=source_conversation_id,
+        )
     owner_summary = owner_user or {}
     owner_user_id = str(owner_summary.get('user_id') or '').strip()
     if not owner_user_id:
@@ -1236,8 +1249,9 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     )
     collaboration_conversation_doc['strict'] = bool(source_conversation_doc.get('strict', False))
     collaboration_conversation_doc['summary'] = source_conversation_doc.get('summary')
-    collaboration_conversation_doc['legacy_source_conversation_id'] = source_conversation_id
-    collaboration_conversation_doc['legacy_source_scope'] = 'group'
+    collaboration_conversation_doc[source_link_field] = source_conversation_id
+    if source_link_field == 'legacy_source_conversation_id':
+        collaboration_conversation_doc['legacy_source_scope'] = 'group'
 
     source_context = list(source_conversation_doc.get('context', []) or [])
     if source_context:
@@ -1249,7 +1263,7 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     if source_locked_contexts:
         collaboration_conversation_doc['locked_contexts'] = source_locked_contexts
 
-    copied_messages = _copy_legacy_group_messages_to_collaboration(
+    copied_messages = copy_source_messages(
         source_conversation_id,
         collaboration_conversation_doc.get('id'),
         owner_summary,
@@ -1270,7 +1284,9 @@ def ensure_group_collaboration_for_legacy_conversation(source_conversation_id, o
     source_conversation_doc['converted_to_collaboration_at'] = conversion_timestamp
     source_conversation_doc['is_hidden'] = True
     source_conversation_doc['last_updated'] = conversion_timestamp
-    cosmos_group_conversations_container.upsert_item(source_conversation_doc)
+    source_container.upsert_item(source_conversation_doc)
+    invalidate_conversation_cache_for_item(source_conversation_doc, reason="collaboration_source_converted")
+    invalidate_conversation_cache_for_item(collaboration_conversation_doc, reason="collaboration_converted")
 
     log_event(
         '[COLLABORATION] Converted group conversation into collaborative conversation',

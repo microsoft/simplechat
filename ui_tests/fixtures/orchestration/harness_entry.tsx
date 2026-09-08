@@ -22,6 +22,7 @@ import * as controller from '../../../application/v2_ui/src/lib/orchestrationCon
 import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
 import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
 import * as resume from '../../../application/v2_ui/src/lib/orchestrationResume';
+import * as sharing from '../../../application/v2_ui/src/lib/sharing';
 
 import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
 import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
@@ -32,6 +33,8 @@ import { OrchestrationPlanEditorHost } from '../../../application/v2_ui/src/comp
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
+import { ParticipantsPanel } from '../../../application/v2_ui/src/components/chat/ParticipantsPanel';
+import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
 
 function PlanEditorExperience() {
     const conversationId = chatStore.useChatStore((state) => state.activeConversationId);
@@ -101,7 +104,9 @@ type ComponentName =
     | 'ApprovalPreferenceWorkflow'
     | 'PlanEditorExperience'
     | 'OrchestrationPlanEditorHost'
-    | 'ContextWorkflow';
+    | 'ContextWorkflow'
+    | 'ParticipantsPanel'
+    | 'Toaster';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const components: Record<ComponentName, (props: any) => ReactElement | null> = {
@@ -117,6 +122,8 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     PlanEditorExperience,
     OrchestrationPlanEditorHost,
     ContextWorkflow,
+    ParticipantsPanel,
+    Toaster,
 };
 
 const roots = new Map<string, Root>();
@@ -234,6 +241,7 @@ const harness = {
     plan,
     orchestration,
     resume,
+    sharing,
     components,
 };
 

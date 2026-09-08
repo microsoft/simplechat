@@ -11,6 +11,7 @@
 // chat-collaboration.js.
 
 import { isCollaborative } from './types';
+import { primaryContext, resolveChatType } from './conversationBadges';
 import type { Conversation, ConversationMetadata } from './types';
 import type { ParticipantsPanelTarget } from '../stores/collaborationStore';
 
@@ -21,17 +22,16 @@ import type { ParticipantsPanelTarget } from '../stores/collaborationStore';
  * so offering to share one would present an action with nothing behind it.
  */
 const SHAREABLE_CHAT_TYPES = new Set([
-    '',
     'personal_single_user',
     'personal_multi_user',
+    'group',
     'group-single-user',
+    'group_single_user',
     'group_multi_user',
 ]);
 
 function chatTypeOf(conversation: Conversation | ConversationMetadata | null | undefined): string {
-    return String(conversation?.chat_type ?? '')
-        .trim()
-        .toLowerCase();
+    return resolveChatType(conversation).toLowerCase();
 }
 
 /** Whether a Share action should be offered for this conversation at all. */
@@ -57,16 +57,22 @@ export function panelTargetForConversation(
     conversation: Conversation | ConversationMetadata | null | undefined,
 ): ParticipantsPanelTarget {
     const chatType = chatTypeOf(conversation);
-    const groupId =
-        (conversation?.group_id as string | undefined) ??
-        (conversation?.scope as { group_id?: string } | undefined)?.group_id ??
-        null;
+    const scope = conversation?.scope;
+    const scopeGroupId =
+        scope && typeof scope === 'object' && 'group_id' in scope ? scope.group_id : undefined;
+    // Regular-stored group chats carry their workspace in primary context, not scope.
+    const groupId = [
+        conversation?.group_id,
+        scopeGroupId,
+        primaryContext(conversation, 'group')?.id,
+    ].find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        ?.trim() ?? null;
 
     if (isCollaborative(conversation)) {
         return {
             conversationId,
             kind: 'collaborative',
-            title: conversation?.title as string | undefined,
+            title: conversation?.title,
             groupId,
         };
     }
@@ -74,7 +80,7 @@ export function panelTargetForConversation(
     return {
         conversationId,
         kind: chatType.startsWith('group') ? 'group' : 'personal',
-        title: conversation?.title as string | undefined,
+        title: conversation?.title,
         groupId,
     };
 }
