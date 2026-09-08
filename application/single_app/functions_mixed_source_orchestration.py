@@ -706,6 +706,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "public_workspace_id": public_workspace_id,
         "conversation_id": conversation_id,
         "source_version": source_version,
+        "source_revision": document_item.get("_etag") or document_item.get("updated_at") or document_item.get("last_updated"),
         "storage_locator": storage_locator,
         "xsd_logical_path": document_item.get("xsd_logical_path"),
         "xsd_schema_status": document_item.get("xsd_schema_status"),

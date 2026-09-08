@@ -1,5 +1,6 @@
 // OrchestrationPlanCard.tsx
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
+import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -122,6 +123,11 @@ export function OrchestrationPlanCard({
     const inFlightMap = useOrchestrationStore((state) => state.inFlight);
     const historyMap = useOrchestrationStore((state) => state.history);
     const setDrawerMode = useChatStore((state) => state.setDrawerMode);
+    const hasSavedNotice = useChatStore((state) => state.messages.some((message) => {
+        const metadata = message.metadata?.orchestration;
+        return metadata && typeof metadata === 'object' && 'run_id' in metadata
+            && metadata.run_id === plan?.run_id;
+    }));
 
     const editedPlan = useMemo(
         () => (plan ? applyPlanEdits(plan, edits) : null),
@@ -198,8 +204,10 @@ export function OrchestrationPlanCard({
     //
     // This is why the card renders from the store rather than from message markdown: there
     // is nothing to clean up when it stops being relevant, it simply stops rendering.
-    if (historyEntry && !runInFlight) {
-        return null;
+    if ((historyEntry || isPlanTerminal(plan)) && !runInFlight) {
+        if (hasSavedNotice) return null;
+        return <OrchestrationRecoveryNotice conversationId={conversationId}
+            runId={plan.run_id} plan={plan} status={plan.status} />;
     }
 
     // Running: a compact progress line. The full step list is a click away in the drawer, so this
@@ -219,6 +227,8 @@ export function OrchestrationPlanCard({
         return (
             <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
                 <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
+                <OrchestrationRecoveryNotice conversationId={conversationId}
+                    runId={plan.run_id} plan={plan} status={plan.status} />
                 <div className="flex items-center gap-2 text-sm">
                     <Loader2 size={15} className="shrink-0 animate-spin text-accent" />
                     <span className="min-w-0 flex-1 truncate text-text-1" title={summary.intent_summary}>
