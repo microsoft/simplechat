@@ -1,7 +1,7 @@
 // test_v2_model_connections_logic.mjs
 //
 // Runtime test for the V2 global model connection form logic.
-// Version: 0.261.059
+// Version: 0.261.102
 // Implemented in: 0.261.059
 //
 // The classic connection editor decided which fields a provider and auth type needed by
@@ -151,9 +151,16 @@ check('an endpoint without a scheme is refused', () => {
 check('Azure OpenAI discovery requires the resource coordinates', () => {
     const errors = validateConnection(
         validAoai({ management: { subscription_id: '', resource_group: '' } }),
+        { requireDiscovery: true },
     );
     assert.ok(errors.subscription_id);
     assert.ok(errors.resource_group);
+});
+
+check('manual model connections do not require discovery-only resource coordinates', () => {
+    assert.deepEqual(validateConnection(
+        validAoai({ management: { subscription_id: '', resource_group: '' } }),
+    ), {});
 });
 
 check('an API key connection does not demand the discovery coordinates', () => {

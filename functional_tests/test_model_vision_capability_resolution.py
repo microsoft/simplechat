@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_model_vision_capability_resolution.py
+#!/usr/bin/env python3
 """
 Functional test for how the application decides a model can accept images.
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.084
 
 Multi-Modal Vision Analysis sends page images to a model, so it can only offer
@@ -107,10 +107,11 @@ def test_the_catalog_overrules_the_name_heuristic():
         "text-only, and offering it for image analysis would fail at runtime."
     )
 
-    # A real vision model resolves from the catalog rather than by its name.
-    supports, source = resolve("gpt-5.6-sol")
-    assert supports is True, "gpt-5.6-sol should resolve as vision-capable."
-    assert source == capabilities_module.VISION_SOURCE_CATALOG, source
+    # Both newer and older vision models resolve from catalog metadata.
+    for model_name in ("gpt-5.6-sol", "gpt-4o"):
+        supports, source = resolve(model_name)
+        assert supports is True, f"{model_name} should resolve as vision-capable."
+        assert source == capabilities_module.VISION_SOURCE_CATALOG, source
 
     print("  The catalog decides where it disagrees with the heuristic.")
     return True
@@ -151,12 +152,11 @@ def test_an_unknown_model_still_falls_back_to_the_heuristic():
     """Refusing to guess would hide working models from existing deployments."""
     print("\nTesting the heuristic fallback...")
 
-    # gpt-4o has a reasoning-only record, not a vision declaration.
-    # A great many deployments still run it, so the heuristic still has to
-    # recognise it rather than the model disappearing from the picker.
-    supports, source = resolve("gpt-4o")
+    # Use an uncatalogued deployment with an explicit vision marker. GPT-4o is
+    # now catalogued, so it no longer exercises the legacy fallback.
+    supports, source = resolve("acme-vision-deployment")
     assert supports is True, (
-        "gpt-4o resolved as not vision-capable. It has no vision declaration, "
+        "The uncatalogued vision deployment resolved as not vision-capable. "
         "so the heuristic has to carry it, or existing deployments would lose "
         "the model they are using."
     )

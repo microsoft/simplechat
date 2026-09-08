@@ -17,6 +17,7 @@ import re
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import date
 
 
 MODEL_IDENTIFIER_SEPARATOR_PATTERN = re.compile(r"[\s_.]+")
@@ -243,6 +244,35 @@ def _read_declared_capabilities(source):
                 declared[CAPABILITY_PROCESSES_IMAGES] = value.strip().lower() in ("true", "on", "yes", "1")
                 break
     return declared
+
+
+def get_model_catalog_capabilities(model):
+    """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
+
+    Vision retains its legacy deployment-name heuristic separately. Image tool
+    support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
+    """
+    if isinstance(model, Mapping):
+        underlying = model.get("modelName")
+    else:
+        underlying = getattr(model, "modelName", None)
+    identifiers = [underlying] if str(underlying or "").strip() else _iter_model_identifiers(model)
+    catalog = load_model_capability_catalog()
+    for identifier in identifiers:
+        normalized = _normalize_model_identifier(identifier)
+        if normalized not in catalog:
+            snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
+            if not snapshot or snapshot.group(1) not in catalog:
+                continue
+            try:
+                date(*(int(value) for value in snapshot.groups()[1:]))
+            except ValueError:
+                continue
+            normalized = snapshot.group(1)
+        capabilities = catalog[normalized]
+        if any(isinstance(value, bool) for value in capabilities.values()):
+            return dict(capabilities)
+    return None
 
 
 def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):

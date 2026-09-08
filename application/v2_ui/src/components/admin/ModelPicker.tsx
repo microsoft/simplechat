@@ -37,9 +37,12 @@ export function ModelPicker({
     const id = `admin-field-${field.key}`;
     const current = asString(value);
 
-    const eligible = field.requires_vision
-        ? models.filter((model) => model.supports_vision)
-        : models;
+    const eligible = models.filter((model) =>
+        model.supports_chat !== false &&
+        model.capability_status?.chat?.supported !== false &&
+        model.capability_status?.chat?.available !== false &&
+        (!field.requires_vision || model.supports_vision),
+    );
 
     const selected = eligible.find((model) => model.deployment === current);
 
@@ -76,7 +79,7 @@ export function ModelPicker({
             {!eligible.length ? (
                 <p className="mt-1.5 text-xs text-warn">
                     {field.requires_vision
-                        ? 'No deployed model reports image support. Check the models on your endpoints under AI Models.'
+                        ? 'No available chat model reports image input support. Check AI Connections under AI Models.'
                         : 'No models are deployed yet. Add one under AI Models.'}
                 </p>
             ) : null}
