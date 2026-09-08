@@ -210,6 +210,7 @@ def _assert_editable(record):
     if (
         record.get('status') not in _EDITABLE_STATUSES or record.get('started_at')
         or 'superseded_by_run_id' in record
+        or record.get('retry_of_run_id') or record.get('checkpoints_deleted')
     ):
         raise _changed(record)
 
@@ -772,6 +773,10 @@ def claim_plan_run(
 ):
     """Atomically turn a current pre-execution plan into the one executable run."""
     record = read_revision_run(run_id, user_id, conversation_id)
+    if record.get('checkpoints_deleted') or record.get('latest_attempt_run_id'):
+        raise PlanRevisionError('This execution is no longer current.', code='already_run')
+    if record.get('retry_of_run_id') and edits:
+        raise PlanRevisionError('Retry uses the frozen effective plan.', code='plan_changed')
     if record.get('started_at') or record.get('status') in ('running', 'completed'):
         raise PlanRevisionError('This plan has already started.', code='already_run')
     if record.get('status') not in _RUNNABLE_STATUSES or 'superseded_by_run_id' in record:
@@ -796,6 +801,14 @@ def claim_plan_run(
         'status': 'running', 'started_at': now, 'edit_claim': None,
         'capabilities_used': list(summary['capabilities_used']),
     }
+    # Imported here to keep revision and execution state machines independent at
+    # module initialization; the lease is created in this same conditional claim.
+    from functions_orchestration_recovery import lease_fields
+
+    updates.update({
+        'execution_lease': lease_fields(), 'recovery_version': uuid.uuid4().hex,
+        'attempt_index': record.get('attempt_index') or 1,
+    })
     if conversation_context is not None:
         if not isinstance(conversation_context, dict):
             raise _invalid('Invalid conversation context.')

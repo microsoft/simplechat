@@ -18,6 +18,10 @@ class AgentExecutionCancelled(AgentDelegationError):
     """The invoking turn was stopped; remote effects are not rolled back."""
 
 
+class AgentDelegationTimeout(AgentDelegationError, TimeoutError):
+    """A measured delegation deadline, distinct from explicit user cancellation."""
+
+
 @dataclass
 class DelegationBudget:
     """One lock-protected budget shared by descendants, siblings and retries."""

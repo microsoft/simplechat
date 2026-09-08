@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.104"
+version: "0.261.105"
 ---
 
 ## Decide what should run
@@ -129,8 +129,51 @@ continuing. An outdated approval cannot run a superseded plan.
 If Cancel discovers a newer pending change, the editor shows that change without
 cancelling it. Review it before explicitly choosing Cancel again.
 
+## Recover from a failed run
+
+Since **0.261.105**, an execution failure remains visible in the conversation and
+Run view. The explanation distinguishes a measured timeout from a user-requested
+Stop and describes the work that could not finish. If answering also fails, a
+status explanation still reports the incomplete request.
+
+Use **Retry from failed step** when the run has recoverable saved progress.
+Review which steps will be reused and which work will execute. Completed steps
+are restored from checkpoints and labelled **Reused saved result**; retry does
+not ask the planner to choose a new agent or start the whole plan again.
+
+An agent step may have performed several tool calls before failing. If retry
+could repeat external effects, read and confirm the warning before continuing.
+The retry resumes at the orchestration-step boundary, not inside that agent's
+tool loop.
+
+The new attempt retains the original question and effective plan, including
+source restrictions, clarification answers, and the selected model. It does not
+duplicate your question. The earlier attempt remains available in history.
+Retry always requires your action, even when normal approval is Auto or timed.
+
+A browser disconnect does not mean the server stopped. Let the interface check
+the existing attempt before retrying. A live attempt cannot be retried, and a
+lost retry response is recovered without starting a second copy.
+
+The Run view can finish before its final conversation message has been saved.
+The interface keeps checking during that interval instead of prematurely
+reporting a missing message. If saving fails, or the server stops before saving
+can be confirmed, the visible status explains the difference.
+
+Use **Check saved status** if the connection still cannot confirm the outcome.
+If retry preparation was saved but execution never started, open that attempt
+and select **Run prepared retry**. It remains paused across reloads. **View
+current attempt** and **View previous attempt** navigate the linked history
+without running work.
+
+If sources, permissions, or saved context changed, or an older run has no full
+checkpoints, recovery explains why it cannot continue. Create a new plan in that
+case; the application will not quietly rerun completed actions to fill a gap.
+Editing an already-started plan remains unavailable.
+
 ## Related
 
 - [Chat orchestration](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/CHAT_ORCHESTRATION.md)
 - [Plan editing architecture](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/V2_ORCHESTRATION_PLAN_EDITING.md)
+- [Checkpoint recovery architecture](https://github.com/microsoft/simplechat/blob/Development/docs/explanation/features/ORCHESTRATION_CHECKPOINT_RECOVERY.md)
 - [Orchestration settings]({{ '/admin/orchestration/' | relative_url }})

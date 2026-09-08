@@ -25,8 +25,8 @@ import {
     selectPlan,
     useOrchestrationStore,
 } from '../stores/orchestrationStore';
-import { fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps } from './orchestration';
-import { refreshOrchestrationPlanEditor } from './orchestrationController';
+import { fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps, isOrchestrationRunPending } from './orchestration';
+import { loadOrchestrationRecovery, reconcileOrchestrationRun, refreshOrchestrationPlanEditor } from './orchestrationController';
 import type { Json } from './orchestration';
 
 /** How many runs to ask for. Matches the store's per-conversation history cap. */
@@ -82,6 +82,29 @@ export async function resumeOrchestrationForConversation(
         return;
     }
 
+    const newest = useOrchestrationStore.getState().hydratedHistory[conversationId]?.[0];
+    const pending = newest && isOrchestrationRunPending({ ...newest.attempt, status: newest.planStatus });
+    if (newest && (newest.planStatus === 'failed' || newest.planStatus === 'cancelled' || pending)) {
+        try {
+            const record = await loadOrchestrationRecovery(conversationId, newest.runId);
+            const steps = await fetchRunSteps(newest.runId, { conversationId });
+            const current = useOrchestrationStore.getState();
+            if (record && !selectActiveTurn(current, conversationId)
+                && useChatStore.getState().activeConversationId === conversationId) {
+                current.adoptPersistedPlan(conversationId, newest.turnId, record.plan, steps);
+                current.setActiveTurn(conversationId, newest.turnId);
+            }
+            if (record && (pending || isOrchestrationRunPending(record))) {
+                current.beginRun({
+                    conversationId, turnId: newest.turnId, runId: newest.runId,
+                    planId: newest.planId, startedAt: Date.now(),
+                });
+                void reconcileOrchestrationRun(conversationId, newest.runId);
+            }
+        } catch {
+            consideredConversations.delete(conversationId);
+        }
+    }
     await restorePendingApproval(conversationId);
 }
 
@@ -196,7 +219,7 @@ function neutralizeTimedApproval(plan: Json): Json {
         return plan;
     }
     const approvalRecord = approval as Record<string, unknown>;
-    if (approvalRecord.mode !== 'timed') {
+    if (approvalRecord.mode !== 'timed' && approvalRecord.mode !== 'auto') {
         return plan;
     }
     return {

@@ -103,6 +103,8 @@ import { messageThreadId } from '../lib/threads';
 import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
+import { normalizeOrchestrationAttempt } from '../lib/orchestration';
+import { openOrchestrationRecovery } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
 import { useBootstrapStore } from './bootstrapStore';
 import { useCollaborationStore, participantName } from './collaborationStore';
@@ -142,7 +144,7 @@ export type DrawerMode = 'contents' | 'documents' | 'plan' | null;
  */
 export type OrchestrationTurnOutcome =
     | {
-          status: 'completed';
+          status: 'completed' | 'failed' | 'cancelled' | 'unknown';
           event: RunStreamEvent;
           accumulated: string;
           /** The optimistic user bubble to reconcile with the server's id, when one is known. */
@@ -2599,7 +2601,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
 
-        if (outcome.status === 'failed') {
+        if (outcome.status === 'failed' && !('event' in outcome)) {
             set({
                 streaming: false,
                 streamingContent: '',
@@ -2610,7 +2612,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             return;
         }
 
-        if (outcome.status === 'cancelled') {
+        if (outcome.status === 'cancelled' && !('event' in outcome)) {
             // Partial output is kept, matching a cancelled chat stream: discarding a long answer
             // someone stopped is more annoying than useful.
             const { accumulated } = outcome;
@@ -2641,12 +2643,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // conversation echoes the same message over its event stream and the second copy must
         // update the first rather than double it.
         const { event, accumulated, pendingUserMessageId } = outcome;
+        const attempt = normalizeOrchestrationAttempt(event);
+        const fallback = outcome.status === 'unknown'
+            ? 'The connection to this run ended before a final result was confirmed. Checking its saved status; execution may still be running.'
+            : attempt.failure?.message || (outcome.status === 'cancelled'
+                ? 'This run was stopped. Any available partial results have been kept.'
+                : 'This run could not complete. Review the saved attempt for recovery options.');
         const persistedUserId = String(event.user_message_id ?? '').trim();
         const finalMessage: ChatMessage = {
-            id: String(event.message_id ?? STREAMING_MESSAGE_ID),
+            id: String(event.message_id ?? (attempt.run_id ? `orchestration-status-${attempt.run_id}` : STREAMING_MESSAGE_ID)),
             conversation_id: conversationId,
             role: 'assistant',
-            content: accumulated,
+            content: typeof event.full_content === 'string' && event.full_content
+                ? event.full_content : accumulated || (outcome.status === 'completed' ? '' : fallback),
             timestamp: new Date().toISOString(),
             model_deployment_name: event.model_deployment_name,
             agent_display_name: event.agent_display_name,
@@ -2658,7 +2667,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
             web_search_citations:
                 event.web_search_citations as ChatMessage['web_search_citations'],
             agent_citations: event.agent_citations as ChatMessage['agent_citations'],
-            metadata: reasoningMetadataForEvent(event),
+            metadata: {
+                ...event.metadata,
+                ...reasoningMetadataForEvent(event),
+                orchestration: {
+                    ...(event.metadata?.orchestration && typeof event.metadata.orchestration === 'object'
+                        ? event.metadata.orchestration : {}),
+                    ...attempt,
+                },
+            },
             thoughts: get().thoughts.length > 0 ? [...get().thoughts] : undefined,
         };
         set((state) => {
@@ -2666,14 +2683,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
             // per-message actions address a message the server knows. Matched on the exact pending
             // id rather than any `pending-user-` bubble, so an earlier cancelled turn's unresolved
             // bubble is left alone.
+            const existing = attempt.run_id && event.message_id
+                ? state.messages.filter((message) => message.id !== `orchestration-status-${attempt.run_id}`)
+                : state.messages;
             const messages =
                 persistedUserId && pendingUserMessageId
-                    ? state.messages.map((message) =>
+                    ? existing.map((message) =>
                           message.id === pendingUserMessageId
                               ? { ...message, id: persistedUserId }
                               : message,
                       )
-                    : state.messages;
+                    : existing;
             return {
                 messages: mergeCollaborationMessage(
                     messages,
@@ -2682,6 +2702,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 streaming: false,
                 streamingContent: '',
                 reconnectPhase: null,
+                streamError: null,
+                streamAuthUrl: null,
             };
         });
 
@@ -2847,6 +2869,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     retryMessage: async (messageId, options) => {
         if (get().streaming) {
+            return;
+        }
+        const message = get().messages.find((candidate) => candidate.id === messageId);
+        const attempt = normalizeOrchestrationAttempt(message?.metadata?.orchestration);
+        const recoveryConversationId = get().activeConversationId;
+        if (attempt.run_id && recoveryConversationId) {
+            openOrchestrationRecovery(recoveryConversationId, attempt.run_id);
+            return;
+        }
+        if (message?.metadata?.orchestration) {
+            set({
+                streamError: 'This historical orchestration message has no saved attempt identity. It cannot be resumed; create a new plan deliberately if needed.',
+                streamAuthUrl: null,
+            });
             return;
         }
         set({

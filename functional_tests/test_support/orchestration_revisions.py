@@ -2,7 +2,7 @@
 """
 In-memory Cosmos boundary for conditional orchestration revision tests.
 
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.102
 
 Batch operations are formatted by the installed SDK and applied to a copy. A failed
@@ -160,8 +160,9 @@ class AtomicMemoryContainer:
                 deepcopy(item) for (partition, _), item in self.items.items()
                 if partition_key is None or partition == partition_key
             ]
+        run_field = 'run_id' if re.search(r'\bc\.run_id\s*=\s*@run_id\b', query, re.IGNORECASE) else 'id'
         for parameter, field in (
-            ('@conversation_id', 'conversation_id'), ('@user_id', 'user_id'), ('@run_id', 'id'),
+            ('@conversation_id', 'conversation_id'), ('@user_id', 'user_id'), ('@run_id', run_field),
         ):
             if parameter in params:
                 rows = [row for row in rows if row.get(field) == params[parameter]]
@@ -200,5 +201,7 @@ class AtomicMemoryContainer:
         for field in ('timestamp', 'created_at', 'turn_index', 'revision'):
             if f'ORDER BY c.{field} DESC' in query:
                 rows.sort(key=lambda row: row.get(field, 0 if field in ('revision', 'turn_index') else ''), reverse=True)
+        if 'ORDER BY c.step_index ASC' in query:
+            rows.sort(key=lambda row: row.get('step_index', 0))
         top = re.search(r'SELECT TOP (\d+)', query)
         return rows[:int(top.group(1))] if top else rows
