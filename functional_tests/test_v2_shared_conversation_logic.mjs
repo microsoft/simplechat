@@ -1,8 +1,9 @@
 // test_v2_shared_conversation_logic.mjs
 //
 // Runtime test for the pure logic behind V2 shared conversations.
-// Version: 0.261.038
+// Version: 0.261.106
 // Implemented in: 0.261.038
+// Group participant source-context regressions added in: 0.261.106 (Refs #1472, #1473).
 //
 // The companion test, test_v2_shared_conversations.py, asserts that the V2 modules are wired
 // to the right endpoints and that the actions with no collaboration counterpart are hidden.
@@ -625,6 +626,71 @@ check('a group conversation is shared through the group conversion route', () =>
     assert.equal(target.groupId, 'g1');
 });
 
+check('a regular-stored group conversation finds invitees through its primary context', () => {
+    const target = panelTargetForConversation('regular-source', {
+        chat_type: 'group-single-user',
+        context: [
+            { type: 'secondary', scope: 'group', id: 'another-group' },
+            { type: 'primary', scope: 'group', id: 'g1', name: 'Operations' },
+        ],
+    });
+    assert.equal(target.kind, 'group');
+    assert.equal(target.groupId, 'g1');
+    assert.equal(target.conversationId, 'regular-source');
+});
+
+check('older group conversations infer their sharing route from primary context', () => {
+    for (const chatType of [undefined, '', 'group', 'group_single_user']) {
+        const conversation = {
+            chat_type: chatType,
+            context: [{ type: 'primary', scope: 'group', id: 'g1' }],
+        };
+        assert.equal(canShareConversation(conversation), true);
+        const target = panelTargetForConversation('c1', conversation);
+        assert.equal(target.kind, 'group');
+        assert.equal(target.groupId, 'g1');
+    }
+});
+
+check('explicit group identity takes precedence over a contextual fallback', () => {
+    const conversation = {
+        chat_type: 'group-single-user',
+        group_id: ' explicit-group ',
+        scope: { group_id: 'scope-group' },
+        context: [{ type: 'primary', scope: 'group', id: 'context-group' }],
+    };
+    assert.equal(panelTargetForConversation('c1', conversation).groupId, 'explicit-group');
+    conversation.group_id = '';
+    assert.equal(panelTargetForConversation('c1', conversation).groupId, 'scope-group');
+    conversation.scope.group_id = ' ';
+    assert.equal(panelTargetForConversation('c1', conversation).groupId, 'context-group');
+});
+
+check('secondary group knowledge does not turn a personal conversation into a group invite', () => {
+    const target = panelTargetForConversation('c1', {
+        chat_type: 'personal_single_user',
+        context: [
+            { type: 'primary', scope: 'personal', id: 'u1' },
+            { type: 'secondary', scope: 'group', id: 'g1' },
+        ],
+    });
+    assert.equal(target.kind, 'personal');
+    assert.equal(target.groupId, null);
+});
+
+check('incomplete group metadata never supplies a fabricated group id', () => {
+    for (const scope of [undefined, null, false, 'group', { group_id: {} }]) {
+        const target = panelTargetForConversation('c1', {
+            chat_type: 'group-single-user',
+            group_id: [],
+            scope,
+            context: [null, {}, { type: 'secondary', scope: 'group', id: 'g1' }],
+        });
+        assert.equal(target.kind, 'group');
+        assert.equal(target.groupId, null);
+    }
+});
+
 check('an already-shared conversation takes members directly', () => {
     // Converting a second time would create another shared conversation alongside the
     // first, which is the failure this distinction exists to prevent.
@@ -636,12 +702,26 @@ check('an already-shared conversation takes members directly', () => {
     assert.equal(target.kind, 'collaborative');
 });
 
+check('a shared group conversation keeps its member endpoint with contextual group identity', () => {
+    const target = panelTargetForConversation('shared-id', {
+        conversation_kind: 'collaborative',
+        chat_type: 'group_multi_user',
+        context: [{ type: 'primary', scope: 'group', id: 'g1' }],
+    });
+    assert.equal(target.kind, 'collaborative');
+    assert.equal(target.groupId, 'g1');
+    assert.equal(target.conversationId, 'shared-id');
+});
+
 check('a public workspace conversation cannot be shared', () => {
     // There is no conversion route for one, so offering to share it would be an action with
     // nothing behind it.
     assert.equal(canShareConversation({ chat_type: 'public' }), false);
     assert.equal(canShareConversation({ chat_type: 'personal_single_user' }), true);
     assert.equal(canShareConversation({ chat_type: 'group_multi_user' }), true);
+    assert.equal(canShareConversation({
+        context: [{ type: 'primary', scope: 'public', id: 'public-1' }],
+    }), false);
     assert.equal(canShareConversation(null), false);
 });
 
