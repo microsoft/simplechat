@@ -1,14 +1,16 @@
 # test_group_collaboration_source_storage_fix.py
 #!/usr/bin/env python3
 """
-Functional regression for Development/v1 group conversation source storage.
-Version: 0.261.024
+Functional regression for group conversation source storage.
+Version: 0.261.106
 Implemented in: 0.261.024
+Ported to the React branch in: 0.261.106
 Related issue: microsoft/simplechat#1472
 
 Exercise production conversion and route helpers against isolated Cosmos stores.
 Group context must not imply group-container storage or weaken authorization.
 No application config, Azure clients, or deployed services are initialized.
+The route is shared by v1 and v2; React interaction coverage lives in ui_tests.
 """
 
 import ast
@@ -350,21 +352,27 @@ class ConversionHarness:
             },
         )
         tree = ast.parse(ROUTE_FILE.read_text(encoding='utf-8'), filename=str(ROUTE_FILE))
-        handler = next(
+        handler_names = {
+            'convert_group_conversation_to_collaboration_api',
+            'convert_personal_conversation_to_collaboration_api',
+            'invite_collaboration_members_api',
+        }
+        handlers = [
             node for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef)
-            and node.name == 'convert_group_conversation_to_collaboration_api'
-        )
-        exec(compile(ast.Module(body=[handler], type_ignores=[]), str(ROUTE_FILE), 'exec'), namespace)
+            and node.name in handler_names
+        ]
+        assert len(handlers) == len(handler_names)
+        exec(compile(ast.Module(body=handlers, type_ignores=[]), str(ROUTE_FILE), 'exec'), namespace)
         self.route_namespace = namespace
         app = Flask(__name__)
         app.config['TESTING'] = True
         app.register_blueprint(bp)
         return app
 
-    def post(self, payload):
+    def post(self, payload, path=None):
         app = self.build_route_app()
-        path = f'/api/collaboration/conversations/from-group/{SOURCE_ID}/members'
+        path = path or f'/api/collaboration/conversations/from-group/{SOURCE_ID}/members'
         with app.test_request_context(path, method='POST', json=payload):
             return app.full_dispatch_request()
 
