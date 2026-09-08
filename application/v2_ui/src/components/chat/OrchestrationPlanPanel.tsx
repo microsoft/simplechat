@@ -22,7 +22,7 @@ import {
     type StepRuntimeMap,
     type TrackedRun,
 } from '../../stores/orchestrationStore';
-import { fetchOrchestrationRun, fetchRunSteps, type OrchestrationPlan } from '../../lib/orchestration';
+import { fetchOrchestrationRun, fetchRunSteps, normalizeOrchestrationAttempt, type OrchestrationPlan } from '../../lib/orchestration';
 import { normalizePlan } from '../../lib/orchestrationPlan';
 import { openOrchestrationPlanEditor } from '../../lib/orchestrationController';
 import { GlassButton } from '../ui/primitives';
@@ -87,6 +87,7 @@ export function OrchestrationPlanPanel() {
     );
     const inFlightMap = useOrchestrationStore((state) => state.inFlight);
     const pinRun = useOrchestrationStore((state) => state.pinRun);
+    const recoveryTarget = useOrchestrationStore((state) => state.recoveryTarget);
 
     const [view, setView] = useState<PanelView>('run');
     const [pinned, setPinned] = useState<PinnedRun | null>(null);
@@ -171,12 +172,18 @@ export function OrchestrationPlanPanel() {
                     return;
                 }
                 const store = useOrchestrationStore.getState();
+                store.updateRunRecovery(runId, {
+                    ...normalizeOrchestrationAttempt(run), plan, status: run?.status, detailLoaded: true,
+                });
                 const current = selectPlan(store, activeConversationId, turnId);
                 if (current && (current.run_id !== runId
                     || selectCanEditPlan(store, activeConversationId, turnId))) {
                     const runtime: StepRuntimeMap = {};
                     for (const step of steps) {
-                        runtime[step.step_id] = { status: step.status ?? 'pending', summary: step.summary ?? '' };
+                        runtime[step.step_id] = {
+                            status: step.status ?? 'pending', summary: step.summary ?? '',
+                            reused: step.reused === true, failure: step.failure,
+                        };
                     }
                     setArchivedPreview({ runId, plan, runtime });
                 } else {
@@ -217,6 +224,20 @@ export function OrchestrationPlanPanel() {
     };
 
     const showJumpBar = Boolean(pinned && liveRun && liveRun.turnId !== shownTurnId);
+
+    useEffect(() => {
+        if (!recoveryTarget || recoveryTarget.conversationId !== activeConversationId) return;
+        let cancelled = false;
+        setView('run');
+        void fetchOrchestrationRun(recoveryTarget.runId, { conversationId: activeConversationId }).then((run) => {
+            if (cancelled || !run?.turn_id) return;
+            setPinned({ runId: recoveryTarget.runId, turnId: run.turn_id });
+            loadArchivedRun(run.turn_id, recoveryTarget.runId);
+        }).catch(() => {
+            if (!cancelled) setLoadError('The saved attempt could not be loaded. Please try again.');
+        });
+        return () => { cancelled = true; };
+    }, [recoveryTarget, activeConversationId]);
 
     return (
         <div className="flex h-full flex-col">

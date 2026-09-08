@@ -1,7 +1,7 @@
 # test_orchestration_memory_context.py
 """Functional regressions for audience-bound orchestration memory.
 
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.104
 
 Uses real Flask routes, revisions, executor, adapters and the shared memory reader.
@@ -151,7 +151,9 @@ class OrchestrationMemoryTests(unittest.TestCase):
         plan = self.group_plan()
         self.after_search = lambda: setattr(self.membership, 'side_effect', PermissionError('revoked'))
         events = context_tests.frames(self.run_plan(plan))
-        self.assertTrue(any(event.get('error') for event in events), events)
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
+        self.assertFalse(terminal['recovery']['eligible'])
         self.assertEqual(self.answer_calls(), [])
 
     def test_disabling_memory_during_retrieval_removes_final_context_and_citations(self):
@@ -175,7 +177,9 @@ class OrchestrationMemoryTests(unittest.TestCase):
         plan = self.planned()
         self.after_search = self.shared_source
         events = context_tests.frames(self.run_plan(plan))
-        self.assertTrue(any(event.get('error') for event in events), events)
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
+        self.assertFalse(terminal['recovery']['eligible'])
         self.assertEqual(self.answer_calls(), [])
 
     def test_changing_audience_during_planning_prevents_publication(self):
@@ -200,9 +204,10 @@ class OrchestrationMemoryTests(unittest.TestCase):
 
         self.model.chat.completions.create = change_during_answer
         events = context_tests.frames(self.run_plan(plan))
-        self.assertTrue(any(event.get('error') for event in events), events)
-        self.assertFalse(any(event.get('type') == 'orchestration_done' for event in events), events)
-        self.assertFalse(self.runs.read_item(plan['run_id'], 'conv1').get('assistant_message_id'))
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
+        self.assertTrue(terminal['message_saved'])
+        self.assertNotIn('Saved destination:', json.dumps(events))
 
     def test_revoked_group_membership_during_synthesis_blocks_answer_and_citations(self):
         plan = self.group_plan()
@@ -216,12 +221,13 @@ class OrchestrationMemoryTests(unittest.TestCase):
 
         self.model.chat.completions.create = revoke_during_answer
         events = context_tests.frames(self.run_plan(plan))
-        self.assertTrue(any(event.get('error') for event in events), events)
-        self.assertFalse(any(event.get('type') == 'orchestration_done' for event in events), events)
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
+        self.assertTrue(terminal['message_saved'])
         self.assertNotIn('GROUP MEMORY', json.dumps(events))
         stored = self.runs.read_item(plan['run_id'], 'conv1')
         self.assertEqual(stored['status'], 'failed')
-        self.assertFalse(stored.get('assistant_message_id'))
+        self.assertTrue(stored.get('assistant_message_id'))
 
     def private_memory_question(self):
         question = revision_tests.question()

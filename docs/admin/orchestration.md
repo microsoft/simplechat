@@ -304,7 +304,9 @@ Opening a conversation on a second device rebuilds the orchestration panel from 
 server holds. A user who plans on a laptop and then opens the same conversation on a
 phone sees the same list of runs, can expand any of them, and can read the steps and
 results of a run they were not present for. Runs opened this way are shown as a record:
-they can be read but not edited or run again, because they have already happened.
+they cannot be edited or directly executed again. Since **0.261.105**, an incomplete
+run with valid checkpoints can instead prepare a separate, user-approved recovery
+attempt that reuses its completed results.
 
 A plan that was still waiting for approval when the user moved is the one case that stays
 actionable. It reappears as a plan the user can approve, edit or discard, so a plan is
@@ -314,9 +316,33 @@ nothing starts running on a device where nobody was watching. And if the plan wa
 approved elsewhere in the meantime, approving it again is refused rather than run twice,
 and the conversation reloads to show the answer that already exists.
 
-A run that was interrupted — the browser closed, the device slept, the network dropped
-mid-run — is shown as interrupted rather than silently disappearing or appearing to still
-be working.
+A closed browser or dropped connection does not prove that server execution stopped.
+The interface checks the saved attempt rather than treating transport loss as user
+cancellation or automatically running the work again.
+
+## Failure explanations and checkpoint recovery
+
+Implemented in version **0.261.105**, tracked in `application/single_app/config.py`.
+Execution failures and measured timeouts are reported in the conversation and Run
+view. If the answering model also fails, an application-generated status explanation
+still describes the incomplete work. Errors are not classified from integration
+names or exception-message keywords.
+
+Completed step results are saved in the existing orchestration Cosmos containers.
+No new storage connection or settings switch is required. **Retry from failed step**
+uses these results with the same effective plan and current authorization, rather
+than invoking the planner or repeating the whole request.
+
+Retry is always deliberate, even under Auto approval. If a failed agent/action
+may already have changed an external system, the user must acknowledge that the
+step's internal effects could repeat. Checkpoints do not restore an agent's
+individual tool calls, and cannot guarantee exactly-once remote execution.
+
+A live execution cannot be retried. Missing, incompatible, or unauthorized
+checkpoints block recovery rather than causing completed actions to run again.
+Older runs without full checkpoints remain readable but require a new plan.
+Checkpoint payloads are removed on conversation deletion, including bulk
+deletion and archive-and-remove; existing archived messages are unaffected.
 
 ## Common tasks
 
@@ -356,7 +382,10 @@ be working.
 | A plan proposed reading a link but found nothing | The link was not available in the eligible user-authored context. | Paste the URL into the current request. Assistant-generated links and omitted historical text do not authorize page reads. |
 | Earlier runs are missing after switching devices | The conversation list has loaded but its run history has not been fetched yet, or the fetch failed. | The orchestration panel shows its own loading and retry states. If retrying keeps failing, check that the user can reach `/api/v2/orchestration/runs` and is the owner of the conversation. |
 | A restored plan will not run | It was already approved on the other device. | This is expected. The conversation reloads to show the answer that run produced. |
-| A run is shown as interrupted | The browser or device that started it went away before the run finished. | Ask the user to send the question again. An interrupted run is a record of what happened, not a run that can be continued. |
+| A step reports a timeout or failure | Execution hit a recorded time limit or an operation failed. | Read the conversation/Run explanation. Address the reported dependency or limit, then use Retry from failed step when recovery is available. |
+| A connection was interrupted | The browser cannot yet confirm the server's execution state. | Check the existing run. Do not resend the request while that attempt may still be active. |
+| Retry requires confirmation | An agent/action may have performed external effects before it failed. | Review those effects before confirming. Retry reexecutes that failed step, not its internal tool-call checkpoint. |
+| A saved run cannot be resumed | Checkpoints are absent or invalid, relevant context/access changed, or a newer/live attempt exists. | Follow the recovery explanation. Open the current attempt or create a new plan as appropriate; do not infer results from old summaries. |
 
 ## Related
 
@@ -367,3 +396,4 @@ be working.
 - [Create an action]({{ '/guides/create-an-action/' | relative_url }})
 - [Actions reference]({{ '/reference/actions/' | relative_url }})
 - [Workflow settings]({{ '/admin/workflow/' | relative_url }})
+- [Recover a failed run]({{ '/guides/review-and-edit-orchestration-plans/#recover-from-a-failed-run' | relative_url }})

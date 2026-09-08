@@ -1,7 +1,7 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
 Direct action integration: 0.261.098
@@ -531,12 +531,14 @@ class ConversationRouteTests(unittest.TestCase):
                 self.model.answer_response = response
                 plan = self.planned()
                 events = frames(self.run_plan(plan))
-                self.assertTrue(any(event.get('error') for event in events), events)
-                self.assertFalse(any(event.get('type') == 'orchestration_done' for event in events))
+                terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+                self.assertEqual(terminal['status'], 'failed')
+                self.assertTrue(terminal['message_saved'])
+                self.assertTrue(terminal['full_content'])
                 self.assertNotIn('PRIVATE_PROVIDER_RESPONSE', json.dumps(events))
                 stored = self.runs.read_item(plan['run_id'], 'conv1')
                 self.assertEqual(stored['status'], 'failed')
-                self.assertFalse(stored.get('assistant_message_id'))
+                self.assertTrue(stored.get('assistant_message_id'))
                 self.assertEqual(stored['token_usage']['total_tokens'], 45)
         for client in self.model_clients:
             client.close.assert_called_once_with()
@@ -551,7 +553,9 @@ class ConversationRouteTests(unittest.TestCase):
         plan = self.planned()
         with patch.object(self.route, 'log_event') as log:
             events = frames(self.run_plan(plan))
-        self.assertTrue(any(event.get('error') for event in events))
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['status'], 'failed')
+        self.assertEqual(terminal['failure']['provider_status'], 400)
         self.assertNotIn('PRIVATE_PROVIDER_RESPONSE', json.dumps(events))
         self.assertNotIn('PRIVATE_PROVIDER_RESPONSE', repr(log.call_args_list))
         self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['status'], 'failed')
@@ -644,7 +648,7 @@ class ConversationRouteTests(unittest.TestCase):
         self.assertEqual(second_run['request_resolution']['clarification'], '')
         self.assertFalse(any(event.get('error') for event in frames(self.run_plan(second))))
         self.assertEqual(self.runs.read_item(second['run_id'], 'conv1')['status'], 'completed')
-        self.assertEqual(len(self.messages.items), 4)
+        self.assertEqual(len([row for row in self.messages.items.values() if row.get('role') in ('user', 'assistant')]), 4)
         resolution_calls = [
             call for call in self.model.calls
             if call['messages'][0]['content'] == self.modules.planner.RESOLUTION_SYSTEM_PROMPT
@@ -839,7 +843,8 @@ class ConversationRouteTests(unittest.TestCase):
             metadata={'masked': True}
         )
         events = frames(self.run_plan(plan))
-        self.assertTrue(any('context changed' in event.get('error', '').lower() for event in events))
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
         self.assertEqual(len(self.model.calls), 2)
         self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['status'], 'failed')
 
@@ -1078,7 +1083,8 @@ class ConversationRouteTests(unittest.TestCase):
             metadata={'masked': True}
         )
         events = frames(self.run_plan(plan))
-        self.assertTrue(any('context changed' in event.get('error', '').lower() for event in events))
+        terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+        self.assertEqual(terminal['failure']['code'], 'context_unavailable')
         self.assertEqual(len(self.model.calls), 2)
         self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['status'], 'failed')
 

@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_executor.py
 """
 Functional test for the chat orchestration step executor.
-Version: 0.261.085
+Version: 0.261.105
 Implemented in: 0.261.085
 
 The executor is what turns a validated plan into an answer. Its job is almost entirely
@@ -198,7 +198,7 @@ def test_cancellation_stops_the_run():
             assert order == [], f"Steps ran after cancellation: {order}"
             assert result['status'] == schema.PLAN_STATUS_CANCELLED
 
-            # Cancelled by an adapter mid-run.
+            # An adapter interruption without an explicit Stop is not user cancellation.
             order2 = []
             plan2 = _plan([
                 _step('a', 'document_search'),
@@ -211,9 +211,9 @@ def test_cancellation_stops_the_run():
                 plan2, context2, settings=SETTINGS, user_id='user_1',
                 get_adapter=_recording_adapters(schema, order2, cancel_on='a'),
             )
-            assert result2['status'] == schema.PLAN_STATUS_CANCELLED, (
-                "An adapter reporting cancellation must cancel the run"
-            )
+            assert result2['status'] == schema.PLAN_STATUS_FAILED
+            assert result2['failure']['code'] == 'execution_interrupted'
+            assert 'answer' in order2
 
         print("Test passed!")
         return True
@@ -249,7 +249,8 @@ def test_budgets_are_enforced():
             assert 'answer' in order, (
                 "The budget must not consume the step that produces the answer"
             )
-            assert result['message'] == 'ANSWER'
+            assert result['message'].startswith('ANSWER')
+            assert result['outcome'] == 'partial'
 
             # Replan hints are collected but bounded, and the executor never re-plans
             # itself -- the route owns that loop.
@@ -387,7 +388,7 @@ def test_unknown_capability_fails_the_step_not_the_run():
 
             statuses = {record['step_id']: record['status'] for record in result['steps']}
             assert statuses['ghost'] == schema.STEP_STATUS_FAILED
-            assert result['message'] == 'ANSWER', (
+            assert result['message'].startswith('ANSWER'), (
                 "One unrunnable step must not stop the user getting an answer"
             )
 

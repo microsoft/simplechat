@@ -48,6 +48,116 @@ export type StepStatus =
     | 'skipped'
     | 'cancelled';
 
+export type OrchestrationOutcome = 'completed' | 'partial' | 'failed' | 'cancelled';
+export type OrchestrationFinalizationStatus = 'pending' | 'saved' | 'failed' | 'interrupted';
+
+export interface OrchestrationFailure {
+    code: string;
+    message: string;
+    step_id?: string;
+    capability_id?: string;
+    provider_status?: number;
+}
+
+export interface OrchestrationRecovery {
+    eligible: boolean;
+    reason_code: string | null;
+    message: string | null;
+    expected_version: string | null;
+    source_run_id: string;
+    current_run_id?: string;
+    retry_step_ids: string[];
+    reused_step_ids: string[];
+    requires_confirmation: boolean;
+}
+
+export interface OrchestrationAttempt {
+    run_id?: string;
+    turn_id?: string | null;
+    outcome?: OrchestrationOutcome;
+    failure?: OrchestrationFailure | null;
+    failures?: OrchestrationFailure[];
+    recovery?: OrchestrationRecovery;
+    attempt_index?: number;
+    retry_of_run_id?: string | null;
+    latest_attempt_run_id?: string;
+    finalization_status?: OrchestrationFinalizationStatus;
+    message_saved?: boolean;
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+export function normalizeOrchestrationFailure(value: unknown): OrchestrationFailure | null {
+    const data = recordOf(value);
+    if (typeof data.code !== 'string' || typeof data.message !== 'string') return null;
+    return {
+        code: data.code,
+        message: data.message,
+        ...(typeof data.step_id === 'string' ? { step_id: data.step_id } : {}),
+        ...(typeof data.capability_id === 'string' ? { capability_id: data.capability_id } : {}),
+        ...(typeof data.provider_status === 'number' ? { provider_status: data.provider_status } : {}),
+    };
+}
+
+export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRecovery | undefined {
+    const data = recordOf(value);
+    if (typeof data.source_run_id !== 'string' || typeof data.eligible !== 'boolean') return undefined;
+    const ids = (value: unknown): string[] => Array.isArray(value)
+        ? value.filter((id): id is string => typeof id === 'string') : [];
+    return {
+        eligible: data.eligible,
+        source_run_id: data.source_run_id,
+        reason_code: typeof data.reason_code === 'string' ? data.reason_code : null,
+        message: typeof data.message === 'string' ? data.message : null,
+        expected_version: typeof data.expected_version === 'string' ? data.expected_version : null,
+        current_run_id: typeof data.current_run_id === 'string' ? data.current_run_id : undefined,
+        retry_step_ids: ids(data.retry_step_ids),
+        reused_step_ids: ids(data.reused_step_ids),
+        // Missing replay-safety information must never silently authorize external effects.
+        requires_confirmation: data.requires_confirmation !== false,
+    };
+}
+
+export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAttempt {
+    const outer = recordOf(value);
+    const data = { ...recordOf(recordOf(outer.metadata).orchestration), ...outer };
+    const outcome = data.outcome;
+    const finalization = data.finalization_status;
+    return {
+        run_id: typeof data.run_id === 'string' ? data.run_id : undefined,
+        turn_id: typeof data.turn_id === 'string' ? data.turn_id : undefined,
+        outcome: outcome === 'completed' || outcome === 'partial' || outcome === 'failed' || outcome === 'cancelled'
+            ? outcome : undefined,
+        failure: normalizeOrchestrationFailure(data.failure),
+        failures: Array.isArray(data.failures)
+            ? data.failures.map(normalizeOrchestrationFailure).filter((value): value is OrchestrationFailure => value !== null) : [],
+        recovery: normalizeOrchestrationRecovery(data.recovery),
+        attempt_index: typeof data.attempt_index === 'number' ? data.attempt_index : undefined,
+        retry_of_run_id: typeof data.retry_of_run_id === 'string' ? data.retry_of_run_id : undefined,
+        latest_attempt_run_id: typeof data.latest_attempt_run_id === 'string' ? data.latest_attempt_run_id : undefined,
+        finalization_status: finalization === 'pending' || finalization === 'saved'
+            || finalization === 'failed' || finalization === 'interrupted' ? finalization : undefined,
+        message_saved: typeof data.message_saved === 'boolean' ? data.message_saved : undefined,
+    };
+}
+
+/** A terminal execution status can precede durable final-message publication. */
+export function isOrchestrationRunPending(run: OrchestrationAttempt & { status?: string | null }): boolean {
+    return run.status === 'running' || run.finalization_status === 'pending'
+        || run.recovery?.reason_code === 'execution_live';
+}
+
+export function orchestrationTerminalStatus(event: RunStreamEvent): 'completed' | 'failed' | 'cancelled' {
+    const outcome = normalizeOrchestrationAttempt(event).outcome;
+    if (event.status === 'failed' || outcome === 'failed' || outcome === 'partial' || event.error) return 'failed';
+    if (event.status === 'cancelled' || outcome === 'cancelled') return 'cancelled';
+    if (event.status === 'completed' || outcome === 'completed') return 'completed';
+    if (event.cancelled || event.canceled || event.type === 'cancelled' || event.type === 'canceled') return 'cancelled';
+    return 'completed';
+}
+
 /** How a plan is approved before it runs, from `APPROVAL_MODES`. */
 export type ApprovalMode = 'manual' | 'timed' | 'auto';
 
@@ -462,10 +572,13 @@ export interface PlanStreamEvent {
  * reusing that type is how the two stay in step. `orchestration_step` frames carry the live
  * status of a step as it runs; content deltas arrive exactly as they do in chat.
  */
-export interface RunStreamEvent extends ChatStreamEvent {
+export interface RunStreamEvent extends ChatStreamEvent, OrchestrationAttempt {
     step_id?: string;
     status?: StepStatus;
     summary?: string;
+    reused?: boolean;
+    reused_from_run_id?: string | null;
+    checkpoint_available?: boolean;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -542,6 +655,9 @@ export interface RunStreamResult {
     /** The plan was already run elsewhere. Distinct from `errored`; see `onAlreadyRun`. */
     alreadyRun: boolean;
     conflict?: OrchestrationRequestError;
+    rejection?: OrchestrationRequestError;
+    /** No terminal acknowledgement: the server may still be executing. */
+    transportUnknown?: boolean;
 }
 
 export const ORCHESTRATION_PLAN_PATH = '/api/v2/orchestration/plan';
@@ -560,7 +676,7 @@ export const ORCHESTRATION_RUNS_PATH = '/api/v2/orchestration/runs';
  * plans -- so anything that needs the steps themselves fetches the run through
  * `fetchOrchestrationRun`.
  */
-export interface PersistedRunSummary {
+export interface PersistedRunSummary extends OrchestrationAttempt {
     run_id: string;
     conversation_id: string;
     /** The turn this run answered. Present on every run the plan route created. */
@@ -608,6 +724,10 @@ export interface PersistedRunStep {
     title?: string;
     status?: StepStatus;
     summary?: string;
+    failure?: OrchestrationFailure | null;
+    reused?: boolean;
+    reused_from_run_id?: string | null;
+    checkpoint_available?: boolean;
     [key: string]: unknown;
 }
 
@@ -665,6 +785,27 @@ export async function fetchRunSteps(
         options.signal,
     );
     return Array.isArray(payload?.steps) ? payload.steps : [];
+}
+
+export async function prepareOrchestrationRetry(
+    runId: string,
+    body: {
+        conversation_id: string;
+        submission_id: string;
+        expected_version: string;
+        confirm_external_effects: boolean;
+    },
+): Promise<PersistedRun> {
+    const payload = await api.post<{ run: PersistedRun }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/retry`, body,
+    );
+    return payload.run;
+}
+
+export async function cancelOrchestrationRun(runId: string, conversationId: string): Promise<void> {
+    await api.post(`/api/v2/orchestration/cancel/${encodeURIComponent(runId)}`, {
+        conversation_id: conversationId,
+    });
 }
 
 export async function beginPlanEdit(
@@ -935,8 +1076,8 @@ async function readPlanStream(
  * resolve on the terminal frame.
  *
  * The terminal frame is shaped like chat's `done` payload, so `onDone` receives the same
- * assistant-message metadata a chat completion would carry. As with the plan stream, an abort
- * resolves with `cancelled: true` rather than throwing.
+ * assistant-message metadata a chat completion would carry. Reader aborts and unexpected EOF
+ * report unknown transport state; only a server terminal frame can establish cancellation.
  */
 export async function runOrchestration(
     body: OrchestrationRunRequest,
@@ -968,27 +1109,33 @@ export async function runOrchestration(
                 return;
             }
             // Uncoded/legacy 409s and already_run retain the existing duplicate-run recovery.
-            if (error?.status === 409) {
+            if (error?.status === 409 && (!error.code || error.code === 'already_run')) {
                 result.alreadyRun = true;
                 handlers.onAlreadyRun?.(message);
                 return;
             }
-            result.errored = true;
-            handlers.onError?.(message);
+            if (error?.status === 409 || error?.status === 400 || error?.status === 401
+                || error?.status === 403 || error?.status === 404) {
+                result.rejection = error;
+                result.errored = true;
+                return;
+            }
+            result.transportUnknown = true;
         },
     );
     if (!response) {
         if (signal?.aborted) {
-            result.cancelled = true;
+            result.transportUnknown = true;
         }
         return result;
     }
 
     const onEvent = (event: RunStreamEvent): boolean => {
-        if (typeof event.error === 'string' && event.error) {
+        if (typeof event.error === 'string' && event.error && !event.done) {
             result.errored = true;
             handlers.onError?.(event.error, event);
-            return true;
+            // Finalization can still provide a safe terminal status after a save error.
+            return false;
         }
 
         // A run streams progress on the same `thought` event planning uses, and those frames
@@ -1012,17 +1159,17 @@ export async function runOrchestration(
         }
 
         if (event.done) {
-            const wasCancelled =
-                Boolean(event.cancelled) ||
-                Boolean(event.canceled) ||
-                event.type === 'cancelled' ||
-                event.type === 'canceled';
+            if (typeof event.full_content === 'string') {
+                result.accumulated = event.full_content;
+            }
+            const wasCancelled = orchestrationTerminalStatus(event) === 'cancelled';
 
             if (wasCancelled) {
                 result.cancelled = true;
                 handlers.onCancelled?.(event, result.accumulated);
             } else {
-                result.completed = true;
+                result.completed = orchestrationTerminalStatus(event) === 'completed';
+                result.errored = orchestrationTerminalStatus(event) === 'failed';
                 handlers.onDone?.(event, result.accumulated);
             }
             return true;
@@ -1034,18 +1181,16 @@ export async function runOrchestration(
     const outcome = await readSsePost<RunStreamEvent>(response, onEvent, signal);
 
     if (outcome.aborted) {
-        result.cancelled = true;
+        result.transportUnknown = true;
     } else if (outcome.transportError) {
-        result.errored = true;
-        handlers.onError?.(outcome.transportError.message);
+        result.transportUnknown = true;
     } else if (
         outcome.endedWithoutTerminal &&
         !result.completed &&
         !result.cancelled &&
         !result.errored
     ) {
-        result.errored = true;
-        handlers.onError?.('The run ended unexpectedly.');
+        result.transportUnknown = true;
     }
 
     return result;

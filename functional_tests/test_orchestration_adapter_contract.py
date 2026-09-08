@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_adapter_contract.py
 """
 Functional test for the orchestration adapter contract.
-Version: 0.261.089
+Version: 0.261.105
 Implemented in: 0.261.087
 
 This is the generalisation of a bug that reached production. A step failed live with
@@ -25,6 +25,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from test_support.app_stubs import APP_ROOT, stubbed_app_imports  # noqa: E402
+from test_support.orchestration_research import stubbed_orchestration_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 ADAPTERS = 'functions_orchestration_adapters.py'
@@ -356,7 +357,7 @@ def test_request_gates_withhold_what_the_caller_cannot_use():
     """The gates themselves, exercised rather than inspected."""
     print("Testing request gate behaviour...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             from functions_orchestration_registry import resolve_available_capabilities
 
             settings = {

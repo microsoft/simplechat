@@ -18,7 +18,14 @@ import { createConversation } from './endpoints';
 import { ApiError } from './apiClient';
 import {
     beginPlanEdit,
+    cancelOrchestrationRun,
     fetchOrchestrationRun,
+    fetchRunSteps,
+    isOrchestrationRunPending,
+    normalizeOrchestrationAttempt,
+    normalizeOrchestrationRecovery,
+    orchestrationTerminalStatus,
+    prepareOrchestrationRetry,
     fetchPlanEditor,
     MAX_PLAN_INSTRUCTION_LENGTH,
     orchestrationErrorInfo,
@@ -37,6 +44,8 @@ import {
     type PlanRevisionAction,
     type PlanRevisionRequest,
     type RunStreamEvent,
+    type PersistedRun,
+    type PlanEdits,
 } from './orchestration';
 import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan } from './orchestrationPlan';
 import type { Json } from './types';
@@ -104,6 +113,7 @@ const turnContexts = new Map<string, TurnContext>();
  * re-plan superseding a plan — reaches the right one while another conversation's run is untouched.
  */
 const activeControllers = new Map<string, AbortController>();
+const activeRunIds = new Map<string, string>();
 /** Editor requests never abort, begin, settle, or append a main-thread turn. */
 const editorControllers = new Map<string, AbortController>();
 
@@ -230,6 +240,7 @@ async function dispatchPlan(
     // A re-plan supersedes whatever was open for this conversation.
     activeControllers.get(currentConversationId)?.abort();
     activeControllers.set(currentConversationId, controller);
+    activeRunIds.delete(currentConversationId);
 
     /**
      * Adopt the conversation id the server just announced, if it is not the one we already hold.
@@ -591,8 +602,8 @@ export async function answerElicitation(params: {
  * The run request carries the narrowing edits so the server applies them before executing; the
  * browser never assembles the plan that runs. `beginRun` guards a double approval — a second press
  * or a restored record — by refusing a run id already tracked. Every terminal path settles the
- * thread and ends the run; a bare abort (Stop, with no terminal frame) is settled after the await,
- * because `runOrchestration` reports that as `cancelled` without calling a handler.
+ * thread and ends the run. A dropped reader is reconciled against the saved attempt instead of
+ * guessing that execution ended or that the user cancelled it.
  */
 export async function approveAndRunPlan(params: {
     conversationId: string;
@@ -610,6 +621,16 @@ export async function approveAndRunPlan(params: {
     if (!isPlanRunnable(applyPlanEdits(plan, edits))) {
         return;
     }
+    await executeSavedPlan(conversationId, turnId, plan, edits);
+}
+
+async function executeSavedPlan(
+    conversationId: string,
+    turnId: string,
+    plan: OrchestrationPlan,
+    edits?: PlanEdits,
+): Promise<void> {
+    const store = useOrchestrationStore.getState();
 
     const runId = plan.run_id;
     const planId = plan.plan_id;
@@ -635,12 +656,14 @@ export async function approveAndRunPlan(params: {
     const controller = new AbortController();
     activeControllers.get(conversationId)?.abort();
     activeControllers.set(conversationId, controller);
+    activeRunIds.set(conversationId, runId);
 
     const runBody: OrchestrationRunRequest = {
         run_id: runId,
         plan_id: planId,
         conversation_id: conversationId,
-        edits,
+        ...(edits ? { edits } : {}),
+        // A retry uses its returned child plan version, not the source recovery token.
         ...(plan.edit_version ? { expected_version: plan.edit_version } : {}),
     };
 
@@ -669,31 +692,41 @@ export async function approveAndRunPlan(params: {
                 useChatStore.getState().pushOrchestrationContent(conversationId, accumulated),
             onDone: (event, accumulated) => {
                 settled = true;
+                const status = orchestrationTerminalStatus(event);
+                const terminal = { ...event, run_id: runId, turn_id: turnId };
+                useOrchestrationStore.getState().updateRunRecovery(runId, {
+                    ...normalizeOrchestrationAttempt(terminal), status, plan,
+                    transportUnknown: false, checking: false,
+                    error: event.message_saved === false
+                        ? 'This explanation could not be saved to the conversation. It is kept in this tab; review saved progress before leaving.' : null,
+                });
                 useOrchestrationStore.getState().mergeReasoningAdjustments(
                     conversationId, turnId, event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments,
                 );
                 useChatStore.getState().settleOrchestrationTurn(conversationId, {
-                    status: 'completed',
-                    event,
+                    status,
+                    event: terminal,
                     accumulated,
                     pendingUserMessageId: context?.pendingUserMessageId ?? null,
                 });
-                useOrchestrationStore.getState().endRun(runId, 'completed');
+                useOrchestrationStore.getState().endRun(runId, status);
             },
-            onCancelled: (_event, accumulated) => {
+            onCancelled: (event, accumulated) => {
                 settled = true;
+                const terminal = { ...event, run_id: runId, turn_id: turnId, status: 'cancelled' as const };
+                useOrchestrationStore.getState().updateRunRecovery(runId, {
+                    ...normalizeOrchestrationAttempt(terminal), status: 'cancelled', plan,
+                    transportUnknown: false, checking: false,
+                    error: event.message_saved === false
+                        ? 'This explanation could not be saved to the conversation. It is kept in this tab; review saved progress before leaving.' : null,
+                });
                 useChatStore
                     .getState()
-                    .settleOrchestrationTurn(conversationId, { status: 'cancelled', accumulated });
+                    .settleOrchestrationTurn(conversationId, { status: 'cancelled', event: terminal, accumulated });
                 useOrchestrationStore.getState().endRun(runId, 'cancelled');
             },
-            onError: (message) => {
-                settled = true;
-                useChatStore
-                    .getState()
-                    .settleOrchestrationTurn(conversationId, { status: 'failed', error: message });
-                useOrchestrationStore.getState().endRun(runId, 'failed');
-            },
+            // Older error-only frames do not prove that finalization reached storage.
+            onError: () => {},
             onConflict: (message) => {
                 settled = true;
                 conflictMessage = message;
@@ -712,14 +745,7 @@ export async function approveAndRunPlan(params: {
             // quietly and the conversation re-read -- the answer the other device produced is
             // already stored, and fetching it is how this device catches up.
             onAlreadyRun: () => {
-                settled = true;
-                useChatStore.getState().settleOrchestrationTurn(conversationId, {
-                    status: 'cancelled',
-                    accumulated: '',
-                });
-                useOrchestrationStore.getState().endRun(runId, 'completed');
-                useOrchestrationStore.getState().clearActiveTurn(conversationId);
-                void useChatStore.getState().reloadMessages();
+                // Read the existing attempt; it might still be running, failed, or stopped.
             },
         },
         controller.signal,
@@ -727,38 +753,302 @@ export async function approveAndRunPlan(params: {
 
     if (activeControllers.get(conversationId) === controller) {
         activeControllers.delete(conversationId);
+        activeRunIds.delete(conversationId);
     }
     if (result.conflict) {
         await refreshOrchestrationPlanEditor(
             { conversationId, turnId }, result.conflict.current_run_id ?? runId, conflictMessage,
         );
     }
+    if (result.rejection) {
+        const current = useOrchestrationStore.getState();
+        current.releaseRunAttempt(runId);
+        current.updateRunRecovery(runId, {
+            run_id: runId, turn_id: turnId, plan, status: plan.status,
+            transportUnknown: false,
+            error: 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
+        });
+        useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+        return;
+    }
 
     if (!settled) {
-        // A bare abort: Stop was pressed and the stream dropped before any terminal frame. Keep
-        // whatever partial answer had arrived, matching a cancelled chat stream.
-        useChatStore.getState().settleOrchestrationTurn(conversationId, {
-            status: 'cancelled',
-            accumulated: result.accumulated,
+        useOrchestrationStore.getState().updateRunRecovery(runId, {
+            run_id: runId, turn_id: turnId, plan, transportUnknown: true,
         });
-        useOrchestrationStore.getState().endRun(runId, 'cancelled');
+        if (!activeControllers.has(conversationId)) {
+            useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                status: 'unknown',
+                event: { run_id: runId, turn_id: turnId },
+                accumulated: result.accumulated,
+            });
+        }
+        await reconcileOrchestrationRun(conversationId, runId);
     }
 }
 
-/**
- * Stop the in-flight plan or run for a conversation.
- *
- * Aborting the reader is all that is available: orchestration has no run-cancel endpoint the way
- * chat does, so the server may finish the work unwatched. The UI settles either way, and the
- * partial answer is kept.
- */
-export function cancelOrchestration(conversationId: string): void {
-    activeControllers.get(conversationId)?.abort();
+const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const recoverySubmissions = new Map<string, { id: string; version: string; confirmed: boolean; unresolved: boolean }>();
+const recoveryLocks = new Set<string>();
+
+export async function loadOrchestrationRecovery(conversationId: string, runId: string): Promise<PersistedRun | null> {
+    const record = await fetchOrchestrationRun(runId, { conversationId });
+    if (!record || record.run_id !== runId || record.conversation_id !== conversationId) {
+        throw new Error('Recovery record unavailable');
+    }
+    const plan = normalizePlan(record.plan);
+    useOrchestrationStore.getState().updateRunRecovery(runId, {
+        ...normalizeOrchestrationAttempt(record),
+        status: record.status,
+        ...(plan ? { plan } : {}),
+        detailLoaded: true,
+    });
+    return record;
+}
+
+/** Read-only polling never approves, retries, or invents a cancellation reason. */
+export async function reconcileOrchestrationRun(conversationId: string, runId: string): Promise<void> {
+    const timer = reconciliationTimers.get(runId);
+    if (timer) clearTimeout(timer);
+    reconciliationTimers.delete(runId);
+    const store = useOrchestrationStore.getState();
+    if (store.runRecovery[runId]?.checking) return;
+    store.updateRunRecovery(runId, { checking: true, transportUnknown: true });
+    try {
+        const record = await loadOrchestrationRecovery(conversationId, runId);
+        if (!record) return;
+        const steps = await fetchRunSteps(runId, { conversationId }).catch(() => []);
+        const current = useOrchestrationStore.getState();
+        if (record.turn_id && selectPlan(current, conversationId, record.turn_id)?.run_id === runId) {
+            current.adoptPersistedPlan(conversationId, record.turn_id, record.plan, steps);
+        }
+        const terminal = record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled';
+        if (terminal && !isOrchestrationRunPending(record)) {
+            const event: RunStreamEvent = {
+                ...normalizeOrchestrationAttempt(record),
+                status: record.status === 'cancelled' ? 'cancelled' : record.status === 'failed' ? 'failed' : 'completed',
+                message_id: record.assistant_message_id ?? undefined,
+            };
+            const status = orchestrationTerminalStatus(event);
+            current.updateRunRecovery(runId, { transportUnknown: false, checking: false, error: null });
+            current.endRun(runId, status);
+            const chat = useChatStore.getState();
+            const otherRun = Object.values(current.inFlight)
+                .some((run) => run.conversationId === conversationId && run.runId !== runId);
+            const activeTurn = current.activeTurns[conversationId];
+            if (chat.activeConversationId === conversationId && !otherRun
+                && (!chat.streaming || !activeTurn || activeTurn === record.turn_id)) {
+                const partial = chat.messages.find((message) => message.id === `orchestration-status-${runId}`)?.content ?? '';
+                chat.settleOrchestrationTurn(conversationId, {
+                    status, event, accumulated: record.assistant_message_id ? '' : partial,
+                });
+                // Saved messages own final content, citations and artifact metadata.
+                if (record.assistant_message_id) await useChatStore.getState().reloadMessages();
+                else current.updateRunRecovery(runId, {
+                    error: record.finalization_status === 'interrupted'
+                        ? 'Execution was interrupted before a final conversation message could be confirmed. Review the saved status and recovery options.'
+                        : record.message_saved === false || record.finalization_status === 'failed'
+                        ? 'The run ended, but its conversation message was not saved. This visible status is kept in this tab.'
+                        : 'This run ended without a linked conversation message. Review its saved status and recovery options.',
+                });
+            }
+            return;
+        }
+        current.updateRunRecovery(runId, {
+            checking: false,
+            error: terminal
+                ? 'The server is saving the final response. Checking saved status; no retry will start.'
+                : 'The server has not confirmed a final result. Execution may still be running. Checking saved status; no retry will start.',
+        });
+    } catch {
+        useOrchestrationStore.getState().updateRunRecovery(runId, {
+            checking: false,
+            error: 'The saved run status could not be reached. Execution may still be running. No retry will start until its status is confirmed.',
+        });
+    }
+    reconciliationTimers.set(runId, setTimeout(() => {
+        void reconcileOrchestrationRun(conversationId, runId);
+    }, 5000));
+}
+
+export function openOrchestrationRecovery(conversationId: string, runId: string): void {
+    useOrchestrationStore.setState({ recoveryTarget: { conversationId, runId } });
+    useChatStore.getState().setDrawerMode('plan');
+    void loadOrchestrationRecovery(conversationId, runId).then((record) => {
+        if (record && isOrchestrationRunPending(record)) {
+            return reconcileOrchestrationRun(conversationId, runId);
+        }
+    }).catch(() => {
+        useOrchestrationStore.getState().updateRunRecovery(runId, {
+            error: 'The saved attempt could not be loaded. Your previous failure and progress have been kept.',
+        });
+    });
+}
+
+export async function retryOrchestrationRun(
+    conversationId: string,
+    runId: string,
+    confirmedVersion?: string,
+): Promise<{ confirmationRequired?: boolean; version?: string }> {
+    const key = scopeKey(conversationId, runId);
+    const store = useOrchestrationStore.getState();
+    if (recoveryLocks.has(key)) return {};
+    const fail = (error: string) => useOrchestrationStore.getState().updateRunRecovery(runId, { error });
+    if (useChatStore.getState().activeConversationId !== conversationId
+        || useChatStore.getState().streaming
+        || Object.values(store.inFlight).some((run) => run.conversationId === conversationId)) {
+        fail('Finish or stop the current request, then review this saved attempt before retrying.');
+        return {};
+    }
+    recoveryLocks.add(key);
+    store.updateRunRecovery(runId, { busy: true, error: null });
+    const initialTurn = store.activeTurns[conversationId];
+    try {
+        const record = await loadOrchestrationRecovery(conversationId, runId);
+        const recovery = normalizeOrchestrationRecovery(record?.recovery);
+        const previous = recoverySubmissions.get(key);
+        if (!record || !recovery || (!previous?.unresolved && (!recovery.eligible || !recovery.expected_version
+            || recovery.source_run_id !== runId
+            || (recovery.current_run_id && recovery.current_run_id !== runId)))) {
+            fail(recovery?.message || 'This saved attempt cannot be resumed. Review the current attempt or start a new plan deliberately.');
+            return {};
+        }
+        if (!previous?.unresolved && confirmedVersion && confirmedVersion !== recovery.expected_version) {
+            fail('The recovery preview changed. Review the updated saved steps before confirming another retry.');
+            return {};
+        }
+        if (!previous?.unresolved && recovery.requires_confirmation && confirmedVersion !== recovery.expected_version) {
+            return { confirmationRequired: true, version: recovery.expected_version ?? undefined };
+        }
+        const confirmed = recovery.requires_confirmation && confirmedVersion === recovery.expected_version;
+        const submission = previous?.unresolved ? previous
+            : { id: makeTurnId(), version: recovery.expected_version ?? '', confirmed, unresolved: true };
+        recoverySubmissions.set(key, submission);
+        const child = await prepareOrchestrationRetry(runId, {
+            conversation_id: conversationId,
+            submission_id: submission.id,
+            expected_version: submission.version,
+            confirm_external_effects: submission.confirmed,
+        });
+        submission.unresolved = false;
+        const plan = normalizePlan(child.plan);
+        if (!plan || child.conversation_id !== conversationId || child.turn_id !== record.turn_id
+            || child.retry_of_run_id !== runId || child.run_id !== plan.run_id
+            || plan.conversation_id !== conversationId || plan.turn_id !== record.turn_id) {
+            fail('The prepared attempt could not be verified. Nothing was executed. Reload the saved run before continuing.');
+            return {};
+        }
+        const current = useOrchestrationStore.getState();
+        current.updateRunRecovery(runId, {
+            latest_attempt_run_id: child.run_id,
+            recovery: { ...recovery, eligible: false, current_run_id: child.run_id },
+        });
+        current.updateRunRecovery(child.run_id, { ...normalizeOrchestrationAttempt(child), plan, status: child.status });
+        if (useChatStore.getState().activeConversationId !== conversationId
+            || useChatStore.getState().streaming
+            || current.activeTurns[conversationId] !== initialTurn
+            || Object.values(current.inFlight).some((run) => run.conversationId === conversationId)) {
+            fail('A retry was prepared but not started because the active request changed. Open the current saved attempt to continue manually.');
+            return {};
+        }
+        // Never replan or append a user message. The saved child is the server's effective plan.
+        current.setPlan(conversationId, plan.turn_id, plan);
+        current.setActiveTurn(conversationId, plan.turn_id);
+        current.pinRun(null);
+        useOrchestrationStore.setState({ recoveryTarget: null });
+        await executeSavedPlan(conversationId, plan.turn_id, plan);
+        return {};
+    } catch (error) {
+        const info = error instanceof ApiError ? orchestrationErrorInfo(error.payload, error.status) : {};
+        if (info.code) recoverySubmissions.delete(key);
+        const payload = error instanceof ApiError && error.payload && typeof error.payload === 'object'
+            ? error.payload as Record<string, unknown> : {};
+        const recovery = normalizeOrchestrationRecovery(payload.recovery);
+        if (recovery) useOrchestrationStore.getState().updateRunRecovery(runId, { recovery });
+        if (info.code === 'confirmation_required' && recovery?.expected_version) {
+            return { confirmationRequired: true, version: recovery.expected_version };
+        }
+
+        if (info.current_run_id) useOrchestrationStore.getState().updateRunRecovery(runId, {
+            latest_attempt_run_id: info.current_run_id,
+        });
+        fail(info.code === 'recovery_changed'
+            ? 'Recovery changed or a newer attempt already exists. Review the current attempt; no work was started by this request.'
+            : 'Recovery could not be prepared. Your previous failure and saved progress have been kept. Check the saved status and try again.');
+        return {};
+    } finally {
+        recoveryLocks.delete(key);
+        useOrchestrationStore.getState().updateRunRecovery(runId, { busy: false });
+    }
+}
+
+export async function runPreparedOrchestrationRetry(conversationId: string, runId: string): Promise<void> {
+    const key = scopeKey(conversationId, runId);
+    if (recoveryLocks.has(key)) return;
+    recoveryLocks.add(key);
+    const fail = () => useOrchestrationStore.getState().updateRunRecovery(runId, {
+        error: 'This saved retry cannot start right now. Check the current attempt and finish any active request first.',
+    });
+    try {
+        const record = await loadOrchestrationRecovery(conversationId, runId);
+        const plan = normalizePlan(record?.plan);
+        if (!plan || !record?.retry_of_run_id || (record.status !== 'awaiting_approval' && record.status !== 'approved')
+            || plan.run_id !== runId || plan.conversation_id !== conversationId || plan.turn_id !== record.turn_id
+            || useChatStore.getState().activeConversationId !== conversationId || useChatStore.getState().streaming
+            || Object.values(useOrchestrationStore.getState().inFlight).some((run) => run.conversationId === conversationId)) {
+            fail();
+            return;
+        }
+        const source = await loadOrchestrationRecovery(conversationId, record.retry_of_run_id);
+        const latest = source?.latest_attempt_run_id || source?.recovery?.current_run_id;
+        if (latest !== runId || useChatStore.getState().activeConversationId !== conversationId
+            || useChatStore.getState().streaming) {
+            fail();
+            return;
+        }
+        const current = useOrchestrationStore.getState();
+        current.setPlan(conversationId, plan.turn_id, plan);
+        current.setActiveTurn(conversationId, plan.turn_id);
+        useOrchestrationStore.setState({ recoveryTarget: null });
+        await executeSavedPlan(conversationId, plan.turn_id, plan);
+    } catch {
+        fail();
+    } finally {
+        recoveryLocks.delete(key);
+    }
+}
+
+export async function cancelOrchestration(conversationId: string, runId?: string): Promise<void> {
+    if (!runId && activeControllers.has(conversationId) && !activeRunIds.has(conversationId)) {
+        activeControllers.get(conversationId)?.abort();
+        return;
+    }
+    const runs = Object.values(useOrchestrationStore.getState().inFlight)
+        .filter((candidate) => candidate.conversationId === conversationId);
+    const targetId = runId ?? activeRunIds.get(conversationId);
+    const run = targetId ? runs.find((candidate) => candidate.runId === targetId)
+        : runs.sort((left, right) => right.startedAt - left.startedAt)[0];
+    if (!run) {
+        if (!runId) activeControllers.get(conversationId)?.abort();
+        return;
+    }
+    const controller = activeRunIds.get(conversationId) === run.runId
+        ? activeControllers.get(conversationId) : undefined;
+    try {
+        await cancelOrchestrationRun(run.runId, conversationId);
+        if (activeControllers.get(conversationId) === controller) controller?.abort();
+        await reconcileOrchestrationRun(conversationId, run.runId);
+    } catch {
+        useOrchestrationStore.getState().updateRunRecovery(run.runId, {
+            error: 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
+        });
+    }
 }
 
 /** Whether a plan or run is streaming for a conversation, so Stop can route to the right cancel. */
 export function hasActiveOrchestration(conversationId: string): boolean {
-    return activeControllers.has(conversationId);
+    return activeControllers.has(conversationId)
+        || Object.values(useOrchestrationStore.getState().inFlight).some((run) => run.conversationId === conversationId);
 }
 
 /**

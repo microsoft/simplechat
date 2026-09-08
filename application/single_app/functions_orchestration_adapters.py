@@ -89,6 +89,9 @@ from functions_orchestration_schema import (
     STEP_STATUS_COMPLETED,
     STEP_STATUS_FAILED,
     build_step_result,
+    build_failure,
+    failure_from_exception,
+    safe_failure,
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_ADAPTERS]'
@@ -293,11 +296,12 @@ def _cancelled_result(summary):
 
 
 def _failed_result(summary, error, replan_hint=None):
+    failure = failure_from_exception(error) if isinstance(error, Exception) else build_failure()
     return build_step_result(
         status=STEP_STATUS_FAILED,
-        summary=summary,
-        error=error,
-        replan_hint=replan_hint,
+        summary=failure['message'],
+        error=failure['message'],
+        failure=failure,
     )
 
 
@@ -495,7 +499,7 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Document search failed.', 'The selected sources could not be searched. Please retry.')
+        return _failed_result('Document search failed.', exc)
 
     results = list(results or [])
     document_ids = []
@@ -684,9 +688,11 @@ def run_document_analyze(step, context, *, settings, user_id, emit, cancel_reque
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Document analysis failed.', str(exc))
+        return _failed_result('Document analysis failed.', exc)
 
     envelopes = _analysis_envelopes(result, document_ids)
+    if any((envelope.get('coverage') or {}).get('failed_windows') for envelope in envelopes):
+        return _failed_result('Document analysis could not complete.', 'step_failed')
     reply = _text((result or {}).get('reply') or (result or {}).get('analysis_reply'))
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
@@ -764,7 +770,7 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Document comparison failed.', str(exc))
+        return _failed_result('Document comparison failed.', exc)
 
     result = result if isinstance(result, dict) else {}
     reply = _text(result.get('reply') or result.get('analysis_reply'))
@@ -808,10 +814,10 @@ def run_document_compare(step, context, *, settings, user_id, emit, cancel_reque
 # --------------------------------------------------------------------------------------
 
 def _tabular_evidence_status(execution_state, reply, artifacts):
-    if reply or artifacts:
-        return EVIDENCE_STATUS_COMPLETED
     if execution_state in ('declined', 'failed', 'error'):
         return EVIDENCE_STATUS_FAILED
+    if reply or artifacts:
+        return EVIDENCE_STATUS_COMPLETED
     return EVIDENCE_STATUS_PARTIAL
 
 
@@ -880,7 +886,7 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Tabular analysis failed.', str(exc))
+        return _failed_result('Tabular analysis failed.', exc)
 
     result = result if isinstance(result, dict) else {}
     reply = _text(result.get('analysis_reply') or result.get('reply'))
@@ -888,6 +894,8 @@ def run_tabular_analyze(step, context, *, settings, user_id, emit, cancel_reques
     artifacts = [generated] if isinstance(generated, dict) else []
     execution_state = _text(result.get('execution_state')).lower()
     envelope_status = _tabular_evidence_status(execution_state, reply, artifacts)
+    if envelope_status == EVIDENCE_STATUS_FAILED:
+        return _failed_result('Tabular analysis could not complete.', 'step_failed')
 
     envelopes = []
     for index, source in enumerate(tabular_sources):
@@ -964,7 +972,7 @@ def run_web_search(step, context, *, settings, user_id, emit, cancel_requested):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Web search failed.', str(exc))
+        return _failed_result('Web search failed.', exc)
 
     notes = [
         _text(message.get('content'))
@@ -1083,10 +1091,9 @@ def _finalize_source_review(
             citations=citations,
         )
 
-    reason = _text(result.get('skipped_reason'))
     return build_step_result(
         status=STEP_STATUS_COMPLETED,
-        summary=empty_summary + (f' ({reason})' if reason else ''),
+        summary=empty_summary,
         notes=notes,
         citations=citations,
         replan_hint=empty_replan_hint,
@@ -1135,7 +1142,7 @@ def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('Reading linked pages is unavailable.', str(exc))
+        return _failed_result('Reading linked pages is unavailable.', exc)
 
     # Rewritten requests can contain model-generated links. Seed only the separately
     # authorized user-authored URLs, including any referenced historical user message.
@@ -1175,7 +1182,7 @@ def run_url_fetch(step, context, *, settings, user_id, emit, cancel_requested):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('The linked pages could not be read.', str(exc))
+        return _failed_result('The linked pages could not be read.', exc)
 
     return _finalize_source_review(
         result,
@@ -1508,17 +1515,19 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
             build_agent_citation_tool_label,
             make_json_serializable,
         )
+        from semantic_kernel_plugins.plugin_invocation_logger import sanitize_plugin_invocation_value
     except Exception:
         build_agent_citation_tool_label = None
         make_json_serializable = None
+        sanitize_plugin_invocation_value = None
 
     def _serialize(value):
-        if make_json_serializable:
+        if make_json_serializable and sanitize_plugin_invocation_value:
             try:
-                return make_json_serializable(value)
+                return sanitize_plugin_invocation_value(make_json_serializable(value), max_string_length=None)
             except Exception:
                 pass
-        return _text(value) if value is not None else None
+        return None
 
     citations = []
     for inv in invocations or ():
@@ -1547,11 +1556,11 @@ def _agent_citations(plugin_logger, user_id, conversation_id, seen_before, root_
             'function_name': function_name,
             'plugin_name': plugin_name,
             'function_arguments': _serialize(parameters),
-            'function_result': _serialize(inv_result),
+            'function_result': _serialize(inv_result) if getattr(inv, 'success', None) is not False else None,
             'duration_ms': getattr(inv, 'duration_ms', None),
             'timestamp': timestamp_str,
             'success': getattr(inv, 'success', None),
-            'error_message': _serialize(getattr(inv, 'error_message', None)),
+            'error_message': build_failure()['message'] if getattr(inv, 'success', None) is False else None,
             'user_id': getattr(inv, 'user_id', None),
             'delegation': getattr(inv, 'provenance', None),
         })
@@ -1597,10 +1606,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             extra={'action_ref': action_ref, 'step_id': (step or {}).get('step_id'),
                    'error_type': type(exc).__name__},
         )
-        return _failed_result(
-            'The action could not complete.',
-            'Check action access, configuration, enabled functions, and model availability.',
-        )
+        return _failed_result('The action could not complete.', exc)
     citations = _agent_citations(
         None, user_id, _ctx(context, 'conversation_id'), set(),
         root_id=result['root_id'], scoped_invocations=result['invocations'],
@@ -1663,7 +1669,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('The agent could not be resolved.', str(exc))
+        return _failed_result('The agent could not be resolved.', exc)
 
     if _is_cancelled(cancel_requested):
         return _cancelled_result('Cancelled before invoking the agent.')
@@ -1694,12 +1700,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
         except Exception as exc:
             log_event('[AGENT_DELEGATION] Orchestration agent execution failed.',
                       extra={'error_type': type(exc).__name__, 'step_id': (step or {}).get('step_id')})
-            safe_error = (
-                'The called agent requires sign-in or consent for Foundry.'
-                if type(exc).__name__ == 'FoundryAgentUserAuthenticationRequired'
-                else 'The selected agent could not complete the task.'
-            )
-            return _failed_result('The agent invocation failed.', safe_error)
+            return _failed_result('The agent invocation failed.', exc)
         new_records = [record for record in budget.snapshot() if record['invocation_id'] not in prior_ids]
         usage = _ctx(context, 'token_usage', None)
         if isinstance(usage, dict):
@@ -1754,7 +1755,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('The agent could not be loaded.', str(exc))
+        return _failed_result('The agent could not be loaded.', exc)
 
     if not kernel or selected_agent is None:
         return _failed_result(
@@ -1780,7 +1781,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
     try:
         reply = _invoke_agent_sync(selected_agent, task)
     except _AgentEventLoopError as exc:
-        return _failed_result('The agent could not run in this context.', str(exc))
+        return _failed_result('The agent could not run in this context.', exc)
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} agent_invoke failed during invocation: {exc}',
@@ -1788,7 +1789,7 @@ def run_agent_invoke(step, context, *, settings, user_id, emit, cancel_requested
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('The agent invocation failed.', str(exc))
+        return _failed_result('The agent invocation failed.', exc)
 
     _record_agent_token_usage(context, kernel)
     citations = _agent_citations(plugin_logger, user_id, conversation_id, seen_before)
@@ -1875,13 +1876,20 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
             f'{_LOG_PREFIX} Saved memory is unavailable for synthesis.',
             level=logging.WARNING, extra={'reason': exc.code},
         )
-        return _failed_result(exc.message, exc.code)
+        failure = build_failure('context_unavailable')
+        return build_step_result(status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'])
     _emit(emit, _progress(step, CAPABILITY_RESPOND, 'Writing the answer'))
 
     user_message = _text(_ctx(context, 'user_message', ''))
     instruction = _text(arguments.get('instruction') or arguments.get('prompt'))
     evidence = [envelope for envelope in (_ctx(context, 'evidence', []) or []) if isinstance(envelope, dict)]
     notes = list(_ctx(context, 'notes', []) or [])
+    failures = [safe_failure(value) for value in (_ctx(context, 'failures', []) or [])]
+    if failures:
+        notes.append(
+            'Application-recorded incomplete work (explain these limitations; do not claim full success):\n'
+            + json.dumps(failures, ensure_ascii=False)
+        )
     citations = list(_ctx(context, 'citations', []) or [])
     citations.extend(memory.get('citations') or [])
 
@@ -1940,7 +1948,11 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        return _failed_result('The answer could not be written.', str(exc))
+        failure = build_failure('context_unavailable') if isinstance(exc, OrchestrationMemoryError) else failure_from_exception(exc, answering=True)
+        return build_step_result(
+            status=STEP_STATUS_FAILED, failure=failure,
+            summary=failure['message'], error=failure['message'],
+        )
 
     reply = reply or _EMPTY_ANSWER
     return build_step_result(

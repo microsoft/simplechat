@@ -40,6 +40,10 @@ import logging
 import math
 import uuid
 
+from azure.core.exceptions import ServiceRequestError
+from openai import APIConnectionError, APITimeoutError
+
+from agent_execution_context import AgentDelegationTimeout
 from functions_appinsights import log_event
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
@@ -1058,6 +1062,83 @@ def summarize_plan(plan):
 # Step results
 # --------------------------------------------------------------------------------------
 
+FAILURE_CONTRACT_VERSION = 1
+FAILURE_MESSAGES = {
+    'user_cancelled': 'You stopped this run. Already submitted external actions may still finish.',
+    'step_timeout': 'This step did not finish before its time limit.',
+    'run_timeout': 'The run reached its total time limit before all work could finish.',
+    'step_budget': 'The run reached its step limit before all work could finish.',
+    'delegation_timeout': 'The delegated agent did not finish before its time limit.',
+    'provider_timeout': 'The service used by this step timed out.',
+    'provider_http_error': 'The service used by this step returned an unsuccessful HTTP response.',
+    'connection_failed': 'This step could not connect to the service it uses.',
+    'execution_interrupted': 'This step stopped unexpectedly. The underlying cause was not recorded.',
+    'execution_expired': 'The execution lease expired before the worker recorded a final outcome.',
+    'ownership_lost': 'This execution no longer owns the attempt and cannot publish further results.',
+    'context_unavailable': 'The original context or access changed. Review the request and create a new plan.',
+    'checkpoint_unavailable': 'Progress could not be saved or verified. This attempt cannot safely resume.',
+    'checkpoint_invalid': 'Saved progress could not be verified. Review the request and create a new plan.',
+    'recovery_changed': 'Saved step inputs changed. Previously completed work will not be repeated.',
+    'model_failed': 'The answering model could not complete the reply.',
+    'step_failed': 'This operation could not complete.',
+    'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
+}
+
+
+def build_failure(code='step_failed', *, step_id=None, capability_id=None, provider_status=None):
+    """Only application-owned text may cross a failure boundary."""
+    code = code if code in FAILURE_MESSAGES else 'step_failed'
+    result = {'code': code, 'message': FAILURE_MESSAGES[code]}
+    if step_id:
+        result['step_id'] = _text(step_id, 200)
+    if capability_id:
+        result['capability_id'] = _text(capability_id, 100)
+    if isinstance(provider_status, int) and not isinstance(provider_status, bool) and 400 <= provider_status <= 599:
+        result['provider_status'] = provider_status
+        if code == 'provider_http_error':
+            result['message'] = f'The service used by this step returned HTTP {provider_status}.'
+    return result
+
+
+def safe_failure(value, *, step_id=None, capability_id=None):
+    value = value if isinstance(value, dict) else {}
+    return build_failure(
+        value.get('code'), step_id=step_id or value.get('step_id'),
+        capability_id=capability_id or value.get('capability_id'),
+        provider_status=value.get('provider_status'),
+    )
+
+
+def failure_from_exception(exc, *, answering=False, _depth=0):
+    """Use types and structured status, never diagnostic prose or model content."""
+    status = getattr(exc, 'status_code', None)
+    if not isinstance(status, int):
+        status = getattr(getattr(exc, 'response', None), 'status_code', None)
+    if isinstance(status, int) and 400 <= status <= 599:
+        return build_failure('provider_http_error', provider_status=status)
+    if isinstance(exc, AgentDelegationTimeout):
+        return build_failure('delegation_timeout')
+    if isinstance(exc, (TimeoutError, APITimeoutError)):
+        return build_failure('provider_timeout')
+    if isinstance(exc, (ConnectionError, APIConnectionError, ServiceRequestError)):
+        return build_failure('connection_failed')
+    cause = getattr(exc, '__cause__', None)
+    if cause is not None and cause is not exc and _depth < 3:
+        return failure_from_exception(cause, answering=answering, _depth=_depth + 1)
+    return build_failure('model_failed' if answering else 'step_failed')
+
+
+def failure_explanation(failures, *, partial=False, cancelled=False):
+    facts = [safe_failure(value)['message'] for value in failures or []]
+    facts = list(dict.fromkeys(facts))
+    heading = 'The run was stopped.' if cancelled else (
+        'The request was only partially completed.' if partial else 'The request could not be completed.'
+    )
+    return heading + ('\n\n' + '\n'.join(facts) if facts else '') + (
+        '\n\nCheck the run details for saved progress and retry availability.'
+    )
+
+
 def build_step_result(
     status=STEP_STATUS_COMPLETED,
     summary='',
@@ -1068,6 +1149,7 @@ def build_step_result(
     error=None,
     replan_hint=None,
     message=None,
+    failure=None,
 ):
     """The single shape every capability adapter returns.
 
@@ -1095,6 +1177,7 @@ def build_step_result(
         'error': _text(error) or None,
         'replan_hint': _text(replan_hint) or None,
         'message': message,
+        'failure': safe_failure(failure) if failure else None,
     }
 
 

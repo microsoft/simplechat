@@ -28,6 +28,7 @@ import { AssistantMarkdown } from './AssistantMarkdown';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
 import { MessageActions } from './MessageActions';
+import { OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { MessageInspector, type InspectorSection } from './MessageInspector';
 import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
 import { OrchestrationPlanCard } from './OrchestrationPlanCard';
@@ -605,6 +606,10 @@ function MessageBubbleInner({
                             </p>
                         )}
                         <ReasoningAdjustmentNotice adjustments={message.metadata?.reasoning_adjustments} />
+                        <OrchestrationMessageRecovery
+                            conversationId={message.conversation_id}
+                            metadata={message.metadata?.orchestration}
+                        />
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
                         {artifacts.map((artifact, index) => (
