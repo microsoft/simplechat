@@ -1,7 +1,7 @@
 # test_v2_reasoning_effort_persistence.py
 """
 Functional regressions for canonical reasoning projection and preference contracts.
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.104
 
 Executes actual catalog/initial-selection functions without Flask/Azure startup, then the
@@ -20,6 +20,7 @@ APP = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP))
 
 from functions_model_capabilities import REASONING_IDENTIFIER_FIELDS, resolve_model_reasoning_policy  # noqa: E402
+from functions_ai_connections import filter_model_endpoints_by_capability  # noqa: E402
 
 
 def _catalog_functions():
@@ -31,6 +32,7 @@ def _catalog_functions():
     namespace = {
         "resolve_model_reasoning_policy": resolve_model_reasoning_policy,
         "REASONING_IDENTIFIER_FIELDS": REASONING_IDENTIFIER_FIELDS,
+        "filter_model_endpoints_by_capability": filter_model_endpoints_by_capability,
         "sanitize_model_endpoints_for_frontend": copy.deepcopy,
         "normalize_model_endpoints": lambda endpoints: (endpoints, False),
         "_filter_chat_model_endpoints_by_governance": lambda user, endpoints, feature: endpoints,

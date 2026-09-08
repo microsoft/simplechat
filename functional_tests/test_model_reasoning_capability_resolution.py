@@ -1,7 +1,7 @@
 # test_model_reasoning_capability_resolution.py
 """
 Functional tests for canonical reasoning policies and bounded provider recovery.
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.104
 
 Exercises real catalog matching and SDK errors without Azure clients or network
@@ -158,8 +158,11 @@ class ReasoningPolicyTests(unittest.TestCase):
 
     def test_reasoning_only_legacy_records_do_not_change_vision(self):
         resolve_vision = self.capabilities.resolve_model_vision_support
-        self.assertEqual(resolve_vision("gpt-4o"), (True, "inferred"))
-        self.assertEqual(resolve_vision("o3-mini"), (True, "inferred"))
+        self.assertEqual(resolve_vision("gpt-4"), (False, "inferred"))
+        self.assertEqual(resolve_vision("gpt-4.5"), (True, "inferred"))
+        self.assertEqual(resolve_vision("o1-mini"), (True, "inferred"))
+        self.assertEqual(resolve_vision("gpt-4o"), (True, "catalog"))
+        self.assertEqual(resolve_vision("o3-mini"), (False, "catalog"))
         self.assertEqual(resolve_vision("gpt-5.3-chat"), (False, "catalog"))
         self.assertEqual(resolve_vision(LUNA), (True, "catalog"))
         self.assertEqual(resolve_vision({"modelName": LUNA, "supportsVision": False}),

@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_model_endpoints_api.py
+#!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.059
+Version: 0.261.105
 Implemented in: 0.261.059
 
 Global model endpoints were the only scope without per-resource routes. They were
@@ -127,7 +127,9 @@ def _load_selection_helpers():
         f"found {[getattr(n, 'name', 'constant') for n in selected]}"
     )
 
-    namespace = {}
+    namespace = {
+        "supports_model_capability": import_app_module("functions_ai_connections").supports_model_capability,
+    }
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(SETTINGS_FILE), "exec"), namespace)
     return namespace
 
@@ -360,6 +362,7 @@ def _load_persistence_helper():
         "cleaned": [],
         "deleted": [],
         "updates": [],
+        "events": [],
         "settings": {
             "enable_multi_model_endpoints": True,
             "default_model_selection": {},
@@ -367,16 +370,20 @@ def _load_persistence_helper():
     }
 
     def fake_save(endpoint, scope_value, scope="global", existing_endpoint=None):
+        calls["events"].append("save")
         calls["saved"].append((endpoint.get("id"), scope, scope_value))
         return endpoint
 
     def fake_cleanup(previous, current, scope_value, scope="global"):
+        calls["events"].append("cleanup")
         calls["cleaned"].append((scope_value, scope))
 
     def fake_delete(endpoint, scope_value, scope="global"):
+        calls["events"].append("delete")
         calls["deleted"].append((scope_value, scope))
 
     def fake_update_settings(updates):
+        calls["events"].append("commit")
         calls["updates"].append(updates)
         if calls.get("fail_update"):
             return False
@@ -397,6 +404,8 @@ def _load_persistence_helper():
         "resolve_metadata_extraction_model_selection": selection_helpers[
             "resolve_metadata_extraction_model_selection"
         ],
+        "IMAGE_SELECTION_KEY": "image_generation_model_selection",
+        "resolve_capability_model_selection": import_app_module("functions_ai_connections").resolve_capability_model_selection,
     }
     exec(compile(ast.Module(body=[target], type_ignores=[]), str(ROUTES_FILE), "exec"), namespace)
     return namespace["_persist_global_model_endpoints"], calls
@@ -425,6 +434,8 @@ def test_persistence_runs_all_three_key_vault_passes():
 
     assert calls["updates"], "settings were never written"
     assert calls["updates"][0]["model_endpoints"] == saved
+    assert calls["events"].index("commit") < calls["events"].index("cleanup")
+    assert calls["events"].index("commit") < calls["events"].index("delete")
 
     print("  Save, cleanup and delete each ran over the right endpoints.")
     return True
@@ -525,7 +536,7 @@ def test_metadata_extraction_selection_is_revalidated():
 
 
 def test_a_failed_settings_write_is_not_reported_as_success():
-    """Key Vault deletes already ran, so a silent failure leaves a broken endpoint."""
+    """A failed settings write must leave the previous credentials intact."""
     print("Testing failed settings write handling...")
 
     persist, calls = _load_persistence_helper()
@@ -534,12 +545,46 @@ def test_a_failed_settings_write_is_not_reported_as_success():
     try:
         persist([], [{"id": "ep-1", "enabled": True, "models": []}])
     except RuntimeError:
+        assert calls["cleaned"] == [], calls
+        assert calls["deleted"] == [], calls
         print("  A failed settings write raises rather than reporting success.")
         return True
 
     raise AssertionError(
         "_persist_global_model_endpoints ignored a failed update_settings call"
     )
+
+
+def test_image_default_is_revalidated_on_capability_or_availability_changes():
+    """Removing publication for images clears the reference with a durable notice."""
+    for endpoint_enabled, model_enabled, capabilities in (
+        (False, True, ["image_generation"]),
+        (True, False, ["image_generation"]),
+        (True, True, ["chat"]),
+    ):
+        persist, calls = _load_persistence_helper()
+        calls["settings"]["image_generation_model_selection"] = {
+            "endpoint_id": "images", "model_id": "pixels", "provider": "aoai",
+        }
+        existing = [{
+            "id": "images", "provider": "aoai", "enabled": True,
+            "models": [{
+                "id": "pixels", "deploymentName": "drawing", "modelName": "gpt-image-1",
+                "enabled": True, "enabled_capabilities": ["image_generation"],
+            }],
+        }]
+        changed = [{
+            **existing[0], "enabled": endpoint_enabled,
+            "models": [{
+                **existing[0]["models"][0],
+                "enabled": model_enabled, "enabled_capabilities": capabilities,
+            }],
+        }]
+        persist(changed, existing)
+        updates = calls["updates"][0]
+        assert updates["image_generation_model_selection"]["endpoint_id"] == "", updates
+        assert updates["ai_connection_default_notices"]["image_generation"], updates
+    return True
 
 
 def test_enabling_connections_cannot_be_undone_silently():
@@ -654,6 +699,7 @@ if __name__ == "__main__":
         test_an_unaffected_default_is_left_alone,
         test_metadata_extraction_selection_is_revalidated,
         test_a_failed_settings_write_is_not_reported_as_success,
+        test_image_default_is_revalidated_on_capability_or_availability_changes,
         test_enabling_connections_cannot_be_undone_silently,
         test_first_enable_carries_the_classic_endpoint_over,
         test_classic_form_shares_the_selection_rule,

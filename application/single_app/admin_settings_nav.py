@@ -102,10 +102,10 @@ ADMIN_NAV = [
                 # what chat uses when connections are switched off, so it is listed
                 # alongside them.
                 "id": "model-endpoints",
-                "label": "Connections",
+                "label": "AI Connections",
                 "icon": "bi-hdd-network",
                 "sections": [
-                    {"id": "multi-endpoint-configuration", "label": "Connections", "icon": "bi-hdd-network"},
+                    {"id": "multi-endpoint-configuration", "label": "AI Connections", "icon": "bi-hdd-network"},
                     {"id": "gpt-config", "label": "Chat", "icon": "bi-chat-square-text"},
                 ],
             },

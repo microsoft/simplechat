@@ -16,6 +16,7 @@ from importlib import import_module
 from pathlib import Path
 
 from flask import jsonify, request
+from functions_ai_connections import filter_model_endpoints_by_capability
 
 
 EDITOR_SECRET_MASK = "***REDACTED***"
@@ -950,7 +951,7 @@ def build_agent_editor_options(user_id, settings, model_endpoints):
         safe["gpt_model"] = {}
         safe["default_model_selection"] = {}
     model_endpoints = settings_module.sanitize_settings_for_user(
-        {"model_endpoints": model_endpoints},
+        {"model_endpoints": filter_model_endpoints_by_capability(model_endpoints, preserve_empty=True)},
     ).get("model_endpoints", [])
     # These names contain "key"/"secret", but their values are strictly UI flags/defaults.
     try:
@@ -994,7 +995,9 @@ def build_agent_editor_options(user_id, settings, model_endpoints):
     for endpoint in endpoints:
         for path in editor_secret_paths(endpoint, "agents"):
             _set(endpoint, path, EDITOR_SECRET_MASK)
-    safe["enable_multi_model_endpoints"] = bool(safe.get("enable_multi_model_endpoints") or endpoints)
+    safe["enable_multi_model_endpoints"] = bool(
+        safe.get("enable_multi_model_endpoints") or any(endpoint.get("models") for endpoint in endpoints)
+    )
     return {
         "agent_types": [
             {

@@ -2,6 +2,7 @@
 
 import re
 import logging
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from functions_appinsights import log_event
@@ -1287,7 +1288,7 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     return updated
 
 
-def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="global", existing_endpoint=None):
+def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="global", existing_endpoint=None, *, stage_new_secrets=False):
     """Store model endpoint auth secrets in Key Vault and replace them with references."""
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
@@ -1354,6 +1355,14 @@ def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="globa
             continue
 
         secret_name = _build_model_endpoint_secret_name(auth_field)
+        if stage_new_secrets:
+            # A losing import must not overwrite the secret used by another
+            # worker's committed connection. The owner/scope remain unchanged.
+            prefix = f"{clean_name_for_keyvault(str(scope_value))}--{source}--{scope}--"
+            available = 127 - len(prefix)
+            if available < 18:
+                raise ValueError("The model endpoint identifier is too long to stage credentials safely.")
+            secret_name = f"s-{uuid.uuid4().hex[:available - 2]}"
         updated_auth[auth_field] = store_secret_in_key_vault(
             secret_name,
             value,
@@ -1435,7 +1444,7 @@ def keyvault_model_endpoint_delete_helper(endpoint_dict, scope_value, scope="glo
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            raise Exception(f"Error deleting model endpoint auth secret '{auth_field}' for '{scope}' '{scope_value}': {e}")
+            raise RuntimeError("Unable to remove the model endpoint credential from Key Vault.") from e
 
     return endpoint_dict
 

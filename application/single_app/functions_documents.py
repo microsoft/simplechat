@@ -10,6 +10,8 @@ from flask import make_response
 from azure.core.exceptions import ResourceExistsError
 from config import *
 from functions_appinsights import log_event
+from functions_ai_connections import require_model_capability
+from functions_model_capabilities import is_vision_capable_model
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_GROUP,
     DOCUMENT_ACCESS_SCOPE_PERSONAL,
@@ -168,6 +170,13 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
         if not endpoint_cfg.get("enabled", True):
             raise ValueError("Selected metadata extraction endpoint is disabled.")
 
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next((m for m in models if m.get("id") == selection["model_id"]), None)
+        if not model_cfg:
+            raise LookupError("Selected metadata extraction model could not be found on the endpoint.")
+        provider = str(endpoint_cfg.get("provider") or "aoai").lower()
+        require_model_capability(model_cfg, provider=provider)
+
         endpoint_cfg = keyvault_model_endpoint_get_helper(
             endpoint_cfg,
             endpoint_cfg.get("id") or selection["endpoint_id"],
@@ -175,14 +184,6 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
             return_type=SecretReturnType.VALUE,
         )
 
-        models = endpoint_cfg.get("models", []) or []
-        model_cfg = next((m for m in models if m.get("id") == selection["model_id"]), None)
-        if not model_cfg:
-            raise LookupError("Selected metadata extraction model could not be found on the endpoint.")
-        if not model_cfg.get("enabled", True):
-            raise ValueError("Selected metadata extraction model is disabled.")
-
-        provider = str(endpoint_cfg.get("provider") or selection["provider"] or "aoai").lower()
         connection = endpoint_cfg.get("connection", {}) or {}
         auth_settings = endpoint_cfg.get("auth", {}) or {}
         deployment = str(model_cfg.get("deploymentName") or model_cfg.get("deployment") or "").strip()
@@ -5254,6 +5255,18 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
         if not vision_model:
             print(f"Warning: Multi-modal vision enabled but no model selected")
             return None
+
+        selected_models = (settings.get('gpt_model') or {}).get('selected') or []
+        vision_model_record = next(
+            (
+                model for model in selected_models if isinstance(model, dict)
+                and vision_model in (model.get('deploymentName'), model.get('deployment'), model.get('id'))
+            ),
+            vision_model,
+        )
+        require_model_capability(vision_model_record)
+        if not is_vision_capable_model(vision_model_record):
+            raise ValueError('The selected vision model must support image input and text responses.')
 
         # Initialize client (reuse Chat Model)
         enable_gpt_apim = settings.get('enable_gpt_apim', False)

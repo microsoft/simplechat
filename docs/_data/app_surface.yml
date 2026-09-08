@@ -424,7 +424,7 @@ admin_tabs:
   label: Migrate
   group: backup-recovery
 - id: model-endpoints
-  label: Connections
+  label: AI Connections
   group: ai-models
 - id: network
   label: Network
@@ -788,7 +788,7 @@ admin_sections:
   tab: extraction
   group: knowledge
 - id: multi-endpoint-configuration
-  label: Connections
+  label: AI Connections
   tab: model-endpoints
   group: ai-models
 - id: multimodal-vision-section

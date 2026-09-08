@@ -1,21 +1,21 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'model-endpoints' %} show active{% endif %}" id="model-endpoints" role="tabpanel" aria-labelledby="model-endpoints-tab">
 
                 <p class="text-muted">
-                    Configure all AI model settings including GPT for text generation, embeddings for semantic search, and image generation capabilities.
+                    Configure shared AI Connections for chat and image generation. Each capability keeps its own default model.
                 </p>
 
                 <div class="card p-3 mb-4" id="multi-endpoint-configuration">
                     <h5 class="card-title">
-                        <i class="bi bi-hdd-network me-2"></i>Model Endpoints
+                        <i class="bi bi-hdd-network me-2"></i>AI Connections
                     </h5>
                     <p class="text-muted small">
-                        Manage multiple AI model endpoints (Azure OpenAI and Azure AI Foundry). When enabled, model selection in chat is driven by these endpoints.
+                        Manage Azure OpenAI and Azure AI Foundry connections once. Models can be available for chat, image generation, or both. Image connections work independently of the chat mode switch.
                     </p>
 
                     {% if not settings.enable_multi_model_endpoints %}
                     <div class="form-check form-switch mb-3 d-flex align-items-center">
                         <input type="checkbox" class="form-check-input me-2" id="enable_multi_model_endpoints" name="enable_multi_model_endpoints" {% if settings.enable_multi_model_endpoints %}checked{% endif %}>
-                        <label class="form-check-label" for="enable_multi_model_endpoints">Enable multi-endpoint model management</label>
+                        <label class="form-check-label" for="enable_multi_model_endpoints">Use AI Connections for chat</label>
                     </div>
                     {% endif %}
 
@@ -189,8 +189,8 @@
                     </div>
 
                     <div id="default-model-selection-wrapper" class="mt-3">
-                        <label for="default-model-selection" class="form-label">Default model for fallbacks</label>
-                        <select class="form-select" id="default-model-selection" aria-label="Default model for fallback selection"></select>
+                        <label for="default-model-selection" class="form-label">Default chat model</label>
+                        <select class="form-select" id="default-model-selection" aria-label="Default chat model"></select>
                         <div class="form-text">
                             Used for tasks such as conversation summarization, fallback, and other operations when an agent is selected.
                         </div>
@@ -199,15 +199,17 @@
                     <input type="hidden" name="model_endpoints_json" id="model_endpoints_json" />
                     <input type="hidden" name="default_model_selection_json" id="default_model_selection_json" />
 
-                    <div id="model-endpoints-wrapper" class="{% if not settings.enable_multi_model_endpoints %}d-none{% endif %}">
+                    <div id="ai-connections-migration-notice" class="alert alert-info d-none mt-3" role="status"></div>
+                    <div id="ai-connections-default-notices" class="alert alert-warning d-none mt-3" role="status"></div>
+                    <div id="model-endpoints-wrapper">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <h6 class="mb-0">Global Endpoints</h6>
+                            <h6 class="mb-0">Global AI Connections</h6>
                             <div class="d-flex flex-wrap gap-2">
                                 <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#modelEndpointIdentityGuideModal" data-testid="model-endpoint-identity-guide-open">
                                     <i class="bi bi-question-circle me-1"></i>Setup Guide
                                 </button>
                                 <button type="button" class="btn btn-sm btn-outline-primary" id="add-model-endpoint-btn">
-                                    <i class="bi bi-plus-circle me-1"></i>Add Endpoint
+                                    <i class="bi bi-plus-circle me-1"></i>Add Connection
                                 </button>
                             </div>
                         </div>

@@ -66,6 +66,7 @@ from functions_citation_tracking import (
 )
 from functions_activity_logging import log_conversation_creation, log_token_usage, log_workflow_run
 from functions_appinsights import log_event
+from functions_ai_connections import require_model_capability
 from functions_assistant_table_exports import (
     build_safe_csv_headers,
     has_generated_tabular_csv_output,
@@ -6050,10 +6051,13 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     endpoint_cfg = next((candidate for candidate in candidates if candidate.get('id') == endpoint_id), None)
     if not endpoint_cfg:
         raise ValueError('Selected model endpoint was not found.')
+    if not endpoint_cfg.get('enabled', True):
+        raise ValueError('Selected model endpoint is disabled.')
 
     model_cfg = next((model for model in endpoint_cfg.get('models', []) if model.get('id') == model_id), None)
     if not model_cfg:
         raise ValueError('Selected model was not found on the endpoint.')
+    require_model_capability(model_cfg, provider=endpoint_cfg.get('provider') or 'aoai')
 
     scope = endpoint_cfg.get('scope', 'global')
     resolved_endpoint = keyvault_model_endpoint_get_helper(

@@ -37,6 +37,7 @@ import { AppRoleRoster } from '../components/admin/AppRoleRoster';
 import { AssignmentPicker } from '../components/admin/AssignmentPicker';
 import { BrandingImageField } from '../components/admin/BrandingImageField';
 import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
+import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { CustomPagesTable } from '../components/admin/CustomPagesTable';
@@ -819,17 +820,13 @@ export function AdminSettingsPage() {
                             )}
                         />
                     );
-                case 'image-model-selection':
+                case 'image-generation-model-selection':
                     return (
-                        <ModelSelectionPicker
+                        <CapabilityModelPicker
                             key={key}
-                            kind="image"
-                            label={field.label}
+                            capability="image_generation"
+                            featureEnabled={asBoolean(settings['enable_image_generation'])}
                             help={field.help}
-                            unsavedConnectionEdits={hasUnsavedDiscoveryEdits(
-                                'image',
-                                Object.keys(draft),
-                            )}
                         />
                     );
                 case 'global-identities-list':

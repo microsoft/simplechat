@@ -16,6 +16,7 @@ from config import (
     cosmos_group_workflows_container,
 )
 from functions_appinsights import log_event
+from functions_ai_connections import require_model_capability
 from functions_debug import debug_print
 from functions_document_actions import DOCUMENT_ACTION_TYPE_ANALYZE, build_analyze_config
 from functions_file_sync import (
@@ -293,6 +294,7 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
         raise ValueError('The selected model is no longer available on that endpoint.')
     if not model_cfg.get('enabled', True):
         raise ValueError('The selected model is disabled.')
+    require_model_capability(model_cfg, provider=endpoint_cfg.get('provider') or 'aoai')
 
     endpoint_name = endpoint_cfg.get('name') or endpoint_id
     model_name = (

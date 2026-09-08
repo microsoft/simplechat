@@ -17,6 +17,7 @@ from config import (
     cosmos_personal_workflows_container,
 )
 from functions_appinsights import log_event
+from functions_ai_connections import require_model_capability, resolve_capability_model_selection
 from functions_debug import debug_print
 from functions_document_actions import (
     DOCUMENT_ACTION_TYPE_ANALYZE,
@@ -483,14 +484,18 @@ def _build_default_model_summary(settings):
     model_id = str(default_selection.get('model_id') or '').strip()
     provider = str(default_selection.get('provider') or '').strip().lower()
 
-    if endpoint_id and model_id:
+    if endpoint_id or model_id:
+        selection, error = resolve_capability_model_selection(
+            default_selection, settings.get('model_endpoints') or [], 'chat',
+        )
+        valid = bool(selection.get('endpoint_id') and selection.get('model_id'))
         return {
             'mode': 'default_selection',
-            'valid': True,
+            'valid': valid,
             'endpoint_id': endpoint_id,
             'model_id': model_id,
-            'provider': provider,
-            'label': 'Default app model selection',
+            'provider': selection.get('provider') or provider,
+            'label': 'Default app model selection' if valid else error or 'Default app model is unavailable',
         }
 
     selected_models = (settings.get('gpt_model') or {}).get('selected') or []
@@ -560,6 +565,7 @@ def _summarize_model_binding(candidates, endpoint_id, model_id):
         raise ValueError('The selected model is no longer available on that endpoint.')
     if not model_cfg.get('enabled', True):
         raise ValueError('The selected model is disabled.')
+    require_model_capability(model_cfg, provider=endpoint_cfg.get('provider') or 'aoai')
 
     endpoint_name = endpoint_cfg.get('name') or endpoint_id
     model_name = (

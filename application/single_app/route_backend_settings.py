@@ -5,12 +5,11 @@ from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
-from functions_image_api_route import (
-    IMAGE_API_ROUTE_RESPONSES,
-    build_image_generation_tool,
-    extract_responses_image_source,
-    resolve_image_api_route,
-    resolve_responses_image_api_version,
+from functions_ai_connections import IMAGE_SELECTION_KEY
+from functions_image_generation import (
+    image_generation_error_log_context,
+    image_generation_error_response,
+    request_generated_image_source,
 )
 from functions_url_access_policy_test import run_url_access_policy_test
 from functions_model_endpoint_runtime import (
@@ -78,6 +77,8 @@ def _resolve_admin_settings_test_secrets(payload):
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_embedding_key')
     elif test_type == 'image':
+        if 'selection' in payload:
+            return payload
         if payload.get('enable_apim'):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_image_gen_subscription_key')
         else:
@@ -262,7 +263,13 @@ def run_admin_settings_connection_test(payload):
     placeholder for a stored secret, so ``_resolve_admin_settings_test_secrets``
     swaps it back for the real value here, server-side.
     """
-    data = _resolve_admin_settings_test_secrets(payload if isinstance(payload, dict) else {})
+    data = payload if isinstance(payload, dict) else {}
+    try:
+        data = _resolve_admin_settings_test_secrets(data)
+    except Exception as exc:
+        if str(data.get('test_type') or '').strip() == 'image':
+            return _image_connection_test_error_response(exc)
+        raise
     test_type = str(data.get('test_type') or '').strip()
 
     runner = ADMIN_SETTINGS_CONNECTION_TESTS.get(test_type)
@@ -272,6 +279,8 @@ def run_admin_settings_connection_test(payload):
     try:
         return runner(data)
     except Exception as exc:
+        if test_type == 'image':
+            return _image_connection_test_error_response(exc)
         # A connection test reaches external services, so a failure here is an
         # expected outcome to report rather than a server fault to raise.
         return jsonify({'error': str(exc)}), 500
@@ -1754,91 +1763,45 @@ def _test_embedding_connection(payload):
         return jsonify({'error': f'Error generating embedding response: {str(e)}'}), 500
     
 
+def _image_connection_test_error_response(exc):
+    log_event(
+        '[IMAGE_GENERATION] Image connection test failed',
+        extra=image_generation_error_log_context(exc),
+    )
+    error_payload, status_code = image_generation_error_response(exc)
+    return jsonify(error_payload), status_code
+
+
 def _test_image_gen_connection(payload):
-    """Attempt to connect to an Image Generation endpoint using ephemeral settings."""
-    enable_apim = payload.get('enable_apim', False)
-    selected_model = payload.get('selected_model') or {}
-    prompt = "A scenic mountain at sunrise"
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        api_version = apim_data.get('api_version')
-        image_gen_model = apim_data.get('deployment')
-        subscription_key = apim_data.get('subscription_key')
-
-        image_gen_client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key
-        )
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')
-        api_version = direct_data.get('api_version')
-        image_gen_model = selected_model.get('deploymentName')
-
-        # The route is decided by the model behind the deployment, and a test that took a
-        # different route from the real call would report success for a path chat never
-        # uses. The ephemeral payload is reshaped into what the classifier reads rather
-        # than the answer being guessed here.
-        image_api_route = resolve_image_api_route({
-            'enable_image_gen_apim': False,
-            'image_gen_model': {'selected': [selected_model]},
-        })
-        if image_api_route == IMAGE_API_ROUTE_RESPONSES:
-            api_version = resolve_responses_image_api_version(
-                {'azure_openai_image_gen_api_version': api_version}
-            )
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-            
-            image_gen_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
-            )
-        else:
-            key = direct_data.get('key')
-
-            image_gen_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=key
-            )
-
-        if image_api_route == IMAGE_API_ROUTE_RESPONSES:
-            try:
-                response = image_gen_client.responses.create(
-                    model=image_gen_model,
-                    input=prompt,
-                    tools=[build_image_generation_tool()],
-                    tool_choice={'type': 'image_generation'},
-                )
-                if extract_responses_image_source(response):
-                    return jsonify({'message': 'Image generation connection successful'}), 200
-                return jsonify({
-                    'error': (
-                        f'{image_gen_model} answered without generating an image. Its '
-                        'deployment may not support the image generation tool.'
-                    )
-                }), 500
-            except Exception as e:
-                print(str(e))
-                return jsonify({'error': f'Error generating model response: {str(e)}'}), 500
-
+    """Test the real image operation using a stored global reference or a legacy draft."""
     try:
-        response = image_gen_client.images.generate(
-            prompt=prompt,
-            n=1,
-            model=image_gen_model
-        )
-        if response:
-            return jsonify({'message': 'Image generation connection successful'}), 200
-    except Exception as e:
-        print(str(e))
-        return jsonify({'error': f'Error generating model response: {str(e)}'}), 500
+        if 'selection' in payload:
+            settings = dict(get_settings())
+            settings[IMAGE_SELECTION_KEY] = payload.get('selection')
+            # This explicit admin test may validate a connection before enabling images
+            # for users. Stored endpoint/model availability still applies.
+            settings['enable_image_generation'] = True
+        else:
+            is_apim = bool(payload.get('enable_apim'))
+            direct = payload.get('direct') or {}
+            apim = payload.get('apim') or {}
+            settings = {
+                'enable_image_generation': True,
+                'enable_image_gen_apim': is_apim,
+                'image_gen_model': {'selected': [payload.get('selected_model') or {}]},
+                'azure_openai_image_gen_endpoint': direct.get('endpoint'),
+                'azure_openai_image_gen_api_version': direct.get('api_version'),
+                'azure_openai_image_gen_authentication_type': direct.get('auth_type'),
+                'azure_openai_image_gen_key': direct.get('key'),
+                'azure_apim_image_gen_endpoint': apim.get('endpoint'),
+                'azure_apim_image_gen_api_version': apim.get('api_version'),
+                'azure_apim_image_gen_deployment': apim.get('deployment'),
+                'azure_apim_image_gen_subscription_key': apim.get('subscription_key'),
+            }
+        request_generated_image_source(settings, 'A scenic mountain at sunrise')
+        return jsonify({'message': 'Image generation connection successful'}), 200
+    except Exception as exc:
+        return _image_connection_test_error_response(exc)
 
 
 def _test_safety_connection(payload):

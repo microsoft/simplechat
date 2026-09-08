@@ -2,7 +2,7 @@
 # test_v2_admin_model_selection_api.py
 """
 Functional test for the V2 admin embedding and image deployment selection API.
-Version: 0.261.083
+Version: 0.261.105
 Implemented in: 0.261.083
 
 ``embedding_model`` and ``image_gen_model`` are stored as
@@ -48,10 +48,10 @@ EXPECTED_ROUTES = {
 
 REQUIRED_DECORATORS = {"swagger_route", "login_required", "admin_required"}
 
-# The catalogs, the section that owns each one, and the component that renders it.
+# Legacy image catalogs remain non-patchable for recovery; normal images use a reference.
 EXPECTED_CATALOGS = {
     "embedding_model": ("embeddings-config", "embedding-model-selection"),
-    "image_gen_model": ("image-config", "image-model-selection"),
+    "image_gen_model": ("image-config", None),
 }
 
 # The discovery routes reused rather than reimplemented, and the guard each must keep.
@@ -253,8 +253,10 @@ def test_catalogs_are_components_so_the_patch_refuses_them():
             problems.append(
                 f"{key}: declared under {section_id!r}, expected {expected_section!r}"
             )
-        if field.get("type") != "component":
-            problems.append(f"{key}: declared as {field.get('type')!r}, expected 'component'")
+        if field.get("type") not in fields_module.NON_PATCHABLE_TYPES:
+            problems.append(f"{key}: must remain non-patchable")
+        if key == "image_gen_model" and not field.get("legacy"):
+            problems.append(f"{key}: must be hidden from the normal shared image flow")
         if field.get("component") != expected_component:
             problems.append(
                 f"{key}: renders {field.get('component')!r}, expected {expected_component!r}"
@@ -278,7 +280,7 @@ def test_catalogs_are_components_so_the_patch_refuses_them():
         f"The settings PATCH accepted a catalog dict: {errors}"
     )
 
-    print("  Both catalogs are components and the PATCH refuses them.")
+    print("  Both catalogs remain protected; the legacy image catalog is suppressed.")
     return True
 
 

@@ -4,11 +4,16 @@ title: "Generate images"
 description: "Use the chat Image control to request AI-generated images."
 section: "Guides"
 audience: user
+version: "0.261.105"
 ---
 
 ## What this does
 
 **Image** switches the chat composer into image-generation mode for the current prompt. While it is active, other source controls are disabled so the request stays focused on image generation.
+
+Images use the administrator's global image default from **AI Connections**, not the
+model currently selected for text chat. The image default can share a connection with
+chat or use a separate image-only resource. There is no second model picker in chat.
 
 {% include media.html type="video"
                       title="Generate images walkthrough"
@@ -21,8 +26,12 @@ Use image generation for visual concepts, drafts, illustrations, and creative ex
 
 ## Before you start
 
-- Admins must enable `enable_image_generation`; see [AI Models]({{ '/admin/ai-models/' | relative_url }}).
-- Tenants using APIM may also configure `enable_image_gen_apim`.
+- Admins must enable image generation and select a supported image default; see
+  [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
+  This does not require enabling **Use AI Connections for chat**.
+- The selected resource or API Management route must support the image operation.
+  Not every GPT or Responses deployment can generate images, even when ordinary
+  chat works.
 - Prompts must comply with your organization's acceptable use policy.
 
 ## Steps
@@ -48,7 +57,14 @@ Use image generation for visual concepts, drafts, illustrations, and creative ex
 
 ## Verify it worked
 
-The conversation contains generated image output rather than a text-only answer. Other source controls return when **Image** is off.
+The conversation contains generated image output rather than a text-only answer. Other
+source controls return when **Image** is off. A text description of a proposed picture
+is not successful image generation.
+
+The available edit actions depend on the configured image model. Responses-backed
+generation supports whole-image regeneration in SimpleChat; masked editing requires
+an existing compatible direct Images model/API. Image-input support alone does not
+provide either generation or masked editing.
 
 ## Troubleshooting
 
@@ -56,9 +72,15 @@ The conversation contains generated image output rather than a text-only answer.
 | --- | --- | --- |
 | **Image** is missing | Image generation is disabled | Ask an admin to enable `enable_image_generation`. |
 | Source controls are disabled | Image mode intentionally disables them | Turn **Image** off. |
+| Changing the chat model does not change generated images | Chat and image defaults are independent | Ask an admin to review the image default if a different image model is needed. |
+| The image model is unavailable | Its shared connection/model was deleted, disabled, or no longer published for images | Ask an admin to choose a compatible replacement in AI Connections. The application does not silently substitute another model. |
+| A GPT model does not return an image | The resource may lack image-tool access, a required image backend/default, or the matching gateway operation | Ask an admin to verify image readiness on the selected resource. Rewording the prompt cannot repair a missing service capability. |
+| Images fail after an administrator clears the default | An imported/shared default is authoritative | Ask an admin to select a new image default; old endpoint settings are not automatically restored. |
+| Only regeneration is offered | The selected route does not support SimpleChat's masked-edit workflow | Regenerate the whole image, or ask an admin whether an approved edit-capable image deployment is available. |
 
 ## Related
 
 - [Use web search]({{ '/guides/use-web-search/' | relative_url }})
 - [Upload documents in chat]({{ '/guides/upload-documents-in-chat/' | relative_url }})
 - [AI Models]({{ '/admin/ai-models/' | relative_url }})
+- [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }})

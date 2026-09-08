@@ -31,9 +31,12 @@ import re
 
 from PIL import Image
 
+from functions_ai_connections import AIConnectionError
 from functions_image_api_route import (
     IMAGE_API_ROUTE_RESPONSES,
+    ImageGenerationError,
     resolve_image_api_route,
+    resolve_image_generation_api_version,
     resolve_selected_image_deployment_name,
     resolve_selected_image_model_name,
 )
@@ -79,8 +82,8 @@ _UNSUPPORTED_PARAMETER_PATTERN = re.compile(
 )
 
 
-class ImageEditError(RuntimeError):
-    """Raised when an image edit could not be produced."""
+class ImageEditError(ImageGenerationError):
+    """Safe image-operation failure, retaining the existing shared-editor exception contract."""
 
 
 # How an image may be changed once it exists.
@@ -108,6 +111,8 @@ def image_api_version_supports_edit(api_version):
     is treated as unsupported: guessing optimistically would trade a clear message here for an
     opaque failure after the reader has already selected a region.
     """
+    if str(api_version or '').strip() == 'v1':
+        return True
     parts = str(api_version or '').strip().split('-')
     if len(parts) < 3:
         return False
@@ -125,8 +130,8 @@ def resolve_image_edit_capability(settings):
     reader does any work. Being told up front that only whole-image regeneration is available is
     a usable experience; painting a mask and then being refused is not.
 
-    Lives here rather than beside the generation helpers because those import the Cosmos and
-    Azure OpenAI clients at module scope, and this has to stay resolvable from a test.
+    Resolving this projection must not initialize runtime clients, read secrets, or turn
+    a cleared shared default into a bootstrap failure.
     """
     settings = settings if isinstance(settings, dict) else {}
 
@@ -138,7 +143,17 @@ def resolve_image_edit_capability(settings):
             'reason': '',
         }
 
-    model_name = resolve_selected_image_model_name(settings)
+    try:
+        model_name = resolve_selected_image_model_name(settings)
+        image_api_route = resolve_image_api_route(settings)
+        api_version = resolve_image_generation_api_version(settings)
+    except AIConnectionError as exc:
+        return {
+            'mode': IMAGE_EDIT_MODE_REGENERATE,
+            'enabled': False,
+            'model_name': '',
+            'reason': exc.public_message,
+        }
     normalized_model = model_name.lower()
 
     if not normalized_model:
@@ -154,7 +169,7 @@ def resolve_image_edit_capability(settings):
         }
 
     if not any(marker in normalized_model for marker in EDIT_CAPABLE_MODEL_MARKERS):
-        if resolve_image_api_route(settings) == IMAGE_API_ROUTE_RESPONSES:
+        if image_api_route == IMAGE_API_ROUTE_RESPONSES:
             reason = (
                 f'{model_name} produces images through the Responses image tool, which has '
                 'no way to change part of one, so a change replaces the whole image.'
@@ -171,7 +186,6 @@ def resolve_image_edit_capability(settings):
             'reason': reason,
         }
 
-    api_version = settings.get('azure_openai_image_gen_api_version')
     if not image_api_version_supports_edit(api_version):
         return {
             'mode': IMAGE_EDIT_MODE_REGENERATE,
@@ -619,11 +633,9 @@ def _optional_parameters(quality='', background='', input_fidelity=''):
     """Return the newer, optional API parameters as a body fragment.
 
     Sent through ``extra_body`` rather than as keyword arguments deliberately. ``quality``,
-    ``background`` and ``input_fidelity`` do not exist in every version of the SDK -- the
-    installed one has none of them on ``images.edit`` -- so passing them directly raises
-    ``TypeError`` depending on which version is present. ``extra_body`` merges into the same
-    request body on every 1.x release, which makes this work against both the pinned SDK and an
-    older one without version sniffing.
+    ``background`` and ``input_fidelity`` do not exist in every version of the SDK.
+    ``extra_body`` merges them into the same request body across the supported SDK versions
+    without requiring version-specific keyword arguments.
     """
     optional = {}
     if quality in SUPPORTED_IMAGE_QUALITIES:
@@ -645,13 +657,20 @@ def _call_with_optional_parameters(operation, optional):
     try:
         return operation(optional)
     except Exception as exc:
-        if not optional or not _UNSUPPORTED_PARAMETER_PATTERN.search(str(exc)):
+        message = str(exc).lower()
+        if (
+            not optional or getattr(exc, 'status_code', None) != 400
+            or not _UNSUPPORTED_PARAMETER_PATTERN.search(message)
+            or not any(parameter in message for parameter in optional)
+        ):
             raise
+        # Deferred with the rest of the runtime dependencies; pure mask helpers stay import-safe.
         from functions_appinsights import log_event
+        from functions_image_generation import image_generation_error_log_context
 
         log_event(
             '[IMAGE_EDIT] Retrying without optional image parameters',
-            extra={'parameters': sorted(optional), 'error': str(exc)[:400]},
+            extra={'parameters': sorted(optional), **image_generation_error_log_context(exc)},
         )
         return operation({})
 
@@ -674,116 +693,98 @@ def request_image_edit(
     """
     from functions_appinsights import log_event
     from functions_image_generation import (
+        close_image_generation_client,
         extract_generated_image_source,
+        image_generation_error_log_context,
+        normalize_image_generation_error,
         request_generated_image_source,
         resolve_image_generation_client,
     )
 
     capability = resolve_image_edit_capability(settings)
+    if not capability['enabled']:
+        raise AIConnectionError(
+            capability.get('reason') or 'Image generation is not enabled.',
+            'model_configuration_unavailable' if settings.get('enable_image_generation') else 'capability_disabled',
+        )
     normalized_size = size if size in SUPPORTED_IMAGE_SIZES else ''
+    normalized_quality = quality if quality in SUPPORTED_IMAGE_QUALITIES else ''
+    normalized_background = background if background in SUPPORTED_IMAGE_BACKGROUNDS else ''
 
-    if (
-        capability['mode'] != IMAGE_EDIT_MODE_MASKED
-        and resolve_image_api_route(settings) == IMAGE_API_ROUTE_RESPONSES
-    ):
-        # This deployment answers on the Responses API and nowhere else, so the images
-        # endpoint below is not a fallback for it -- it is a request it cannot serve.
+    if capability['mode'] != IMAGE_EDIT_MODE_MASKED:
+        # Every whole-image regeneration uses the same binding, request, and validation
+        # as chat and approvals. It must never try a second paid route after a failure.
         deployment = resolve_selected_image_deployment_name(settings)
         try:
             generated_source = request_generated_image_source(
                 settings,
                 prompt,
                 size=normalized_size,
-                quality=quality,
-                background=background,
+                quality=normalized_quality,
+                background=normalized_background,
             )
-        except Exception as exc:
-            log_event(
-                f'[IMAGE_EDIT] Regeneration request failed: {exc}',
-                extra={'deployment': deployment},
-            )
-            raise ImageEditError('The image could not be regenerated') from exc
+        except ImageGenerationError as exc:
+            raise ImageEditError(exc.public_message, exc.code, exc.status_code, exc.context) from exc
 
         return _finish_image_edit(
             generated_source,
             deployment=deployment,
             method='regenerate',
             normalized_size=normalized_size,
-            quality=quality,
-            background=background,
+            quality=normalized_quality,
+            background=normalized_background,
         )
 
     client, deployment = resolve_image_generation_client(settings)
 
     optional = _optional_parameters(
-        quality=quality,
-        background=background,
+        quality=normalized_quality,
+        background=normalized_background,
         # Only meaningful alongside a real edit, and only for the GPT image models.
         input_fidelity='high' if capability['mode'] == IMAGE_EDIT_MODE_MASKED else '',
     )
 
-    if capability['mode'] == IMAGE_EDIT_MODE_MASKED:
-        def edit(extra):
-            arguments = {
-                'model': deployment,
-                'prompt': prompt,
-                'n': 1,
-                'image': (
-                    source_image['file_name'],
-                    source_image['bytes'],
-                    source_image['mime_type'],
-                ),
-            }
-            if mask:
-                arguments['mask'] = ('mask.png', mask['bytes'], 'image/png')
-            if normalized_size:
-                arguments['size'] = normalized_size
-            if extra:
-                arguments['extra_body'] = extra
-            return client.images.edit(**arguments)
-
-        try:
-            response = _call_with_optional_parameters(edit, optional)
-        except Exception as exc:
-            log_event(
-                f'[IMAGE_EDIT] Edit request failed: {exc}',
-                extra={'deployment': deployment},
-            )
-            raise ImageEditError('The image could not be edited') from exc
-
-        method = 'edit'
-    else:
-        def generate(extra):
-            arguments = {'model': deployment, 'prompt': prompt, 'n': 1}
-            if normalized_size:
-                arguments['size'] = normalized_size
-            if extra:
-                arguments['extra_body'] = extra
-            return client.images.generate(**arguments)
-
-        try:
-            response = _call_with_optional_parameters(generate, optional)
-        except Exception as exc:
-            log_event(
-                f'[IMAGE_EDIT] Regeneration request failed: {exc}',
-                extra={'deployment': deployment},
-            )
-            raise ImageEditError('The image could not be regenerated') from exc
-
-        method = 'regenerate'
+    def edit(extra):
+        arguments = {
+            'model': deployment,
+            'prompt': prompt,
+            'n': 1,
+            'image': (
+                source_image['file_name'],
+                source_image['bytes'],
+                source_image['mime_type'],
+            ),
+        }
+        if mask:
+            arguments['mask'] = ('mask.png', mask['bytes'], 'image/png')
+        if normalized_size:
+            arguments['size'] = normalized_size
+        if extra:
+            arguments['extra_body'] = extra
+        return client.images.edit(**arguments)
 
     try:
+        response = _call_with_optional_parameters(edit, optional)
         generated_source = extract_generated_image_source(response)
-    except ValueError as exc:
-        raise ImageEditError('The model returned no image') from exc
+    except Exception as exc:
+        log_event(
+            '[IMAGE_EDIT] Edit request failed',
+            extra={'deployment': deployment, **image_generation_error_log_context(exc)},
+        )
+        error = normalize_image_generation_error(exc)
+        if isinstance(error, AIConnectionError):
+            raise
+        raise ImageEditError(error.public_message, error.code, error.status_code, error.context) from exc
+    finally:
+        close_image_generation_client(client)
 
     return _finish_image_edit(
         generated_source,
         deployment=deployment,
-        method=method,
+        method='edit',
         normalized_size=normalized_size,
-        quality=quality,
-        background=background,
+        quality=normalized_quality,
+        background=normalized_background,
     )
 
 
@@ -805,7 +806,10 @@ def _finish_image_edit(
     from functions_image_generation import resolve_generated_image_bytes
 
     if is_external_image_url(generated_source) or generated_source.startswith('data:image/'):
-        mime_type, image_bytes = resolve_generated_image_bytes(generated_source)
+        try:
+            mime_type, image_bytes = resolve_generated_image_bytes(generated_source)
+        except ImageGenerationError as exc:
+            raise ImageEditError(exc.public_message, exc.code, exc.status_code, exc.context) from exc
     else:
         raise ImageEditError('The model returned an unusable image')
 

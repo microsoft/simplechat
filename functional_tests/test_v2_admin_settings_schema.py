@@ -2,7 +2,7 @@
 # test_v2_admin_settings_schema.py
 """
 Functional test for the Admin Settings field schema shape.
-Version: 0.261.039
+Version: 0.261.105
 Implemented in: 0.261.039
 
 The V2 admin surface renders whatever ``admin_settings_fields.py`` declares. A
@@ -137,8 +137,8 @@ def test_fields_carry_required_properties():
         if field_type not in ("component", "status") and not field.get("key"):
             problems.append(f"{identity}: missing key")
 
-        # A readout with no source would render permanently blank.
-        if field_type == "status" and not field.get("status_source"):
+        # Legacy definitions retain validation/secret contracts but never render in V2.
+        if field_type == "status" and not field.get("legacy") and not field.get("status_source"):
             problems.append(f"{identity}: missing status_source")
 
         for prop in REQUIRED_PROPERTIES_BY_TYPE.get(field_type, ()):

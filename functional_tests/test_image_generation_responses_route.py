@@ -1,26 +1,12 @@
-#!/usr/bin/env python3
 # test_image_generation_responses_route.py
 """
 Functional test for image generation through the Responses image tool.
-Version: 0.261.088
+Version: 0.261.105
 Implemented in: 0.261.088
 
-Azure OpenAI produces images two different ways. ``gpt-image-*`` and the legacy
-``dall-e-*`` models serve ``/images/generations``; a chat model such as ``gpt-5.6-*``
-serves no image endpoint at all and can only produce one through the Responses API's
-hosted ``image_generation`` tool. SimpleChat now selects between the two from the model
-name already stored alongside the chosen deployment.
-
-The risk this test covers is not that the new route fails -- that surfaces immediately --
-but that it captures deployments it should have left alone. Everything selectable before
-the Responses route existed answers on the images endpoint, and moving one of those onto
-a route it cannot serve would break image generation for an installation that changed
-nothing.
-
-So these checks pin the classification in both directions, the two cases that must stay on
-the images endpoint despite carrying no usable model name, the API version substitution
-that makes the Responses call routable at all, and the response reading that lets
-everything downstream stay unaware of which route was taken.
+Shared connection routing, v1 transport, and strict non-success validation were added
+in 0.261.102. Dedicated image deployments retain Images, while established GPT image-tool
+support uses Responses. These tests do not establish live Azure availability.
 """
 
 import sys
@@ -36,6 +22,7 @@ from functions_image_api_route import (  # noqa: E402  - path set above
     DEFAULT_RESPONSES_IMAGE_FORMAT,
     IMAGE_API_ROUTE_IMAGES,
     IMAGE_API_ROUTE_RESPONSES,
+    ImageGenerationError,
     RESPONSES_IMAGE_API_VERSION,
     build_image_generation_tool,
     extract_responses_image_source,
@@ -90,14 +77,14 @@ def test_chat_models_route_to_the_responses_tool():
     """A chat deployment is the only thing some tenants have, and has no image endpoint."""
     print("\nTesting that chat models route to the Responses image tool...")
 
-    for model_name in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5", "gpt-4o", "o3"):
+    for model_name in ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"):
         route = resolve_image_api_route(settings_for(model_name))
         assert route == IMAGE_API_ROUTE_RESPONSES, (
             f"{model_name} was routed to {route!r}. It serves no image endpoint, so the "
             "images route would fail rather than degrade."
         )
 
-    print("  All 6 chat models route to the Responses image tool.")
+    print("  Cataloged GPT image-tool models route to the Responses image tool.")
     return True
 
 
@@ -136,7 +123,7 @@ def test_an_unknown_model_stays_on_the_images_endpoint():
 
 
 def test_the_responses_route_does_not_inherit_an_unusable_api_version():
-    """The stored default predates the Responses API, so honouring it would fail every call."""
+    """The hosted image tool requires v1, not a dated Azure Responses preview."""
     print("\nTesting the Responses API version substitution...")
 
     stored_default = {"azure_openai_image_gen_api_version": "2024-12-01-preview"}
@@ -151,11 +138,10 @@ def test_the_responses_route_does_not_inherit_an_unusable_api_version():
         )
 
     newer = {"azure_openai_image_gen_api_version": "2026-01-01-preview"}
-    assert resolve_responses_image_api_version(newer) == "2026-01-01-preview", (
-        "A deliberately pinned newer version was overridden by a constant that will age."
-    )
+    assert resolve_responses_image_api_version(newer) == "v1"
+    assert RESPONSES_IMAGE_API_VERSION == "v1"
 
-    print(f"  Older and unreadable versions become {RESPONSES_IMAGE_API_VERSION}; newer ones survive.")
+    print("  Dated Images/chat API versions never become the Responses image-tool version.")
     return True
 
 
@@ -235,7 +221,7 @@ def test_a_reply_without_an_image_is_reported_as_empty():
     for barren in (
         {"output": []},
         {"output": [{"type": "message", "id": "msg_1", "content": []}]},
-        {"output": [{"type": "image_generation_call", "id": "ig_1", "status": "failed", "result": None}]},
+        {"output": [{"type": "image_generation_call", "id": "ig_1", "status": "completed", "result": None}]},
         {},
         {"output": "not a list"},
     ):
@@ -247,23 +233,37 @@ def test_a_reply_without_an_image_is_reported_as_empty():
     return True
 
 
+def test_failed_and_incomplete_responses_are_not_images():
+    """A failed tool or incomplete outer response must not persist partial image bytes."""
+    for response in (
+        {"status": "incomplete", "output": [{"type": "image_generation_call", "result": "QUJD"}]},
+        {"status": "failed", "output": [{"type": "image_generation_call", "result": "QUJD"}]},
+        {"output": [{"type": "image_generation_call", "status": "failed", "result": "QUJD"}]},
+        {"output": [{"type": "image_generation_call", "status": "in_progress", "result": "QUJD"}]},
+    ):
+        try:
+            extract_responses_image_source(response)
+        except ImageGenerationError as exc:
+            assert exc.code == "image_generation_incomplete"
+            assert exc.status_code >= 500
+        else:
+            raise AssertionError("A non-successful image operation was accepted")
+    return True
+
+
 def test_discovery_offers_what_could_actually_produce_an_image():
     """Discovery answers 'is this worth offering', which both routes now widen."""
     print("\nTesting image deployment discovery...")
 
-    for model_name in ("gpt-image-1", "gpt-image-2", "dall-e-3", "gpt-5.6-sol", "gpt-4o", "o3", "gpt-5"):
+    for model_name in ("gpt-image-1", "gpt-image-2", "dall-e-3", "gpt-5.6-sol", "gpt-5.6-terra"):
         assert is_image_capable_model_name(model_name), (
             f"{model_name} was excluded from discovery, so it could never be selected."
         )
 
-    # The old filter matched any name containing "image". Discovery must stay a superset
-    # of what it offered, or this change would remove a working configuration's model
-    # from the list it was chosen from.
-    assert is_image_capable_model_name("some-other-image-model"), (
-        "A deployment the previous filter offered is no longer discoverable."
-    )
-
-    for model_name in ("text-embedding-3-large", "text-embedding-ada-002", "", None, "whisper"):
+    for model_name in (
+        "text-embedding-3-large", "text-embedding-ada-002", "", None, "whisper",
+        "some-other-image-model", "gpt-not-in-the-image-tool-catalog",
+    ):
         assert not is_image_capable_model_name(model_name), (
             f"{model_name!r} was offered as an image model. It can produce no image on "
             "either route, so selecting it would fail at the point of use."
@@ -284,6 +284,7 @@ if __name__ == "__main__":
         test_only_stated_image_options_are_sent,
         test_a_generated_image_is_read_out_of_the_responses_output,
         test_a_reply_without_an_image_is_reported_as_empty,
+        test_failed_and_incomplete_responses_are_not_images,
         test_discovery_offers_what_could_actually_produce_an_image,
     ]
 

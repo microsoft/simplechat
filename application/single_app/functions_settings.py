@@ -6,6 +6,13 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from functions_appinsights import log_event
+from functions_ai_connections import (
+    AIConnectionError,
+    CAPABILITY_DEFINITIONS,
+    describe_model_capabilities,
+    normalize_model_capability_fields,
+    supports_model_capability,
+)
 from functions_content_safety import (
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
 )
@@ -2618,6 +2625,25 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
         connection = endpoint_copy.get("connection") or {}
+        if not isinstance(connection, dict):
+            raise AIConnectionError("Connection configuration must be an object.")
+        operation_settings = connection.get("operation_settings")
+        if operation_settings is not None:
+            if not isinstance(operation_settings, dict):
+                raise AIConnectionError("Connection operation settings must be an object.")
+            for capability, profile in operation_settings.items():
+                if capability not in CAPABILITY_DEFINITIONS or not isinstance(profile, dict):
+                    raise AIConnectionError("Connection operation settings must describe an implemented capability.")
+                allowed_routes = CAPABILITY_DEFINITIONS[capability].api_routes
+                if profile.get("api") and allowed_routes and profile["api"] not in allowed_routes:
+                    raise AIConnectionError("The connection operation API is not supported.")
+                if "is_apim" in profile and not isinstance(profile["is_apim"], bool):
+                    raise AIConnectionError("The gateway setting must be true or false.")
+                for field in ("api_version", "image_deployment"):
+                    if field in profile and not isinstance(profile[field], str):
+                        raise AIConnectionError(f"The operation {field} must be text.")
+                if profile.get("auth_header") not in (None, "", "api-key", "Ocp-Apim-Subscription-Key"):
+                    raise AIConnectionError("The gateway authentication header is not supported.")
         identity_header = normalize_model_endpoint_identity_header_override(endpoint_copy.get("identity_header"))
         if endpoint_copy.get("identity_header") != identity_header:
             endpoint_copy["identity_header"] = identity_header
@@ -2641,7 +2667,9 @@ def normalize_model_endpoints(endpoints):
         for model in models:
             if not isinstance(model, dict):
                 continue
-            model_copy = json.loads(json.dumps(model))
+            model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            if model_copy != model:
+                changed = True
             if not model_copy.get("id"):
                 model_id = (
                     model_copy.get("deploymentName")
@@ -2782,6 +2810,11 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
+        for model in endpoint_copy.get("models") or []:
+            if isinstance(model, dict):
+                model["capability_status"] = describe_model_capabilities(
+                    model, endpoint_copy.get("provider")
+                )
         sanitized.append(endpoint_copy)
 
     return sanitized
@@ -2855,6 +2888,12 @@ def resolve_model_selection(selection, endpoints, multi_endpoint_enabled=True, l
         return (
             dict(EMPTY_DEFAULT_MODEL_SELECTION),
             f"{label} is not available. Please select a valid model.",
+        )
+
+    if not supports_model_capability(model_cfg, "chat", endpoint_cfg.get("provider")):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            f"{label} does not support chat. Please select a compatible model.",
         )
 
     endpoint_provider = str(endpoint_cfg.get("provider") or "").strip().lower()

@@ -7,6 +7,11 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAICha
 
 from config import cognitive_services_scope
 from foundry_agent_runtime import resolve_authority
+from functions_ai_connections import (
+    AIConnectionError,
+    register_capability_client_factory,
+    require_model_capability,
+)
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_settings import resolve_model_endpoint_foundry_scope
 from model_endpoint_clients import (
@@ -118,6 +123,38 @@ def resolve_credential_for_model_endpoint_auth(auth_settings):
     return DefaultAzureCredential(managed_identity_client_id=managed_identity_client_id)
 
 
+def _require_chat_model_for_endpoint(endpoint_config, deployment_name='', model_id=''):
+    """Validate stored model metadata before considering a legacy deployment alias."""
+    if isinstance(endpoint_config, dict):
+        if endpoint_config.get('enabled') is False:
+            raise AIConnectionError('The selected chat connection is disabled.')
+        provider = endpoint_config.get('provider') or 'aoai'
+        models = [model for model in endpoint_config.get('models') or [] if isinstance(model, dict)]
+        if not model_id and deployment_name:
+            deployment_matches = [
+                model for model in models
+                if str(deployment_name).strip() in {
+                    str(model.get(field) or '').strip() for field in ('deploymentName', 'deployment')
+                }
+            ]
+            models = deployment_matches or models
+        for model in models:
+            if model_id:
+                matches = str(model.get('id') or '').strip() == str(model_id).strip()
+            else:
+                matches = bool(deployment_name) and str(deployment_name).strip() in {
+                    str(model.get(field) or '').strip()
+                    for field in ('deploymentName', 'deployment', 'modelName', 'name', 'id')
+                }
+            if matches:
+                return require_model_capability(model, provider=provider)
+        if model_id or ('models' in endpoint_config and deployment_name):
+            raise AIConnectionError('The selected chat model is not available on this connection.')
+    if deployment_name:
+        require_model_capability(deployment_name)
+    return None
+
+
 def build_model_endpoint_sync_chat_client(
     auth_settings,
     provider,
@@ -130,6 +167,7 @@ def build_model_endpoint_sync_chat_client(
     identity_context=None,
 ):
     """Create a protocol-aware synchronous chat client for a configured model endpoint."""
+    _require_chat_model_for_endpoint(endpoint_config, deployment_name)
     auth_settings = auth_settings or {}
     extra_headers = build_model_endpoint_identity_headers(
         settings,
@@ -195,6 +233,40 @@ def build_model_endpoint_sync_chat_client(
     ), runtime_protocol
 
 
+def build_chat_connection_client(binding, settings):
+    """Adapt a resolved chat binding without changing the legacy tuple-returning factory."""
+    # Credential hydration stays at the operation boundary, not in the pure binding module.
+    from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+
+    if binding.capability != 'chat':
+        raise AIConnectionError('This connection binding is not configured for chat.')
+    endpoint_config = binding.endpoint
+    provider = endpoint_config.get('provider') or 'aoai'
+    model = require_model_capability(binding.model, provider=provider)
+    deployment_name = model.get('deploymentName') or model.get('deployment') or model.get('id') or ''
+    _require_chat_model_for_endpoint(endpoint_config, deployment_name)
+    endpoint_config = keyvault_model_endpoint_get_helper(
+        endpoint_config,
+        endpoint_config.get('id') or binding.selection.get('endpoint_id'),
+        scope='global',
+        return_type=SecretReturnType.VALUE,
+    )
+    connection = endpoint_config.get('connection') or {}
+    client, _ = build_model_endpoint_sync_chat_client(
+        endpoint_config.get('auth') or {},
+        provider,
+        connection.get('endpoint'),
+        connection.get('openai_api_version') or connection.get('api_version'),
+        deployment_name=deployment_name,
+        settings=settings,
+        endpoint_config=endpoint_config,
+    )
+    return client
+
+
+register_capability_client_factory('chat', build_chat_connection_client)
+
+
 def _append_model_endpoint_candidate(endpoints, scope, endpoint):
     if isinstance(endpoint, dict):
         endpoints.append({**endpoint, '_endpoint_scope': scope})
@@ -202,6 +274,7 @@ def _append_model_endpoint_candidate(endpoints, scope, endpoint):
 
 def resolve_model_endpoint_from_context(settings, model_context, *, authorize=False):
     """Resolve selected endpoint metadata, including secrets, from non-secret model context."""
+    # Defer store imports so client adapter registration does not initialize scoped stores.
     from functions_group import get_group_model_endpoints
     from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
     from functions_settings import get_user_settings, normalize_model_endpoints
@@ -275,14 +348,17 @@ def resolve_model_endpoint_from_context(settings, model_context, *, authorize=Fa
         matched_model = None
         for model_cfg in models:
             deployment = str(model_cfg.get('deploymentName') or model_cfg.get('deployment') or '').strip()
-            if requested_model_id and str(model_cfg.get('id') or '').strip() == requested_model_id:
+            if requested_model_id:
+                if str(model_cfg.get('id') or '').strip() != requested_model_id:
+                    continue
                 matched_model = model_cfg
                 break
             if requested_deployment and deployment == requested_deployment:
                 matched_model = model_cfg
                 break
-        if not matched_model or not matched_model.get('enabled', True):
+        if not matched_model:
             continue
+        require_model_capability(matched_model, provider=endpoint_cfg.get('provider') or 'aoai')
 
         endpoint_scope = endpoint_cfg.get('_endpoint_scope', 'global')
         resolved_endpoint_cfg = dict(endpoint_cfg)
@@ -314,6 +390,8 @@ def build_semantic_kernel_chat_service_for_model(
         model_context.get('endpoint_id') or model_context.get('model_id')
     ):
         resolved_model_endpoint = resolve_model_endpoint_from_context(settings, model_context)
+        if resolved_model_endpoint is None:
+            raise AIConnectionError('The selected chat connection or model is unavailable.')
 
     provider = str(model_context.get('provider') or '').strip().lower()
     endpoint = str(model_context.get('endpoint') or '').strip()
@@ -331,26 +409,16 @@ def build_semantic_kernel_chat_service_for_model(
             or api_version
         ).strip()
         auth_settings = resolved_model_endpoint.get('auth', {}) or auth_settings
-        resolved_models = resolved_model_endpoint.get('models', []) or []
         requested_model_id = str(model_context.get('model_id') or '').strip()
-        matched_model = None
-        if requested_model_id:
-            matched_model = next(
-                (model for model in resolved_models if str(model.get('id') or '').strip() == requested_model_id),
-                None,
-            )
-        if matched_model is None and deployment_name:
-            matched_model = next(
-                (
-                    model for model in resolved_models
-                    if str(model.get('deploymentName') or model.get('deployment') or '').strip() == deployment_name
-                ),
-                None,
-            )
+        matched_model = _require_chat_model_for_endpoint(
+            resolved_model_endpoint, deployment_name, requested_model_id,
+        )
         if matched_model:
             deployment_name = str(
                 matched_model.get('deploymentName') or matched_model.get('deployment') or deployment_name
             ).strip()
+    elif deployment_name:
+        require_model_capability(deployment_name, provider=provider or 'aoai')
 
     if provider and endpoint and deployment_name:
         runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment_name)

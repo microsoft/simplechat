@@ -17,6 +17,7 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from config import *
 from flask import jsonify, make_response, request
 from functions_appinsights import log_event
+from functions_ai_connections import require_model_capability
 from functions_authentication import *
 from functions_chat import sort_messages_by_thread
 from functions_chart_export import decode_base64_image_data_uri
@@ -1389,11 +1390,23 @@ def _find_summary_endpoint_model(
     requested_model: str,
     requested_model_id: str,
 ) -> Optional[Dict[str, Any]]:
-    models = endpoint_cfg.get('models', []) or []
+    models = [model for model in endpoint_cfg.get('models', []) or [] if isinstance(model, dict)]
+    if not requested_model_id and requested_model:
+        deployment_matches = [
+            model for model in models
+            if requested_model in {
+                _normalize_summary_model_value(model.get('deploymentName')),
+                _normalize_summary_model_value(model.get('deployment')),
+            }
+        ]
+        models = deployment_matches or models
     for model_cfg in models:
-        if not isinstance(model_cfg, dict) or not model_cfg.get('enabled', True):
-            continue
-        if _summary_model_matches(model_cfg, requested_model, requested_model_id):
+        matches = (
+            _normalize_summary_model_value(model_cfg.get('id')) == requested_model_id
+            if requested_model_id else _summary_model_matches(model_cfg, requested_model, '')
+        )
+        if matches:
+            require_model_capability(model_cfg, provider=endpoint_cfg.get('provider') or 'aoai')
             return model_cfg
     return None
 
@@ -1526,12 +1539,14 @@ def _resolve_summary_multi_endpoint_client(
             if _normalize_summary_model_value(endpoint.get('id')) == requested_endpoint_id
         ]
         if not endpoint_candidates:
-            if selection_source == 'request':
-                raise ValueError('Selected summary model endpoint could not be found.')
-            return None
+            raise ValueError('Selected summary model endpoint could not be found.')
 
     for endpoint_cfg in endpoint_candidates:
-        if not isinstance(endpoint_cfg, dict) or not endpoint_cfg.get('enabled', True):
+        if not isinstance(endpoint_cfg, dict):
+            continue
+        if not endpoint_cfg.get('enabled', True):
+            if requested_endpoint_id:
+                raise ValueError('Selected summary model endpoint is disabled.')
             continue
 
         model_cfg = _find_summary_endpoint_model(endpoint_cfg, requested_model, requested_model_id)
@@ -1550,6 +1565,7 @@ def _resolve_summary_multi_endpoint_client(
         )
 
         provider = _normalize_summary_model_value(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
+        require_model_capability(model_cfg, provider=provider)
         connection = resolved_endpoint_cfg.get('connection', {}) or {}
         auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
         deployment = _normalize_summary_model_value(
@@ -1584,8 +1600,10 @@ def _resolve_summary_multi_endpoint_client(
         )
         return gpt_client, deployment
 
-    if selection_source == 'request' and requested_endpoint_id:
+    if requested_endpoint_id or requested_model_id:
         raise ValueError('Selected summary model could not be found on the configured endpoint.')
+    if requested_model:
+        require_model_capability(requested_model, provider=requested_provider or 'aoai')
 
     return None
 

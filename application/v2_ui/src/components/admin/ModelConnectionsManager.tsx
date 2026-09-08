@@ -11,7 +11,7 @@
 // connection looked identical to a saved one. Here each connection saves on its own, and
 // the editor says which state it is in.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     AlertCircle,
@@ -27,6 +27,7 @@ import {
     Zap,
 } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
+import { capabilityDescription, testImageModel } from '../../lib/capabilityModels';
 import {
     AUTH_TYPE_OPTIONS,
     IDENTITY_HEADER_MODE_OPTIONS,
@@ -44,8 +45,11 @@ import {
     fetchModelConnections,
     isFoundryProvider,
     mergeDiscoveredModels,
+    modelPublishesCapability,
+    modelSupportsCapability,
     projectNameFromEndpoint,
     providerLabel,
+    setModelCapabilityEnabled,
     testConnection,
     testConnectionModel,
     toEditableConnection,
@@ -53,6 +57,8 @@ import {
     validateConnection,
     visibleFields,
     type ConnectionModel,
+    type ConnectionMigrationNotice,
+    type ImplementedCapability,
     type ModelConnection,
 } from '../../lib/modelConnections';
 import { AdminModal } from './AdminModal';
@@ -129,6 +135,77 @@ function Pill({ tone, children }: { tone: 'ok' | 'muted' | 'warn'; children: Rea
     );
 }
 
+function ModelCapabilities({ model, disabled, onChange }: {
+    model: ConnectionModel;
+    disabled: boolean;
+    onChange: (next: ConnectionModel) => void;
+}) {
+    const metadataId = useId();
+    const capabilities: Array<{ key: ImplementedCapability; label: string }> = [
+        { key: 'chat', label: 'chat' },
+        { key: 'image_generation', label: 'images' },
+    ];
+    return (
+        <div className="mt-3 space-y-2">
+            {capabilities.map(({ key, label }) => (
+                <div key={key}>
+                    <label className="flex items-center gap-2 text-xs text-text-2">
+                        <input
+                            type="checkbox"
+                            className="accent-[var(--accent)]"
+                            checked={modelSupportsCapability(model, key) && (!model.enabled_capabilities || model.enabled_capabilities.includes(key))}
+                            disabled={disabled || !modelSupportsCapability(model, key)}
+                            onChange={(event) => onChange(setModelCapabilityEnabled(model, key, event.target.checked))}
+                        />
+                        Use for {label}
+                    </label>
+                    <p className="mt-1 text-xs text-text-3">{capabilityDescription(model.capability_status?.[key])}</p>
+                </div>
+            ))}
+            {model.capability_status?.vision ? (
+                <p className="text-xs text-text-3">
+                    Image input (vision): {model.capability_status.vision.supported ? 'supported' : 'not supported'}
+                    {' · '}{model.capability_status.vision.source}. This is separate from image output.
+                </p>
+            ) : null}
+            {model.enabled === false ? <p className="text-xs text-warn">Model is disabled. Enable it and save to publish the selected uses.</p> : null}
+            <details className="text-xs text-text-3">
+                <summary className="cursor-pointer py-1 text-text-2">Capability metadata</summary>
+                <p className="mb-2">Use automatic metadata unless you have verified the deployment’s capabilities. Saving rechecks provider compatibility; this is not an inference test.</p>
+                {([
+                    ['supportsChat', 'Text output support'],
+                    ['supportsImageGeneration', 'Image generation support'],
+                    ['supportsVision', 'Image input support'],
+                ] as const).map(([key, label]) => (
+                    <div key={key} className="mt-2">
+                        <label htmlFor={`${metadataId}-${key}`} className="mb-1 block">{label}</label>
+                        <select
+                            id={`${metadataId}-${key}`}
+                            className={inputClass}
+                            value={typeof model[key] === 'boolean' ? String(model[key]) : ''}
+                            disabled={disabled}
+                            onChange={(event) => {
+                                const next = { ...model };
+                                delete next.capability_status;
+                                if (event.target.value === '') {
+                                    delete next[key];
+                                } else {
+                                    next[key] = event.target.value === 'true';
+                                }
+                                onChange(next);
+                            }}
+                        >
+                            <option value="">Automatic</option>
+                            <option value="true">Supported (verified by administrator)</option>
+                            <option value="false">Not supported</option>
+                        </select>
+                    </div>
+                ))}
+            </details>
+        </div>
+    );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Editor                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -155,6 +232,8 @@ function ConnectionEditor({
     const authType = String(draft.auth?.type ?? 'managed_identity');
 
     const shown = useMemo(() => visibleFields(draft), [draft]);
+    const savedBinding = !isNew && JSON.stringify(buildConnectionPayload(draft)) ===
+        JSON.stringify(buildConnectionPayload(toEditableConnection(initial)));
 
     const setField = useCallback((path: string, value: unknown) => {
         setErrors((current) => {
@@ -193,7 +272,7 @@ function ConnectionEditor({
     }, []);
 
     const runDiscovery = async () => {
-        const validation = validateConnection(draft);
+        const validation = validateConnection(draft, { requireDiscovery: true });
         // Discovery needs the connection and credentials, but not the model list, so a
         // missing name should not stop it.
         delete validation.name;
@@ -223,7 +302,7 @@ function ConnectionEditor({
     };
 
     const runConnectionTest = async () => {
-        const validation = validateConnection(draft);
+        const validation = validateConnection(draft, { requireDiscovery: true });
         delete validation.name;
         if (Object.keys(validation).length) {
             setErrors(validation);
@@ -237,8 +316,8 @@ function ConnectionEditor({
             const response = await testConnection(buildConnectionPayload(draft));
             toast.success(
                 typeof response.count === 'number'
-                    ? `Connected. ${response.count} chat deployment${response.count === 1 ? '' : 's'} visible.`
-                    : 'Connected.',
+                    ? `Connected. ${response.count} deployment${response.count === 1 ? '' : 's'} visible. Image inference was not tested.`
+                    : 'Connected. Image inference was not tested.',
             );
         } catch (error) {
             setFormError(errorMessage(error, 'The connection could not be reached.'));
@@ -247,7 +326,11 @@ function ConnectionEditor({
         }
     };
 
-    const runModelTest = async (model: ConnectionModel) => {
+    const runModelTest = async (model: ConnectionModel, capability: ImplementedCapability) => {
+        if (capability === 'image_generation' && !savedBinding) {
+            setFormError('Save the connection first. Image tests use only the saved model and credentials.');
+            return;
+        }
         const deploymentName = String(model.deploymentName ?? '').trim();
         if (!deploymentName) {
             setFormError('Give the model a deployment name before testing it.');
@@ -256,8 +339,20 @@ function ConnectionEditor({
         setTestingModelId(String(model.id ?? deploymentName));
         setFormError(null);
         try {
-            await testConnectionModel(buildConnectionPayload(draft), deploymentName);
-            toast.success(`${deploymentName} answered.`);
+            if (capability === 'image_generation') {
+                const response = await testImageModel({
+                    endpoint_id: initial.id,
+                    model_id: String(model.id || model.deploymentName || ''),
+                    provider: String(initial.provider || ''),
+                });
+                if (response.success !== true) {
+                    throw new Error(response.error || 'The saved model did not return an image.');
+                }
+                toast.success(`${deploymentName} generated an image.`);
+            } else {
+                await testConnectionModel(buildConnectionPayload(draft), deploymentName);
+                toast.success(`${deploymentName} answered a chat request. Image inference was not tested.`);
+            }
         } catch (error) {
             setFormError(errorMessage(error, `${deploymentName} did not answer.`));
         } finally {
@@ -635,6 +730,7 @@ function ConnectionEditor({
                     </SectionHeading>
                     <Field
                         label="Subscription id"
+                        help="Required for discovery, optional when entering models manually."
                         error={errors.subscription_id}
                         htmlFor="connection-subscription"
                     >
@@ -722,6 +818,10 @@ function ConnectionEditor({
                     Add manually
                 </GlassButton>
             </div>
+            <p className="mb-3 text-xs text-text-3">
+                Connection checks do not test image inference. Image tests use saved bindings and may incur generation costs.
+                {!savedBinding ? ' Save the connection first before testing images or choosing a default.' : ''}
+            </p>
 
             {models.length === 0 ? (
                 <p className="rounded-lg border border-edge bg-surface-1 p-3 text-xs text-text-3">
@@ -753,23 +853,9 @@ function ConnectionEditor({
                                                 setModels(next);
                                             }}
                                         />
-                                        <span className="text-xs text-text-3">Available</span>
+                                        <span className="text-xs text-text-3">Model enabled</span>
                                     </label>
                                     {model.isDiscovered ? <Pill tone="muted">Discovered</Pill> : null}
-                                    <button
-                                        type="button"
-                                        title={`Test ${model.deploymentName || 'model'}`}
-                                        aria-label={`Test ${model.deploymentName || 'model'}`}
-                                        disabled={busy}
-                                        onClick={() => void runModelTest(model)}
-                                        className="rounded-lg p-1 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1 disabled:opacity-50"
-                                    >
-                                        {testingModelId === String(model.id ?? model.deploymentName) ? (
-                                            <Loader2 size={14} className="animate-spin" />
-                                        ) : (
-                                            <Zap size={14} />
-                                        )}
-                                    </button>
                                     <button
                                         type="button"
                                         title={`Remove ${model.deploymentName || 'model'}`}
@@ -799,6 +885,7 @@ function ConnectionEditor({
                                                 ...model,
                                                 deploymentName: event.target.value,
                                             };
+                                            delete next[index].capability_status;
                                             setModels(next);
                                         }}
                                     />
@@ -818,6 +905,37 @@ function ConnectionEditor({
                                             setModels(next);
                                         }}
                                     />
+                                </div>
+                                <label className="mt-2 block text-xs text-text-3">
+                                    Underlying model name (optional)
+                                    <input
+                                        type="text"
+                                        className={inputClass}
+                                        value={model.modelName ?? ''}
+                                        disabled={busy}
+                                        onChange={(event) => {
+                                            const nextModel = { ...model, modelName: event.target.value };
+                                            delete nextModel.capability_status;
+                                            setModels(models.map((item, at) => at === index ? nextModel : item));
+                                        }}
+                                    />
+                                </label>
+                                <ModelCapabilities
+                                    model={model}
+                                    disabled={busy}
+                                    onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
+                                />
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    {modelPublishesCapability(model, 'chat') ? (
+                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'chat')}>
+                                            Test chat
+                                        </GlassButton>
+                                    ) : null}
+                                    {modelSupportsCapability(model, 'image_generation') ? (
+                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'image_generation')}>
+                                            Test image generation
+                                        </GlassButton>
+                                    ) : null}
                                 </div>
                             </li>
                         );
@@ -899,6 +1017,8 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const [editing, setEditing] = useState<ModelConnection | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const [migration, setMigration] = useState<ConnectionMigrationNotice | null>(null);
+    const [defaultNotices, setDefaultNotices] = useState<string[]>([]);
 
     // Turning connections on seeds this list server-side with the classic chat endpoint,
     // and that save happens in the section above rather than here. Without a reload the
@@ -909,12 +1029,14 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
         try {
             const response = await fetchModelConnections(signal);
             setConnections(Array.isArray(response.endpoints) ? response.endpoints : []);
+            setMigration(response.migration ?? null);
+            setDefaultNotices(Object.values(response.default_notices ?? {}).filter((notice): notice is string => typeof notice === 'string' && Boolean(notice)));
             setError(null);
         } catch (loadError) {
             if (signal?.aborted) {
                 return;
             }
-            setError(errorMessage(loadError, 'Model connections could not be loaded.'));
+            setError(errorMessage(loadError, 'AI Connections could not be loaded.'));
         } finally {
             setLoading(false);
         }
@@ -993,9 +1115,9 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     };
 
     return (
-        <div className="py-3">
+        <div className="py-3" role="region" aria-label="AI Connections">
             <div className="mb-2 flex items-center justify-between gap-3">
-                <span className="text-sm font-medium text-text-1">Connections</span>
+                <span className="text-sm font-medium text-text-1">AI Connections</span>
                 <GlassButton
                     type="button"
                     variant="subtle"
@@ -1008,6 +1130,15 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             </div>
 
             {help ? <p className="mb-3 text-xs leading-relaxed text-text-3">{help}</p> : null}
+            <p className="mb-3 text-xs text-text-3">Configure credentials once, then choose independent chat and image defaults. Image connections remain available when chat uses its classic endpoint.</p>
+            {migration?.message ? (
+                <p role="status" className={`mb-3 rounded-lg p-3 text-xs ${migration.status === 'complete' ? 'bg-surface-2 text-text-2' : 'bg-warn-soft text-warn'}`}>
+                    {migration.message}
+                </p>
+            ) : null}
+            {defaultNotices.map((notice, index) => (
+                <p key={index} role="status" className="mb-2 text-xs text-warn">{notice}</p>
+            ))}
 
             {error ? (
                 <p
@@ -1079,6 +1210,15 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
                                         {total === 0
                                             ? 'no models'
                                             : `${available} of ${total} model${total === 1 ? '' : 's'} available`}
+                                    </p>
+                                    <p className="mt-1 text-xs text-text-3">
+                                        {connection.enabled === false ? 'Connection disabled' : (
+                                            <>
+                                                {(connection.models ?? []).filter((model) => modelPublishesCapability(model, 'chat')).length} chat
+                                                {' · '}
+                                                {(connection.models ?? []).filter((model) => modelPublishesCapability(model, 'image_generation')).length} image generation
+                                            </>
+                                        )}
                                     </p>
                                     {connection.connection?.endpoint ? (
                                         <p className="truncate font-mono text-[11px] text-text-3">

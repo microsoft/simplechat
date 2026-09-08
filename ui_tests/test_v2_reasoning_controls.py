@@ -1,7 +1,7 @@
 # test_v2_reasoning_controls.py
 """
 Real-Composer reasoning, capability selections, and saved-plan notice regressions.
-Version: 0.261.104
+Version: 0.261.105
 Implemented in: 0.261.104
 
 Reuse the local/Azure Playwright fixtures without live model, Azure or retrieval calls.
@@ -76,8 +76,8 @@ def test_stale_minimal_is_corrected_once_even_with_manual_controls_collapsed(app
     expect(page.get_by_role("button", name="Low", exact=True)).to_be_visible()
     message_box(page).fill("A short request")
     expect(notice).to_have_count(1)
-    with page.expect_response(settings_response):
-        page.evaluate("() => window.OrchHarness.stores.userSettings.useUserSettingsStore.getState().flush()")
+    # Autosave may already have finished while the controls were exercised.
+    page.evaluate("async () => await window.OrchHarness.stores.userSettings.useUserSettingsStore.getState().flush()")
     assert api.settings["reasoningEffortSettings"] == {"luna-uuid": "low", "other-uuid": "high"}
     assert api.settings["darkModeEnabled"] is True
     mount(page, api)
