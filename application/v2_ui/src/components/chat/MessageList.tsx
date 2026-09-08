@@ -1,4 +1,5 @@
 // MessageList.tsx
+import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 // Renders the message thread, the in-flight streaming bubble and the reasoning panel.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -603,6 +604,7 @@ function MessageBubbleInner({
                                 )}
                             </p>
                         )}
+                        <ReasoningAdjustmentNotice adjustments={message.metadata?.reasoning_adjustments} />
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
                         {artifacts.map((artifact, index) => (
@@ -680,7 +682,7 @@ const MessageBubble = memo(MessageBubbleInner);
  * actively arriving reads as a stall, which is the opposite of what is happening.
  */
 function StreamingBubble() {
-    const { streamingContent, thoughts, reconnectPhase } = useChatStore();
+    const { streamingContent, streamingReasoningAdjustments, thoughts, reconnectPhase } = useChatStore();
     const chatWidth = useUiStore((state) => state.chatWidth);
     const [showReconnectedNote, setShowReconnectedNote] = useState(false);
 
@@ -714,6 +716,7 @@ function StreamingBubble() {
                         Reconnected.
                     </p>
                 )}
+                <ReasoningAdjustmentNotice adjustments={streamingReasoningAdjustments} />
                 <ThoughtsPanel thoughts={thoughts} live />
                 {streamingContent ? (
                     <AssistantMarkdown content={streamingContent} streaming />

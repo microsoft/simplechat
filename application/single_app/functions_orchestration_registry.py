@@ -28,7 +28,7 @@ application are genuinely of three shapes:
   Document analysis and comparison are gated by ``is_document_action_enabled``, which
   reads a nested capability record rather than a flag.
 
-Version: 0.261.099
+Version: 0.261.104
 """
 
 import logging
@@ -120,6 +120,28 @@ WORKSPACE_SCOPE_SETTINGS = {
 }
 
 
+class CapabilityResolutionError(RuntimeError):
+    """Capability access could not be checked, rather than being denied."""
+
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
+
+
+def required_capability_ids(seeds):
+    """Read positive selections without treating unchecked controls as restrictions."""
+    seeds = seeds or {}
+    values = seeds.get('required_capabilities') or []
+    if not isinstance(values, (list, tuple, set)):
+        raise ValueError('Capability selections must be a list.')
+    required = [value.strip() for value in values if isinstance(value, str) and value.strip()]
+    if seeds.get('web_search') is True:
+        required.append(CAPABILITY_WEB_SEARCH)
+    if isinstance(seeds.get('agent'), dict) and seeds['agent'].get('name'):
+        required.append(CAPABILITY_AGENT_INVOKE)
+    return list(dict.fromkeys(required))
+
+
 def _document_action_gate(action_type):
     """Build a gate for a document action, whose enablement is a nested record."""
 
@@ -130,11 +152,11 @@ def _document_action_gate(action_type):
             return bool(is_document_action_enabled(action_type, settings=settings))
         except Exception as exc:
             log_event(
-                f"[ORCHESTRATION_REGISTRY] Could not resolve the {action_type} document "
-                f"action gate, treating it as disabled: {exc}",
+                '[ORCHESTRATION_REGISTRY] Could not check document action availability.',
                 level=logging.WARNING,
+                extra={'reason': 'capability_check_failed', 'error_type': type(exc).__name__},
             )
-            return False
+            raise CapabilityResolutionError('Document capabilities could not be checked.') from exc
 
     return _gate
 
@@ -168,11 +190,11 @@ def _url_access_request_gate(settings, context):
             return False
     except Exception as exc:
         log_event(
-            f"[ORCHESTRATION_REGISTRY] Could not resolve the URL access gate, treating it "
-            f"as disabled: {exc}",
+            '[ORCHESTRATION_REGISTRY] Could not check URL access.',
             level=logging.WARNING,
+            extra={'reason': 'capability_check_failed', 'error_type': type(exc).__name__},
         )
-        return False
+        raise CapabilityResolutionError('URL access could not be checked.') from exc
 
     # Offering "read URLs" when the message contains none invites a step that can only
     # report having nothing to do. The classic composer hides the button on the same
@@ -194,11 +216,11 @@ def _deep_research_request_gate(settings, context):
         ))
     except Exception as exc:
         log_event(
-            f"[ORCHESTRATION_REGISTRY] Could not resolve the deep research gate, treating "
-            f"it as disabled: {exc}",
+            '[ORCHESTRATION_REGISTRY] Could not check Deep Research access.',
             level=logging.WARNING,
+            extra={'reason': 'capability_check_failed', 'error_type': type(exc).__name__},
         )
-        return False
+        raise CapabilityResolutionError('Deep Research access could not be checked.') from exc
 
 
 def _agent_request_gate(settings, context):
@@ -702,24 +724,27 @@ def _request_gate_passes(capability, settings, request_context):
     Skipped entirely when no request context is supplied, which is what the admin page and
     the bootstrap payload want: they are describing the deployment, not a caller.
 
-    A gate that raises is treated as a refusal. These gates read app roles, and an error
-    resolving a role is not a reason to assume the caller has it.
+    A failed check prevents planning, rather than pretending access was checked and denied.
     """
     gate = capability.get('request_gate')
     if not callable(gate) or request_context is None:
         return True
     try:
         return bool(gate(settings, request_context))
+    except CapabilityResolutionError:
+        raise
     except Exception as exc:
         log_event(
-            f"[ORCHESTRATION_REGISTRY] The request gate for {capability['id']} raised; "
-            f"withholding the capability: {exc}",
+            '[ORCHESTRATION_REGISTRY] A capability access check failed.',
             level=logging.WARNING,
+            extra={'reason': 'capability_check_failed', 'error_type': type(exc).__name__},
         )
-        return False
+        raise CapabilityResolutionError('Capability access could not be checked.') from exc
 
 
-def resolve_available_capabilities(settings, allowed_ids=None, request_context=None, candidate_ids=None):
+def resolve_available_capabilities(
+    settings, allowed_ids=None, request_context=None, candidate_ids=None, unavailable=None,
+):
     """The capabilities this deployment currently permits, in registry order.
 
     ``allowed_ids`` is the administrator's ``chat_orchestration_enabled_capabilities``
@@ -736,6 +761,9 @@ def resolve_available_capabilities(settings, allowed_ids=None, request_context=N
 
     ``candidate_ids`` limits an internal lookup to specific descriptors, avoiding unrelated
     gates and their storage/import work when an executor checks one capability.
+
+    ``unavailable`` optionally receives stable reasons from the same checks. It never
+    infers permissions from a manual control or from model-authored text.
     """
     settings = settings if isinstance(settings, dict) else {}
 
@@ -751,10 +779,26 @@ def resolve_available_capabilities(settings, allowed_ids=None, request_context=N
             continue
         if narrowed is not None and capability['id'] not in narrowed:
             if capability['id'] != TERMINAL_CAPABILITY_ID:
+                if unavailable is not None:
+                    unavailable[capability['id']] = 'not_enabled_for_orchestration'
                 continue
         if not _gates_pass(capability, settings):
+            if unavailable is not None:
+                unavailable[capability['id']] = 'feature_disabled'
             continue
         if not _request_gate_passes(capability, settings, request_context):
+            if unavailable is not None:
+                reason = 'caller_access_required'
+                if capability['id'] == CAPABILITY_URL_FETCH and not request_context.get('message_urls'):
+                    reason = 'missing_user_url'
+                elif capability['id'] == CAPABILITY_AGENT_INVOKE:
+                    reason = (
+                        'no_accessible_agents' if request_context.get('user_enable_agents', True)
+                        else 'agents_disabled_for_user'
+                    )
+                elif capability['id'] == CAPABILITY_ACTION_INVOKE:
+                    reason = 'no_accessible_actions'
+                unavailable[capability['id']] = reason
             continue
         available.append(capability)
 
@@ -775,10 +819,8 @@ def resolve_available_capability_ids(settings, allowed_ids=None, request_context
 def build_planner_capability_projection(capabilities):
     """Reduce descriptors to what the planner model is actually shown.
 
-    Gates, adapter names and per-plan caps are deliberately withheld. They are the
-    application's business, they would spend context the planner needs for the question,
-    and a model told about a cap tends to argue with it rather than obey it -- the
-    validator enforces caps regardless of what the model was told.
+    Gate implementation and adapter internals stay private. Outputs and limits help the
+    model choose feasible work; the validator still enforces them independently.
     """
     projection = []
     for capability in capabilities or ():
@@ -790,6 +832,8 @@ def build_planner_capability_projection(capabilities):
             'when_to_use': capability['when_to_use'],
             'inputs': capability['inputs'],
             'cost': capability['cost_class'],
+            'produces': list(capability.get('produces') or ()),
+            'max_per_plan': capability.get('max_per_plan'),
         })
     return projection
 

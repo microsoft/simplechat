@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_phase_ordering.py
 """
 Functional test for chat orchestration phase ordering.
-Version: 0.261.089
+Version: 0.261.104
 Implemented in: 0.261.087
 
 A plan runs in three phases: collect knowledge, reason on it and answer, then create
@@ -20,7 +20,7 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from test_support.app_stubs import stubbed_app_imports  # noqa: E402
+from test_support.orchestration_research import stubbed_orchestration_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 SETTINGS = {
@@ -43,7 +43,7 @@ def test_phases_are_ordered_and_indexed():
     """The phase tuple is ordered, and every capability lands in a real one."""
     print("Testing the phase ordering...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_registry as registry
 
             assert registry.CAPABILITY_PHASES == ('knowledge', 'reasoning', 'output'), (
@@ -80,7 +80,7 @@ def test_gathering_after_answering_is_reordered():
     """A plan that answers before it gathers is repaired, not run as written."""
     print("Testing that gathering is moved ahead of answering...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_schema as schema
 
             plan = schema.normalize_plan(
@@ -119,7 +119,7 @@ def test_backwards_dependency_is_dropped_and_reported():
     """A gathering step may not wait on the answer."""
     print("Testing that a backwards dependency is dropped...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_schema as schema
 
             plan = schema.normalize_plan(
@@ -164,7 +164,7 @@ def test_ordering_within_a_phase_is_preserved():
     """Sorting by phase must not shuffle steps that share one."""
     print("Testing that the planner's own order survives within a phase...")
     try:
-        with stubbed_app_imports():
+        with stubbed_orchestration_imports():
             import functions_orchestration_schema as schema
 
             plan = schema.normalize_plan(

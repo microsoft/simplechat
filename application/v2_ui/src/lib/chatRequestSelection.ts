@@ -25,7 +25,7 @@
 // being fixed here rather than the behaviour being matched.
 
 import { agentInfoForSelection } from './agents';
-import { modelIdentityForSelection, type ModelCatalogEntry } from './models';
+import { findModel, modelIdentityForSelection, type ModelCatalogEntry } from './models';
 import { requestReasoningEffort } from './reasoning';
 import type { Json } from './types';
 
@@ -71,10 +71,10 @@ export function buildSelectionFields(input: SelectionInput): SelectionFields {
         ...modelIdentityForSelection(input.models, input.modelDeployment),
     };
 
-    // `none` is a real choice in the picker but not a value the endpoint takes, so it is
-    // dropped here rather than at each caller: this is where a request's reasoning level is
-    // decided, and the classic client's getCurrentReasoningEffort() returns null for it.
-    const reasoningEffort = requestReasoningEffort(input.reasoningEffort);
+    const reasoningEffort = requestReasoningEffort(
+        input.reasoningEffort,
+        findModel(input.models, input.modelDeployment)?.reasoning_capabilities,
+    );
     if (reasoningEffort) {
         fields.reasoning_effort = reasoningEffort;
     }

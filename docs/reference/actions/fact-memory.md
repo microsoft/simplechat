@@ -25,6 +25,20 @@ Use it for durable preferences or background facts. Do not store secrets or regu
 - Assigning this action to an agent lets the agent read and write memories as part of its own tool calls.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+## Orchestration context
+
+Since **0.261.104**, private-conversation orchestration also recalls enabled saved
+instructions and relevant embedded facts when planning, editing a plan, and
+answering. This automatic context is read-only; it does not require assigning
+the action to an agent and does not autosave or backfill memory embeddings.
+Current requests override saved preferences. Scope and membership are rechecked
+before answering, and memory provenance remains available in citations.
+
+Shared conversations, including their hidden backing records, do not receive
+this automatic memory context. See the
+[orchestration memory boundaries](https://github.com/microsoft/simplechat/blob/main/docs/explanation/fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md#read-only-saved-memory)
+for scope selection and missing-embedding behavior.
+
 ## Configuration overview
 
 Assign/enable the built-in memory action; no external service fields are required.

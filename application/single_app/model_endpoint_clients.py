@@ -3,12 +3,13 @@
 
 import json
 import asyncio
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Iterator, List
 from urllib.parse import urlparse
 
 import requests
-from openai import OpenAI
+from openai import BadRequestError, OpenAI
 from pydantic import Field
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.function_calling_utils import update_settings_from_function_call_configuration
@@ -24,6 +25,8 @@ from semantic_kernel.contents.utils.finish_reason import FinishReason
 from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutionSettingsError
 
 from functions_debug import debug_print
+from functions_appinsights import log_event
+from functions_model_capabilities import resolve_model_reasoning_effort
 
 
 MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI = "azure_openai"
@@ -92,14 +95,62 @@ class ModelEndpointBehavior:
         return MODEL_CONTEXT_MODE_FOLD_LATEST_USER if self.is_foundry_non_openai_model else MODEL_CONTEXT_MODE_SYSTEM
 
     def resolve_reasoning_effort(self, reasoning_effort: Any) -> str:
-        normalized_reasoning_effort = str(reasoning_effort or "").strip()
-        if not normalized_reasoning_effort or normalized_reasoning_effort.lower() == "none":
-            return ""
-        return normalized_reasoning_effort if self.is_openai_reasoning_model else ""
+        return resolve_model_reasoning_effort(
+            self.deployment_name, reasoning_effort
+        )["effective_effort"] or ""
 
     @property
     def response_length_parameter(self) -> str:
         return "max_completion_tokens" if self.is_openai_reasoning_model else "max_tokens"
+
+
+def is_reasoning_parameter_rejection(error: Exception) -> bool:
+    """Recognize only an SDK HTTP 400 rejecting this specific parameter or value."""
+    if not isinstance(error, BadRequestError) or error.status_code != 400:
+        return False
+    body = error.body
+    if not isinstance(body, Mapping):
+        return False
+    detail = body.get("error", body)
+    if not isinstance(detail, Mapping) or detail.get("param") != "reasoning_effort":
+        return False
+    return detail.get("code") in {"unsupported_value", "unsupported_parameter"}
+
+
+def create_completion_with_reasoning(create_callable, params, model_name, *, on_resolution=None):
+    """Resolve effort and recover once from a provider-policy disagreement.
+
+    Both attempts retain the selected model, messages and all unrelated options.
+    Streaming recovery applies only while creating the stream, never after any
+    output has been delivered. Provider text is not returned or logged.
+    ``on_resolution`` receives a snapshot before each attempt so an outer
+    compatibility retry retains the effective policy even if this call raises.
+    """
+    parameters = dict(params)
+    resolution = resolve_model_reasoning_effort(
+        model_name, parameters.pop("reasoning_effort", None)
+    )
+    if resolution["effective_effort"] is not None:
+        parameters["reasoning_effort"] = resolution["effective_effort"]
+    if on_resolution is not None:
+        on_resolution(dict(resolution))
+    try:
+        return create_callable(**parameters), resolution
+    except BadRequestError as error:
+        if "reasoning_effort" not in parameters or not is_reasoning_parameter_rejection(error):
+            raise
+        parameters.pop("reasoning_effort")
+        resolution.update(
+            effective_effort=None, mode="model_default",
+            adjustment_reason="reasoning_parameter_rejected",
+        )
+        if on_resolution is not None:
+            on_resolution(dict(resolution))
+        log_event(
+            "[MODEL_ENDPOINT] Reasoning parameter rejected; retrying with model default.",
+            extra={"reason": "reasoning_parameter_rejected"}, debug_only=True,
+        )
+        return create_callable(**parameters), resolution
 
 
 def normalize_endpoint_text(endpoint: Any) -> str:

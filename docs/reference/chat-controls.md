@@ -4,6 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
+version: "0.261.104"
 ---
 
 ## How to use this reference
@@ -74,6 +75,14 @@ arrived during streaming. After granting access, send the message again.
 | `agent-dropdown-button` | Opens the searchable agent picker. | Use it to choose a specialized agent with approved instructions, actions, documents, or governance scope. | Always available |
 | `reasoning-toggle-btn` | Opens reasoning-effort controls for models that support configurable reasoning. | Use it when a hard planning or analysis task needs more deliberate reasoning, or a simple task should be cheaper/faster. | Always available |
 | `tts-autoplay-toggle-btn` | Toggles automatic spoken playback for AI responses. | Use it for hands-free review, accessibility, or listening while working in another window. | [`enable_text_to_speech`]({{ '/admin/knowledge/' | relative_url }}) |
+
+Since **0.261.104**, both interfaces use the selected model's declared reasoning
+levels rather than guessing from its configuration ID. Unsupported saved choices
+are adjusted visibly to a supported application default. For GPT-5.6 Luna,
+Minimal becomes Low; None and XHigh remain valid choices. When support is unknown
+or the parameter is unsupported, the request uses **Model default** instead of
+advertising invented options. Explicit **None** is distinct from omitting the
+parameter. Plans and answer metadata retain compatibility adjustments.
 
 ## Grounded search and document scope
 
@@ -162,6 +171,19 @@ for the complete workflow.
 
 ## Orchestration approval (V2 interface)
 
+In Orchestrate, selected Document Search, Web Search, Deep Research, and eligible
+URL Access controls are positive requirements, not the complete list of permitted
+tools. Unchecked controls are neutral. The planner may choose other enabled,
+authorized capabilities, while selected documents, agents, workspaces, and filters
+retain their intended constraints. Deep Research can be selected without also
+selecting Web Search. Image generation is unsupported in this mode and must be
+handled in ordinary chat or explicitly excluded for that message rather than
+silently discarded.
+
+Every Orchestrate request now invokes the planner, even a short question or
+acknowledgment. The planner may choose a direct answer; no topic rule forces
+research. See [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
+
 Account-level approval persistence was fixed in **0.261.101**. These controls appear
 while Orchestrate is active and the administrator allows users to change approval
 modes. The saved choice applies across chats and future visits; it does not alter
@@ -177,12 +199,27 @@ The composer reports an unsuccessful save rather than claiming the new mode was
 remembered. Choose the mode again to retry. If no choice has been saved, the current
 deployment default applies. See [Orchestration settings]({{ '/admin/orchestration/' | relative_url }}).
 
+## Orchestration input recovery (V2 interface)
+
+Since **0.261.104**, entering Orchestrate with Image already selected pauses
+submission behind an accessible alert. This applies to Send, Enter, and requests
+with an attached prompt; an unsupported selection is not silently ignored.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Use regular Chat with Image | Leaves Orchestrate and retains the Image selection. | Keep image generation as part of the request. | Orchestrate with Image already selected |
+| Use Orchestrate without Image for this message | Explicitly excludes Image from this orchestration message without changing the ordinary-chat Image preference. | Continue with supported orchestration work when an image is unnecessary for this turn. | Same input-recovery alert |
+
+The exclusion must be chosen again for a later message. URL Access eligibility
+uses the full resolved message, including attached prompts. Removing its URL
+clears only that selection; other requirements remain intact.
+
 ## Inline follow-up questions (V2 interface)
 
 Implemented in **0.261.096**. These controls appear when chat orchestration needs more
 information before it can plan the request. They use the composer's editing capabilities
 without adding another model, agent, or execution toolbar. See
-[Chat Orchestration]({{ '/explanation/features/CHAT_ORCHESTRATION/' | relative_url }}).
+[Chat Orchestration](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/CHAT_ORCHESTRATION.md).
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |

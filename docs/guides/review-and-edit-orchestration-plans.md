@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.102"
+version: "0.261.104"
 ---
 
 ## Decide what should run
@@ -17,6 +17,32 @@ focus.
 Conversational plan editing was implemented in version **0.261.102**, recorded in
 `application/single_app/config.py`. It is available in the V2 interface for plans
 that have not started.
+
+## Choose requirements, not permissions
+
+Since **0.261.104**, every Orchestrate request reaches the planner, including
+short questions. Selected supported tools, documents, and agents tell it what
+the plan must use. Leaving Web Search or Deep Research unchecked does not
+forbid those capabilities: the planner can choose them when they are enabled,
+authorized, and useful for the task. Say "do not browse" when that is an actual
+requirement.
+
+Deep Research does not require selecting the Web button first. Its automatic
+source discovery still depends on the administrator enabling Web Search.
+Selected workspaces and document filters continue to bound document access.
+Image generation has no orchestration adapter; use ordinary chat for that work.
+If Image was already selected, Send and Enter pause for an explicit choice:
+**Use regular Chat with Image**, or **Use Orchestrate without Image for this
+message**. The second choice excludes Image only from that orchestration message
+and preserves your ordinary-chat Image preference.
+
+URL Access uses the full resolved message, including an attached prompt. Removing
+the URL from the draft clears that now-ineligible selection; it does not clear
+other selected requirements.
+
+Research is not compulsory. The planner can answer directly when the available
+context is enough. Capability lookup or model failures produce errors rather
+than a replacement answer-only plan.
 
 ## Review versus Edit
 
@@ -53,6 +79,24 @@ Editor exchanges do not create duplicate messages in your main conversation.
 The eventual answer follows your accepted changes while the original question
 remains intact.
 
+If an accepted edit removes an originally selected operation or document, the
+preview reports that change for review. It does not rewrite your standing
+composer preferences.
+
+## Understand reasoning adjustments
+
+The reasoning picker uses the selected model's supported levels. For example,
+GPT-5.6 Luna supports **None**, **Low**, **Medium**, **High**, and **XHigh**, not
+Minimal. A previously saved Minimal choice becomes Low with a visible notice.
+This also applies to older saved plans when edited or run.
+
+**None** is an explicit level on models that support it. **Model default** means
+the request omitted the effort parameter; it does not claim the provider chose
+None or Low. If the provider rejects an otherwise supported effort, SimpleChat
+can retry once using the model default and reports the adjustment. Other model
+errors still stop the affected operation. Neither adjustment switches models
+or approves a plan.
+
 ## Understand the countdown pause
 
 Opening Edit stops any countdown and establishes a manual-approval hold. The
@@ -87,6 +131,6 @@ cancelling it. Review it before explicitly choosing Cancel again.
 
 ## Related
 
-- [Chat orchestration]({{ '/explanation/features/CHAT_ORCHESTRATION/' | relative_url }})
-- [Plan editing architecture]({{ '/explanation/features/V2_ORCHESTRATION_PLAN_EDITING/' | relative_url }})
+- [Chat orchestration](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/CHAT_ORCHESTRATION.md)
+- [Plan editing architecture](https://github.com/microsoft/simplechat/blob/main/docs/explanation/features/V2_ORCHESTRATION_PLAN_EDITING.md)
 - [Orchestration settings]({{ '/admin/orchestration/' | relative_url }})

@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.104)**
+
+#### Bug Fixes
+
+*   **Model-Aware Reasoning Across Chat And Orchestration**
+    *   Fixed plan editing and Auto/Review execution failures caused by unsupported reasoning levels. GPT-5.6 Luna's stale Minimal selection becomes Low with a visible adjustment, while supported None remains explicit.
+    *   Both interfaces use canonical per-model capabilities. Narrow provider compatibility recovery reports Model default rather than claiming the rejected effort was honored; model identity and approval safeguards remain unchanged.
+    *   (Ref: `functions_model_capabilities.py`, `model_endpoint_clients.py`, `functions_orchestration_models.py`, `route_backend_chats.py`, [Reasoning Compatibility Fix](fixes/ORCHESTRATION_REASONING_LEVEL_COMPATIBILITY_FIX.md))
+
+*   **Capability-Aware Planning Without Hidden Shortcuts**
+    *   Selected supported tools and sources are requirements, not a restriction to only those tools. Unchecked controls no longer imply that enabled Web Search or Deep Research is unauthorized.
+    *   Every Orchestrate request reaches the planner, including short questions. Direct answers remain available; no topic rule forces research. Model and discovery failures are surfaced instead of becoming successful answer-only plans.
+    *   Fixed authorized group-agent catalog discovery and preserved original selections separately from model-chosen plan usage. Current capabilities are rechecked before execution.
+    *   Enabled saved memories now inform private-conversation planning, edits, and answers without autosave or embedding backfill. Scope and audience are rechecked before answering, and existing memory citations are preserved.
+    *   (Ref: `functions_orchestration_context.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `functions_agent_catalog.py`, [Capability Context Fix](fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md))
+
 ### **(v0.261.100)**
 
 #### New Features

@@ -1,16 +1,18 @@
 # functions_orchestration_models.py
 """Authorized model bindings for orchestration planning and execution.
 
-Version: 0.261.103
+Version: 0.261.104
 """
 
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+from functions_model_capabilities import resolve_model_reasoning_effort
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
     ModelEndpointBehavior,
+    create_completion_with_reasoning,
     infer_model_endpoint_protocol,
 )
 
@@ -57,6 +59,13 @@ class OrchestrationModel:
     source: str = 'legacy'
     _answer_selection: dict[str, str] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    reasoning_resolution: dict[str, Any] = field(default_factory=dict, init=False)
+    _reasoning_rejected_efforts: set[str] = field(default_factory=set, init=False, repr=False)
+
+    def __post_init__(self):
+        self.reasoning_resolution = resolve_model_reasoning_effort(
+            self.behavior_name or self.deployment, self.reasoning_effort
+        )
 
     def answer_model_selection(self):
         """Pin the answer choice even when this binding is a separate planner."""
@@ -83,6 +92,11 @@ class OrchestrationModel:
         """Keep the chat-completions interface used by planning and source review."""
         return SimpleNamespace(chat=SimpleNamespace(completions=_PlannerCompletions(self)))
 
+    def _record_reasoning_resolution(self, resolution):
+        self.reasoning_resolution = dict(resolution)
+        if resolution['adjustment_reason'] == 'reasoning_parameter_rejected':
+            self._reasoning_rejected_efforts.add(resolution['requested_effort'])
+
     def create_completion(self, *, use_model_response_length=False, **kwargs):
         parameters = dict(kwargs)
         if parameters.get('model', self.deployment) != self.deployment:
@@ -101,12 +115,24 @@ class OrchestrationModel:
             parameters[behavior.response_length_parameter] = limit
         if behavior.is_openai_reasoning_model:
             parameters.pop('temperature', None)
-        effort = behavior.resolve_reasoning_effort(
-            parameters.pop('reasoning_effort', None) or self.reasoning_effort
+        parameters.setdefault('reasoning_effort', self.reasoning_effort)
+        self.reasoning_resolution = resolve_model_reasoning_effort(
+            self.behavior_name or self.deployment, parameters['reasoning_effort']
         )
-        if effort:
-            parameters['reasoning_effort'] = effort
-        return self.client.chat.completions.create(**parameters)
+        if self.reasoning_resolution['requested_effort'] in self._reasoning_rejected_efforts:
+            # An outer JSON-format retry must not resend an effort already rejected
+            # by this binding. Different explicit per-call efforts retain their policy.
+            parameters.pop('reasoning_effort')
+            self.reasoning_resolution.update(
+                effective_effort=None, mode='model_default',
+                adjustment_reason='reasoning_parameter_rejected',
+            )
+            return self.client.chat.completions.create(**parameters)
+        completion, self.reasoning_resolution = create_completion_with_reasoning(
+            self.client.chat.completions.create, parameters, self.behavior_name or self.deployment,
+            on_resolution=self._record_reasoning_resolution,
+        )
+        return completion
 
     def close(self):
         if not self._closed:
@@ -122,8 +148,17 @@ def _resolve_legacy_binding(settings, *, deployment='', reasoning_effort='', sou
     from functions_orchestration_planner import resolve_planner_client
 
     client, resolved_deployment = resolve_planner_client(settings)
+    deployment = deployment or resolved_deployment
+    behavior_name = ''
+    if not settings.get('enable_gpt_apim'):
+        behavior_name = next((
+            _text(model.get('modelName'))
+            for model in (settings.get('gpt_model') or {}).get('selected') or []
+            if isinstance(model, dict) and _text(model.get('deploymentName')) == deployment
+        ), '')
     return OrchestrationModel(
-        client, deployment or resolved_deployment, reasoning_effort=reasoning_effort,
+        client, deployment, behavior_name=behavior_name,
+        reasoning_effort=reasoning_effort,
         source=source, _answer_selection=answer_selection,
     )
 

@@ -3,6 +3,77 @@ import { loadUserSettings, saveUserSetting } from './chat-layout.js';
 import { showToast } from './chat-toast.js';
 
 let reasoningEffortSettings = {}; // Per-model settings: {modelName: 'low', ...}
+let settingsLoaded = false;
+let pendingLevels = {};
+const shownAdjustments = new Set();
+const levelLabels = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh' };
+
+export function getMessageReasoningAdjustments(message, previous = []) {
+    const latest = new Map();
+    const entries = [
+        ...(Array.isArray(previous) ? previous : []),
+        ...(Array.isArray(message?.metadata?.reasoning_adjustments) ? message.metadata.reasoning_adjustments : []),
+        ...(Array.isArray(message?.reasoning_adjustments) ? message.reasoning_adjustments : []),
+    ];
+    for (const entry of entries) {
+        if (!entry || typeof entry !== 'object' ||
+            !['explicit', 'model_default'].includes(entry.mode) ||
+            !(entry.requested_effort === null || typeof entry.requested_effort === 'string') ||
+            !(entry.effective_effort === null || typeof entry.effective_effort === 'string') ||
+            !(entry.adjustment_reason === null || typeof entry.adjustment_reason === 'string')) {
+            continue;
+        }
+        const stage = ['planner', 'answer'].includes(entry.stage) ? entry.stage : undefined;
+        const modelName = typeof entry.model_name === 'string' ? entry.model_name : undefined;
+        latest.set(JSON.stringify([stage, modelName]), {
+            requested_effort: entry.requested_effort,
+            effective_effort: entry.effective_effort,
+            mode: entry.mode,
+            adjustment_reason: entry.adjustment_reason,
+            stage,
+            model_name: modelName,
+        });
+    }
+    return [...latest.values()];
+}
+
+export function renderMessageReasoningAdjustments(messageElement, adjustments) {
+    const bubble = messageElement?.querySelector('.message-bubble');
+    if (!bubble) return;
+    const existing = bubble.querySelector('.reasoning-adjustment-notices');
+    const messages = getMessageReasoningAdjustments({ reasoning_adjustments: adjustments })
+        .filter((entry) => entry.adjustment_reason)
+        .map((entry) => {
+            const label = (effort) => levelLabels[effort] || (effort ? 'Saved effort' : 'Model default');
+            const stage = entry.stage === 'planner' ? 'Planner: ' : entry.stage === 'answer' ? 'Answer: ' : '';
+            const effective = entry.mode === 'model_default' ? 'Model default' : label(entry.effective_effort);
+            const model = entry.model_name ? ` for ${entry.model_name}` : '';
+            return `${stage}${label(entry.requested_effort)} could not be used${model}; using ${effective}.`;
+        });
+    if (!messages.length) {
+        existing?.remove();
+        return;
+    }
+    const signature = JSON.stringify(messages);
+    if (existing?.dataset.reasoningSignature === signature) return;
+    const notice = existing || document.createElement('div');
+    notice.className = 'reasoning-adjustment-notices alert alert-warning py-2 small';
+    notice.setAttribute('role', 'status');
+    notice.setAttribute('aria-live', 'polite');
+    notice.setAttribute('aria-atomic', 'true');
+    notice.dataset.reasoningSignature = signature;
+    notice.replaceChildren(...messages.map((message) => {
+        const paragraph = document.createElement('p');
+        paragraph.className = 'mb-0';
+        paragraph.textContent = message;
+        return paragraph;
+    }));
+    if (!existing) {
+        const footer = bubble.querySelector('.message-footer');
+        if (footer) footer.before(notice);
+        else bubble.appendChild(notice);
+    }
+}
 
 function setTooltipText(element, text, options = {}) {
     if (!element) {
@@ -34,9 +105,12 @@ function setTooltipText(element, text, options = {}) {
 }
 
 function applyReasoningSettings(settings = {}) {
-    console.log('Loaded reasoning settings:', settings);
-    reasoningEffortSettings = settings.reasoningEffortSettings || {};
-    console.log('Reasoning effort settings:', reasoningEffortSettings);
+    reasoningEffortSettings = { ...(settings.reasoningEffortSettings || {}), ...pendingLevels };
+    settingsLoaded = true;
+    if (Object.keys(pendingLevels).length) {
+        pendingLevels = {};
+        saveUserSetting({ reasoningEffortSettings });
+    }
     syncReasoningStateForCurrentModel();
 }
 
@@ -101,6 +175,33 @@ export function initializeReasoningToggle(initialSettings = null) {
 export function syncReasoningStateForCurrentModel() {
     updateReasoningIconForCurrentModel();
     updateReasoningButtonVisibility();
+    const modelName = getCurrentModelName();
+    const requested = reasoningEffortSettings[modelName];
+    const effective = getCurrentModelReasoningEffort();
+    const noticeId = 'reasoning-adjustment-notice';
+    const existingNotice = document.getElementById(noticeId);
+    if (existingNotice && (
+        existingNotice.dataset.modelKey !== modelName ||
+        existingNotice.dataset.effectiveEffort !== (effective || '')
+    )) {
+        existingNotice.remove();
+    }
+    if (!settingsLoaded || !requested || requested === effective) return;
+    const adjustmentKey = JSON.stringify([modelName, requested, effective]);
+    if (!shownAdjustments.has(adjustmentKey)) {
+        shownAdjustments.add(adjustmentKey);
+        const modelSelect = document.getElementById('model-select');
+        const option = modelSelect?.options[modelSelect.selectedIndex];
+        const notice = document.getElementById(noticeId) || document.createElement('p');
+        notice.id = noticeId;
+        notice.className = 'alert alert-warning py-2 small';
+        notice.setAttribute('role', 'status');
+        notice.dataset.modelKey = modelName;
+        notice.dataset.effectiveEffort = effective || '';
+        notice.textContent = `${levelLabels[requested] || 'Saved effort'} could not be used for ${option?.dataset.modelName || option?.textContent?.trim() || 'this model'}; using ${levelLabels[effective] || 'Model default'}.`;
+        document.getElementById('reasoning-toggle-btn')?.parentElement?.prepend(notice);
+    }
+    if (effective) saveReasoningEffort(modelName, effective);
 }
 
 /**
@@ -115,13 +216,13 @@ function updateReasoningButtonVisibility() {
     
     // Hide reasoning button when image generation is active
     if (imageGenBtn && imageGenBtn.classList.contains('active')) {
-        reasoningToggleBtn.style.display = 'none';
+        reasoningToggleBtn.classList.add('d-none');
         return;
     }
     
     // Hide reasoning button when agents are active
     if (enableAgentsBtn && enableAgentsBtn.classList.contains('active')) {
-        reasoningToggleBtn.style.display = 'none';
+        reasoningToggleBtn.classList.add('d-none');
         return;
     }
     
@@ -129,15 +230,14 @@ function updateReasoningButtonVisibility() {
     const modelName = getCurrentModelName();
     if (modelName) {
         const supportedLevels = getModelSupportedLevels(modelName);
-        // If model only supports 'none', hide the button
-        if (supportedLevels.length === 1 && supportedLevels[0] === 'none') {
-            reasoningToggleBtn.style.display = 'none';
+        if (supportedLevels.length === 0) {
+            reasoningToggleBtn.classList.add('d-none');
             return;
         }
     }
     
     // Otherwise show the button
-    reasoningToggleBtn.style.display = 'flex';
+    reasoningToggleBtn.classList.toggle('d-none', !modelName);
 }
 
 /**
@@ -158,44 +258,25 @@ function getCurrentModelName() {
  * @param {string} modelName - The name of the model
  * @returns {Array<string>} Array of supported effort levels
  */
+function getReasoningPolicy(modelName) {
+    const modelSelect = document.getElementById('model-select');
+    const selected = modelSelect?.options[modelSelect.selectedIndex];
+    const option = modelName === getCurrentModelName() ? selected :
+        Array.from(modelSelect?.options || []).find((item) =>
+            item.dataset.modelId === modelName || item.dataset.deploymentName === modelName || item.value === modelName);
+    try {
+        const policy = JSON.parse(option?.dataset.reasoningCapabilities || '{}');
+        return policy && typeof policy === 'object' && !Array.isArray(policy) ? policy : {};
+    } catch {
+        return {};
+    }
+}
+
 export function getModelSupportedLevels(modelName) {
-    if (!modelName) {
-        return ['none', 'minimal', 'low', 'medium', 'high'];
-    }
-    
-    const lowerModelName = modelName.toLowerCase();
-    
-    // Models without reasoning support: gpt-4o, gpt-4.1, gpt-4.1-mini, gpt-5-chat, gpt-5-codex
-    if (lowerModelName.includes('gpt-4o') || 
-        lowerModelName.includes('gpt-4.1') || 
-        lowerModelName.includes('gpt-5-chat') || 
-        lowerModelName.includes('gpt-5-codex')) {
-        return ['none'];
-    }
-    
-    // gpt-5-pro: high only
-    if (lowerModelName.includes('gpt-5-pro')) {
-        return ['high'];
-    }
-    
-    // gpt-5.1 series: none, minimal, medium, high (skip low/2 bars)
-    if (lowerModelName.includes('gpt-5.1')) {
-        return ['none', 'minimal', 'medium', 'high'];
-    }
-    
-    // gpt-5 series (but not 5.1, 5-pro, 5-chat, or 5-codex): minimal, low, medium, high
-    // Includes: gpt-5, gpt-5-nano, gpt-5-mini
-    if (lowerModelName.includes('gpt-5')) {
-        return ['minimal', 'low', 'medium', 'high'];
-    }
-    
-    // o-series (o1, o3, etc): low, medium, high
-    if (lowerModelName.match(/\bo[0-9]/)) {
-        return ['low', 'medium', 'high'];
-    }
-    
-    // Default: all levels
-    return ['none', 'minimal', 'low', 'medium', 'high'];
+    const policy = getReasoningPolicy(modelName);
+    return policy.status === 'supported' && Array.isArray(policy.efforts)
+        ? policy.efforts.filter((level) => Object.hasOwn(levelLabels, level))
+        : [];
 }
 
 /**
@@ -205,16 +286,11 @@ export function getModelSupportedLevels(modelName) {
 export function getCurrentModelReasoningEffort() {
     const modelName = getCurrentModelName();
     if (!modelName) {
-        return 'low'; // Default
+        return null;
     }
     
     const supportedLevels = getModelSupportedLevels(modelName);
     const savedEffort = reasoningEffortSettings[modelName];
-    
-    // If gpt-5-pro, always return high
-    if (modelName.toLowerCase().includes('gpt-5-pro')) {
-        return 'high';
-    }
     
     // If saved effort exists and is supported, use it
     if (savedEffort && supportedLevels.includes(savedEffort)) {
@@ -226,7 +302,8 @@ export function getCurrentModelReasoningEffort() {
         return 'low';
     }
     
-    return supportedLevels[0];
+    const defaultEffort = getReasoningPolicy(modelName).default_effort;
+    return supportedLevels.includes(defaultEffort) ? defaultEffort : null;
 }
 
 /**
@@ -254,7 +331,8 @@ export function updateReasoningIcon(level) {
         'minimal': 'bi-reception-1',
         'low': 'bi-reception-2',
         'medium': 'bi-reception-3',
-        'high': 'bi-reception-4'
+        'high': 'bi-reception-4',
+        'xhigh': 'bi-reception-4'
     };
     
     // Remove all reception classes
@@ -270,7 +348,8 @@ export function updateReasoningIcon(level) {
         'minimal': 'Minimal reasoning effort',
         'low': 'Low reasoning effort',
         'medium': 'Medium reasoning effort',
-        'high': 'High reasoning effort'
+        'high': 'High reasoning effort',
+        'xhigh': 'XHigh reasoning effort'
     };
     setTooltipText(reasoningToggleBtn, labelMap[level] || 'Configure reasoning effort');
 }
@@ -302,53 +381,46 @@ export function showReasoningSlider() {
     const currentEffort = getCurrentModelReasoningEffort();
     
     // All possible levels in order (for display from bottom to top)
-    const allLevels = ['none', 'minimal', 'low', 'medium', 'high'];
-    const levelLabels = {
-        'none': 'None',
-        'minimal': 'Minimal',
-        'low': 'Low',
-        'medium': 'Medium',
-        'high': 'High'
-    };
     const levelIcons = {
         'none': 'bi-reception-0',
         'minimal': 'bi-reception-1',
         'low': 'bi-reception-2',
         'medium': 'bi-reception-3',
-        'high': 'bi-reception-4'
+        'high': 'bi-reception-4',
+        'xhigh': 'bi-reception-4'
     };
     const levelDescriptions = {
         'none': 'No additional reasoning - fastest responses, suitable for simple questions',
         'minimal': 'Light reasoning - quick responses with basic logical steps',
         'low': 'Moderate reasoning - balanced speed and thoughtfulness for everyday questions',
         'medium': 'Enhanced reasoning - more deliberate thinking for complex questions',
-        'high': 'Maximum reasoning - deepest analysis for challenging problems and nuanced topics'
+        'high': 'High reasoning - deeper analysis for challenging problems',
+        'xhigh': 'Extra high reasoning - most deliberate analysis'
     };
     
     // Build level buttons (reversed for bottom-to-top display)
-    levelsContainer.innerHTML = '';
-    allLevels.forEach(level => {
-        const isSupported = supportedLevels.includes(level);
+    levelsContainer.replaceChildren();
+    supportedLevels.forEach(level => {
         const isActive = level === currentEffort;
         
-        const levelDiv = document.createElement('div');
-        levelDiv.className = `reasoning-level ${isActive ? 'active' : ''} ${!isSupported ? 'disabled' : ''}`;
+        const levelDiv = document.createElement('button');
+        levelDiv.type = 'button';
+        levelDiv.className = `reasoning-level ${isActive ? 'active' : ''}`;
         levelDiv.dataset.level = level;
-        
-        levelDiv.innerHTML = `
-            <div class="reasoning-level-icon">
-                <i class="bi ${levelIcons[level]}"></i>
-            </div>
-            <div class="reasoning-level-label">${levelLabels[level]}</div>
-        `;
+        levelDiv.setAttribute('aria-pressed', String(isActive));
+        const icon = document.createElement('i');
+        icon.className = `bi ${levelIcons[level]}`;
+        icon.setAttribute('aria-hidden', 'true');
+        const label = document.createElement('span');
+        label.className = 'reasoning-level-label';
+        label.textContent = levelLabels[level];
+        levelDiv.append(icon, label);
 
         setTooltipText(levelDiv, levelDescriptions[level], { placement: 'right' });
         
-        if (isSupported) {
-            levelDiv.addEventListener('click', () => {
-                selectReasoningLevel(level, modelName);
-            });
-        }
+        levelDiv.addEventListener('click', () => {
+            selectReasoningLevel(level, modelName);
+        });
         
         levelsContainer.appendChild(levelDiv);
     });
@@ -362,6 +434,7 @@ export function showReasoningSlider() {
  * @param {string} modelName - The model name
  */
 function selectReasoningLevel(level, modelName) {
+    document.getElementById('reasoning-adjustment-notice')?.remove();
     // Update the settings
     reasoningEffortSettings[modelName] = level;
     
@@ -374,20 +447,14 @@ function selectReasoningLevel(level, modelName) {
     // Update active state in modal
     document.querySelectorAll('.reasoning-level').forEach(el => {
         el.classList.remove('active');
+        el.setAttribute('aria-pressed', String(el.dataset.level === level));
         if (el.dataset.level === level) {
             el.classList.add('active');
         }
     });
     
     // Show feedback
-    const levelLabels = {
-        'none': 'None',
-        'minimal': 'Minimal',
-        'low': 'Low',
-        'medium': 'Medium',
-        'high': 'High'
-    };
-    showToast(`Reasoning effort set to ${levelLabels[level]} for ${modelName}`, 'success');
+    showToast(`Reasoning effort set to ${levelLabels[level]}`, 'success');
     
     // Close modal after a short delay
     setTimeout(() => {
@@ -405,7 +472,11 @@ function selectReasoningLevel(level, modelName) {
  */
 export function saveReasoningEffort(modelName, effort) {
     reasoningEffortSettings[modelName] = effort;
-    saveUserSetting({ reasoningEffortSettings });
+    if (settingsLoaded) {
+        saveUserSetting({ reasoningEffortSettings });
+    } else {
+        pendingLevels = { ...pendingLevels, [modelName]: effort };
+    }
 }
 
 /**
@@ -419,9 +490,9 @@ export function isReasoningEffortEnabled() {
 
 /**
  * Get the current reasoning effort to send to the backend
- * @returns {string|null} The effort level or null if 'none'
+ * @returns {string|null} A supported explicit effort, or null for model default
  */
 export function getCurrentReasoningEffort() {
     const effort = getCurrentModelReasoningEffort();
-    return effort === 'none' ? null : effort;
+    return effort;
 }

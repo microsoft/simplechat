@@ -1,9 +1,12 @@
 # V2 Orchestration Plan Editing
 
-**Version: 0.261.102**
+**Version: 0.261.104**
 
 **Implemented in version: 0.261.102**, tracked in
 `application/single_app/config.py`.
+
+**Reasoning compatibility and capability context fixed in version: 0.261.104**,
+using the same application version field.
 
 ## Overview
 
@@ -65,6 +68,17 @@ The planner receives the current effective plan, including Review's narrowing
 changes, the current task, the latest instruction, and a bounded editor
 conversation. The saved original request, selected sources, and conversation
 snapshot retain their identities.
+
+Available capabilities come from server configuration, current access, and resource
+prerequisites. Selected controls and sources are positive requirements; an unchecked
+control does not veto a capability. A later edit can intentionally change an earlier
+selection, with a visible review warning when selected work is removed.
+
+Planner and answer models resolve reasoning effort independently from canonical
+model metadata. Unsupported saved levels are adjusted visibly rather than breaking
+Edit or Run. Runtime adjustments survive revision publication, editor projections,
+and run restoration without changing immutable historical plans. See
+[Reasoning compatibility]({{ '/explanation/fixes/ORCHESTRATION_REASONING_LEVEL_COMPATIBILITY_FIX/' | relative_url }}).
 
 The planner can return an updated plan, an explanation without changing the plan,
 or a clarifying question. Questions remain inside the editor; answering one
@@ -134,7 +148,8 @@ conditional transitions, idempotency, history, and edit/run conflicts.
 planner-to-persistence-to-execution flow, including clarification, error recovery,
 preserved source selections, and the final revised request.
 `functional_tests/test_orchestration_plan_revision_planner.py` covers the strict
-edit-output contract and the separation from initial planning's failure fallback.
+edit-output contract. Initial planning is strict too: a provider failure or an
+invalid plan no longer becomes a successful direct-answer fallback.
 
 The orchestration UI harness covers the editor and existing narrowing-only Review
 behavior. Model responses are deterministic in these tests; they establish the

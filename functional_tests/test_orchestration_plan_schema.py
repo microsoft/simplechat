@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_plan_schema.py
 """
 Functional test for the chat orchestration plan contract and validator.
-Version: 0.261.085
+Version: 0.261.104
 Implemented in: 0.261.085
 
 Planner output is untrusted input. A plan arrives as JSON written by a language model, and
@@ -19,13 +19,16 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from test_support.app_stubs import stubbed_app_imports  # noqa: E402
+from test_support.orchestration_research import stubbed_orchestration_imports as stubbed_app_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 SETTINGS = {
     'enable_user_workspace': True,
     'enable_web_search': True,
     'chat_orchestration_max_steps': 6,
+    'document_action_capabilities': {
+        'analyze': {'enabled': False}, 'comparison': {'enabled': False},
+    },
 }
 
 

@@ -1,7 +1,7 @@
 # test_fact_memory_streaming_context_fix.py
 """
 Functional test for fact memory chat-context parity.
-Version: 0.240.051
+Version: 0.261.104
 Implemented in: 0.240.050; 0.240.051
 
 This test ensures both standard and streaming agent chat paths inject saved fact
@@ -13,6 +13,7 @@ import ast
 import copy
 import os
 from test_support.versioning import assert_app_version_at_least
+from test_fact_memory_profile_and_mini_sk import CONTEXT_FILE, load_tabular_fact_memory_helpers
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,7 @@ FIX_DOC = os.path.join(
     'docs',
     'explanation',
     'fixes',
+    'v0.241.001',
     'FACT_MEMORY_STREAMING_CONTEXT_FIX.md',
 )
 TARGET_FUNCTIONS = {
@@ -60,24 +62,10 @@ def load_fact_memory_helpers():
         f'found {[node.name for node in selected_nodes]}'
     )
 
-    class FakeFactMemoryStore:
-        created_instances = []
-        next_facts = []
-
-        def __init__(self):
-            self.calls = []
-            self.__class__.created_instances.append(self)
-
-        def get_facts(self, **kwargs):
-            self.calls.append(kwargs)
-            return list(self.__class__.next_facts)
-
     module = ast.Module(body=selected_nodes, type_ignores=[])
     ast.fix_missing_locations(module)
 
-    namespace = {
-        'FactMemoryStore': FakeFactMemoryStore,
-    }
+    namespace, FakeFactMemoryStore, _ = load_tabular_fact_memory_helpers()
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace, route_source, FakeFactMemoryStore
 
@@ -89,7 +77,7 @@ def test_get_facts_for_context_preserves_selected_agent_id():
     namespace, _, fake_store_class = load_fact_memory_helpers()
     fake_store_class.created_instances = []
     fake_store_class.next_facts = [
-        {'value': 'The user prefers hyphens instead of em dashes.'},
+        {'value': 'The user prefers hyphens instead of em dashes.', 'memory_type': 'fact', 'value_embedding': [1.0, 0.0]},
     ]
 
     facts = namespace['get_facts_for_context'](
@@ -97,16 +85,17 @@ def test_get_facts_for_context_preserves_selected_agent_id():
         scope_type='user',
         conversation_id='conversation-456',
         agent_id='agent-789',
+        query_text='who am i?',
     )
 
     assert '- The user prefers hyphens instead of em dashes.' in facts, facts
-    assert '- agent_id: agent-789' in facts, facts
     assert fake_store_class.created_instances, 'Expected FactMemoryStore to be instantiated.'
     assert fake_store_class.created_instances[-1].calls == [{
         'scope_type': 'user',
         'scope_id': 'user-123',
         'agent_id': 'agent-789',
         'conversation_id': 'conversation-456',
+        'memory_type': 'fact',
     }], fake_store_class.created_instances[-1].calls
 
     print('✅ Fact lookup preserves selected agent id')
@@ -120,7 +109,7 @@ def test_inject_fact_memory_context_adds_metadata_and_facts():
     namespace, _, fake_store_class = load_fact_memory_helpers()
     fake_store_class.created_instances = []
     fake_store_class.next_facts = [
-        {'value': 'The user prefers hyphens instead of em dashes.'},
+        {'value': 'The user prefers hyphens instead of em dashes.', 'memory_type': 'fact', 'value_embedding': [1.0, 0.0]},
     ]
 
     conversation_history = [
@@ -132,6 +121,8 @@ def test_inject_fact_memory_context_adds_metadata_and_facts():
         scope_type='user',
         conversation_id='conversation-456',
         agent_id='agent-789',
+        query_text='who am i?',
+        include_metadata=True,
     )
 
     assert conversation_history[0]['role'] == 'system', conversation_history
@@ -158,8 +149,9 @@ def test_route_wires_fact_memory_injection_for_standard_and_streaming_paths():
     assert "agent_id=getattr(selected_agent, 'id', None)" in route_source, (
         'Expected streaming injection to use the selected agent id.'
     )
-    assert '<Fact Memory>' in route_source, 'Expected fact memory system message markup.'
-    assert '<Conversation Metadata>' in route_source, 'Expected conversation metadata system message markup.'
+    context_source = read_file_text(CONTEXT_FILE)
+    assert '<Fact Memory>' in context_source, 'Expected fact memory system message markup.'
+    assert '<Conversation Metadata>' in context_source, 'Expected conversation metadata system message markup.'
 
     print('✅ Route wiring for standard and streaming fact injection passed')
     return True

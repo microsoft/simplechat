@@ -1,7 +1,7 @@
 # test_orchestration_conversation_context_routes.py
 """
 Functional tests for conversation context across real orchestration HTTP/SSE routes.
-Version: 0.261.103
+Version: 0.261.104
 Implemented in: 0.261.096
 Prompt attachment integration: 0.261.097
 Direct action integration: 0.261.098
@@ -266,6 +266,46 @@ class ConversationRouteTests(unittest.TestCase):
         for client in self.model_clients:
             client.close.assert_called_once_with()
 
+    def test_stale_luna_minimal_is_corrected_through_every_approval_mode(self):
+        selection = self.use_modern_models()
+        selection.update(model_id='luna-model', model_deployment='gpt-5.6-luna')
+        normal_completion = self.model.chat.completions.create
+
+        def reject_unsupported_minimal(**kwargs):
+            if kwargs.get('reasoning_effort') == 'minimal':
+                raise BadRequestError(
+                    "Unsupported reasoning_effort: minimal. Supported values: none, low, medium, high, xhigh.",
+                    response=HttpResponse(400, request=HttpRequest('POST', 'https://model.example.test')),
+                    body={'error': {'code': 'unsupported_value', 'param': 'reasoning_effort'}},
+                )
+            return normal_completion(**kwargs)
+
+        self.model.chat.completions.create = reject_unsupported_minimal
+        for mode in ('auto', 'timed', 'manual'):
+            with self.subTest(mode=mode):
+                self.messages.items.clear()
+                self.runs.items.clear()
+                self.model.calls.clear()
+                for row in winery_history():
+                    self.messages.upsert_item(row)
+                plan = self.planned(**selection, reasoning_effort='minimal', approval_mode=mode)
+                self.assertEqual(plan['reasoning_adjustments'][0]['effective_effort'], 'low')
+                events = frames(self.run_plan(plan))
+                self.assertFalse(any(event.get('error') for event in events), events)
+                self.assertEqual(len(self.model.calls), 3)
+                for call in self.model.calls:
+                    self.assertEqual(call['model'], 'gpt-5.6-luna')
+                    self.assertEqual(call['reasoning_effort'], 'low')
+                terminal = next(event for event in events if event.get('type') == 'orchestration_done')
+                self.assertEqual(terminal['requested_reasoning_effort'], 'minimal')
+                self.assertEqual(terminal['reasoning_effort'], 'low')
+                self.assertEqual(terminal['reasoning_mode'], 'explicit')
+                self.assertEqual({item['stage'] for item in terminal['reasoning_adjustments']}, {'planner', 'answer'})
+                stored = self.runs.read_item(plan['run_id'], 'conv1')
+                answer = self.messages.read_item(stored['assistant_message_id'], 'conv1')
+                self.assertEqual(answer['reasoning_effort'], 'low')
+                self.assertEqual(answer['requested_reasoning_effort'], 'minimal')
+
     def test_admin_default_is_pinned_to_the_plan_and_cannot_be_retargeted_at_run_time(self):
         self.use_modern_models()
         plan = self.planned()
@@ -277,6 +317,18 @@ class ConversationRouteTests(unittest.TestCase):
         self.assertFalse(any(event.get('error') for event in frames(response)))
         self.assertEqual({call['model'] for call in self.model.calls}, {'gpt-5.6-terra'})
         self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['seeds']['model'], TERRA_SELECTION)
+
+    def test_malformed_model_step_lists_never_publish_an_executable_plan(self):
+        for proposal in (
+            {'kind': 'plan'}, {'kind': 'plan', 'steps': []},
+            {'kind': 'plan', 'steps': 'not-a-list'},
+        ):
+            with self.subTest(proposal=proposal):
+                self.model.plan_override = proposal
+                _response, events = self.plan()
+                self.assertTrue(any(event.get('error') for event in events), events)
+                self.assertFalse(any(event.get('type') == 'orchestration_plan' for event in events))
+                self.assertFalse(any(row.get('plan') for row in self.runs.items.values()))
 
     def test_replanning_uses_the_original_model_not_replacement_answer_controls(self):
         self.use_modern_models()
@@ -834,6 +886,9 @@ class ConversationRouteTests(unittest.TestCase):
 
     def test_declined_clarification_is_not_asked_again(self):
         elicitation = self.clarification()
+        self.model.plan_override = {
+            'kind': 'plan', 'steps': [{'capability_id': 'respond', 'arguments': {}}],
+        }
         plan = self.planned(
             revision=1, elicitation=elicitation,
             elicitation_response={'action': 'decline', 'content': {}},
@@ -841,6 +896,10 @@ class ConversationRouteTests(unittest.TestCase):
         self.assertEqual([step['capability_id'] for step in plan['steps']], ['respond'])
         self.assertEqual(self.search_queries, [])
         self.assertEqual(self.runs.read_item(plan['run_id'], 'conv1')['answered_questions'][0]['action'], 'decline')
+        self.assertTrue(any(
+            call['messages'][0]['content'] == self.modules.planner.PLANNER_SYSTEM_PROMPT
+            for call in self.model.calls
+        ))
 
     def test_successive_clarifications_preserve_answers_without_creating_phantom_runs(self):
         first = self.clarification()
@@ -958,18 +1017,37 @@ class ConversationRouteTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_history_transformation_bypasses_retrieval_but_keeps_answer_context(self):
+    def test_planner_can_reuse_history_without_retrieval_and_keeps_answer_context(self):
         self.model.resolution_override = {
             'relationship': 'follow_up',
             'resolved_message': 'Put the previously listed Grants Pass wineries in a table.',
             'message_ids': ['u2', 'a2'], 'requires_retrieval': False, 'clarification': '',
         }
+        self.model.plan_override = {
+            'kind': 'plan', 'steps': [{'capability_id': 'respond', 'arguments': {}}],
+        }
         plan = self.planned(message='Put those in a table.')
         self.assertEqual([step['capability_id'] for step in plan['steps']], ['respond'])
         self.run_plan(plan)
         self.assertEqual(self.search_queries, [])
-        self.assertEqual(len(self.model.calls), 2)
+        self.assertEqual(len(self.model.calls), 3)
+        self.assertEqual(self.model.calls[1]['messages'][0]['content'], self.modules.planner.PLANNER_SYSTEM_PROMPT)
         self.assertIn('Schmidt', json.dumps(self.model.calls[-1]))
+
+    def test_short_requests_reach_the_planner_with_available_capabilities(self):
+        self.messages.items.clear()
+        self.settings['enable_web_search'] = True
+        self.model.plan_override = {
+            'kind': 'plan', 'steps': [{'capability_id': 'respond', 'arguments': {}}],
+        }
+        plan = self.planned(message='Hi!', turn_id='short-turn')
+        self.assertEqual([step['capability_id'] for step in plan['steps']], ['respond'])
+        self.assertEqual(len(self.model.calls), 1)
+        call = self.model.calls[0]
+        self.assertEqual(call['messages'][0]['content'], self.modules.planner.PLANNER_SYSTEM_PROMPT)
+        context = json.loads(call['messages'][1]['content'])
+        self.assertIn('web_search', context['capability_availability']['available'])
+        self.assertNotIn('web_search', context['user_selected'])
 
     def test_legacy_pending_run_uses_its_saved_user_message_cutoff(self):
         plan = self.planned()

@@ -487,6 +487,8 @@
                                                     selected
                                                     data-selection-key="{{ initial_chat_model_selection.selection_key }}"
                                                     data-model-id="{{ initial_chat_model_selection.model_id }}"
+                                                    data-model-name="{{ initial_chat_model_selection.model_name }}"
+                                                    data-reasoning-capabilities="{{ initial_chat_model_selection.reasoning_capabilities|tojson|forceescape }}"
                                                     data-display-name="{{ initial_chat_model_selection.display_name }}"
                                                     data-deployment-name="{{ initial_chat_model_selection.deployment_name }}"
                                                     data-endpoint-id="{{ initial_chat_model_selection.endpoint_id }}"
@@ -498,35 +500,18 @@
                                                 >
                                                     {{ initial_chat_model_selection.display_name }}
                                                 </option>
-                                            {% elif settings.enable_gpt_apim %}
-                                                {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                                {% set apim_list = raw.split(',') %}
-                                                {% for dep in apim_list %}
-                                                {% set d = dep.strip() %}
-                                                <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                                    {{ d }}
-                                                </option>
-                                                {% endfor %}
                                             {% else %}
-                                                {% if settings.enable_gpt_apim %}
-                                                    {% set raw = settings.azure_apim_gpt_deployment or "" %}
-                                                    {% set apim_list = raw.split(',') %}
-                                                    {% for dep in apim_list %}
-                                                    {% set d = dep.strip() %}
-                                                    <option value="{{ d }}" {% if loop.first %}selected{% endif %}>
-                                                        {{ d }}
-                                                    </option>
-                                                    {% endfor %}
-                                                {% else %}
-                                                    {% for model in settings.gpt_model.selected %}
+                                                    {% for model in chat_model_options %}
                                                     <option
-                                                        value="{{ model.deploymentName }}"
-                                                        {% if loop.first %}selected{% endif %}
+                                                        value="{{ model.deployment_name }}"
+                                                        data-model-name="{{ model.model_name }}"
+                                                        data-deployment-name="{{ model.deployment_name }}"
+                                                        data-reasoning-capabilities="{{ model.reasoning_capabilities|tojson|forceescape }}"
+                                                        {% if initial_chat_model_selection and model.selection_key == initial_chat_model_selection.selection_key %}selected{% endif %}
                                                     >
-                                                        {{ model.modelName }}
+                                                        {{ model.display_name }}
                                                     </option>
                                                     {% endfor %}
-                                                {% endif %}
                                             {% endif %}
                                             </select>
                                         </div>
