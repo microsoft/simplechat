@@ -2,6 +2,63 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.102)**
+
+#### New Features
+
+*   **Shared AI Connections Framework**
+    *   Configure a connection and its credentials once, then choose independent chat and image-generation defaults from compatible models on that connection.
+    *   Capability-aware model references and runtime adapters provide extension points for future embeddings, transcription, speech, computer use, and other integrations. Those additional integrations are not enabled by this release.
+    *   (Ref: `functions_ai_connections.py`, `functions_model_capabilities.py`, [AI Connections Framework](features/AI_CONNECTIONS_FRAMEWORK.md), #1436)
+
+#### User Interface Enhancements
+
+*   **One Image Model Picker Across Shared Connections**
+    *   Classic and V2 Admin Settings now use the shared AI Connections catalog instead of maintaining another image endpoint and credential form.
+    *   Existing image settings are imported automatically, preserving the selected model, authentication, image API version, and APIM routing without enabling multi-endpoint chat.
+    *   Model availability, invalidated defaults, and import recovery are explained alongside the controls. Duplicate connection names and deployment names remain distinct through stable references.
+    *   (Ref: `CapabilityModelPicker.tsx`, `ModelConnectionsManager.tsx`, `functions_ai_connection_migration.py`, [Configure AI Connections](../guides/configure-ai-connections.md))
+
+#### Bug Fixes
+
+*   **GPT Image Generation Uses The Correct API**
+    *   Compatible GPT deployments use Azure's v1 Responses image tool rather than the older dated Responses contract. Dedicated image deployments retain the Images API.
+    *   Image generation no longer requires a usable text-model configuration. Inline approvals retain the selected deployment when persisting images, and shared image edits preserve rate-limit and configuration-error status codes.
+    *   Provider-specific image-tool availability and deployment requirements still apply; the application does not provision or guess a backing deployment.
+    *   (Ref: `functions_image_generation.py`, `functions_image_api_route.py`, `route_backend_chats.py`, [GPT Image Generation Fix](fixes/GPT_CHAT_MODEL_IMAGE_GENERATION_FIX.md), #1436)
+
+*   **Connection Changes Preserve Configuration And Capability Boundaries**
+    *   Image-only models are excluded from text-only chat, agent, workflow, and document operations. Unverified model variants do not inherit image-tool support from a name prefix.
+    *   Failed imports and unrelated Classic settings saves retain legacy image settings. Connection duplication preserves image operation profiles, and concurrent imports stage credentials without overwriting another worker's committed value.
+    *   Dated Azure Images requests use API-key authentication independently of a connection's Foundry label, while explicit gateway headers remain supported.
+    *   (Ref: `functions_ai_connection_migration.py`, `functions_keyvault.py`, `route_frontend_admin_settings.py`, `admin_model_endpoints.js`, `functions_model_endpoint_runtime.py`)
+
+### **(v0.261.100)**
+
+#### New Features
+
+*   **Composer-Aware Inline Answers**
+    *   V2 orchestration follow-up questions now support `#` file, tag, and workspace references, `/` saved prompts, and uploads through a compact version of the main composer's editor.
+    *   Single- and multiple-choice selections can include an optional explanation, prompt, or additional sources. File suggestions are not an exhaustive list: a different referenced or uploaded file can answer the question on its own.
+    *   This applies to supported chat file types generally, not only tabular files. Existing upload and workspace permissions still apply.
+    *   (Ref: `ComposerEditor.tsx`, `ElicitationCard.tsx`, `composerDraft.ts`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md))
+
+#### User Interface Enhancements
+
+*   **Upload Progress And Independent Answer Drafts**
+    *   Inline uploads show processing state and retry/remove controls. Finish waits for selected files to be ready rather than continuing without them.
+    *   Paging and navigation within the current browser session preserve each answer's text, references, prompt edits, and variable values. Failed submissions keep the draft available for correction or retry.
+    *   The main composer remains separate, and inline questions do not duplicate its model, agent, web, or voice toolbar.
+    *   (Ref: `chatUploads.ts`, `orchestrationStore.ts`, `AttachedPromptCard.tsx`, [Upload Documents In Chat](../guides/upload-documents-in-chat.md))
+
+#### Bug Fixes
+
+*   **Follow-Up Answers Reach The Resumed Task**
+    *   Fixed a client/server mismatch that could ignore inline answers. Replies are now matched to the stored question and checked against its owner, turn, and revision.
+    *   Accepted explanations, filled prompts, and real source references reach both replanning and execution, while original selections and document filters remain intact.
+    *   Retries cannot apply the same answer twice, and declining or cancelling sends no draft answer context.
+    *   (Ref: `orchestrationController.ts`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_runs.py`, `route_backend_orchestration.py`)
+
 ### **(v0.261.099)**
 
 #### Bug Fixes

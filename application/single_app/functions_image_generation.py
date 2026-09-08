@@ -1,27 +1,45 @@
 # functions_image_generation.py
 """Shared helpers for opt-in chat image generation proposals."""
 
-import json
 import mimetypes
 import random
 import re
 import time
+from copy import deepcopy
 from datetime import datetime
 from urllib.parse import urlparse
 
 import requests
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from azure.identity import get_bearer_token_provider
+from openai import OpenAI
 
-from config import AzureOpenAI, cognitive_services_scope, cosmos_messages_container
+from functions_ai_connections import (
+    AIConnectionError,
+    IMAGE_GENERATION_CAPABILITY,
+    create_capability_client,
+    get_connection_operation_settings,
+    image_settings_use_connections,
+    register_capability_client_factory,
+)
 from functions_appinsights import log_event
 from functions_image_api_route import (
+    DEFAULT_IMAGES_API_VERSION,
     IMAGE_API_ROUTE_RESPONSES,
+    ImageGenerationError,
+    _as_response_dict,
+    build_image_api_base_url,
     build_image_generation_tool,
     extract_responses_image_source,
     resolve_image_api_route,
-    resolve_responses_image_api_version,
+    resolve_image_binding_api,
+    resolve_image_binding_deployment,
+    resolve_image_generation_api_version,
+    resolve_responses_image_backend,
+    resolve_selected_image_deployment_name,
+    resolve_shared_image_binding,
 )
 from functions_image_messages import build_image_message_documents, decode_image_content
+from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 
 
 INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE = 'simpleimage'
@@ -142,52 +160,262 @@ def normalize_image_proposal(raw_proposal):
     return normalized_proposal
 
 
-def resolve_image_generation_client(settings, api_version=None):
-    """Create the Azure OpenAI image generation client and return it with the deployment name.
+class _ImageOpenAIClient(OpenAI):
+    """Preserve Azure/gateway auth and refresh identity tokens with the pinned SDK.
 
-    ``api_version`` overrides the stored image API version. The Responses route passes one
-    because that setting defaults to a version predating the Responses API, and honouring
-    it there would fail every request against a deployment that is otherwise configured
-    correctly.
+    OpenAI 1.109.1 interpolates ``api_key`` as a string; a callable there becomes
+    an invalid bearer credential. Its auth_headers hook is evaluated per request.
     """
+
+    def __init__(self, *, image_auth_header='api-key', image_token_provider=None, **kwargs):
+        self._image_auth_header = image_auth_header
+        self._image_token_provider = image_token_provider
+        super().__init__(**kwargs)
+
+    @property
+    def auth_headers(self):
+        if self._image_token_provider is not None:
+            return {'Authorization': f'Bearer {self._image_token_provider()}'}
+        if self._image_auth_header == 'authorization':
+            return super().auth_headers
+        return {self._image_auth_header: self.api_key}
+
+
+def image_generation_error_log_context(exc):
+    """Keep structured diagnostics, never provider messages, prompts, endpoints, or keys."""
+    body = getattr(exc, 'body', None)
+    detail = body.get('error', body) if isinstance(body, dict) else {}
+    detail = detail if isinstance(detail, dict) else {}
+    response = getattr(exc, 'response', None)
+    headers = getattr(response, 'headers', {}) or {}
+    values = {
+        'error_type': type(exc).__name__,
+        'provider_code': detail.get('code') or getattr(exc, 'code', None),
+        'parameter': detail.get('param') or getattr(exc, 'param', None),
+        'request_id': getattr(exc, 'request_id', None) or headers.get('x-request-id') or headers.get('apim-request-id'),
+    }
+    context = {
+        key: value for key, value in values.items()
+        if isinstance(value, str) and re.fullmatch(r'[A-Za-z0-9_.:\[\]-]{1,128}', value)
+    }
+    status = getattr(exc, 'status_code', None) or getattr(response, 'status_code', None)
+    if isinstance(status, int) and not isinstance(status, bool):
+        context['status_code'] = status
+    if isinstance(exc, ImageGenerationError):
+        context.update(exc.context)
+    return context
+
+
+def normalize_image_generation_error(exc):
+    """Distinguish configuration/readiness failures from prompt refusals and throttling."""
+    if isinstance(exc, (AIConnectionError, ImageGenerationError)):
+        return exc
+    context = image_generation_error_log_context(exc)
+    status = context.get('status_code')
+    code = str(context.get('provider_code') or '').lower()
+    parameter = str(context.get('parameter') or '').lower()
+    body = getattr(exc, 'body', None)
+    detail = body.get('error', body) if isinstance(body, dict) else {}
+    detail = detail if isinstance(detail, dict) else {}
+    # Provider prose is used only for classification when structured codes are absent.
+    # It is deliberately never logged or returned to the caller.
+    message = str(detail.get('message') or exc).lower()
+    if status == 429 or type(exc).__name__ == 'RateLimitError':
+        return ImageGenerationError(
+            'The image service is busy or has reached its rate limit. Please try again later.',
+            'image_rate_limited', 429, context,
+        )
+    if (
+        code in ('content_filter', 'content_policy_violation', 'responsibleaipolicyviolation', 'safety_violation')
+        or any(marker in message for marker in ('content_filter', 'content policy', 'content safety', 'responsibleaipolicyviolation'))
+    ):
+        return ImageGenerationError(
+            'Image generation was blocked by content safety policies. Please edit the prompt and try again.',
+            'image_content_refused', 400, context,
+        )
+    if isinstance(exc, PermissionError):
+        return ImageGenerationError('Image generation is not enabled.', 'capability_disabled', 403, context)
+    configuration_parameter = parameter in ('model', 'tools', 'tool_choice', 'api-version', 'api_version') or parameter.startswith('tools[')
+    configuration_message = any(marker in message for marker in (
+        'x-ms-oai-image-generation-deployment', 'image_generation', 'image generation tool',
+        'deployment', 'api-version', 'unsupported', 'not supported',
+    ))
+    if status in (401, 403, 404) or (status == 400 and (configuration_parameter or configuration_message)):
+        return ImageGenerationError(
+            'The selected connection cannot perform this image operation. Ask an administrator to check its model, API, permissions, and image service availability.',
+            'image_service_unavailable', 503, context,
+        )
+    if isinstance(exc, ValueError) or (status == 400 and (
+        parameter in ('prompt', 'input', 'size', 'quality', 'background')
+        or parameter.startswith('input[')
+        or code in ('invalid_prompt', 'prompt_too_long')
+    )):
+        return ImageGenerationError(
+            'Image generation request is invalid. Please review the prompt and image options and try again.',
+            'invalid_image_request', 400, context,
+        )
+    return ImageGenerationError(
+        'Image generation failed due to a technical error. Please try again.',
+        'image_generation_failed', 502, context,
+    )
+
+
+def image_generation_error_response(exc):
+    """Build the same safe failure contract for chat, approvals, editing, and admin tests."""
+    error = normalize_image_generation_error(exc)
+    status = (
+        403 if error.code == 'capability_disabled' else 503
+    ) if isinstance(error, AIConnectionError) else error.status_code
+    return {
+        'error': error.public_message,
+        'error_code': error.code,
+        **({'rate_limited': True} if status == 429 else {}),
+    }, status
+
+
+def _build_image_runtime_client(endpoint, settings, deployment, route, api_version, backend=''):
+    connection = endpoint.get('connection') or {}
+    auth = endpoint.get('auth') or {}
+    profile = get_connection_operation_settings(endpoint, IMAGE_GENERATION_CAPABILITY)
+    provider = str(endpoint.get('provider') or 'aoai').strip().lower()
+    if provider not in ('aoai', 'aifoundry', 'new_foundry'):
+        raise AIConnectionError('This connection type has no compatible image adapter.', 'unsupported_capability')
+    if not isinstance(api_version, str) or not re.fullmatch(r'(?:v1|\d{4}-\d{2}-\d{2}(?:-preview)?)', api_version):
+        raise AIConnectionError('The image connection API version is invalid.')
+
+    base_url = build_image_api_base_url(
+        connection.get('endpoint'), route, deployment=deployment, api_version=api_version
+    )
+    auth_type = str(auth.get('type') or 'managed_identity').strip().lower()
+    auth_header = str(profile.get('auth_header') or (
+        'api-key' if api_version != 'v1' or provider == 'aoai' or profile.get('is_apim')
+        else 'authorization'
+    )).lower()
+    if auth_header not in ('api-key', 'authorization', 'ocp-apim-subscription-key'):
+        raise AIConnectionError('The image connection authentication header is unsupported.')
+    token_provider = None
+    api_key = ''
+    if auth_type in ('api_key', 'key'):
+        api_key = auth.get('api_key')
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise AIConnectionError('The selected image connection is missing an API key.')
+    elif auth_type in ('managed_identity', 'service_principal'):
+        # These helpers import application configuration; defer them so proposal and
+        # response validation can be imported without initializing Cosmos or Azure.
+        from config import cognitive_services_scope
+        from functions_model_endpoint_runtime import (
+            resolve_credential_for_model_endpoint_auth,
+            resolve_foundry_scope_for_endpoint_auth,
+        )
+
+        credential = resolve_credential_for_model_endpoint_auth(auth)
+        scope = cognitive_services_scope
+        if provider in ('aifoundry', 'new_foundry'):
+            scope = resolve_foundry_scope_for_endpoint_auth(auth, endpoint=connection.get('endpoint'))
+        token_provider = get_bearer_token_provider(credential, scope)
+    else:
+        raise AIConnectionError('The image connection authentication type is unsupported.')
+
+    headers = build_model_endpoint_identity_headers(settings, endpoint_config=endpoint)
+    if backend:
+        headers['x-ms-oai-image-generation-deployment'] = backend
+    return _ImageOpenAIClient(
+        api_key=api_key,
+        base_url=base_url,
+        image_auth_header=auth_header,
+        image_token_provider=token_provider,
+        default_headers=headers,
+        default_query={'api-version': api_version} if api_version != 'v1' else {},
+        max_retries=0,
+    )
+
+
+def build_image_connection_client(binding, settings):
+    """Registered image adapter: resolve stored global secrets and return only the client."""
+    try:
+        route = resolve_image_binding_api(binding)
+        provider = str(binding.endpoint.get('provider') or 'aoai').strip().lower()
+        if binding.selection.get('provider') not in (None, '', provider):
+            raise AIConnectionError('The selected image model does not belong to that provider.')
+        deployment = resolve_image_binding_deployment(binding)
+        profile = get_connection_operation_settings(binding.endpoint, IMAGE_GENERATION_CAPABILITY)
+        api_version = (
+            'v1' if route == IMAGE_API_ROUTE_RESPONSES
+            else str(profile.get('api_version') or DEFAULT_IMAGES_API_VERSION).strip()
+        )
+        backend = resolve_responses_image_backend(binding) if route == IMAGE_API_ROUTE_RESPONSES else ''
+        # The model-endpoint helper enforces endpoint secret scope; a settings-secret
+        # reference or browser-redacted credential must never be treated as the key.
+        from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
+
+        endpoint = keyvault_model_endpoint_get_helper(
+            deepcopy(binding.endpoint), binding.endpoint['id'], scope='global', return_type=SecretReturnType.VALUE
+        )
+        return _build_image_runtime_client(endpoint, settings, deployment, route, api_version, backend)
+    except AIConnectionError:
+        raise
+    except Exception as exc:
+        log_event('[IMAGE_GENERATION] Image connection initialization failed', extra=image_generation_error_log_context(exc))
+        raise AIConnectionError(
+            'The image connection could not be initialized. Ask an administrator to check its credentials and configuration.',
+            'image_connection_initialization_failed',
+        ) from exc
+
+
+register_capability_client_factory(IMAGE_GENERATION_CAPABILITY, build_image_connection_client)
+
+
+def resolve_image_generation_client(settings, api_version=None):
+    """Return the selected image client and deployment, retaining unmigrated legacy settings."""
     if not image_generation_is_enabled(settings):
         raise PermissionError('Image generation is not enabled')
+    if image_settings_use_connections(settings):
+        binding = resolve_shared_image_binding(settings)
+        return create_capability_client(binding, settings), resolve_image_binding_deployment(binding)
 
-    if settings.get('enable_image_gen_apim', False):
-        image_gen_model = settings.get('azure_apim_image_gen_deployment')
-        image_gen_client = AzureOpenAI(
-            api_version=api_version or settings.get('azure_apim_image_gen_api_version'),
-            azure_endpoint=settings.get('azure_apim_image_gen_endpoint'),
-            api_key=settings.get('azure_apim_image_gen_subscription_key'),
-        )
-        return image_gen_client, image_gen_model
+    deployment = resolve_selected_image_deployment_name(settings)
+    if not deployment:
+        raise AIConnectionError('No image generation deployment is selected.', 'model_configuration_unavailable')
+    route = resolve_image_api_route(settings)
+    resolved_version = resolve_image_generation_api_version(settings)
+    if route != IMAGE_API_ROUTE_RESPONSES and api_version:
+        resolved_version = api_version
+    is_apim = bool(settings.get('enable_image_gen_apim'))
+    prefix = 'azure_apim_image_gen' if is_apim else 'azure_openai_image_gen'
+    endpoint = {
+        'provider': 'aoai',
+        'connection': {
+            'endpoint': settings.get(f'{prefix}_endpoint'),
+            'operation_settings': {
+                IMAGE_GENERATION_CAPABILITY: {'is_apim': is_apim, 'auth_header': 'api-key'},
+            },
+        },
+        'auth': {
+            'type': (
+                'managed_identity'
+                if not is_apim and settings.get('azure_openai_image_gen_authentication_type') == 'managed_identity'
+                else 'api_key'
+            ),
+            'api_key': settings.get(f'{prefix}_subscription_key' if is_apim else f'{prefix}_key'),
+        },
+    }
+    try:
+        return _build_image_runtime_client(endpoint, settings, deployment, route, resolved_version), deployment
+    except AIConnectionError:
+        raise
+    except Exception as exc:
+        log_event('[IMAGE_GENERATION] Legacy image connection initialization failed', extra=image_generation_error_log_context(exc))
+        raise AIConnectionError('The image connection could not be initialized. Check its credentials and configuration.') from exc
 
-    image_gen_model = None
-    image_gen_model_obj = settings.get('image_gen_model', {})
-    if image_gen_model_obj and image_gen_model_obj.get('selected'):
-        selected_image_gen_model = image_gen_model_obj['selected'][0]
-        image_gen_model = selected_image_gen_model.get('deploymentName')
 
-    resolved_api_version = api_version or settings.get('azure_openai_image_gen_api_version')
-
-    if settings.get('azure_openai_image_gen_authentication_type') == 'managed_identity':
-        token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-        image_gen_client = AzureOpenAI(
-            api_version=resolved_api_version,
-            azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
-            azure_ad_token_provider=token_provider,
-        )
-    else:
-        image_gen_client = AzureOpenAI(
-            api_version=resolved_api_version,
-            azure_endpoint=settings.get('azure_openai_image_gen_endpoint'),
-            api_key=settings.get('azure_openai_image_gen_key'),
-        )
-
-    if not image_gen_model:
-        raise ValueError('No image generation deployment is selected')
-
-    return image_gen_client, image_gen_model
+def close_image_generation_client(client):
+    """Release a per-operation client without replacing an image or its original failure."""
+    close = getattr(client, 'close', None)
+    if callable(close):
+        try:
+            close()
+        except Exception as exc:
+            log_event('[IMAGE_GENERATION] Image client cleanup failed', extra=image_generation_error_log_context(exc))
 
 
 def request_generated_image_source(settings, prompt, size='', quality='', background=''):
@@ -198,70 +426,118 @@ def request_generated_image_source(settings, prompt, size='', quality='', backgr
     test that exercised a different route from the real call would certify a path nobody
     uses.
     """
-    if resolve_image_api_route(settings) != IMAGE_API_ROUTE_RESPONSES:
+    client = None
+    response = None
+    route = ''
+    try:
+        if not image_generation_is_enabled(settings):
+            raise PermissionError('Image generation is not enabled')
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError('Image generation prompt is required')
+        route = resolve_image_api_route(settings)
         client, deployment = resolve_image_generation_client(settings)
-        arguments = {'model': deployment, 'prompt': prompt, 'n': 1}
-        if size:
-            arguments['size'] = size
-        return extract_generated_image_source(client.images.generate(**arguments))
+        if route != IMAGE_API_ROUTE_RESPONSES:
+            arguments = {'model': deployment, 'prompt': prompt, 'n': 1}
+            if size:
+                arguments['size'] = size
+            optional = {key: value for key, value in {'quality': quality, 'background': background}.items() if value}
+            if optional:
+                arguments['extra_body'] = optional
+            response = client.images.generate(**arguments)
+            return extract_generated_image_source(response)
 
-    client, deployment = resolve_image_generation_client(
-        settings,
-        api_version=resolve_responses_image_api_version(settings),
-    )
-    response = client.responses.create(
-        model=deployment,
-        input=prompt,
-        tools=[build_image_generation_tool(size=size, quality=quality, background=background)],
-        # Without this the model is free to answer with prose about the image it would
-        # have drawn, which reads as an empty result rather than as a refusal.
-        tool_choice={'type': 'image_generation'},
-    )
-
-    generated_image_url = extract_responses_image_source(response)
-    if not generated_image_url:
-        raise ValueError(
-            f'{deployment} answered without generating an image. Its deployment may not '
-            'support the image generation tool.'
+        response = client.responses.create(
+            model=deployment,
+            input=prompt,
+            tools=[build_image_generation_tool(size=size, quality=quality, background=background)],
+            tool_choice={'type': 'image_generation'},
         )
-    return generated_image_url
+        generated_image_url = extract_responses_image_source(response)
+        if not generated_image_url:
+            raise ImageGenerationError(
+                'The selected model returned no image. Ask an administrator to check image service availability for this connection.',
+                'image_output_missing',
+            )
+        return generated_image_url
+    except Exception as exc:
+        error = normalize_image_generation_error(exc)
+        context = image_generation_error_log_context(exc)
+        response_request_id = getattr(response, '_request_id', None)
+        if isinstance(response_request_id, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', response_request_id):
+            context['request_id'] = response_request_id
+        provider_status = response.get('status') if isinstance(response, dict) else getattr(response, 'status', None)
+        if provider_status in ('completed', 'incomplete', 'failed', 'in_progress', 'queued', 'cancelled'):
+            context['provider_status'] = provider_status
+        if isinstance(error, ImageGenerationError):
+            error.context.update(context)
+        log_event(
+            '[IMAGE_GENERATION] Image request failed',
+            extra={**context, 'route': route},
+        )
+        if error is exc:
+            raise
+        raise error from exc
+    finally:
+        close_image_generation_client(client)
 
 
 def extract_generated_image_source(image_response):
     """Extract a usable image URL or data URL from an Azure OpenAI image response."""
-    response_dict = json.loads(image_response.model_dump_json())
-    if 'data' not in response_dict or not response_dict['data']:
-        raise ValueError('No image data in response')
+    response_dict = _as_response_dict(image_response)
+    if not isinstance(response_dict.get('data'), list) or not response_dict['data']:
+        raise ImageGenerationError('The image service returned no image data.', 'image_output_missing')
 
     image_data = response_dict['data'][0]
-    if image_data.get('url'):
-        return image_data['url']
+    if not isinstance(image_data, dict):
+        raise ImageGenerationError('The image service returned unreadable image data.', 'image_output_missing')
+    url = image_data.get('url')
+    if isinstance(url, str):
+        try:
+            parsed_url = urlparse(url.strip())
+            if parsed_url.scheme in ('http', 'https') and parsed_url.hostname:
+                return url.strip()
+        except ValueError:
+            pass
 
-    if image_data.get('b64_json'):
-        return f"data:image/png;base64,{image_data['b64_json']}"
+    source = extract_responses_image_source({
+        'output': [{'type': 'image_generation_call', 'result': image_data.get('b64_json')}],
+    })
+    if source:
+        return source
 
-    available_keys = list(image_data.keys())
-    raise ValueError(f'No URL or base64 data in image response. Available keys: {available_keys}')
+    raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
 
 def resolve_generated_image_bytes(generated_image_url):
     """Resolve generated image output into bytes and a MIME type for blob storage."""
     normalized_image_url = str(generated_image_url or '').strip()
     if not normalized_image_url:
-        raise ValueError('Generated image URL is empty')
+        raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
     if normalized_image_url.startswith('data:image/'):
-        return decode_image_content(normalized_image_url)
+        try:
+            return decode_image_content(normalized_image_url)
+        except ValueError as exc:
+            raise ImageGenerationError('The image service returned unreadable image data.', 'image_output_missing') from exc
 
-    parsed_url = urlparse(normalized_image_url)
-    if parsed_url.scheme not in {'http', 'https'}:
-        raise ValueError('Generated image output is not a supported image source')
+    try:
+        parsed_url = urlparse(normalized_image_url)
+        if parsed_url.scheme not in {'http', 'https'} or not parsed_url.hostname:
+            raise ValueError('Unsupported image URL')
+    except ValueError as exc:
+        raise ImageGenerationError('The image service returned an unsupported image source.', 'image_output_missing') from exc
 
-    response = requests.get(normalized_image_url, timeout=30)
-    response.raise_for_status()
+    try:
+        response = requests.get(normalized_image_url, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ImageGenerationError(
+            'The generated image could not be downloaded. Please try again.',
+            'image_download_failed', context=image_generation_error_log_context(exc),
+        ) from exc
     image_bytes = response.content
     if not image_bytes:
-        raise ValueError('Generated image download returned empty content')
+        raise ImageGenerationError('The generated image download was empty.', 'image_output_missing')
 
     content_type = str(response.headers.get('Content-Type') or '').split(';', 1)[0].strip()
     if not content_type or not content_type.startswith('image/'):
@@ -309,9 +585,13 @@ def generate_chat_image_message(
     if not normalized_prompt:
         raise ValueError('Image generation prompt is required')
 
+    image_gen_model = resolve_selected_image_deployment_name(settings)
     generated_image_url = request_generated_image_source(settings, normalized_prompt)
     if not generated_image_url or generated_image_url == 'null':
-        raise ValueError('Generated image URL is null or empty')
+        raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
+
+    # Persistence is intentionally lazy: validating proposal payloads must not initialize Cosmos.
+    from config import cosmos_messages_container
 
     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000, 9999)}"
     image_timestamp = datetime.utcnow().isoformat()

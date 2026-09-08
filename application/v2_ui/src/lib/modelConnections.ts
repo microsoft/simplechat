@@ -33,6 +33,22 @@ export type ManagementCloud = 'public' | 'usgovernment' | 'custom';
 
 export type IdentityHeaderMode = 'inherit' | 'enabled' | 'disabled';
 
+export type ImplementedCapability = 'chat' | 'image_generation';
+
+export interface ModelCapabilityStatus {
+    supported: boolean;
+    available?: boolean;
+    source: string;
+    reason?: string;
+    api?: string;
+}
+
+export interface ConnectionMigrationNotice {
+    status: string;
+    message: string;
+    imported_connections?: number;
+}
+
 export interface ConnectionModel {
     id?: string;
     deploymentName?: string;
@@ -42,6 +58,15 @@ export interface ConnectionModel {
     enabled?: boolean;
     isDiscovered?: boolean;
     responseLength?: number | string;
+    supportsChat?: boolean;
+    supportsImageGeneration?: boolean;
+    supportsVision?: boolean;
+    enabled_capabilities?: ImplementedCapability[];
+    capability_status?: {
+        chat?: ModelCapabilityStatus;
+        image_generation?: ModelCapabilityStatus;
+        vision?: { supported: boolean; source: string };
+    };
     [key: string]: unknown;
 }
 
@@ -323,7 +348,10 @@ export function visibleFields(connection: ModelConnection): {
  * Keyed by field so the editor can mark the control that caused it, rather than the
  * classic editor's behaviour of raising a toast that named the problem but not the place.
  */
-export function validateConnection(connection: ModelConnection): Record<string, string> {
+export function validateConnection(
+    connection: ModelConnection,
+    { requireDiscovery = false }: { requireDiscovery?: boolean } = {},
+): Record<string, string> {
     const errors: Record<string, string> = {};
     const provider = text(connection.provider) || 'aoai';
     const authType = (text(connection.auth?.type) || 'managed_identity') as ConnectionAuthType;
@@ -356,7 +384,7 @@ export function validateConnection(connection: ModelConnection): Record<string, 
         }
     }
 
-    if (shown.management) {
+    if (shown.management && requireDiscovery) {
         if (!text(connection.management?.subscription_id)) {
             errors.subscription_id = 'Required so Azure OpenAI deployments can be discovered.';
         }
@@ -408,6 +436,7 @@ export function buildConnectionPayload(connection: ModelConnection): Record<stri
 
     const endpoint = text(connection.connection?.endpoint);
     const connectionBlock: Record<string, unknown> = {
+        ...connection.connection,
         endpoint,
         openai_api_version: text(connection.connection?.openai_api_version) || defaultOpenAiApiVersion(provider),
     };
@@ -420,6 +449,9 @@ export function buildConnectionPayload(connection: ModelConnection): Record<stri
         if (projectName) {
             connectionBlock.project_name = projectName;
         }
+    } else {
+        delete connectionBlock.project_api_version;
+        delete connectionBlock.project_name;
     }
 
     const auth: Record<string, unknown> = {
@@ -513,6 +545,7 @@ export function mergeDiscoveredModels(
         }
         seen.add(key);
         models.push({
+            ...candidate,
             id: deploymentName,
             deploymentName,
             modelName: text(candidate.modelName) || text(candidate.name),
@@ -529,6 +562,40 @@ export function mergeDiscoveredModels(
 
 export function enabledModelCount(connection: ModelConnection): number {
     return (connection.models ?? []).filter((model) => model.enabled !== false).length;
+}
+
+/** Server metadata is authoritative; older chat records keep their existing behavior. */
+export function modelSupportsCapability(model: ConnectionModel, capability: ImplementedCapability): boolean {
+    const resolved = model.capability_status?.[capability];
+    if (resolved) {
+        return resolved.supported === true;
+    }
+    return capability === 'chat'
+        ? model.supportsChat !== false
+        : model.supportsImageGeneration === true;
+}
+
+export function modelPublishesCapability(model: ConnectionModel, capability: ImplementedCapability): boolean {
+    return model.enabled !== false &&
+        modelSupportsCapability(model, capability) &&
+        (!Array.isArray(model.enabled_capabilities) || model.enabled_capabilities.includes(capability));
+}
+
+/** Restrict publication without changing what the model technically supports. */
+export function setModelCapabilityEnabled(
+    model: ConnectionModel,
+    capability: ImplementedCapability,
+    enabled: boolean,
+): ConnectionModel {
+    const published = new Set<ImplementedCapability>(
+        model.enabled_capabilities ?? ['chat', 'image_generation'],
+    );
+    if (enabled) {
+        published.add(capability);
+    } else {
+        published.delete(capability);
+    }
+    return { ...model, enabled_capabilities: [...published] };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -565,7 +632,9 @@ export const EMPTY_DEFAULT_MODEL_SELECTION: DefaultModelSelection = {
 };
 
 export function toDefaultModelSelection(value: unknown): DefaultModelSelection {
-    const source = (value ?? {}) as Record<string, unknown>;
+    const source = value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
     return {
         endpoint_id: text(source.endpoint_id),
         model_id: text(source.model_id),
@@ -602,7 +671,7 @@ export function buildDefaultModelChoices(connections: ModelConnection[]): Defaul
             text(connection.name) || text(connection.connection?.endpoint) || 'Connection';
 
         for (const model of connection.models ?? []) {
-            if (!model || model.enabled === false) {
+            if (!model || !modelPublishesCapability(model, 'chat')) {
                 continue;
             }
             // `normalize_model_endpoints` fills a missing id from the deployment name, so
@@ -629,6 +698,7 @@ export function buildDefaultModelChoices(connections: ModelConnection[]): Defaul
     return choices.sort(
         (a, b) =>
             a.connectionName.localeCompare(b.connectionName) ||
+            a.endpointId.localeCompare(b.endpointId) ||
             a.modelLabel.localeCompare(b.modelLabel),
     );
 }
@@ -641,18 +711,19 @@ export function buildDefaultModelChoices(connections: ModelConnection[]): Defaul
  */
 export function groupChoicesByConnection(
     choices: DefaultModelChoice[],
-): Array<{ connectionName: string; items: Array<{ choice: DefaultModelChoice; index: number }> }> {
+): Array<{ endpointId: string; connectionName: string; items: Array<{ choice: DefaultModelChoice; index: number }> }> {
     const groups: Array<{
+        endpointId: string;
         connectionName: string;
         items: Array<{ choice: DefaultModelChoice; index: number }>;
     }> = [];
 
     choices.forEach((choice, index) => {
-        const last = groups[groups.length - 1];
-        if (last && last.connectionName === choice.connectionName) {
-            last.items.push({ choice, index });
+        const group = groups.find((item) => item.endpointId === choice.endpointId);
+        if (group) {
+            group.items.push({ choice, index });
         } else {
-            groups.push({ connectionName: choice.connectionName, items: [{ choice, index }] });
+            groups.push({ endpointId: choice.endpointId, connectionName: choice.connectionName, items: [{ choice, index }] });
         }
     });
 
@@ -700,6 +771,8 @@ const BASE = '/api/v2/admin/model-endpoints';
 export interface ConnectionListResponse {
     endpoints: ModelConnection[];
     multi_endpoint_enabled?: boolean;
+    migration?: ConnectionMigrationNotice | null;
+    default_notices?: Record<string, string | null>;
 }
 
 export const fetchModelConnections = (signal?: AbortSignal) =>

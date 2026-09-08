@@ -1,7 +1,7 @@
 # test_workflow_task_sequence.py
 """
 Functional test for ordered workflow task sequences.
-Version: 0.261.029
+Version: 0.261.102
 Implemented in: 0.250.064
 Enhanced in: 0.250.065
 Enhanced in: 0.250.129
@@ -31,6 +31,9 @@ from functions_m365_workflow_checkpoints import (
 )
 from functions_m365_approvals import M365ApprovalRequired
 from m365_interaction import M365SignInRequired
+# Use the real import-safe capability guard in the isolated store function bodies.
+from functions_ai_connections import require_model_capability
+
 STORE_FILE = APP_ROOT / "functions_personal_workflows.py"
 GROUP_STORE_FILE = APP_ROOT / "functions_group_workflows.py"
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
@@ -155,6 +158,7 @@ def load_personal_task_runner_helpers(personal_agents, global_agents, settings, 
                 "settings": {"personal_model_endpoints": list(personal_endpoints or [])}
             },
             "normalize_model_endpoints": lambda endpoints: (list(endpoints), []),
+            "require_model_capability": require_model_capability,
         },
     )
 
@@ -190,6 +194,7 @@ def load_group_task_runner_helpers(group_agents, global_agents, settings, group_
             "get_group_model_endpoints": lambda _group_id: list(group_endpoints or []),
             "get_settings": lambda: settings,
             "normalize_model_endpoints": lambda endpoints: (list(endpoints), []),
+            "require_model_capability": require_model_capability,
         },
     )
     return helpers, role_checks

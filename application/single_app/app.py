@@ -203,6 +203,7 @@ register_swagger_routes(app)
 from flask_session import Session
 import functions_redis_client
 from functions_settings import get_settings
+from functions_ai_connection_migration import initialize_ai_connections
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
 from background_tasks import start_background_task_threads
@@ -314,6 +315,7 @@ def initialize_application(force=False):
             get_redis_cache_infrastructure_endpoint(redis_hostname),
             redis_client_factory=functions_redis_client.create_redis_client,
         )
+        settings = initialize_ai_connections(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
         sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())

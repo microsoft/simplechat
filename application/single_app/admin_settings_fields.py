@@ -870,20 +870,20 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "enable_multi_model_endpoints",
             "type": "switch",
-            "label": "Use connections for chat",
+            "label": "Use AI Connections for chat",
             "help": (
                 "Routes chat through the connections listed below, so several Azure "
                 "OpenAI or Foundry resources can serve models at once. When off, chat "
-                "uses the single classic endpoint instead and these connections are "
-                "not consulted. Switching this on cannot be undone, and carries the "
-                "classic endpoint over as the first connection."
+                "uses the single classic endpoint instead. Images use AI Connections "
+                "independently of this switch. Switching this on cannot be undone, "
+                "and carries the classic chat endpoint into AI Connections."
             ),
             "default": False,
         },
         {
             "type": "component",
             "component": "model-connections-manager",
-            "label": "Connections",
+            "label": "AI Connections",
             "help": (
                 "Each connection is one Azure OpenAI or Foundry resource: where it is, "
                 "how SimpleChat authenticates to it, and which of its deployed models "
@@ -4435,7 +4435,7 @@ ADMIN_SETTINGS_FIELDS = {
             "key": "default_model_selection",
             "type": "component",
             "component": "chat-default-model",
-            "label": "Default model",
+            "label": "Default chat model",
             "help": (
                 "Used when nothing else has chosen a model -- a new conversation, or work "
                 "started outside the chat window. Only models that are enabled on an "
@@ -5450,13 +5450,25 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "switch",
             "label": "Enable Image Generation",
             "help": (
-                "Offers image generation in chat. With it off nothing below is consulted, "
-                "and the rest of this section stays out of the way."
+                "Offers the Image action in chat using the saved image default. "
+                "This does not change chat's endpoint mode or its default model."
             ),
             "default": False,
         },
         {
+            "key": "image_generation_model_selection",
+            "type": "component",
+            "component": "image-generation-model-selection",
+            "label": "Default image model",
+            "help": (
+                "One model from a saved AI Connection generates images for the application. "
+                "Choose a compatible model below; its connection, credentials and image "
+                "route are resolved automatically. This selection saves immediately."
+            ),
+        },
+        {
             "key": "enable_image_gen_apim",
+            "legacy": True,
             "type": "switch",
             "label": "Use APIM instead of direct to Azure OpenAI endpoint",
             "help": (
@@ -5469,6 +5481,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_image_gen_endpoint",
+            "legacy": True,
             "type": "text",
             "label": "Azure OpenAI Image Generation Endpoint",
             "help": (
@@ -5484,6 +5497,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_image_gen_authentication_type",
+            "legacy": True,
             "type": "select",
             "label": "Authentication Type",
             "help": (
@@ -5500,6 +5514,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_image_gen_subscription_id",
+            "legacy": True,
             "type": "text",
             "label": "Subscription ID",
             "help": (
@@ -5514,6 +5529,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_image_gen_resource_group",
+            "legacy": True,
             "type": "text",
             "label": "Resource Group",
             "help": "The other half of the address the deployment list is fetched from.",
@@ -5525,6 +5541,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_image_gen_key",
+            "legacy": True,
             "type": "secret",
             "label": "Azure OpenAI Image Generation Key",
             "help": (
@@ -5541,17 +5558,12 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "image_gen_model",
-            "type": "component",
-            "component": "image-model-selection",
-            "label": "Image model",
+            "type": "status",
+            "legacy": True,
+            "label": "Legacy image model",
             "help": (
-                "The deployment every generated image comes from. A gpt-image or DALL-E "
-                "deployment is asked for an image directly; a chat deployment such as "
-                "gpt-5.6 has no image endpoint and is asked through the Responses image "
-                "tool instead, which is worth choosing where no image model is available "
-                "but cannot change part of an existing image. Image deployments also "
-                "differ in the sizes and quality settings they accept, so a change here "
-                "can alter what the image tool is able to produce."
+                "Retained only for Classic recovery when automatic image import fails. "
+                "Normal image generation uses image_generation_model_selection."
             ),
             "depends_on": [
                 {"key": "enable_image_generation", "equals": True},
@@ -5560,6 +5572,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_image_gen_api_version",
+            "legacy": True,
             "type": "text",
             "label": "Azure OpenAI Image Gen API Version",
             "help": (
@@ -5577,6 +5590,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_image_gen_endpoint",
+            "legacy": True,
             "type": "text",
             "label": "Azure APIM Endpoint",
             "help": "The API Management address that fronts the image deployment.",
@@ -5588,6 +5602,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_image_gen_api_version",
+            "legacy": True,
             "type": "text",
             "label": "Azure APIM API Version",
             "help": (
@@ -5602,6 +5617,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_image_gen_deployment",
+            "legacy": True,
             "type": "text",
             "label": "Azure APIM Deployment",
             "help": (
@@ -5616,6 +5632,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_image_gen_subscription_key",
+            "legacy": True,
             "type": "secret",
             "label": "Azure APIM Subscription Key",
             "help": "Leave it blank to keep the stored key.",
@@ -5649,6 +5666,7 @@ LEGACY_FIELD_NAMES = {
     # Same pattern: V1 posts the default model reference as serialized JSON, while V2
     # writes it through /api/v2/admin/default-model.
     "default_model_selection": ["default_model_selection_json"],
+    "image_gen_model": ["image_gen_model_json"],
     # V1 posts the images as part of the settings form; V2 uploads them
     # separately, so the stored keys are what the schema names.
     "custom_logo_base64": ["logo_file"],
@@ -5696,6 +5714,10 @@ LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
 # with the reason it is reasonable for V2 to be ahead. The parity test reads this
 # so a V2-only field is a recorded decision rather than an accident.
 V2_ONLY_FIELDS = {
+    "image_generation_model_selection": (
+        "Both interfaces save this shared reference through the capability-models API. "
+        "Classic deliberately has no named form field that could overwrite the saved binding."
+    ),
     "enable_app_maintenance": (
         "Documented in docs/admin/scale.md but never given a control on the "
         "server-rendered page. Declared here so it stops being guessed into "
