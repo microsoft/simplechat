@@ -1,7 +1,7 @@
 # test_orchestration_plan_revision_store.py
 """
 Functional tests for the pre-execution plan revision persistence boundary.
-Version: 0.261.102
+Version: 0.261.104
 Implemented in: 0.261.102
 
 Uses real storage helpers and SDK batch formatting with an atomic in-memory container.
@@ -811,11 +811,25 @@ class PlanRevisionStoreTests(unittest.TestCase):
         })
         held['plan'].update(raw_provider_response='PRIVATE_PLAN', seeds={'key': 'PRIVATE_PLAN_SEED'})
         held['plan']['steps'][0]['result'] = {'key': 'PRIVATE_STEP'}
+        held['seeds']['web_search'] = True
+        held['plan']['reasoning_adjustments'] = [{
+            'requested_effort': 'minimal', 'effective_effort': 'low', 'mode': 'explicit',
+            'adjustment_reason': 'reasoning_effort_unsupported', 'stage': 'planner',
+            'model_name': 'gpt-5.6-luna', 'raw': 'PRIVATE_PROVIDER_RESPONSE',
+        }, {
+            'adjustment_reason': 'reasoning_effort_unsupported',
+            'effective_effort': {'key': 'PRIVATE_MALFORMED_METADATA'},
+        }]
+        original_plan = deepcopy(held['plan'])
         state = self.revisions.plan_editor_state(held, 'user1')
         self.assertNotIn('PRIVATE_', json.dumps(state))
         self.assertNotIn('_etag', json.dumps(state))
         self.assertEqual(state['chat'][0]['content'], 'Safe reply')
         self.assertEqual(state['pending'], editor_question())
+        self.assertEqual(state['plan']['inputs']['required_capabilities'], ['web_search'])
+        self.assertEqual(len(state['plan']['reasoning_adjustments']), 1)
+        self.assertEqual(state['plan']['reasoning_adjustments'][0]['effective_effort'], 'low')
+        self.assertEqual(held['plan'], original_plan)
         self.assert_error('not_found', self.revisions.plan_editor_state, held, 'other-user', status=404)
 
     def test_release_does_not_hide_operational_failure_or_clear_pending_outcome(self):

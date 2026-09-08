@@ -1,7 +1,7 @@
 # test_fact_memory_streaming_retrieval_fix.py
 """
 Functional test for fact memory streaming retrieval and visibility.
-Version: 0.240.081
+Version: 0.261.104
 Implemented in: 0.240.081
 
 This test ensures streaming chat uses backward-compatible agent defaults,
@@ -9,12 +9,9 @@ retrieves only relevant fact memories for the current request, and exposes
 fact-memory usage through thoughts and a dedicated citation.
 """
 
-import ast
-import copy
 import os
-import re
-from datetime import datetime
 from test_support.versioning import assert_app_version_at_least
+from test_fact_memory_profile_and_mini_sk import CONTEXT_FILE, load_tabular_fact_memory_helpers
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +22,7 @@ FIX_DOC = os.path.join(
     'docs',
     'explanation',
     'fixes',
+    'v0.241.001',
     'FACT_MEMORY_STREAMING_RETRIEVAL_FIX.md',
 )
 
@@ -42,49 +40,8 @@ def read_config_version():
 
 
 def load_fact_memory_retrieval_helpers():
-    route_source = read_file_text(ROUTE_FILE)
-    parsed = ast.parse(route_source, filename=ROUTE_FILE)
-    target_functions = {
-        '_tokenize_fact_memory_text',
-        '_is_identity_fact_memory_query',
-        '_looks_like_profile_fact',
-        'retrieve_relevant_fact_memory_entries',
-        'build_fact_memory_citation',
-        'build_fact_memory_recall_payload',
-    }
-    selected_nodes = []
-
-    for node in parsed.body:
-        if isinstance(node, ast.FunctionDef) and node.name in target_functions:
-            selected_nodes.append(copy.deepcopy(node))
-
-    assert len(selected_nodes) == len(target_functions), (
-        f'Expected helpers {sorted(target_functions)}, '
-        f'found {[node.name for node in selected_nodes]}'
-    )
-
-    class FakeFactMemoryStore:
-        next_facts = []
-        created_instances = []
-
-        def __init__(self):
-            self.calls = []
-            self.__class__.created_instances.append(self)
-
-        def list_facts(self, **kwargs):
-            self.calls.append(kwargs)
-            return list(self.__class__.next_facts)
-
-    namespace = {
-        'FactMemoryStore': FakeFactMemoryStore,
-        'datetime': datetime,
-        'make_json_serializable': lambda value: value,
-        're': re,
-    }
-    module = ast.Module(body=selected_nodes, type_ignores=[])
-    ast.fix_missing_locations(module)
-    exec(compile(module, ROUTE_FILE, 'exec'), namespace)
-    return namespace, FakeFactMemoryStore
+    namespace, fake_store_class, _ = load_tabular_fact_memory_helpers()
+    return namespace, fake_store_class
 
 
 def test_fact_memory_retrieval_uses_request_relevance():
@@ -94,9 +51,9 @@ def test_fact_memory_retrieval_uses_request_relevance():
     namespace, fake_store_class = load_fact_memory_retrieval_helpers()
     fake_store_class.created_instances = []
     fake_store_class.next_facts = [
-        {'id': '1', 'value': "User's name is Paul.", 'updated_at': '2026-04-07T00:00:00Z'},
-        {'id': '2', 'value': 'User lives in Alexandria.', 'updated_at': '2026-04-06T00:00:00Z'},
-        {'id': '3', 'value': 'Server timeout is 30 seconds.', 'updated_at': '2026-04-05T00:00:00Z'},
+        {'id': '1', 'memory_type': 'fact', 'value_embedding': [1.0, 0.0], 'value': "User's name is Paul.", 'updated_at': '2026-04-07T00:00:00Z'},
+        {'id': '2', 'memory_type': 'fact', 'value_embedding': [0.92, 0.08], 'value': 'User lives in Alexandria.', 'updated_at': '2026-04-06T00:00:00Z'},
+        {'id': '3', 'memory_type': 'fact', 'value_embedding': [0.0, 1.0], 'value': 'Server timeout is 30 seconds.', 'updated_at': '2026-04-05T00:00:00Z'},
     ]
 
     recall_payload = namespace['build_fact_memory_recall_payload'](
@@ -108,7 +65,7 @@ def test_fact_memory_retrieval_uses_request_relevance():
         include_metadata=True,
     )
 
-    assert recall_payload['thought_content'] == 'Fact memory search found 2 relevant memories'
+    assert recall_payload['thought_content'] == 'Fact memory search found 2 relevant facts'
     assert len(recall_payload['context_messages']) == 2, recall_payload
     assert "User's name is Paul." in recall_payload['context_messages'][1]['content']
     assert 'User lives in Alexandria.' in recall_payload['context_messages'][1]['content']
@@ -118,6 +75,7 @@ def test_fact_memory_retrieval_uses_request_relevance():
         'scope_type': 'user',
         'scope_id': 'user-123',
         'conversation_id': 'conversation-456',
+        'memory_type': 'fact',
     }]
 
     print('✅ Fact memory retrieval relevance passed')
@@ -131,10 +89,11 @@ def test_streaming_route_wires_fact_memory_visibility_and_agent_default():
     route_source = read_file_text(ROUTE_FILE)
 
     assert "user_settings.get('enable_agents', True)" in route_source
-    assert 'force_enable_agents = bool(request_agent_info)' in route_source
-    assert 'Fact Memory Recall' in route_source
+    assert 'force_enable_agents = _has_chat_agent_selection(request_agent_info)' in route_source
+    context_source = read_file_text(CONTEXT_FILE)
+    assert 'Fact Memory Recall' in context_source
     assert "yield emit_thought(" in route_source and "'fact_memory'" in route_source
-    assert 'Retrieved saved fact memories relevant to the current request.' in route_source
+    assert 'Retrieved saved facts relevant to the current request.' in context_source
 
     print('✅ Streaming route fact-memory wiring passed')
     return True

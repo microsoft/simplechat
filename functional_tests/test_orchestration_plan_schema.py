@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+# test_orchestration_plan_schema.py
 """
 Functional test for the chat orchestration plan contract and validator.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.104
+Implemented in: 0.261.085
 
 Planner output is untrusted input. A plan arrives as JSON written by a language model, and
 naming a capability that does not exist, using one an administrator disabled, referencing
@@ -19,13 +19,16 @@ import sys
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from test_support.app_stubs import stubbed_app_imports  # noqa: E402
+from test_support.orchestration_research import stubbed_orchestration_imports as stubbed_app_imports  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 SETTINGS = {
     'enable_user_workspace': True,
     'enable_web_search': True,
     'chat_orchestration_max_steps': 6,
+    'document_action_capabilities': {
+        'analyze': {'enabled': False}, 'comparison': {'enabled': False},
+    },
 }
 
 
@@ -290,7 +293,7 @@ def test_approval_mode_decides_initial_status():
 
 
 if __name__ == "__main__":
-    assert_app_version_at_least("0.261.059")
+    assert_app_version_at_least("0.261.085")
 
     tests = [
         test_rejects_unknown_and_disabled_capabilities,

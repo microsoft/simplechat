@@ -1,4 +1,5 @@
 // OrchestrationPlanCard.tsx
+import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 // The plan, inline in the thread, kept deliberately small.
 //
 // Orchestration turns the composer inside out: instead of the user picking documents, a model and
@@ -217,6 +218,7 @@ export function OrchestrationPlanCard({
         }
         return (
             <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken px-3 py-2">
+                <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
                 <div className="flex items-center gap-2 text-sm">
                     <Loader2 size={15} className="shrink-0 animate-spin text-accent" />
                     <span className="min-w-0 flex-1 truncate text-text-1" title={summary.intent_summary}>
@@ -248,6 +250,7 @@ export function OrchestrationPlanCard({
 
     return (
         <div className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken p-3">
+            <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
             <div className="flex items-start gap-2">
                 <ListChecks size={16} className="mt-0.5 shrink-0 text-accent" />
                 <div className="min-w-0 flex-1">

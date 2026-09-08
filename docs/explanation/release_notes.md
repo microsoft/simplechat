@@ -2,6 +2,48 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.104)**
+
+#### Bug Fixes
+
+*   **Model-Aware Reasoning Across Chat And Orchestration**
+    *   Fixed plan editing and Auto/Review execution failures caused by unsupported reasoning levels. GPT-5.6 Luna's stale Minimal selection becomes Low with a visible adjustment, while supported None remains explicit.
+    *   Both interfaces use canonical per-model capabilities. Narrow provider compatibility recovery reports Model default rather than claiming the rejected effort was honored; model identity and approval safeguards remain unchanged.
+    *   (Ref: `functions_model_capabilities.py`, `model_endpoint_clients.py`, `functions_orchestration_models.py`, `route_backend_chats.py`, [Reasoning Compatibility Fix](fixes/ORCHESTRATION_REASONING_LEVEL_COMPATIBILITY_FIX.md))
+
+*   **Capability-Aware Planning Without Hidden Shortcuts**
+    *   Selected supported tools and sources are requirements, not a restriction to only those tools. Unchecked controls no longer imply that enabled Web Search or Deep Research is unauthorized.
+    *   Every Orchestrate request reaches the planner, including short questions. Direct answers remain available; no topic rule forces research. Model and discovery failures are surfaced instead of becoming successful answer-only plans.
+    *   Fixed authorized group-agent catalog discovery and preserved original selections separately from model-chosen plan usage. Current capabilities are rechecked before execution.
+    *   Enabled saved memories now inform private-conversation planning, edits, and answers without autosave or embedding backfill. Scope and audience are rechecked before answering, and existing memory citations are preserved.
+    *   (Ref: `functions_orchestration_context.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `functions_agent_catalog.py`, [Capability Context Fix](fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md))
+
+### **(v0.261.100)**
+
+#### New Features
+
+*   **Composer-Aware Inline Answers**
+    *   V2 orchestration follow-up questions now support `#` file, tag, and workspace references, `/` saved prompts, and uploads through a compact version of the main composer's editor.
+    *   Single- and multiple-choice selections can include an optional explanation, prompt, or additional sources. File suggestions are not an exhaustive list: a different referenced or uploaded file can answer the question on its own.
+    *   This applies to supported chat file types generally, not only tabular files. Existing upload and workspace permissions still apply.
+    *   (Ref: `ComposerEditor.tsx`, `ElicitationCard.tsx`, `composerDraft.ts`, [Chat Orchestration](features/CHAT_ORCHESTRATION.md))
+
+#### User Interface Enhancements
+
+*   **Upload Progress And Independent Answer Drafts**
+    *   Inline uploads show processing state and retry/remove controls. Finish waits for selected files to be ready rather than continuing without them.
+    *   Paging and navigation within the current browser session preserve each answer's text, references, prompt edits, and variable values. Failed submissions keep the draft available for correction or retry.
+    *   The main composer remains separate, and inline questions do not duplicate its model, agent, web, or voice toolbar.
+    *   (Ref: `chatUploads.ts`, `orchestrationStore.ts`, `AttachedPromptCard.tsx`, [Upload Documents In Chat](../guides/upload-documents-in-chat.md))
+
+#### Bug Fixes
+
+*   **Follow-Up Answers Reach The Resumed Task**
+    *   Fixed a client/server mismatch that could ignore inline answers. Replies are now matched to the stored question and checked against its owner, turn, and revision.
+    *   Accepted explanations, filled prompts, and real source references reach both replanning and execution, while original selections and document filters remain intact.
+    *   Retries cannot apply the same answer twice, and declining or cancelling sends no draft answer context.
+    *   (Ref: `orchestrationController.ts`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_runs.py`, `route_backend_orchestration.py`)
+
 ### **(v0.261.099)**
 
 #### Bug Fixes

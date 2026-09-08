@@ -27,7 +27,7 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.102
+Version: 0.261.104
 """
 
 import hashlib
@@ -43,8 +43,10 @@ from functions_message_block_revisions import resolve_block_sources_in_content
 from functions_message_masking import remove_masked_content
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
+    CAPABILITY_AGENT_INVOKE,
     WORKSPACE_SCOPE_SETTINGS,
     build_agent_planner_projection,
+    required_capability_ids,
     resolve_available_capability_ids,
 )
 from functions_orchestration_schema import validate_elicitation_response
@@ -182,9 +184,8 @@ def resolve_seeds(request_data):
         'model': model or None,
         'reasoning_effort': _text(request_data.get('reasoning_effort')),
         'prompt': prompt,
-        # A user who switched web search on has said something about intent even in
-        # orchestration mode, so it is carried through as a constraint rather than dropped.
-        'web_search': bool(request_data.get('web_search_enabled')),
+        'web_search': request_data.get('web_search_enabled') is True,
+        'required_capabilities': _string_list(request_data.get('required_capabilities')),
         'active_group_ids': _string_list(
             request_data.get('active_group_ids') or request_data.get('active_group_id')
         ),
@@ -857,6 +858,15 @@ def resolve_candidate_documents(
 # Agents
 # --------------------------------------------------------------------------------------
 
+class CatalogResolutionError(RuntimeError):
+    """A user-safe catalog failure, distinct from an empty authorized catalog."""
+
+    def __init__(self, message, *, code='catalog_unavailable'):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
 def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
     """The agents a plan may invoke, resolved once for the whole plan.
 
@@ -871,41 +881,67 @@ def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
     ``RunContext.agent_catalog`` is the difference between one such traversal and one per
     step.
 
-    Seeding mirrors ``resolve_candidate_documents``. A user who picked an agent in the
-    composer has already made the choice this catalog exists to inform, so the selection
-    is returned as-is and the traversal never runs -- and because the planner is then shown
-    that agent alone, it is the only one a plan may name, exactly as a selected document is
-    the only candidate.
-
-    Fails soft. A Cosmos hiccup degrades to "no agent available" -- a plan that simply
-    cannot reach for an agent -- rather than failing the whole request, on the same
-    reasoning as the candidate probe above.
+    An explicit selection narrows current authorized records; its client-supplied name,
+    scope and labels are not proof of access. Discovery failures must not look like a
+    successfully resolved empty catalog.
     """
     seeds = seeds or {}
 
+    settings = settings or {}
     seeded_agent = seeds.get('agent')
-    if isinstance(seeded_agent, dict) and _text(seeded_agent.get('name')):
-        return [seeded_agent]
+    available = resolve_available_capability_ids(
+        settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        candidate_ids=(CAPABILITY_AGENT_INVOKE,),
+    )
+    if CAPABILITY_AGENT_INVOKE not in available:
+        return []
+    if isinstance(seeded_agent, dict):
+        selected_group = seeded_agent.get('group_id') or (
+            seeded_agent.get('scope_id')
+            if seeded_agent.get('scope_type') == 'group' or seeded_agent.get('is_group') else None
+        )
+        if selected_group:
+            user_groups = [selected_group]
 
     try:
         # Lazy for the same reason as the candidate probe: functions_agent_catalog reaches
         # config.py and its import-time Cosmos client, and this module is imported by the
         # validator and by tests that have no Azure to talk to. Keeping the import inside
         # the resolver is what lets those import functions_orchestration_context at all.
-        from functions_agent_catalog import build_accessible_agent_catalog
+        from functions_agent_catalog import build_accessible_agent_catalog, build_agent_catalog_key
 
-        return build_accessible_agent_catalog(
+        catalog = build_accessible_agent_catalog(
             user_id,
             settings=settings,
             user_groups=user_groups,
         )
     except Exception as exc:
         log_event(
-            f"[ORCHESTRATION_CONTEXT] Agent catalog resolution failed; planning without "
-            f"agents: {exc}",
+            '[ORCHESTRATION_CONTEXT] The agent catalog could not be resolved.',
             level=logging.WARNING,
+            extra={'reason': 'agent_catalog_failed', 'error_type': type(exc).__name__},
         )
-        return []
+        raise CatalogResolutionError('The available agents could not be loaded. Please retry.') from exc
+
+    if isinstance(seeded_agent, dict) and _text(seeded_agent.get('name')):
+        selected_key = build_agent_catalog_key({**seeded_agent, 'user_id': user_id})
+        selected_id = seeded_agent.get('id') or seeded_agent.get('agent_id')
+        catalog = [
+            agent for agent in catalog
+            if build_agent_catalog_key({
+                **agent, 'id': agent.get('id') if selected_id else agent.get('name'),
+            }) == selected_key
+        ]
+        if len(catalog) != 1:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] The selected agent is no longer available.',
+                level=logging.WARNING, extra={'reason': 'selected_agent_unavailable'},
+            )
+            raise CatalogResolutionError(
+                'The selected agent is no longer available. Choose an agent you can access.',
+                code='selected_agent_unavailable',
+            )
+    return catalog
 
 
 # --------------------------------------------------------------------------------------
@@ -1375,6 +1411,7 @@ def build_planner_context(
     actions=None,
     original_message=None,
     request_resolution=None,
+    memory_context=None,
 ):
     """Assemble everything the planner is shown, in one place.
 
@@ -1395,7 +1432,9 @@ def build_planner_context(
         'clarifications': deepcopy(answered_questions or []),
         'original_message': _text(original_message) if original_message is not None else _text(user_message),
         'request_resolution': request_resolution or {},
+        'request_time_utc': datetime.now(timezone.utc).isoformat(),
         'capabilities': capabilities or [],
+        'required_capabilities': required_capability_ids(seeds),
         'agents': build_agent_planner_projection(agents),
         'actions': build_action_planner_projection(actions),
         'candidate_documents': [
@@ -1407,7 +1446,14 @@ def build_planner_context(
             'context_references': deepcopy(seeds.get('elicitation_references') or []),
             'agent': (seeds.get('agent') or {}).get('name') if seeds.get('agent') else None,
             'prompt': _selected_prompt(seeds),
-            'web_search': bool(seeds.get('web_search')),
+            **({'web_search': True} if seeds.get('web_search') is True else {}),
+        },
+        'memory': {
+            'status': (memory_context or {}).get('status', 'disabled'),
+            'scope_type': (memory_context or {}).get('scope_type'),
+            'messages': deepcopy((memory_context or {}).get('context_messages') or []),
+            'citations': deepcopy((memory_context or {}).get('citations') or []),
+            'notices': list((memory_context or {}).get('notices') or []),
         },
         'earlier_runs': ledger or {'runs': [], 'answered_questions': [], 'truncated': False},
         'conversation': signals or {'recent_turns': [], 'urls': []},

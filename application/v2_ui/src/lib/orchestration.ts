@@ -25,6 +25,7 @@ import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
 import { readSsePost } from './sse';
 import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
+import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
 // part of this contract's surface. Re-exported here (rather than making consumers reach into
@@ -184,6 +185,8 @@ export interface OrchestrationPlanAction {
 
 /** What the plan will act on, for the approval card. */
 export interface OrchestrationPlanInputs {
+    /** Original positive selections resolved by the server, never inferred from planned usage. */
+    required_capabilities?: string[];
     documents: OrchestrationPlanDocument[];
     /** Older plans do not carry action metadata. Match steps by action_ref, not by name. */
     actions?: OrchestrationPlanAction[];
@@ -202,6 +205,7 @@ export interface OrchestrationPlanInputs {
  * the name a second time from the browser.
  */
 export interface OrchestrationPlan {
+    reasoning_adjustments?: ReasoningResolution[];
     plan_id: string;
     run_id: string;
     /** Conditional approval token for a manually held or revised plan. */
@@ -389,7 +393,12 @@ export const MAX_PLAN_INSTRUCTION_LENGTH = 2000;
  * client's store does; a re-plan of the same turn sends the same id. The server honours it and
  * echoes it back on the plan, rather than minting one of its own.
  */
-export interface OrchestrationPlanRequest {
+export interface OrchestrationSeeds {
+    required_capabilities?: string[];
+    [key: string]: unknown;
+}
+
+export interface OrchestrationPlanRequest extends OrchestrationSeeds {
     message: string;
     conversation_id?: string | null;
     turn_id?: string;
@@ -433,6 +442,7 @@ export interface OrchestrationRunRequest {
  * frame ends it too.
  */
 export interface PlanStreamEvent {
+    reasoning_adjustments?: ReasoningResolution[];
     type?: 'thought' | 'orchestration_plan' | 'orchestration_elicitation' | string;
     plan?: OrchestrationPlan;
     elicitation?: Elicitation;
@@ -861,6 +871,15 @@ async function readPlanStream(
                 handlers.onEditor?.(result.editor);
             }
             result.plan = event.plan ?? null;
+            if (result.plan && event.reasoning_adjustments?.length) {
+                result.plan = {
+                    ...result.plan,
+                    reasoning_adjustments: normalizeReasoningAdjustments([
+                        ...(result.plan.reasoning_adjustments ?? []),
+                        ...event.reasoning_adjustments,
+                    ]),
+                };
+            }
             result.completed = true;
             if (result.plan) {
                 handlers.onPlan?.(result.plan);
