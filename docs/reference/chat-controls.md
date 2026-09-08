@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.104"
+version: "0.261.105"
 ---
 
 ## How to use this reference
@@ -244,3 +244,29 @@ plan rather than editing the main chat message. See
 | Ask planner | Sends a change request to the planner for a validated revision, or answers its scoped clarification. | Add a permitted step, remove work, or refine the task without duplicating the main conversation. | Same as Edit; existing capability and source permissions apply |
 | History and restore | Shows previous plan versions and creates a newly validated current version when restoring one. | Return to an earlier approach without deleting later history. | Same as Edit |
 | Run after editing | Executes the saved current revision only after explicit approval. Closing the editor does not approve it. | Start the work once its steps and sources match your intent. | Same as Edit; no revision or clarification may be pending |
+
+## Orchestration failure recovery (V2 interface)
+
+Implemented in **0.261.105**. A failed run keeps an explanation in the conversation
+and Run view instead of silently cancelling the answering step. Recovery uses the
+saved effective plan, not the current composer selections or a new planner call.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Retry from failed step | Creates a linked attempt that restores valid completed-step results and executes the incomplete work. | Recover after a failure without repeating successful plan steps or duplicating the question. | `enable_chat_orchestration`, current access, and recoverable saved checkpoints |
+| Confirm retry / Cancel | Confirms the possible external effects of retrying a failed agent/action, or dismisses the confirmation without executing it. | Decide whether it is safe to repeat the failed step's internal tool activity. | A recoverable attempt that requires external-effect confirmation |
+| Run prepared retry | Starts a recovery attempt that was already prepared but has not executed. | Continue after preparation was saved but execution was interrupted by navigation or connection loss. | An unstarted saved recovery attempt |
+| Review saved attempt | Opens the selected attempt in the Plan/Run view. | Inspect the failure, completed steps, and remaining work without editing or rerunning history. | A saved orchestration attempt |
+| View current attempt / View previous attempt | Opens a linked execution attempt rather than starting another one. | Follow recovery history and avoid retrying an older attempt that already has a successor. | Linked recovery attempts |
+| Check saved status | Reconciles the displayed state with the existing server execution. | Find out whether work finished when the browser connection was lost or recovery details could not load. | An execution-status or recovery-detail error |
+| Stop execution | Requests server cancellation of the potentially active attempt. | Stop work even when its streaming connection was interrupted. | An interrupted connection with a tracked in-flight attempt |
+
+Steps restored from checkpoints show **Reused saved result**. Retry is always
+manual, including when normal approval is Auto or timed. An older attempt cannot
+create a competing retry after a newer attempt has been prepared.
+
+Stop requests cancellation on the server. A connection loss instead requires
+checking the existing execution; it must not automatically start another one.
+When a checkpoint or source is unavailable, the interface explains why recovery
+is blocked rather than turning Retry into a full-plan replay. See
+[Review, edit, and recover plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).

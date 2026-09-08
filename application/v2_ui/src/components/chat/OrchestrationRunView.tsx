@@ -1,5 +1,6 @@
 // OrchestrationRunView.tsx
 import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
+import { OrchestrationRecoveryNotice } from './OrchestrationRecoveryNotice';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -314,6 +315,11 @@ export function OrchestrationRunView({
                             >
                                 {status}
                             </span>
+                            {stepRuntime[step.step_id]?.reused ? (
+                                <span className="rounded-full bg-ok-soft px-2 py-0.5 text-[11px] text-ok">
+                                    Reused saved result
+                                </span>
+                            ) : null}
                         </div>
 
                         {step.rationale ? (
@@ -482,6 +488,9 @@ export function OrchestrationRunView({
     return (
         <div className="space-y-3 p-3">
             <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
+            <OrchestrationRecoveryNotice
+                conversationId={conversationId} runId={plan.run_id} plan={plan} status={plan.status}
+            />
             {readOnly && !previewPlan ? (
                 <p className="flex items-center gap-1.5 rounded-lg border border-edge bg-surface-2 px-2 py-1.5 text-[11px] text-text-3">
                     <Archive size={12} className="shrink-0" />

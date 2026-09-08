@@ -45,6 +45,7 @@ from functions_orchestration_schema import (
     new_run_id,
     new_step_id,
     summarize_plan,
+    safe_failure,
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_RUNS]'
@@ -432,7 +433,7 @@ def _publish_replanned_run(record, expected_previous_run, *, idempotent=False):
     return record
 
 
-def get_orchestration_run(run_id, user_id, conversation_id=None):
+def get_orchestration_run(run_id, user_id, conversation_id=None, *, strict=False):
     """Fetch one run, returning ``None`` unless it exists and belongs to ``user_id``.
 
     A ``conversation_id`` turns this into a point read; without one it is a cross-partition
@@ -465,6 +466,8 @@ def get_orchestration_run(run_id, user_id, conversation_id=None):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
+        if strict:
+            raise
         return None
 
     if not _is_run_record(item):
@@ -516,41 +519,37 @@ def update_orchestration_run(run_id, user_id, updates, conversation_id=None):
     changing ``conversation_id`` or ``user_id`` on an existing item would move it or reassign
     it rather than update it.
     """
-    existing = get_orchestration_run(run_id, user_id, conversation_id=conversation_id)
-    if not existing:
-        return None
-
-    updates = updates if isinstance(updates, dict) else {}
+    if not conversation_id:
+        found = get_orchestration_run(run_id, user_id)
+        if not found:
+            return None
+        conversation_id = found['conversation_id']
     protected = {'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at'}
-    for key, value in updates.items():
-        if key in protected:
+    for _ in range(8):
+        try:
+            current = cosmos_orchestration_runs_container.read_item(item=run_id, partition_key=conversation_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if not _is_run_record(current) or current.get('user_id') != user_id or current.get('checkpoints_deleted'):
+            return None
+        existing = _strip_cosmos_metadata(deepcopy(current))
+        existing.update({key: value for key, value in (updates or {}).items() if key not in protected})
+        if isinstance((updates or {}).get('plan'), dict):
+            summary = summarize_plan(updates['plan'])
+            existing.update({'plan_summary': summary, 'capabilities_used': list(summary.get('capabilities_used') or [])})
+        existing['updated_at'] = _utc_now_iso()
+        try:
+            result = cosmos_orchestration_runs_container.replace_item(
+                item=run_id, body=existing, etag=current['_etag'],
+                match_condition=MatchConditions.IfNotModified,
+            )
+            return _strip_cosmos_metadata(result)
+        except exceptions.CosmosAccessConditionFailedError:
             continue
-        existing[key] = value
-
-    # If the plan document itself was replaced (a re-plan), keep the denormalised summary and
-    # capability list in step with it rather than letting the ledger read a stale summary.
-    if isinstance(updates.get('plan'), dict):
-        summary = summarize_plan(updates['plan'])
-        existing['plan_summary'] = summary
-        existing['capabilities_used'] = list((summary or {}).get('capabilities_used') or [])
-
-    existing['updated_at'] = _utc_now_iso()
-
-    try:
-        result = cosmos_orchestration_runs_container.upsert_item(body=existing)
-    except Exception as exc:
-        log_event(
-            f'{_LOG_PREFIX} Failed to update run {run_id}: {exc}',
-            extra={'user_id': user_id, 'run_id': run_id},
-            level=logging.ERROR,
-            exceptionTraceback=True,
-        )
-        raise
-
-    return _strip_cosmos_metadata(result)
+    raise exceptions.CosmosAccessConditionFailedError(status_code=412, message='Run changed.')
 
 
-def list_conversation_runs(conversation_id, user_id, limit=10):
+def list_conversation_runs(conversation_id, user_id, limit=10, *, strict=False):
     """A conversation's runs for this user, oldest first.
 
     Ordered so the ledger builder can read it as "newest last": the query pulls the most
@@ -582,6 +581,8 @@ def list_conversation_runs(conversation_id, user_id, limit=10):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
+        if strict:
+            raise
         return []
 
     trimmed = [
@@ -941,7 +942,7 @@ def save_orchestration_step(run_id, step_record):
     return _strip_cosmos_metadata(result)
 
 
-def list_run_steps(run_id, user_id=None, conversation_id=None):
+def list_run_steps(run_id, user_id=None, conversation_id=None, *, strict=False):
     """Steps of a run in execution order.
 
     Steps carry only ``run_id``, so ownership can only be proven through the parent run. When
@@ -952,7 +953,7 @@ def list_run_steps(run_id, user_id=None, conversation_id=None):
         return []
 
     if user_id is not None and not get_orchestration_run(
-        run_id, user_id, conversation_id=conversation_id
+        run_id, user_id, conversation_id=conversation_id, strict=strict,
     ):
         return []
 
@@ -971,6 +972,25 @@ def list_run_steps(run_id, user_id=None, conversation_id=None):
             level=logging.ERROR,
             exceptionTraceback=True,
         )
+        if strict:
+            raise
         return []
 
-    return [_strip_cosmos_metadata(item) for item in items]
+    return [public_step_record(item) for item in items if item.get('record_type') in (None, 'step')]
+
+
+def public_step_record(item):
+    """Checkpoint chunks/manifests and future private fields never cross this boundary."""
+    fields = (
+        'run_id', 'step_id', 'step_index', 'capability_id', 'title', 'status',
+        'started_at', 'completed_at', 'duration_ms', 'reused', 'reused_from_run_id',
+        'checkpoint_available',
+    )
+    row = {key: deepcopy(item[key]) for key in fields if key in item}
+    row['failure'] = safe_failure(item['failure']) if item.get('failure') else None
+    failed = item.get('status') in ('failed', 'cancelled')
+    row['summary'] = (
+        (row['failure'] or {}).get('message') or 'This step did not complete.'
+    ) if failed else item.get('summary') or ''
+    row['error'] = row['failure']['message'] if row['failure'] else None
+    return row

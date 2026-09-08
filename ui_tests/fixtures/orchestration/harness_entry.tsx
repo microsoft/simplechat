@@ -179,6 +179,8 @@ function reset(): void {
     roots.clear();
     orchestrationStore.useOrchestrationStore.setState({
         plans: {},
+        runRecovery: {},
+        recoveryTarget: null,
         elicitations: {},
         elicitationDrafts: {},
         edits: {},

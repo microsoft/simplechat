@@ -68,6 +68,13 @@ from functions_orchestration_schema import (
     STEP_STATUS_RUNNING,
     STEP_STATUS_SKIPPED,
     build_step_result,
+    build_failure,
+    safe_failure,
+    failure_from_exception,
+    failure_explanation,
+)
+from functions_orchestration_checkpoints import (
+    CheckpointError, restore_context, step_input_fingerprint,
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_EXECUTOR]'
@@ -136,8 +143,8 @@ def _make_cancel_probe(cancel_requested):
     def _probe():
         try:
             return bool(cancel_requested())
-        except Exception:
-            return False
+        except Exception as exc:
+            raise CheckpointError('ownership_lost') from exc
 
     return _probe
 
@@ -168,6 +175,7 @@ class RunContext:
         conversation_id=None,
         user_id=None,
         turn_index=0,
+        attempt_index=1,
         invoke_prompt=None,
         planner_client=None,
         planner_deployment=None,
@@ -211,6 +219,7 @@ class RunContext:
         self.conversation_id = conversation_id
         self.user_id = user_id
         self.turn_index = turn_index
+        self.attempt_index = attempt_index
 
         self.invoke_prompt = invoke_prompt
         self.planner_client = planner_client
@@ -287,6 +296,8 @@ class RunContext:
         self.artifacts = []
         self.notes = []
         self.token_usage = {}
+        self.failures = []
+        self.step_token_usage = {}
 
         # Documents any step produced evidence for, in first-seen order.
         self.documents_touched = []
@@ -437,7 +448,7 @@ def _run_single_step(step, context, settings, user_id, emit, step_cancel, get_ad
         return build_step_result(
             status=STEP_STATUS_FAILED,
             summary='The step raised an unexpected error.',
-            error=str(exc),
+            failure=failure_from_exception(exc, answering=capability_id == CAPABILITY_RESPOND),
         )
 
     if not isinstance(result, dict) or 'status' not in result:
@@ -480,6 +491,11 @@ def _step_record(context, step, index, status, result, started_at, completed_at,
         'arguments': step.get('arguments') if isinstance(step.get('arguments'), dict) else {},
         'duration_ms': duration_ms,
         'replan_hint': result.get('replan_hint'),
+        'failure': result.get('failure'),
+        'checkpoint_available': False,
+        'reused': False,
+        'reused_from_run_id': None,
+        'effects_uncertain': status == STEP_STATUS_RUNNING and step.get('capability_id') in ('agent_invoke', 'action_invoke'),
     }
 
 
@@ -489,13 +505,12 @@ def _persist(persist, record_type, record):
     try:
         persist(record_type, record)
     except Exception as exc:
-        # Persistence is a side effect of running the plan, not a condition for it; a failed
-        # write is logged and the run continues rather than losing the answer.
         log_event(
             f'{_LOG_PREFIX} Failed to persist {record_type} record: {exc}',
             level=logging.ERROR,
             exceptionTraceback=True,
         )
+        raise CheckpointError() from exc
 
 
 # --------------------------------------------------------------------------------------
@@ -534,6 +549,8 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
+        if getattr(context, 'durable_checkpoints', False):
+            raise ElicitationContextError('Sources could not be reauthorized.') from exc
         if context.elicitation_references:
             log_event(
                 f'{_LOG_PREFIX} Accepted source re-authorization failed.',
@@ -548,6 +565,8 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
         fresh_manifest = None
 
     if not fresh_manifest:
+        if getattr(context, 'durable_checkpoints', False):
+            raise ElicitationContextError('Sources could not be reauthorized.')
         if context.elicitation_references:
             raise ElicitationContextError('Accepted answer sources could not be rechecked. Please retry the run.')
         # The resolver could not run (no resolver wired, or it errored). The evidence was
@@ -576,9 +595,15 @@ def _reauthorize_before_finalization(context, settings, user_id, cancel_requeste
         raise ElicitationContextError('An accepted answer source is no longer available. Please update the answer.')
 
     if dropped:
+        if getattr(context, 'durable_checkpoints', False):
+            raise ElicitationContextError('A saved source is no longer available.')
         context.evidence = [
             envelope for envelope in evidence
             if _text(envelope.get('document_id')) not in dropped
+        ]
+        context.citations = [
+            citation for citation in context.citations or []
+            if not isinstance(citation, dict) or _text(citation.get('document_id')) not in dropped
         ]
         # Rebuild documents_touched to match the surviving evidence, so the run record does
         # not claim to have used a document whose evidence was just dropped.
@@ -621,6 +646,7 @@ def execute_plan(
     cancel_requested=None,
     persist=None,
     get_adapter=None,
+    checkpoints=None,
 ):
     """Run a validated plan to an answer and return the run result.
 
@@ -658,12 +684,13 @@ def execute_plan(
         )
 
     def unavailable_context_result():
+        failure = build_failure('context_unavailable')
         result = {
             'run_id': context.run_id,
             'status': PLAN_STATUS_FAILED,
             'completed_at': _now_iso(),
-            'message': '',
-            'error': 'Accepted answer context is no longer available. Please update the answer or retry.',
+            'message': failure_explanation([failure]),
+            'error': failure['message'], 'failure': failure, 'failures': [failure], 'outcome': 'failed',
             'evidence': [], 'citations': [], 'artifacts': [],
             'reauthorization': {'checked': True, 'reason': 'elicitation_context_unavailable'},
         }
@@ -710,6 +737,16 @@ def execute_plan(
     terminal_result = None
     reauthorization = {'checked': False, 'reason': 'not_reached', 'dropped_document_ids': []}
     first_error = None
+    if checkpoints is not None:
+        context.durable_checkpoints = True
+        checkpoints = checkpoints(context) if callable(checkpoints) else checkpoints
+        checkpoints.initialize()
+
+    def persist_step(record):
+        if checkpoints is not None:
+            checkpoints.save_step(record)
+        else:
+            _persist(persist, 'step', record)
 
     for index, step in enumerate(ordered_steps):
         step_id = step.get('step_id')
@@ -722,7 +759,10 @@ def execute_plan(
             statuses[step_id] = STEP_STATUS_CANCELLED
             record = _step_record(context, step, index, STEP_STATUS_CANCELLED, None, None, None, 0)
             step_records.append(record)
-            _persist(persist, 'step', record)
+            record['failure'] = build_failure('user_cancelled', step_id=step_id, capability_id=step.get('capability_id'))
+            if not context.failures:
+                context.failures.append(record['failure'])
+            persist_step(record)
             _emit(emit, {'type': 'step', 'phase': STEP_STATUS_CANCELLED, 'step_id': step_id,
                          'capability_id': step.get('capability_id'), 'step_index': index,
                          'completed': index + 1, 'total': total_units})
@@ -743,7 +783,7 @@ def execute_plan(
                 statuses[step_id] = STEP_STATUS_CANCELLED
                 record = _step_record(context, step, index, STEP_STATUS_CANCELLED, None, None, None, 0)
                 step_records.append(record)
-                _persist(persist, 'step', record)
+                persist_step(record)
                 continue
             except ElicitationContextError:
                 return unavailable_context_result()
@@ -754,7 +794,7 @@ def execute_plan(
             result = build_step_result(status=STEP_STATUS_SKIPPED, summary='Step is disabled.')
             record = _step_record(context, step, index, STEP_STATUS_SKIPPED, result, None, None, 0)
             step_records.append(record)
-            _persist(persist, 'step', record)
+            persist_step(record)
             _emit(emit, {'type': 'step', 'phase': STEP_STATUS_SKIPPED, 'step_id': step_id,
                          'capability_id': step.get('capability_id'), 'step_index': index,
                          'completed': index + 1, 'total': total_units})
@@ -765,13 +805,15 @@ def execute_plan(
         # than to nothing.
         over_total_time = bool(total_deadline and time.monotonic() > total_deadline)
         over_step_budget = (not is_terminal) and executed_non_terminal >= max_steps
-        if not is_terminal and (over_total_time or over_step_budget):
+        if over_total_time or over_step_budget:
             statuses[step_id] = STEP_STATUS_SKIPPED
             reason = 'the time budget was exhausted' if over_total_time else 'the step budget was reached'
             result = build_step_result(status=STEP_STATUS_SKIPPED, summary=f'Skipped because {reason}.')
+            result['failure'] = build_failure('run_timeout' if over_total_time else 'step_budget', step_id=step_id, capability_id=step.get('capability_id'))
+            context.failures.append(result['failure'])
             record = _step_record(context, step, index, STEP_STATUS_SKIPPED, result, None, None, 0)
             step_records.append(record)
-            _persist(persist, 'step', record)
+            persist_step(record)
             if not budget_note_emitted:
                 context.notes.append(f'Some steps were skipped because {reason}.')
                 budget_note_emitted = True
@@ -790,34 +832,99 @@ def execute_plan(
             )
             record = _step_record(context, step, index, STEP_STATUS_SKIPPED, result, None, None, 0)
             step_records.append(record)
-            _persist(persist, 'step', record)
+            persist_step(record)
             _emit(emit, {'type': 'step', 'phase': STEP_STATUS_SKIPPED, 'step_id': step_id,
                          'capability_id': step.get('capability_id'), 'step_index': index,
                          'completed': index + 1, 'total': total_units})
             continue
 
-        # Run it. The per-step deadline is folded into the cancel probe rather than enforced
-        # by killing a thread: adapters check cancellation at their own safe points, which is
-        # the only portable way to time-bound work that may hold external resources.
+        reused = checkpoints.before_step(step) if checkpoints is not None else None
+        input_fingerprint = (
+            step_input_fingerprint(step, context, checkpoints.binding) if checkpoints is not None else None
+        )
+        if reused:
+            restore_context(context, reused)
+            result = deepcopy(reused['result'])
+            context.step_token_usage = deepcopy(reused.get('usage') or {})
+            checkpoints.commit(step, result, input_fingerprint, reused=reused)
+            record = _step_record(context, step, index, STEP_STATUS_COMPLETED, result, None, _now_iso(), 0)
+            record.update({
+                'checkpoint_available': True, 'reused': True,
+                'reused_from_run_id': (reused.get('provenance') or {}).get('run_id'),
+                'summary': 'Reused saved result',
+                'token_usage': {}, 'reused_token_usage': deepcopy(reused.get('usage') or {}),
+            })
+            step_records.append(record)
+            statuses[step_id] = STEP_STATUS_COMPLETED
+            persist_step(record)
+            _emit(emit, {
+                'type': 'step', 'phase': STEP_STATUS_COMPLETED, **record,
+                'completed': index + 1, 'total': total_units,
+            })
+            continue
+
+        # Cooperative interruption retains its measured cause. A callback may stop
+        # blocked providers, but a deadline is never evidence of the user pressing Stop.
         step_deadline = time.monotonic() + step_timeout if step_timeout else None
+        control = {'reason': None}
 
         def _step_cancel(_step_deadline=step_deadline):
+            if control['reason']:
+                return True
             if cancel_probe():
+                control['reason'] = 'user_cancelled'
                 return True
             now = time.monotonic()
-            if _step_deadline and now > _step_deadline:
+            if total_deadline and now >= total_deadline:
+                control['reason'] = 'run_timeout'
                 return True
-            if total_deadline and now > total_deadline:
+            if _step_deadline and now >= _step_deadline:
+                control['reason'] = 'step_timeout'
                 return True
             return False
 
+        started_at = _now_iso()
+        running_record = _step_record(context, step, index, STEP_STATUS_RUNNING, None, started_at, None, 0)
+        persist_step(running_record)
         _emit(emit, {'type': 'step', 'phase': STEP_STATUS_RUNNING, 'step_id': step_id,
                      'capability_id': step.get('capability_id'), 'step_index': index,
                      'title': step.get('title'), 'completed': index, 'total': total_units})
 
-        started_at = _now_iso()
         started_monotonic = time.monotonic()
+        usage_before = deepcopy(context.token_usage)
+        prompt_usage_before = deepcopy(getattr(context, 'prompt_token_usage', {}) or {})
         result = _run_single_step(step, context, settings, user_id, emit, _step_cancel, get_adapter)
+        _step_cancel()
+        reason = control['reason']
+        if reason or result.get('status') in (STEP_STATUS_FAILED, STEP_STATUS_CANCELLED):
+            failure = build_failure(
+                reason or ('execution_interrupted' if result.get('status') == STEP_STATUS_CANCELLED else 'step_failed'),
+                step_id=step_id, capability_id=step.get('capability_id'),
+            ) if reason or not result.get('failure') else safe_failure(
+                result['failure'], step_id=step_id, capability_id=step.get('capability_id'),
+            )
+            # Failure details are not trusted data. No provider body, adapter error
+            # prose, partial diagnostic citations or stack trace reaches the answer.
+            result = build_step_result(
+                status=STEP_STATUS_CANCELLED if reason == 'user_cancelled' else STEP_STATUS_FAILED,
+                summary=failure['message'], error=failure['message'], failure=failure,
+            )
+            context.failures.append(failure)
+            log_event(
+                f'{_LOG_PREFIX} Step did not complete.',
+                extra={
+                    'run_id': context.run_id, 'step_id': step_id,
+                    'attempt_index': context.attempt_index, 'reason_code': failure['code'],
+                }, level=logging.WARNING,
+            )
+        context.step_token_usage = {
+            key: value - usage_before.get(key, 0)
+            for key, value in context.token_usage.items()
+            if type(value) is int and type(usage_before.get(key, 0)) is int
+        }
+        for key, value in (getattr(context, 'prompt_token_usage', {}) or {}).items():
+            if type(value) is int and type(prompt_usage_before.get(key, 0)) is int:
+                context.step_token_usage[key] = context.step_token_usage.get(key, 0) + value - prompt_usage_before.get(key, 0)
         duration_ms = int((time.monotonic() - started_monotonic) * 1000)
         completed_at = _now_iso()
 
@@ -840,16 +947,23 @@ def execute_plan(
             first_error = result.get('error') or result.get('summary')
 
         if status == STEP_STATUS_CANCELLED:
-            # An adapter reporting cancellation (rather than the probe firing between steps)
-            # still cancels the run.
             cancelled = True
 
         record = _step_record(context, step, index, status, result, started_at, completed_at, duration_ms)
+        record['effects_uncertain'] = (
+            step.get('capability_id') in ('agent_invoke', 'action_invoke') and status != STEP_STATUS_COMPLETED
+        )
+        record['token_usage'] = deepcopy(context.step_token_usage)
+        if checkpoints is not None and status == STEP_STATUS_COMPLETED:
+            checkpoints.commit(step, result, input_fingerprint)
+            record['checkpoint_available'] = True
         step_records.append(record)
-        _persist(persist, 'step', record)
+        persist_step(record)
         _emit(emit, {'type': 'step', 'phase': status, 'step_id': step_id,
                      'capability_id': step.get('capability_id'), 'step_index': index,
-                     'summary': record['summary'], 'completed': index + 1, 'total': total_units})
+                     'summary': record['summary'], 'failure': record['failure'],
+                     'checkpoint_available': record['checkpoint_available'],
+                     'completed': index + 1, 'total': total_units})
 
     # Resolve overall status. Cancellation wins; otherwise the run is complete when the
     # terminal step produced an answer, and failed when it did not.
@@ -858,12 +972,22 @@ def execute_plan(
     )
     if cancelled:
         run_status = PLAN_STATUS_CANCELLED
-    elif terminal_completed:
+    elif terminal_completed and not context.failures:
         run_status = PLAN_STATUS_COMPLETED
     else:
         run_status = PLAN_STATUS_FAILED
 
     message = _text((terminal_result or {}).get('message')) if terminal_result else ''
+    partial = bool(context.evidence or context.notes or any(
+        row['status'] == STEP_STATUS_COMPLETED and row['capability_id'] != CAPABILITY_RESPOND
+        for row in step_records
+    ))
+    outcome = 'cancelled' if cancelled else (
+        'completed' if run_status == PLAN_STATUS_COMPLETED else 'partial' if partial else 'failed'
+    )
+    if context.failures or not message:
+        explanation = failure_explanation(context.failures, partial=partial, cancelled=cancelled)
+        message = f'{message}\n\n{explanation}' if message else explanation
 
     capabilities_used = []
     for record in step_records:
@@ -878,6 +1002,9 @@ def execute_plan(
         'plan_id': getattr(context, 'plan_id', None) or (plan or {}).get('plan_id'),
         'conversation_id': getattr(context, 'conversation_id', None),
         'status': run_status,
+        'outcome': outcome,
+        'failure': context.failures[0] if context.failures else None,
+        'failures': list(context.failures),
         'message': message,
         'summary': _text((terminal_result or {}).get('summary')),
         'evidence': list(context.evidence or []),
@@ -897,6 +1024,9 @@ def execute_plan(
     _persist(persist, 'run', {
         'run_id': getattr(context, 'run_id', None),
         'status': run_status,
+        'outcome': outcome,
+        'failure': run_result['failure'],
+        'failures': run_result['failures'],
         'completed_at': run_result['completed_at'],
         'error': run_result['error'],
         'documents_touched': documents_touched,

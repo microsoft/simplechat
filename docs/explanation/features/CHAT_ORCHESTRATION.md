@@ -1,6 +1,6 @@
 # Chat Orchestration
 
-**Version: 0.261.104** (tracked in `application/single_app/config.py`)
+**Version: 0.261.105** (tracked in `application/single_app/config.py`)
 
 **Implemented in version: 0.261.086**
 **Knowledge phase added in version: 0.261.089**
@@ -13,6 +13,7 @@
 **Approval preference persistence fixed in version: 0.261.101**
 **Conversational plan editing implemented in version: 0.261.102**
 **Capability-aware planning and reasoning compatibility fixed in version: 0.261.104**
+**Failure communication and checkpoint recovery implemented in version: 0.261.105**
 
 ## Overview
 
@@ -421,6 +422,25 @@ An action is also resolved and authorized at execution and before subsequent fun
 calls. Revocation, definition changes, cancellation or a failed operation stop further
 action calls instead of silently substituting an agent or another integration.
 
+#### Failures and resumable attempts
+
+Since **0.261.105**, measured timeouts are distinct from explicit Stop. Safe
+failure facts reach the final response, and an application-generated status
+message reports incomplete work if the answering model cannot finish. The
+conversation does not depend on a successful model call to explain an execution
+failure.
+
+Completed steps save full reusable results in private, versioned checkpoints.
+**Retry from failed step** creates a linked attempt of the same effective plan
+and restores valid completed results without calling their adapters again.
+Current source, context, agent/action, and model access are rechecked. Invalid
+checkpoints block recovery instead of causing a silent full-plan replay.
+
+An agent/action may have performed external effects inside its failed step.
+Retrying that step requires confirmation when effects could repeat. Recovery
+does not restore the agent's internal tool loop and never runs automatically.
+See [Checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md).
+
 #### The worker-thread boundary
 
 `execute_plan` runs in a `threading.Thread` so progress can stream while work happens. That
@@ -458,6 +478,8 @@ without starting its steps or adding messages to the main conversation.
 | `/api/v2/orchestration/run` | POST | Executes an approved plan, streaming step progress and the answer. |
 | `/api/v2/orchestration/cancel/<run_id>` | POST | Asks a running plan to stop. |
 | `/api/v2/orchestration/runs` | GET | Every run in a conversation, oldest first, for the drawer's map view. |
+| `/api/v2/orchestration/runs/<run_id>` | GET | One saved plan with its outcome and safe recovery eligibility. |
+| `/api/v2/orchestration/runs/<run_id>/retry` | POST | Idempotently prepares a linked recovery attempt, with confirmation for uncertain external effects. |
 | `/api/v2/orchestration/runs/<run_id>/editor` | GET | Current editor state and paged revision history. |
 | `/api/v2/orchestration/runs/<run_id>/edit` | POST | Hold an unexecuted plan for manual approval before editing. |
 | `/api/v2/orchestration/runs/<run_id>/revisions` | POST | Ask the planner for a change, answer its question, restore a version, or discard a pending change. |
@@ -481,6 +503,12 @@ emits, so `ThoughtTracker` persistence and the client's activity-lane rendering 
 unchanged and a live run draws identically to a reloaded one. Orchestration adds the
 `step_type` values `orchestration_triage`, `orchestration_planning`, `orchestration_step`
 and `orchestration_synthesis`, each carrying `activity.lane_key = "orchestration"`.
+
+Execution terminal events also retain the actual outcome, safe failure
+information, and attempt/recovery identifiers. A final explanatory message does
+not imply that every step succeeded. The same information is saved with the
+assistant message and restored from history. A dropped stream is reconciled
+against the saved run rather than treated as proof that the server cancelled it.
 
 Three event types are genuinely new, because nothing existing meant the same thing:
 `orchestration_plan`, `orchestration_elicitation` and `orchestration_step`.
@@ -611,6 +639,8 @@ See [the Orchestration settings page](../../admin/orchestration.md) for the full
 | `functions_orchestration_adapters.py` | Capability adapters over existing functions |
 | `functions_orchestration_executor.py` | Step engine, budgets, cancellation, re-authorization |
 | `functions_orchestration_runs.py` | Run and step persistence |
+| `functions_orchestration_checkpoints.py` | Private reusable result payloads, committed manifests, and integrity checks |
+| `functions_orchestration_recovery.py` | Linked retry attempts, execution ownership, and guarded recovery |
 | `functions_orchestration_events.py` | Stream event builders |
 | `functions_orchestration_models.py` | Authorized model selection, endpoint clients, completion parameters and safe model metadata |
 | `route_backend_orchestration.py` | The V2 endpoints, conversation and message persistence |
@@ -720,6 +750,9 @@ research-selection rate is not itself a quality improvement.
   each agent step pays that cost in full.
 - **Steps run sequentially.** The executor orders steps by dependency but does not run
   independent steps in parallel.
+- **Recovery is step-level.** It reuses valid completed checkpoints, not an agent's
+  internal tool-loop state. An uncertain failed agent/action requires confirmation
+  before retry. Older runs without checkpoints cannot be retroactively resumed.
 - **Workflows do not yet execute against this engine.** The run record was shaped with that
   in mind, but the two remain separate.
 
@@ -727,6 +760,8 @@ research-selection rate is not itself a quality improvement.
 
 - [Orchestration settings](../../admin/orchestration.md)
 - [Chat Orchestration Action Access](CHAT_ORCHESTRATION_ACTIONS.md)
+- [Checkpoint recovery](ORCHESTRATION_CHECKPOINT_RECOVERY.md)
+- [Error communication fix](../fixes/ORCHESTRATION_ERROR_COMMUNICATION_FIX.md)
 - [Conversation context fix](../fixes/ORCHESTRATION_CONVERSATION_CONTEXT_FIX.md)
 - [Model selection fix](../fixes/ORCHESTRATION_MODEL_SELECTION_FIX.md)
 - `docs/explanation/release_notes.md`

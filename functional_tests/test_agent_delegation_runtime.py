@@ -1,7 +1,7 @@
 # test_agent_delegation_runtime.py
 """Executable delegation runtime regression tests.
 
-Version: 0.261.093
+Version: 0.261.105
 Implemented in: 0.261.093
 
 Real execution contexts, runtime, plugin and activity logger run against mock
@@ -246,7 +246,8 @@ def test_blocked_child_is_interrupted_and_finally_runs(runtime, monkeypatch, rea
             await asyncio.sleep(0.01)
             if reason == "cancel":
                 stopped = True
-            with pytest.raises(runtime.AgentDelegationError):
+            expected = runtime.AgentExecutionCancelled if reason == 'cancel' else runtime.AgentDelegationTimeout
+            with pytest.raises(expected):
                 await asyncio.wait_for(task, 0.5)
 
     asyncio.run(run())
