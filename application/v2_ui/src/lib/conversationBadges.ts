@@ -41,7 +41,7 @@ function contexts(metadata: BadgeSource | null | undefined): ContextEntry[] {
 }
 
 /** The context a conversation is primarily bound to, for a given scope. */
-function primaryContext(
+export function primaryContext(
     metadata: BadgeSource | null | undefined,
     scope: 'group' | 'public',
 ): ContextEntry | undefined {
