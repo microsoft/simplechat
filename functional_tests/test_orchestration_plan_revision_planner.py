@@ -1,8 +1,9 @@
 # test_orchestration_plan_revision_planner.py
 """
 Functional tests for the plan editor's strict planner contract.
-Version: 0.261.102
+Version: 0.261.104
 Implemented in: 0.261.102
+Authorized model routing through editor replanning: 0.261.103
 
 An edit must produce a validated revision, a scoped explanation, or a question.
 It must never replace the existing plan with the initial planner's failure fallback.
@@ -11,7 +12,10 @@ It must never replace the existing plan with the initial planner's failure fallb
 import json
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+from httpx import Request
+from openai import APIError
 
 from test_orchestration_conversation_context import load_modules
 
@@ -78,6 +82,35 @@ class PlanRevisionPlannerTests(unittest.TestCase):
         self.assertEqual(plan['token_usage']['total_tokens'], 10)
         self.assertNotIn('planner_fallback_reason', plan)
 
+    def test_unrenderable_question_replanning_keeps_the_bound_model_and_edit_context(self):
+        client = object()
+        binding = SimpleNamespace(
+            deployment='gpt-5.6-terra', as_planner_client=Mock(return_value=client),
+        )
+        usage = SimpleNamespace(prompt_tokens=7, completion_tokens=3, total_tokens=10)
+        with (
+            patch.object(self.planner, 'resolve_planner_client') as legacy,
+            patch.object(self.planner, '_call_planner', side_effect=[
+                (json.dumps({'kind': 'elicitation'}), usage),
+                (json.dumps(self.plan()), usage),
+            ]) as completion,
+        ):
+            kind, plan = self.planner.plan_request(
+                'Compare prices.', self.context, 'conversation', 'owner',
+                settings={'enable_user_workspace': True},
+                authorized_document_ids={'allowed-document'},
+                edit_context=self.edit, planner_model=binding,
+            )
+        legacy.assert_not_called()
+        self.assertEqual(kind, 'plan')
+        self.assertEqual(plan['planner_model'], 'gpt-5.6-terra')
+        self.assertEqual(completion.call_count, 2)
+        for call in completion.call_args_list:
+            self.assertIs(call.args[0], client)
+            self.assertEqual(call.args[1], binding.deployment)
+            self.assertIn(self.planner.PLAN_EDIT_INSTRUCTIONS, call.args[2][0]['content'])
+            self.assertEqual(json.loads(call.args[2][1]['content'])['plan_edit'], self.edit)
+
     def test_missing_or_oversized_effective_task_is_not_a_successful_edit(self):
         for task in (None, '', 'x' * 6001):
             with self.subTest(task_length=len(task) if task is not None else None):
@@ -115,7 +148,9 @@ class PlanRevisionPlannerTests(unittest.TestCase):
     def test_provider_failure_is_safe_and_does_not_fall_back(self):
         with (
             patch.object(self.planner, 'resolve_planner_client', return_value=(object(), 'planner')),
-            patch.object(self.planner, '_call_planner', side_effect=RuntimeError('PRIVATE_PROVIDER_DETAIL')),
+            patch.object(self.planner, '_call_planner', side_effect=APIError(
+                'PRIVATE_PROVIDER_DETAIL', request=Request('POST', 'https://model.example'), body=None,
+            )),
         ):
             with self.assertRaises(self.planner.PlannerError) as raised:
                 self.planner.plan_request(

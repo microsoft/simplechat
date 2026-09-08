@@ -1,4 +1,5 @@
 // OrchestrationRunView.tsx
+import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
 // The full step list for one run or one pending plan, with the narrowing edits and live status.
 //
 // This is the detail the inline card deliberately omits. It reads the RAW plan, not the edited
@@ -269,7 +270,10 @@ export function OrchestrationRunView({
         const summary = stepRuntime[step.step_id]?.summary ?? '';
         const removed = new Set(edits.removed_document_ids[step.step_id] ?? []);
         const removable = new Set(stepRemovableDocumentIds(step));
-        const documents = stepDocumentIds(step);
+        const explicitDocuments = stepDocumentIds(step);
+        const documents = step.capability_id === 'document_search' && explicitDocuments.length === 0
+            ? [...planInputDocuments].filter(([, document]) => document.selectedByUser).map(([id]) => id)
+            : explicitDocuments;
         const args = readableArguments(step);
         // A step can defer its documents to whatever an earlier step finds, so it may have
         // none of its own to show.
@@ -477,6 +481,7 @@ export function OrchestrationRunView({
 
     return (
         <div className="space-y-3 p-3">
+            <ReasoningAdjustmentNotice adjustments={plan.reasoning_adjustments} />
             {readOnly && !previewPlan ? (
                 <p className="flex items-center gap-1.5 rounded-lg border border-edge bg-surface-2 px-2 py-1.5 text-[11px] text-text-3">
                     <Archive size={12} className="shrink-0" />

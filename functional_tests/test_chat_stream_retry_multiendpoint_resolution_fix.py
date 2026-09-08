@@ -2,12 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for chat stream retry multi-endpoint resolution.
-Version: 0.250.106
+Version: 0.261.104
 Implemented in: 0.241.003
 
 This test ensures the compatibility retry path reuses the in-app multi-endpoint
-resolver and Foundry fallback helpers instead of calling undefined script-only
-functions during GPT initialization.
+resolver instead of calling undefined script-only functions during GPT
+initialization. Provider compatibility recovery must retain the selected client.
 """
 
 import os
@@ -90,8 +90,11 @@ def test_chat_api_uses_shared_multi_endpoint_resolution_for_retry_compatibility(
     assert 'def get_foundry_api_version_candidates(' in route_source, (
         'Expected route_backend_chats.py to define Foundry API-version fallback candidates in-app.'
     )
-    assert 'retry_client = build_streaming_multi_endpoint_client(' in route_source, (
-        'Expected Foundry fallback retries to reuse the in-app multi-endpoint client builder.'
+    assert '_create_chat_completion_with_reasoning(' in chat_api_source, (
+        'Expected provider recovery to use the bounded shared reasoning helper.'
+    )
+    assert 'retry_client = build_streaming_multi_endpoint_client(' not in chat_api_source, (
+        'A reasoning compatibility retry must not switch the selected client or API version.'
     )
 
     print('✅ Compatibility retry multi-endpoint resolution wiring passed')

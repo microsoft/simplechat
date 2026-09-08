@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+# test_orchestration_run_hydration_routes.py
 """
 Functional test for the orchestration run hydration endpoints and their projections.
-Version: 0.261.099
+Version: 0.261.104
 Implemented in: 0.261.099
 
 Orchestration runs have always been persisted, but nothing in the browser read them back, so a
@@ -23,10 +23,12 @@ import ast
 import re
 import sys
 from pathlib import Path
+from copy import deepcopy
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_support.orchestration_research import _definitions  # noqa: E402
 
 
 IMPLEMENTED_IN = "0.261.099"
@@ -90,7 +92,13 @@ def _load_projections():
     missing = wanted - {node.name for node in picked}
     if missing:
         raise AssertionError(f"missing helpers in the route module: {sorted(missing)}")
-    namespace = {}
+    registry = _definitions("functions_orchestration_registry.py")
+    events = _definitions("functions_orchestration_events.py")
+    namespace = {
+        "deepcopy": deepcopy,
+        "required_capability_ids": registry["required_capability_ids"],
+        "merge_reasoning_adjustments": events["merge_reasoning_adjustments"],
+    }
     exec(compile(ast.Module(body=picked, type_ignores=[]), str(ROUTE_FILE), "exec"), namespace)
     return namespace
 
@@ -175,6 +183,7 @@ def test_detail_projection_adds_only_the_plan():
     print("Testing the run detail projection adds only the plan...")
     try:
         helpers = _load_projections()
+        original = deepcopy(STORED_RUN)
         summary = helpers["_run_summary_row"](STORED_RUN)
         detail = helpers["_run_detail_row"](STORED_RUN)
 
@@ -185,6 +194,15 @@ def test_detail_projection_adds_only_the_plan():
             assert detail[key] == value, f"{key!r} disagrees between the listing and the detail"
         assert detail["plan"]["steps"][0]["step_id"] == "s1", "the plan must be returned in full"
         assert "seeds" not in detail, "the seeds stay server-side even in the detail"
+        assert STORED_RUN == original, "Projection must not rewrite immutable saved plans"
+        assert detail["plan"]["inputs"]["required_capabilities"] == []
+        automatic = deepcopy(STORED_RUN)
+        automatic["plan"]["inputs"]["web"] = True
+        automatic["seeds"] = {"web_search": False}
+        projected = helpers["_run_detail_row"](automatic)
+        assert projected["plan"]["inputs"]["required_capabilities"] == []
+        automatic["seeds"]["web_search"] = True
+        assert helpers["_run_detail_row"](automatic)["plan"]["inputs"]["required_capabilities"] == ["web_search"]
         for forbidden in (
             "conversation_context", "request_resolution", "user_message_fingerprint",
         ):

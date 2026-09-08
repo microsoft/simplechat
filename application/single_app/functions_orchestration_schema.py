@@ -31,7 +31,7 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.096
+Version: 0.261.104
 """
 
 import hashlib
@@ -48,6 +48,7 @@ from functions_orchestration_registry import (
     get_capability,
     get_capability_document_limit,
     phase_index,
+    required_capability_ids,
     resolve_available_capability_ids,
 )
 
@@ -791,6 +792,48 @@ def plan_document_ids(plan, *, include_disabled=False):
     return list(dict.fromkeys(document_ids))
 
 
+def effective_plan_document_ids(plan, seeds=None):
+    """Include an implicit search filter supplied by the user's selected sources."""
+    document_ids = plan_document_ids(plan)
+    if any(
+        step.get('enabled', True) and step.get('capability_id') == 'document_search'
+        and not (step.get('arguments') or {}).get('document_ids')
+        for step in (plan or {}).get('steps') or ()
+    ):
+        document_ids.extend(_string_list((seeds or {}).get('document_ids')))
+    return list(dict.fromkeys(document_ids))
+
+
+def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
+    """Do not silently lose selected operations or sources during normalization.
+
+    Editor revisions require explicit review and may change earlier selections. Make
+    those changes visible rather than blocking a user's later narrowing instruction.
+    """
+    seeds = seeds or {}
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    used = {step.get('capability_id') for step in steps}
+    missing = set(required_capability_ids(seeds)) - used
+    selected_documents = set(_string_list(seeds.get('document_ids')))
+    used_documents = set(effective_plan_document_ids(plan, seeds))
+    messages = [
+        f"The plan does not use the selected {get_capability(value)['label']} operation."
+        if get_capability(value) else 'A selected operation is not available.'
+        for value in sorted(missing)
+    ]
+    if selected_documents - used_documents:
+        messages.append('The plan does not use all selected documents.')
+    if messages and not allow_changes:
+        raise PlanValidationError(' '.join(messages))
+    if messages:
+        repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
+        for message in messages:
+            warning = f'{message} Review this change before running.'
+            if warning not in repairs:
+                repairs.append(warning)
+    return plan
+
+
 def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     """Describe what the plan will actually act on, for the approval card.
 
@@ -805,7 +848,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
     seeds = seeds if isinstance(seeds, dict) else {}
     labels = document_labels if isinstance(document_labels, dict) else {}
 
-    document_ids = plan_document_ids(plan)
+    document_ids = effective_plan_document_ids(plan, seeds)
     action_refs = []
     uses_web = False
     for step in (plan or {}).get('steps') or ():
@@ -838,6 +881,7 @@ def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None):
             for document_id in document_ids
         ],
         'web': uses_web,
+        'required_capabilities': required_capability_ids(seeds),
         'actions': [
             {
                 'action_ref': action['action_ref'],

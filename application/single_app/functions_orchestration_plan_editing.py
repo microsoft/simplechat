@@ -6,7 +6,7 @@ The revision store owns concurrency and publication. This module prepares the sc
 request, reuses the planner and source authorization boundaries, and never executes work
 or writes conversation messages.
 
-Version: 0.261.102
+Version: 0.261.104
 """
 
 import json
@@ -28,6 +28,9 @@ from functions_orchestration_context import (
     resolve_elicitation_references,
     validate_clarification_answers,
 )
+from functions_orchestration_models import OrchestrationModelError, resolve_orchestration_model
+from functions_orchestration_memory import load_orchestration_memory, validate_memory_audience
+from functions_orchestration_events import merge_reasoning_adjustments
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
 from functions_orchestration_planner import plan_request
 from functions_orchestration_registry import resolve_available_capabilities
@@ -36,6 +39,7 @@ from functions_orchestration_schema import (
     apply_plan_edits,
     normalize_plan,
     plan_document_ids,
+    validate_plan_requirements,
 )
 
 TURN_CONTEXT_FIELDS = (
@@ -43,6 +47,7 @@ TURN_CONTEXT_FIELDS = (
     'user_message_fingerprint', 'seeds', 'original_seeds', 'answered_questions',
     'conversation_context', 'request_resolution', 'resolved_message',
     'planning_token_usage', 'prompt_selection', 'edit_user_urls',
+    'reasoning_adjustments', 'memory_audience', 'memory_scope',
 )
 
 
@@ -138,33 +143,17 @@ def _available_sources(context, plan, user_id, settings, candidates=()):
 
 def _revision_catalogs(context, user_id, settings, identity):
     seeds = context.get('seeds') or {}
-    # Resolve current access even for a pinned agent; the ordinary first-plan fast path
-    # assumes that the composer's selection is still fresh.
+    identity = dict(identity or {})
+    if (seeds.get('agent') or {}).get('name'):
+        identity['user_enable_agents'] = True
     agents = resolve_agent_catalog(
-        user_id, seeds={**seeds, 'agent': None}, settings=settings,
+        user_id, seeds=seeds, settings=settings,
+        user_groups=seeds.get('active_group_ids') or None,
+    ) if identity.get('user_enable_agents', True) else []
+    actions = resolve_action_catalog(
+        user_id, seeds=seeds, settings=settings,
+        user_groups=seeds.get('active_group_ids') or None,
     )
-    selected = seeds.get('agent')
-    if selected:
-        scope = selected.get('scope_type') or (
-            'group' if selected.get('is_group') else
-            'global' if selected.get('is_global') else 'personal'
-        )
-        agents = [
-            agent for agent in agents
-            if agent.get('name') == selected.get('name')
-            and agent.get('scope_type') == scope
-            and (not selected.get('id') or agent.get('id') == selected['id'])
-            and (
-                scope != 'group'
-                or agent.get('group_id') == (selected.get('group_id') or selected.get('scope_id'))
-            )
-        ]
-        if len(agents) != 1:
-            raise PlanRevisionError(
-                'The selected agent is no longer available. Start a new request to choose an agent.',
-                code='source_changed',
-            )
-    actions = resolve_action_catalog(user_id, seeds=seeds, settings=settings)
     caller = build_capability_request_context(
         user_id, identity, context.get('resolved_message') or context['user_message'],
         agents, actions, allowed_user_urls=revision_allowed_urls(context),
@@ -214,15 +203,17 @@ def validate_edited_plan(plan, context, user_id, settings, identity):
         *(plan.get('validation', {}).get('repairs') or []),
         *checked['validation']['repairs'],
     ]))
+    validate_plan_requirements(checked, seeds, allow_changes=True)
     return checked
 
 
 def build_plan_edit_outcome(
-    record, data, user_id, settings, *, identity, conversation_context, ledger=None,
+    record, data, user_id, settings, *, identity, conversation_context, conversation, ledger=None,
 ):
     """Return publication arguments; no model response is a committed revision yet."""
     context = _turn_context(record)
     context['conversation_context'] = conversation_context
+    validate_memory_audience(conversation, user_id, context.get('memory_audience'))
     chat = deepcopy(record.get('edit_chat') or [])
     action = data['action']
     current_plan = apply_plan_edits(
@@ -299,6 +290,13 @@ def build_plan_edit_outcome(
         f'Current task:\n{current_request}\n\n'
         f'User-requested change (takes precedence where it changes the task):\n{instruction}'
     )
+    memory_context = load_orchestration_memory(
+        user_id, conversation,
+        build_elicitation_user_request(changed_request, context.get('answered_questions')),
+        settings=settings, seeds=seeds, expected_audience=context.get('memory_audience'),
+    )
+    context['memory_audience'] = memory_context['audience']
+    context['memory_scope'] = memory_context['scope']
     candidates, _probed = resolve_candidate_documents(
         build_elicitation_user_request(changed_request, context.get('answered_questions')),
         user_id, seeds=seeds, conversation_id=context['conversation_id'], settings=settings,
@@ -317,6 +315,7 @@ def build_plan_edit_outcome(
         signals=signals, agents=agents, actions=actions,
         original_message=context['user_message'], request_resolution=resolution,
         answered_questions=context.get('answered_questions'),
+        memory_context=memory_context,
     )
     edit_context = {
         'current_plan': {
@@ -325,16 +324,39 @@ def build_plan_edit_outcome(
         'current_request': current_request, 'instruction': instruction,
         'chat': [{key: turn[key] for key in ('role', 'content')} for turn in chat[-20:]],
     }
-    kind, document = plan_request(
-        changed_request, planner_context, context['conversation_id'], user_id,
-        settings=settings, approval_mode='manual',
-        authorized_document_ids={item['document_id'] for item in candidates},
-        turn_id=context['turn_id'], seeds=seeds,
-        document_labels={item['document_id']: item['file_name'] for item in candidates},
-        request_context=caller, edit_context=edit_context, allow_elicitation=allow_elicitation,
-        revision=int(record.get('revision') or 0) + 1,
-    )
+    try:
+        planner_model = resolve_orchestration_model(
+            settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,
+        )
+    except (ValueError, PermissionError) as exc:
+        raise PlanRevisionError(
+            'The selected model is unavailable. Your previous plan is unchanged.',
+            code='model_unavailable',
+            status_code=403 if isinstance(exc, (OrchestrationModelError, PermissionError)) else 503,
+        ) from exc
+    try:
+        seeds = context['seeds'] = {
+            **seeds, 'model': planner_model.answer_model_selection(),
+        }
+        context['original_seeds'] = {
+            **(context.get('original_seeds') or seeds), 'model': dict(seeds['model']),
+        }
+        kind, document = plan_request(
+            changed_request, planner_context, context['conversation_id'], user_id,
+            settings=settings, approval_mode='manual',
+            authorized_document_ids={item['document_id'] for item in candidates},
+            turn_id=context['turn_id'], seeds=seeds,
+            document_labels={item['document_id']: item['file_name'] for item in candidates},
+            request_context=caller, edit_context=edit_context, allow_elicitation=allow_elicitation,
+            revision=int(record.get('revision') or 0) + 1, planner_model=planner_model,
+        )
+    finally:
+        planner_model.close()
     _add_usage(context, document.get('token_usage'))
+    context['reasoning_adjustments'] = merge_reasoning_adjustments(
+        context.get('reasoning_adjustments'), current_plan.get('reasoning_adjustments'),
+        document.get('reasoning_adjustments'),
+    )
     chat.append(_chat_turn('user', user_content))
     if kind == 'elicitation':
         document.update({
