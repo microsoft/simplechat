@@ -2,7 +2,7 @@
 # test_workflow_file_sync_prompt_context.py
 """
 Functional test for File Sync prompt context reaching the first workflow task.
-Version: 0.250.226
+Version: 0.261.106
 Implemented in: 0.250.226
 
 This test ensures that:
@@ -57,7 +57,6 @@ def load_runner_helpers() -> dict:
     namespace = {
         "DOCUMENT_ACTION_TYPE_NONE": "none",
         "DOCUMENT_ACTION_TYPE_ANALYZE": "analyze",
-        "WORKFLOW_TASK_CONTEXT_MAX_CHARS": 12000,
         "WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS": FILE_SYNC_CONTEXT_MAX_CHARS,
         "build_analyze_config": lambda action: {"enabled": (action or {}).get("type") == "analyze"},
         "_get_document_action_config": lambda source: dict(
@@ -68,7 +67,6 @@ def load_runner_helpers() -> dict:
     return load_functions(
         RUNNER_FILE,
         {
-            "_truncate_workflow_task_context",
             "_truncate_workflow_file_sync_context",
             "_format_workflow_file_sync_context",
             "_apply_file_sync_changed_documents_to_action",

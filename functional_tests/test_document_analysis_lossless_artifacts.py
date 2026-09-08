@@ -2,7 +2,7 @@
 # test_document_analysis_lossless_artifacts.py
 """
 Functional test for document analysis lossless artifacts.
-Version: 0.250.199
+Version: 0.261.106
 Implemented in: 0.241.040
 Updated in: 0.241.065
 Updated in: 0.241.197
@@ -11,6 +11,7 @@ Updated in: 0.250.112
 Updated in: 0.250.154
 Updated in: 0.250.172
 Updated in: 0.250.199
+Updated in: 0.261.106
 
 This test ensures exhaustive/table-style document analysis preserves raw window
 outputs and can build both structured CSV rows and Markdown raw-note artifacts
@@ -103,7 +104,7 @@ def load_module_functions(file_path, extra_globals=None):
         'serialize_generated_json': serialize_generated_json,
         'os': os,
         're': re,
-        'WORKFLOW_TASK_CONTEXT_MAX_CHARS': 12000,
+        'WORKFLOW_FILE_SYNC_CONTEXT_MAX_CHARS': 8000,
     }
     if extra_globals:
         namespace.update(extra_globals)

@@ -115,6 +115,17 @@ def _serialize_run(run_record):
         'response_preview': run_record.get('response_preview'),
         'error': run_record.get('error'),
         'alert_decision': run_record.get('alert_decision') or {},
+        'task_results': [
+            {
+                field: task.get(field)
+                for field in (
+                    'task_id', 'task_name', 'task_order', 'status',
+                    'workflow_result', 'context_budget', 'consumed_inputs',
+                )
+            }
+            for task in run_record.get('task_results') or []
+            if isinstance(task, dict)
+        ],
     }
 
 

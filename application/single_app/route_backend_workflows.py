@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 
 from flask import Response, jsonify, request, session, stream_with_context
+from azure.core.exceptions import AzureError
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
 from config import CosmosResourceNotFoundError, cosmos_conversations_container
@@ -50,6 +51,7 @@ from functions_personal_workflows import (
     get_latest_personal_workflow_run_for_conversation,
     get_personal_workflow,
     get_personal_workflow_run,
+    get_personal_workflow_run_item,
     get_personal_workflows,
     list_personal_workflow_run_items,
     list_personal_workflow_runs,
@@ -64,6 +66,7 @@ from functions_group_workflows import (
     get_group_workflow,
     get_group_workflow_agent_options,
     get_group_workflow_run,
+    get_group_workflow_run_item,
     get_group_workflows,
     get_latest_group_workflow_run_for_conversation,
     list_group_workflow_run_items,
@@ -88,7 +91,8 @@ from functions_source_review import (
     is_url_access_enabled_for_user,
     validate_url_access_request,
 )
-from functions_workflow_runner import create_workflow_run_id, run_group_workflow, run_personal_workflow
+from functions_workflow_runner import _workflow_task_run_item_id, create_workflow_run_id, run_group_workflow, run_personal_workflow
+from functions_workflow_result_store import WorkflowResultStorageUnavailableError, read_workflow_task_result_page
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -114,6 +118,59 @@ def _normalize_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in {'1', 'true', 'yes', 'on'}
     return bool(value)
+
+
+def _workflow_task_result_page_response(workflow, run_record, task_id, get_item):
+    run_id = _normalize_identifier((run_record or {}).get('id'))
+    workflow_id = _normalize_identifier((workflow or {}).get('id'))
+    if not workflow_id or not run_id or _normalize_identifier(run_record.get('workflow_id')) != workflow_id:
+        return jsonify({'error': 'Workflow run not found.'}), 404
+    item = get_item(run_id, _workflow_task_run_item_id(run_id, task_id))
+    if not item or any((
+        _normalize_identifier(item.get('workflow_id')) != workflow_id,
+        _normalize_identifier(item.get('run_id')) != run_id,
+        _normalize_identifier(item.get('task_id')) != _normalize_identifier(task_id),
+    )):
+        return jsonify({'error': 'Workflow task result not found.'}), 404
+    summary = item.get('workflow_result') or {}
+    result_ref = summary.get('result_ref')
+    if not isinstance(result_ref, dict):
+        return jsonify({'error': 'This task has no durable result. Older runs contain previews only.'}), 409
+    output_name = _normalize_identifier(request.args.get('output') or 'manifest')
+    if output_name == 'authoritative':
+        output_name = summary.get('authoritative_output')
+    if output_name != 'manifest':
+        output = (summary.get('outputs') or {}).get(output_name)
+        if not isinstance(output, dict) or not isinstance(output.get('result_ref'), dict):
+            return jsonify({'error': 'The requested task output is not available.'}), 404
+        result_ref = output['result_ref']
+    try:
+        offset = int(request.args.get('offset', '0'))
+        limit = int(request.args.get('limit', '65536'))
+    except ValueError:
+        return jsonify({'error': 'Result page offset and limit must be integers.'}), 400
+    if offset < 0 or not 1 <= limit <= 65536:
+        return jsonify({'error': 'Invalid result page range.'}), 400
+    try:
+        page = read_workflow_task_result_page(
+            workflow, run_id, task_id, result_ref, offset=offset, limit=limit,
+        )
+        return jsonify({**page, 'output_name': output_name})
+    except PermissionError:
+        return jsonify({'error': 'Access to this task result is not allowed.'}), 403
+    except LookupError:
+        return jsonify({'error': 'The saved task result is unavailable.'}), 404
+    except ValueError:
+        return jsonify({'error': 'The saved result or requested page is unavailable.'}), 409
+    except WorkflowResultStorageUnavailableError:
+        return jsonify({'error': 'The storage for this task result is not available.'}), 503
+    except AzureError as exc:
+        log_event(
+            '[WORKFLOW_STORE] Task result read failed',
+            extra={'workflow_id': workflow_id, 'run_id': run_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        return jsonify({'error': 'Unable to read the saved task result.'}), 503
 
 
 def _request_workflow_run_cancellation(
@@ -1080,6 +1137,23 @@ def register_route_backend_workflows(bp):
         })
 
 
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/tasks/<task_id>/result', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_task_result(workflow_id, run_id, task_id):
+        user_id = get_current_user_id()
+        workflow = get_personal_workflow(user_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+        run_record = get_personal_workflow_run(user_id, run_id)
+        return _workflow_task_result_page_response(
+            workflow, run_record, task_id, get_personal_workflow_run_item,
+        )
+
+
     @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1481,6 +1555,27 @@ def register_route_backend_workflows(bp):
             'run_id': run_id,
             'items': list_group_workflow_run_items(run_id, limit=1000),
         })
+
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/tasks/<task_id>/result', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_task_result(workflow_id, run_id, task_id):
+        user_id = get_current_user_id()
+        try:
+            group_id, _ = _resolve_group_workflow_request_group(user_id)
+        except (ValueError, LookupError, PermissionError):
+            return jsonify({'error': 'Group workflow access is not allowed.'}), 403
+        workflow = get_group_workflow(group_id, workflow_id)
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+        run_record = get_group_workflow_run(group_id, run_id)
+        return _workflow_task_result_page_response(
+            workflow, run_record, task_id, get_group_workflow_run_item,
+        )
 
 
     @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/resume-failed', methods=['POST'])

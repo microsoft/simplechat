@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow activity view snapshot aggregation.
-Version: 0.241.179
+Version: 0.261.106
 Implemented in: 0.241.179
 
 This test ensures that workflow activity snapshots merge lifecycle events,
@@ -30,6 +30,30 @@ CONVERSATION_ID = "conversation-xyz"
 def assert_equal(actual, expected, label):
     if actual != expected:
         raise AssertionError(f"{label}: expected {expected!r}, got {actual!r}")
+
+
+def test_task_result_references_survive_activity_projection():
+    result_summary = {
+        "contract_version": "workflow-result-v1",
+        "result_ref": {"sha256": "fixture-digest", "size_bytes": 20000},
+        "output_kinds": ["text", "records"],
+        "output_state": "succeeded",
+        "validation_status": "not_requested",
+    }
+    snapshot = build_workflow_activity_snapshot(run_record={
+        "id": RUN_ID,
+        "task_results": [{
+            "task_id": "extract",
+            "status": "succeeded",
+            "workflow_result": result_summary,
+            "context_budget": {"decision": "full_input", "input_tokens": 5000},
+            "outputs": {"text": "Full source content must not be copied into activity metadata."},
+        }],
+    })
+    task = snapshot["run"]["task_results"][0]
+    assert task["workflow_result"] == result_summary
+    assert task["context_budget"]["decision"] == "full_input"
+    assert "outputs" not in task
 
 
 def test_activity_merging():
