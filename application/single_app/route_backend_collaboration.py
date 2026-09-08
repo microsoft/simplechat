@@ -100,7 +100,10 @@ from functions_message_image_revisions import (
     serialize_image_revisions,
     set_current_image_revision,
 )
-from functions_image_edit import ImageEditError, revise_image_message
+from functions_image_edit import revise_image_message
+from functions_image_api_route import ImageGenerationError
+from functions_image_generation import image_generation_error_response
+from functions_ai_connections import AIConnectionError
 from functions_message_visual_styles import (
     UNSET as VISUAL_STYLE_HEIGHT_UNSET,
     VisualStyleError,
@@ -1988,12 +1991,14 @@ def register_route_backend_collaboration(bp):
                 }), 409
             except ImageRevisionError as exc:
                 return jsonify({'error': str(exc)}), 400
-            except ImageEditError as exc:
+            except (ImageGenerationError, AIConnectionError) as exc:
                 log_event(
-                    f'[COLLABORATION_IMAGE_REVISION] Edit failed for {message_id}: {exc}',
+                    '[COLLABORATION_IMAGE_REVISION] Image operation failed',
+                    extra={'message_id': message_id, 'error_code': exc.code},
                     level=logging.WARNING,
                 )
-                return jsonify({'error': str(exc)}), 502
+                payload, status = image_generation_error_response(exc)
+                return jsonify(payload), status
 
             # From here on the freshly re-read source document is the one being written.
             source_doc = result['message']

@@ -10,6 +10,13 @@ from flask import current_app, jsonify, request
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
 from functions_settings import *
+from functions_ai_connections import (
+    IMAGE_SELECTION_KEY,
+    filter_model_endpoints_by_capability,
+    image_settings_use_connections,
+    resolve_capability_model_selection,
+)
+from functions_ai_connection_migration import preserve_legacy_image_form_settings
 from functions_content_safety import normalize_content_safety_violation_message
 from functions_rate_limit import normalize_rate_limit_message
 from functions_mcp_server_config import (
@@ -1685,8 +1692,8 @@ def register_route_frontend_admin_settings(bp):
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
             requested_enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
-            model_endpoints_json = form_data.get('model_endpoints_json', '[]')
             existing_model_endpoints = settings.get('model_endpoints', []) or []
+            model_endpoints_json = form_data.get('model_endpoints_json', json.dumps(existing_model_endpoints))
             parsed_model_endpoints = []
             try:
                 parsed_model_endpoints_raw = json.loads(model_endpoints_json) if model_endpoints_json else []
@@ -1724,9 +1731,10 @@ def register_route_frontend_admin_settings(bp):
             migration_notice['message'] = ''
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
-            if should_migrate_endpoints and not parsed_model_endpoints:
-                parsed_model_endpoints = build_migrated_model_endpoints_from_legacy(settings)
-                migrated_models = parsed_model_endpoints[0]['models'] if parsed_model_endpoints else []
+            if should_migrate_endpoints and not filter_model_endpoints_by_capability(parsed_model_endpoints, "chat"):
+                migrated_endpoints = build_migrated_model_endpoints_from_legacy(settings)
+                parsed_model_endpoints = list(parsed_model_endpoints) + migrated_endpoints
+                migrated_models = migrated_endpoints[0]['models'] if migrated_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
                 debug_print(
                     f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
@@ -1765,31 +1773,11 @@ def register_route_frontend_admin_settings(bp):
                 for endpoint in parsed_model_endpoints
             ]
 
-            for endpoint in parsed_model_endpoints:
-                if not isinstance(endpoint, dict):
-                    continue
-                endpoint_id = endpoint.get('id')
-                if not endpoint_id:
-                    continue
-                keyvault_model_endpoint_cleanup_helper(
-                    existing_endpoints_by_id.get(endpoint_id),
-                    endpoint,
-                    endpoint_id,
-                    scope='global',
-                )
-
             saved_endpoint_ids = {
                 endpoint.get('id')
                 for endpoint in parsed_model_endpoints
                 if isinstance(endpoint, dict) and endpoint.get('id')
             }
-            for endpoint in existing_model_endpoints:
-                if not isinstance(endpoint, dict):
-                    continue
-                endpoint_id = endpoint.get('id')
-                if endpoint_id and endpoint_id not in saved_endpoint_ids:
-                    keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope='global')
-
             default_model_selection_json = form_data.get('default_model_selection_json', '{}')
             parsed_default_model_selection = {}
             try:
@@ -3138,7 +3126,28 @@ def register_route_frontend_admin_settings(bp):
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
+            new_settings = preserve_legacy_image_form_settings(new_settings, form_data, settings)
+            if image_settings_use_connections(settings):
+                image_selection, image_warning = resolve_capability_model_selection(
+                    settings.get(IMAGE_SELECTION_KEY), parsed_model_endpoints, "image_generation"
+                )
+                if image_selection != settings.get(IMAGE_SELECTION_KEY):
+                    new_settings[IMAGE_SELECTION_KEY] = image_selection
+                    notices = dict(settings.get("ai_connection_default_notices") or {})
+                    notices["image_generation"] = image_warning or "The image default was cleared."
+                    new_settings["ai_connection_default_notices"] = notices
+                    flash(notices["image_generation"], "warning")
             if update_settings(new_settings):
+                for endpoint in parsed_model_endpoints:
+                    endpoint_id = endpoint.get("id")
+                    if endpoint_id:
+                        keyvault_model_endpoint_cleanup_helper(
+                            existing_endpoints_by_id.get(endpoint_id), endpoint, endpoint_id, scope="global"
+                        )
+                for endpoint in existing_model_endpoints:
+                    endpoint_id = endpoint.get("id")
+                    if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                        keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
                 flash("Admin settings updated successfully.", "success")
                 if enable_custom_pages and not custom_pages_was_enabled and custom_pages_restart_acknowledged:
                     log_general_admin_action(

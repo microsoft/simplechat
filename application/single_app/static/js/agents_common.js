@@ -679,6 +679,20 @@ export function shouldEnableCustomConnection(agent) {
 		agent.enable_agent_gpt_apim
 	);
 }
+/** Consume the server's capability projection without guessing from deployment names. */
+export function isChatModelAvailable(model) {
+    return Boolean(model)
+        && model.enabled !== false
+        && model.supportsChat !== false
+        && model.capability_status?.chat?.available !== false
+        && (!Array.isArray(model.enabled_capabilities) || model.enabled_capabilities.includes('chat'));
+}
+
+function hasChatModelEndpoints(endpoints) {
+    return endpoints.some((endpoint) => endpoint && endpoint.enabled !== false
+        && Array.isArray(endpoint.models) && endpoint.models.some(isChatModelAvailable));
+}
+
 /**
  * Returns available models and selected model for dropdown, based on APIM toggle and settings
  * @param {Object} opts - { apimEnabled, settings, agent }
@@ -688,8 +702,8 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 	let models = [];
 	let selectedModel = null;
 	const endpoints = Array.isArray(settings?.model_endpoints) ? settings.model_endpoints : [];
-	const multiEndpointEnabled = (settings && settings.enable_multi_model_endpoints) || endpoints.length > 0;
-	if (multiEndpointEnabled && endpoints.length) {
+    const multiEndpointEnabled = (settings && settings.enable_multi_model_endpoints) || hasChatModelEndpoints(endpoints);
+    if (multiEndpointEnabled) {
 		const agentType = (agent && agent.agent_type) ? agent.agent_type : 'local';
 		endpoints.forEach(endpoint => {
 			if (!endpoint || endpoint.enabled === false) return;
@@ -706,7 +720,7 @@ export function getAvailableModels({ apimEnabled, settings, agent }) {
 			const endpointId = endpoint.id || '';
 			const endpointModels = endpoint.models || [];
 			endpointModels.forEach(model => {
-				if (!model || model.enabled === false) return;
+                if (!isChatModelAvailable(model)) return;
 				const modelId = model.id || model.deploymentName || model.deployment || model.modelName || model.name || '';
 				const deploymentName = model.deploymentName || model.deployment || '';
 				const modelName = model.modelName || model.name || '';
@@ -764,7 +778,7 @@ export async function fetchAndGetAvailableModels(endpoint, agent) {
 		// Check APIM enabled (support both enable_gpt_apim and enable_apim)
 		const apimEnabled = settings.enable_gpt_apim || false;
 		const endpoints = Array.isArray(settings.model_endpoints) ? settings.model_endpoints : [];
-		const enableMultiModelEndpoints = (settings.enable_multi_model_endpoints || false) || endpoints.length > 0;
+        const enableMultiModelEndpoints = (settings.enable_multi_model_endpoints || false) || hasChatModelEndpoints(endpoints);
 		const { models, selectedModel } = getAvailableModels({ apimEnabled, settings, agent });
 		return { models, selectedModel, apimEnabled, enableMultiModelEndpoints };
 	} catch (e) {

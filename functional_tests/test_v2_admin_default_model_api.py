@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_v2_admin_default_model_api.py
+#!/usr/bin/env python3
 """
 Functional test for the V2 admin default chat model API.
-Version: 0.261.061
+Version: 0.261.102
 Implemented in: 0.261.061
 
 ``default_model_selection`` is a reference -- a connection id plus a model id -- not a
@@ -165,7 +165,9 @@ def _load_selection_helpers():
         f"test cannot exercise the real rule: {', '.join(sorted(missing))}"
     )
 
-    namespace = {}
+    namespace = {
+        "supports_model_capability": import_app_module("functions_ai_connections").supports_model_capability,
+    }
     exec(
         compile(ast.Module(body=selected, type_ignores=[]), str(SETTINGS_FILE), "exec"),
         namespace,

@@ -1,7 +1,7 @@
 # test_prompt_variable_knowledge_fill.py
 """
 Functional tests for scoped, document-grounded prompt variable filling.
-Version: 0.261.096
+Version: 0.261.102
 Implemented in: 0.261.096
 
 Execute the service with mocked retrieval/model/storage boundaries and the real
@@ -204,7 +204,7 @@ def load_service():
     }
     spec = importlib.util.spec_from_file_location("_prompt_knowledge_fill_test", SERVICE_PATH)
     module = importlib.util.module_from_spec(spec)
-    with patch.dict(sys.modules, modules):
+    with patch.dict(sys.modules, modules), patch.object(sys, "path", [str(APP_ROOT), *sys.path]):
         spec.loader.exec_module(module)
     return module, client
 

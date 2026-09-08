@@ -1,6 +1,6 @@
 // modelSelection.ts
-// Types, API wrappers and pure logic for the classic embedding and image-generation
-// deployment catalogs.
+// Types, API wrappers and pure logic for embedding and legacy recovery catalogs.
+// Normal image defaults use capabilityModels.ts and saved AI Connection references.
 //
 // These predate connections and work nothing like them. A connection publishes several
 // models and is picked per conversation; an embedding or image route has exactly one

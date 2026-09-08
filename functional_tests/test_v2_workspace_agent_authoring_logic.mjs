@@ -1,5 +1,5 @@
 // test_v2_workspace_agent_authoring_logic.mjs
-// Version: 0.261.096
+// Version: 0.261.102
 // Implemented in: 0.261.096
 // Executes native agent draft, model, action, knowledge, template, and command behavior.
 
@@ -160,6 +160,32 @@ await check('disabled model choices are excluded and legacy APIM fields stay sep
     assert.equal(next.enable_agent_gpt_apim, true);
     const legacy = agentModelChoices({ ...options, settings: { gpt_model: { selected: [{ deploymentName: 'chat', modelName: 'gpt-4o' }] } } });
     assert.equal(legacy[0].deployment, 'chat');
+});
+await check('chat model choices use server capability availability without mutating connections', () => {
+    const endpoints = [{
+        id: 'mixed', provider: 'new_foundry', models: [
+            { id: 'chat', capability_status: { chat: { available: true } } },
+            { id: 'unknown-legacy-chat' },
+            { id: 'image', capability_status: { chat: { available: false } } },
+            { id: 'imported', enabled_capabilities: ['image_generation'] },
+            { id: 'disabled', enabled: false },
+            { id: 'text-disabled', supportsChat: false },
+        ],
+    }];
+    const original = structuredClone(endpoints);
+    assert.deepEqual(agentModelChoices({ ...options, model_endpoints: endpoints }).map((choice) => choice.id),
+        ['chat', 'unknown-legacy-chat']);
+    assert.deepEqual(endpoints, original);
+});
+await check('Foundry project choices do not force legacy chat into multi-endpoint mode', () => {
+    const project = { id: 'project', provider: 'new_foundry', models: [] };
+    const legacySettings = { gpt_model: { selected: [{ deploymentName: 'legacy-chat' }] } };
+    const source = { ...options, model_endpoints: [project], settings: legacySettings };
+    assert.ok(foundryEndpointMatches('new_foundry', project));
+    assert.equal(agentModelChoices(source)[0].deployment, 'legacy-chat');
+    assert.deepEqual(agentModelChoices({
+        ...source, settings: { ...legacySettings, enable_multi_model_endpoints: true },
+    }), []);
 });
 await check('Foundry types accept their scoped providers and synchronize endpoint fields without dropping siblings', () => {
     const endpoint = { id: 'foundry', provider: 'new_foundry', scope: 'personal', connection: {

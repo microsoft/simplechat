@@ -90,7 +90,11 @@ const modelsListEl = document.getElementById("model-endpoint-models-list");
 const addModelBtn = document.getElementById("model-endpoint-add-model-btn");
 
 let modelEndpoints = Array.isArray(window.modelEndpoints) ? [...window.modelEndpoints] : [];
+const savedModelEndpoints = JSON.parse(JSON.stringify(modelEndpoints));
+let connectionDraftChanged = false;
+let modalDraftChanged = false;
 let modalModels = [];
+let modalEndpointSource = null;
 let pendingDeleteEndpointId = null;
 let pendingDeleteTimeout = null;
 let pendingEndpointDuplicate = null;
@@ -432,8 +436,59 @@ function collectSelectedModels(endpoint) {
     if (!selected.length) {
         return "No models selected";
     }
-    const names = selected.map((model) => model.displayName || model.deploymentName || model.modelName || "Unnamed");
+    const names = selected.map((model) => {
+        const uses = [];
+        if (modelPublishesCapability(model, "chat")) uses.push("chat");
+        if (modelPublishesCapability(model, "image_generation")) uses.push("images");
+        return `${model.displayName || model.deploymentName || model.modelName || "Unnamed"} (${uses.join(", ") || "not published"})`;
+    });
     return names.join(", ");
+}
+
+function modelSupportsCapability(model, capability) {
+    const status = model?.capability_status?.[capability];
+    if (status && typeof status.supported === "boolean") return status.supported;
+    return capability === "chat" ? model?.supportsChat !== false : model?.supportsImageGeneration === true;
+}
+
+function modelPublishesCapability(model, capability) {
+    return model?.enabled !== false && modelSupportsCapability(model, capability) &&
+        (!Array.isArray(model.enabled_capabilities) || model.enabled_capabilities.includes(capability));
+}
+
+function announceConnectionDraft() {
+    connectionDraftChanged = true;
+    window.dispatchEvent(new CustomEvent("simplechat:model-connections-changed", { detail: { saved: false } }));
+}
+
+function markModalDraftChanged() {
+    modalDraftChanged = true;
+}
+
+window.hasUnsavedAIConnectionEdits = () => connectionDraftChanged || modalDraftChanged;
+
+async function loadAIConnectionNotices() {
+    const migrationNotice = document.getElementById("ai-connections-migration-notice");
+    const defaultNotices = document.getElementById("ai-connections-default-notices");
+    if (!migrationNotice && !defaultNotices) return;
+    try {
+        const response = await fetch("/api/v2/admin/model-endpoints");
+        if (!response.ok) throw new Error("AI Connection status could not be loaded. Refresh the page to retry.");
+        const data = await response.json();
+        if (migrationNotice) {
+            migrationNotice.textContent = data.migration?.message || "";
+            migrationNotice.classList.toggle("d-none", !migrationNotice.textContent);
+        }
+        if (defaultNotices) {
+            defaultNotices.textContent = Object.values(data.default_notices || {}).filter(value => typeof value === "string").join(" ");
+            defaultNotices.classList.toggle("d-none", !defaultNotices.textContent);
+        }
+    } catch (error) {
+        if (migrationNotice) {
+            migrationNotice.textContent = error.message || "AI Connection status could not be loaded.";
+            migrationNotice.classList.remove("d-none");
+        }
+    }
 }
 
 function renderEndpoints() {
@@ -542,7 +597,7 @@ function buildEndpointModelOption(endpoint, model) {
     const modelEnabled = model.enabled !== false;
     const modelLabel = model.displayName || model.deploymentName || model.modelName || "Unnamed model";
     const option = document.createElement("option");
-    option.value = `${endpoint.id}:${modelId}`;
+    option.value = JSON.stringify([endpoint.id, modelId]);
     option.dataset.endpointId = endpoint.id || "";
     option.dataset.modelId = modelId || "";
     option.dataset.provider = provider;
@@ -572,6 +627,7 @@ function buildDefaultModelOptions() {
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
 
         models.forEach((model) => {
+            if (!modelPublishesCapability(model, "chat")) return;
             defaultModelSelect.appendChild(buildEndpointModelOption(endpoint, model));
         });
     });
@@ -599,6 +655,7 @@ function buildMetadataExtractionModelOptions() {
     modelEndpoints.forEach((endpoint) => {
         const models = Array.isArray(endpoint.models) ? endpoint.models : [];
         models.forEach((model) => {
+            if (!modelPublishesCapability(model, "chat")) return;
             metadataExtractionModelSelect.appendChild(buildEndpointModelOption(endpoint, model));
         });
     });
@@ -803,6 +860,8 @@ function updateAuthVisibility() {
 }
 
 function resetModal() {
+    modelVisionRequest += 1;
+    modalEndpointSource = null;
     if (endpointModalEl) {
         endpointModalEl.dataset.duplicateDisabledDefault = '';
     }
@@ -853,6 +912,9 @@ function openModalForEndpoint(endpoint) {
     resetModal();
 
     if (endpoint) {
+        // Unsaved duplicates already have a new ID, so the registry cannot supply
+        // their hidden operation profiles when this editor saves them.
+        modalEndpointSource = JSON.parse(JSON.stringify(endpoint));
         if (endpointIdInput) endpointIdInput.value = endpoint.id || "";
         if (endpointNameInput) endpointNameInput.value = endpoint.name || "";
         if (endpointProviderSelect) endpointProviderSelect.value = endpoint.provider || "aoai";
@@ -898,6 +960,7 @@ function openModalForEndpoint(endpoint) {
         refreshModalModels(modalModels);
     }
 
+    modalDraftChanged = false;
     updateAuthVisibility();
     endpointModal.show();
 }
@@ -1206,6 +1269,7 @@ function findModelEditor(modelId) {
  * @type {Record<string, {supports_vision: boolean, source: string}>}
  */
 let modelVisionCapability = {};
+let modelVisionRequest = 0;
 
 /**
  * Ask the server which of the loaded models can accept image input.
@@ -1260,7 +1324,10 @@ async function loadModelVisionCapability(models) {
  */
 function createModelVisionControl(model, modelId) {
     const column = createElement("div", "col-md-4");
-    const resolved = modelVisionCapability[model.deploymentName || ""] || {};
+    const vision = model.capability_status?.vision;
+    const resolved = vision
+        ? { supports_vision: vision.supported, source: vision.source }
+        : modelVisionCapability[model.deploymentName || ""] || {};
     const source = typeof model.supportsVision === "boolean" ? "declared" : resolved.source;
     const checked = typeof model.supportsVision === "boolean"
         ? model.supportsVision
@@ -1273,6 +1340,7 @@ function createModelVisionControl(model, modelId) {
     checkbox.id = getModelIconDomId(modelId, "supports-vision");
     checkbox.dataset.supportsVisionFor = modelId;
     checkbox.checked = checked;
+    checkbox.addEventListener("change", () => { checkbox.dataset.visionEdited = "true"; });
 
     const label = createElement("label", "form-check-label");
     label.htmlFor = checkbox.id;
@@ -1295,6 +1363,65 @@ function createModelVisionControl(model, modelId) {
     return column;
 }
 
+function createModelCapabilityControls(model, modelId) {
+    const container = createElement("div", "mt-3");
+    const capabilities = [
+        ["chat", "chat", "supportsChat"],
+        ["image_generation", "images", "supportsImageGeneration"],
+    ];
+    capabilities.forEach(([capability, labelText]) => {
+        const wrapper = createElement("div", "form-check mt-2");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "form-check-input";
+        checkbox.id = getModelIconDomId(modelId, `use-${capability}`);
+        checkbox.dataset.capabilityFor = modelId;
+        checkbox.dataset.capability = capability;
+        checkbox.checked = modelSupportsCapability(model, capability) &&
+            (!Array.isArray(model.enabled_capabilities) || model.enabled_capabilities.includes(capability));
+        checkbox.disabled = !modelSupportsCapability(model, capability);
+        checkbox.dataset.initialChecked = String(checkbox.checked);
+        const label = createElement("label", "form-check-label");
+        label.htmlFor = checkbox.id;
+        label.textContent = `Use for ${labelText}`;
+        wrapper.append(checkbox, label);
+        const help = createElement("div", "form-text");
+        const status = model.capability_status?.[capability];
+        help.textContent = !status
+            ? "Save the connection to resolve capabilities."
+            : !status.supported
+              ? status.reason || "Not supported."
+              : `${status.api === "images" ? "Direct image output" : status.api === "responses" ? "Image output through the Responses image tool" : "Text output"} · ${status.source || "unknown source"}`;
+        container.append(wrapper, help);
+    });
+    const details = document.createElement("details");
+    details.className = "mt-2";
+    const summary = document.createElement("summary");
+    summary.textContent = "Capability metadata";
+    const explanation = createElement("p", "form-text");
+    explanation.textContent = "Keep automatic metadata unless you have verified the deployment's capabilities. Publication choices do not change technical support. Image input is separate from image output.";
+    details.append(summary, explanation);
+    capabilities.forEach(([, , metadataKey]) => {
+        const label = createElement("label", "form-label d-block mt-2");
+        label.textContent = metadataKey === "supportsChat" ? "Text output support" : "Image generation support";
+        const select = document.createElement("select");
+        select.id = getModelIconDomId(modelId, metadataKey);
+        label.htmlFor = select.id;
+        select.className = "form-select form-select-sm";
+        select.dataset.capabilityMetadataFor = modelId;
+        select.dataset.metadataKey = metadataKey;
+        select.append(new Option("Automatic", ""), new Option("Supported (verified by administrator)", "true"), new Option("Not supported", "false"));
+        select.value = typeof model[metadataKey] === "boolean" ? String(model[metadataKey]) : "";
+        select.addEventListener("change", () => {
+            modalModels = collectModalModels();
+            renderModalModels(modalModels);
+        });
+        details.append(label, select);
+    });
+    container.appendChild(details);
+    return container;
+}
+
 /**
  * Render the model list, then refresh it once the server has resolved capabilities.
  *
@@ -1305,10 +1432,12 @@ function createModelVisionControl(model, modelId) {
  * @returns {void}
  */
 function refreshModalModels(models) {
+    const request = ++modelVisionRequest;
     renderModalModels(models);
     void loadModelVisionCapability(models).then((resolved) => {
-        if (resolved) {
-            renderModalModels(models);
+        if (resolved && request === modelVisionRequest) {
+            modalModels = collectModalModels();
+            renderModalModels(modalModels);
         }
     });
 }
@@ -1341,7 +1470,10 @@ function renderModalModels(models) {
         checkbox.type = "checkbox";
         checkbox.dataset.modelId = modelId;
         checkbox.checked = !!model.enabled;
+        checkbox.id = getModelIconDomId(modelId, "enabled");
+        checkbox.setAttribute("aria-label", `Enable ${deploymentName || "model"}`);
         const checkboxLabel = createElement("label", "form-check-label");
+        checkboxLabel.htmlFor = checkbox.id;
         checkboxLabel.appendChild(document.createTextNode(deploymentName));
         if (modelName) {
             checkboxLabel.appendChild(document.createTextNode(" "));
@@ -1359,6 +1491,12 @@ function renderModalModels(models) {
         const displayCol = createElement("div", "col-md-4");
         displayCol.appendChild(createSmallLabel("Display Name"));
         displayCol.appendChild(createModelTextInput(modelId, "displayNameFor", displayName));
+        const modelNameCol = createElement("div", "col-md-4");
+        const modelNameLabel = createSmallLabel("Underlying Model Name (optional)");
+        const modelNameInput = createModelTextInput(modelId, "modelNameFor", modelName);
+        modelNameInput.id = getModelIconDomId(modelId, "model-name");
+        modelNameLabel.htmlFor = modelNameInput.id;
+        modelNameCol.append(modelNameLabel, modelNameInput);
         const iconCol = createElement("div", "col-md-4");
         iconCol.appendChild(createSmallLabel("Icon"));
         iconCol.appendChild(createModelIconEditor(model, modelId));
@@ -1376,6 +1514,7 @@ function renderModalModels(models) {
         descriptionCol.appendChild(createModelTextInput(modelId, "descriptionFor", description));
         fieldsRow.appendChild(deploymentCol);
         fieldsRow.appendChild(displayCol);
+        fieldsRow.appendChild(modelNameCol);
         fieldsRow.appendChild(iconCol);
         fieldsRow.appendChild(responseLengthCol);
         fieldsRow.appendChild(descriptionCol);
@@ -1387,7 +1526,16 @@ function renderModalModels(models) {
         testButton.className = "btn btn-sm btn-outline-secondary";
         testButton.dataset.action = "test-model";
         testButton.dataset.modelId = modelId;
-        testButton.textContent = "Test Connection";
+        testButton.textContent = "Test chat";
+        testButton.disabled = !modelPublishesCapability(model, "chat");
+        testButton.classList.toggle("d-none", !modelSupportsCapability(model, "chat"));
+        const imageTestButton = document.createElement("button");
+        imageTestButton.type = "button";
+        imageTestButton.className = "btn btn-sm btn-outline-secondary";
+        imageTestButton.dataset.action = "test-image";
+        imageTestButton.dataset.modelId = modelId;
+        imageTestButton.textContent = "Test image generation";
+        imageTestButton.classList.toggle("d-none", !modelSupportsCapability(model, "image_generation"));
         const removeButton = document.createElement("button");
         removeButton.type = "button";
         removeButton.className = "btn btn-sm btn-outline-danger";
@@ -1395,10 +1543,12 @@ function renderModalModels(models) {
         removeButton.dataset.modelId = modelId;
         removeButton.textContent = "Remove";
         actions.appendChild(testButton);
+        actions.appendChild(imageTestButton);
         actions.appendChild(removeButton);
 
         wrapper.appendChild(checkWrapper);
         wrapper.appendChild(fieldsRow);
+        wrapper.appendChild(createModelCapabilityControls(model, modelId));
         wrapper.appendChild(actions);
         fragment.appendChild(wrapper);
     });
@@ -1413,25 +1563,53 @@ function collectModalModels() {
     }
 
     const updated = modalModels.map((model) => ({ ...model }));
+    const inputs = Array.from(modelsListEl.querySelectorAll("input"));
     updated.forEach((model) => {
-        const checkbox = modelsListEl.querySelector(`input[data-model-id="${model.id}"]`);
-        const deploymentInput = modelsListEl.querySelector(`input[data-deployment-name-for="${model.id}"]`);
-        const displayInput = modelsListEl.querySelector(`input[data-display-name-for="${model.id}"]`);
-        const descriptionInput = modelsListEl.querySelector(`input[data-description-for="${model.id}"]`);
-        const responseLengthInput = modelsListEl.querySelector(`input[data-response-length-for="${model.id}"]`);
-        const visionInput = modelsListEl.querySelector(`input[data-supports-vision-for="${model.id}"]`);
+        const inputFor = (key) => inputs.find(input => input.dataset[key] === String(model.id));
+        const checkbox = inputFor("modelId");
+        const deploymentInput = inputFor("deploymentNameFor");
+        const displayInput = inputFor("displayNameFor");
+        const modelNameInput = inputFor("modelNameFor");
+        const descriptionInput = inputFor("descriptionFor");
+        const responseLengthInput = inputFor("responseLengthFor");
+        const visionInput = inputFor("supportsVisionFor");
         const iconEditor = findModelEditor(model.id);
         const responseLength = responseLengthInput ? normalizeModelResponseLength(responseLengthInput.value) : "";
         if (responseLength === null) {
             throw new Error("Response length must be a positive whole number.");
         }
         model.enabled = checkbox ? checkbox.checked : model.enabled;
-        model.deploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
+        const nextDeploymentName = deploymentInput ? deploymentInput.value.trim() : model.deploymentName;
+        const nextModelName = modelNameInput ? modelNameInput.value.trim() : model.modelName;
+        if (model.deploymentName !== nextDeploymentName || model.modelName !== nextModelName) {
+            delete model.capability_status;
+        }
+        model.deploymentName = nextDeploymentName;
+        model.modelName = nextModelName;
         model.displayName = displayInput ? displayInput.value.trim() : model.displayName;
-        // Recorded on every save, not only when changed, so the value the catalog
-        // resolved becomes the endpoint's own answer. A model the catalog later
-        // reclassifies then keeps the behaviour the administrator saw and approved.
-        if (visionInput) {
+        const metadataInputs = Array.from(modelsListEl.querySelectorAll("[data-capability-metadata-for]"))
+            .filter(input => input.dataset.capabilityMetadataFor === model.id);
+        metadataInputs.forEach(input => {
+            const key = input.dataset.metadataKey;
+            const next = input.value === "" ? undefined : input.value === "true";
+            if (model[key] !== next) delete model.capability_status;
+            if (next === undefined) delete model[key];
+            else model[key] = next;
+        });
+        const availabilityInputs = Array.from(modelsListEl.querySelectorAll("[data-capability-for]"))
+            .filter(input => input.dataset.capabilityFor === model.id);
+        if (availabilityInputs.some(input => String(input.checked) !== input.dataset.initialChecked)) {
+            const enabled = new Set(model.enabled_capabilities || ["chat", "image_generation"]);
+            availabilityInputs.forEach(input => {
+                if (String(input.checked) === input.dataset.initialChecked) return;
+                if (input.checked) enabled.add(input.dataset.capability);
+                else enabled.delete(input.dataset.capability);
+            });
+            model.enabled_capabilities = [...enabled];
+        }
+        // A late metadata lookup must not turn its initial unchecked placeholder
+        // into an administrator override while preserving the rest of the draft.
+        if (visionInput && (typeof model.supportsVision === "boolean" || visionInput.dataset.visionEdited === "true")) {
             model.supportsVision = visionInput.checked;
         }
         model.icon = iconEditor ? getIconPayload(iconEditor, MODEL_ICON_CONTROL_CONFIG) : model.icon || {};
@@ -1469,15 +1647,42 @@ async function testModelConnection(model) {
         if (!response.ok) {
             throw new Error(data.error || "Connection test failed.");
         }
-        showToast("Model connection successful.", "success");
+        showToast("Chat request succeeded. Image inference was not tested.", "success");
     } catch (error) {
         console.error("Model connection failed", error);
         showToast(error.message || "Model connection failed.", "danger");
     }
 }
 
+async function testSavedImageModel(model) {
+    const endpointId = endpointIdInput?.value || "";
+    const saved = savedModelEndpoints.find(endpoint => endpoint.id === endpointId);
+    const savedModel = saved?.models?.find(item => item.id === model.id);
+    if (!saved || !savedModel || connectionDraftChanged || modalDraftChanged) {
+        showToast("Save the connection first. Image tests use only saved models and credentials.", "warning");
+        return;
+    }
+    try {
+        const response = await fetch("/api/v2/admin/settings/test-connection", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                test_type: "image",
+                selection: { endpoint_id: saved.id, model_id: savedModel.id, provider: saved.provider },
+            }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.success !== true) {
+            throw new Error(data.error || "The saved model did not return an image.");
+        }
+        showToast("The saved model generated an image successfully.", "success");
+    } catch (error) {
+        showToast(error.message || "Image generation could not be tested.", "danger");
+    }
+}
+
 async function fetchModels() {
-    const payload = buildEndpointPayload();
+    const payload = buildEndpointPayload(true);
     if (!payload) {
         return;
     }
@@ -1515,6 +1720,7 @@ async function fetchModels() {
                 return;
             }
             modalModels.push({
+                ...model,
                 id: generateId(),
                 deploymentName,
                 modelName: model.modelName || model.name || "",
@@ -1527,6 +1733,7 @@ async function fetchModels() {
             addedCount += 1;
         });
         refreshModalModels(modalModels);
+        markModalDraftChanged();
         showToast(`Fetched ${models.length} models. Added ${addedCount} new.`, "success");
     } catch (error) {
         console.error("Model fetch failed", error);
@@ -1534,7 +1741,7 @@ async function fetchModels() {
     }
 }
 
-function buildEndpointPayload() {
+function buildEndpointPayload(requireDiscovery = false) {
     if (!endpointNameInput || !endpointUrlInput || !endpointOpenAiApiVersionInput) {
         return null;
     }
@@ -1558,6 +1765,7 @@ function buildEndpointPayload() {
     const resourceGroup = endpointResourceGroupInput?.value.trim() || "";
     const authType = endpointAuthTypeSelect?.value || "managed_identity";
     const existingEndpoint = modelEndpoints.find((savedEndpoint) => savedEndpoint.id === endpointId);
+    const sourceEndpoint = modalEndpointSource?.id === endpointId ? modalEndpointSource : existingEndpoint;
     const identityHeader = normalizeEndpointIdentityHeaderOverride({
         mode: endpointIdentityModeSelect?.value || "inherit",
         header_name: endpointIdentityHeaderNameInput?.value || "",
@@ -1579,7 +1787,7 @@ function buildEndpointPayload() {
         return null;
     }
 
-    if (provider === "aoai" && authType !== "api_key" && (!subscriptionId || !resourceGroup)) {
+    if (requireDiscovery && provider === "aoai" && authType !== "api_key" && (!subscriptionId || !resourceGroup)) {
         showToast("Subscription ID and resource group are required for Azure OpenAI model discovery.", "warning");
         return null;
     }
@@ -1597,6 +1805,7 @@ function buildEndpointPayload() {
         foundry_scope: endpointFoundryScopeInput?.value.trim() || ""
     };
 
+    // A clone's copied marker is not a stored credential under its new ID.
     const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);
     const hasStoredClientSecret = authType === "service_principal" && Boolean(existingEndpoint?.has_client_secret);
 
@@ -1627,6 +1836,7 @@ function buildEndpointPayload() {
     } : {};
 
     const connection = {
+        ...(sourceEndpoint?.connection || {}),
         endpoint,
         openai_api_version: openAiApiVersion
     };
@@ -1659,11 +1869,13 @@ function saveEndpoint() {
         const models = collectModalModels();
         const endpointId = endpointIdInput?.value || generateId();
         const existingEndpoint = modelEndpoints.find((endpoint) => endpoint.id === endpointId);
+        const sourceEndpoint = modalEndpointSource?.id === endpointId ? modalEndpointSource : existingEndpoint;
         const authType = payload.auth?.type || "managed_identity";
         const hasApiKey = authType === "api_key" && (Boolean(payload.auth?.api_key) || Boolean(existingEndpoint?.has_api_key));
         const hasClientSecret = authType === "service_principal" && (Boolean(payload.auth?.client_secret) || Boolean(existingEndpoint?.has_client_secret));
 
         const endpointData = {
+            ...sourceEndpoint,
             id: endpointId,
             name: payload.name,
             provider: payload.provider,
@@ -1687,6 +1899,7 @@ function saveEndpoint() {
         }
 
         renderEndpoints();
+        announceConnectionDraft();
         markModified();
         handleMigrationConfigurationChange();
         endpointModal?.hide();
@@ -1698,6 +1911,7 @@ function saveEndpoint() {
 }
 
 function addManualModel() {
+    modalModels = collectModalModels();
     modalModels.push({
         id: generateId(),
         deploymentName: "",
@@ -1709,6 +1923,7 @@ function addManualModel() {
         isDiscovered: false
     });
     renderModalModels(modalModels);
+    markModalDraftChanged();
 }
 
 function handleModelListClick(event) {
@@ -1723,10 +1938,15 @@ function handleModelListClick(event) {
     if (!model) {
         return;
     }
+    if (action === "test-image") {
+        void testSavedImageModel(model);
+        return;
+    }
 
     if (action === "remove-model") {
         modalModels = modalModels.filter((item) => item.id !== modelId);
         renderModalModels(modalModels);
+        markModalDraftChanged();
         return;
     }
 
@@ -1772,6 +1992,7 @@ function handleTableClick(event) {
 
     if (action === "toggle") {
         endpoint.enabled = !endpoint.enabled;
+        announceConnectionDraft();
         renderEndpoints();
         markModified();
         handleMigrationConfigurationChange();
@@ -1781,6 +2002,7 @@ function handleTableClick(event) {
     if (action === "delete") {
         if (pendingDeleteEndpointId === endpointId) {
             modelEndpoints = modelEndpoints.filter((item) => item.id !== endpointId);
+            announceConnectionDraft();
             renderEndpoints();
             markModified();
             handleMigrationConfigurationChange();
@@ -2184,8 +2406,14 @@ function init() {
 
     renderEndpoints();
     updateAuthVisibility();
-    setElementVisibility(endpointsWrapper, isMultiEndpointEnabled);
+    setElementVisibility(endpointsWrapper, true);
     setElementVisibility(defaultModelWrapper, isMultiEndpointEnabled);
+    void loadAIConnectionNotices();
+    if (endpointModalEl) {
+        endpointModalEl.addEventListener("input", markModalDraftChanged);
+        endpointModalEl.addEventListener("change", markModalDraftChanged);
+        endpointModalEl.addEventListener("hidden.bs.modal", () => { modalDraftChanged = false; });
+    }
 
     if (enableMultiEndpointToggle) {
         enableMultiEndpointToggle.addEventListener("change", handleToggleChange);

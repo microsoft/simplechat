@@ -43,6 +43,7 @@ from model_endpoint_clients import (
     resolve_openai_style_request_api_version,
 )
 from functions_appinsights import log_event, get_appinsights_logger
+from functions_ai_connections import require_model_capability
 from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
@@ -560,6 +561,13 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
             return None
 
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next((m for m in models if m.get("id") == model_id), None)
+        if not model_cfg:
+            return None
+        provider = (endpoint_cfg.get("provider") or "aoai").lower()
+        require_model_capability(model_cfg, provider=provider)
+
         endpoint_scope = endpoint_cfg.get("_endpoint_scope", "global")
         endpoint_cfg = dict(endpoint_cfg)
         endpoint_cfg.pop("_endpoint_scope", None)
@@ -570,12 +578,6 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             return_type=SecretReturnType.VALUE,
         )
 
-        models = endpoint_cfg.get("models", []) or []
-        model_cfg = next((m for m in models if m.get("id") == model_id), None)
-        if not model_cfg or not model_cfg.get("enabled", True):
-            return None
-
-        provider = (endpoint_cfg.get("provider") or "aoai").lower()
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
         deployment = model_cfg.get("deploymentName") or model_cfg.get("deployment") or ""

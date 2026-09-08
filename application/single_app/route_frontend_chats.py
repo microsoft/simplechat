@@ -6,6 +6,7 @@ from functions_authentication import *
 from functions_content import *
 from functions_settings import *
 from functions_agent_catalog import build_accessible_agent_catalog
+from functions_ai_connections import filter_model_endpoints_by_capability
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -546,7 +547,7 @@ def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_gro
         sanitized_endpoints = sanitize_model_endpoints_for_frontend(endpoints)
         normalized_endpoints, _ = normalize_model_endpoints(sanitized_endpoints)
 
-        for endpoint in normalized_endpoints:
+        for endpoint in filter_model_endpoints_by_capability(normalized_endpoints):
             if not endpoint.get('enabled', True):
                 continue
 

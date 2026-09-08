@@ -11,6 +11,7 @@ from functions_settings import *
 from foundry_agent_runtime import FoundryAgentUserAuthenticationRequired, list_foundry_agents_from_endpoint, list_foundry_workflows_from_endpoint, list_new_foundry_agents_from_endpoint, resolve_foundry_project_base, resolve_foundry_project_api_version, build_project_credential, resolve_authority
 from functions_appinsights import log_event
 from functions_image_api_route import is_image_capable_model_name
+from functions_ai_connections import describe_model_capabilities, supports_model_capability
 from functions_model_capabilities import resolve_model_vision_support
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -394,6 +395,8 @@ def register_route_backend_models(bp):
                         "deploymentName": deployment_name,
                         "modelName": model_name or ""
                     })
+                for model in mapped:
+                    model["capability_status"] = describe_model_capabilities(model, provider)
                 return jsonify({"models": mapped})
 
             if provider == "aoai":
@@ -422,12 +425,15 @@ def register_route_backend_models(bp):
                     model_name = deployment.properties.model.name
                     if model_name and (
                         "gpt" in model_name.lower() or
-                        re.search(r"o\d+", model_name.lower())
-                    ) and "image" not in model_name.lower():
+                        re.search(r"o\d+", model_name.lower()) or
+                        supports_model_capability({"modelName": model_name}, "image_generation", provider)
+                    ):
                         mapped.append({
                             "deploymentName": deployment.name,
                             "modelName": model_name
                         })
+                for model in mapped:
+                    model["capability_status"] = describe_model_capabilities(model, provider)
                 return jsonify({"models": mapped})
 
             return jsonify({"error": "Model provider not found."}), 400
@@ -786,8 +792,9 @@ def register_route_backend_models(bp):
                     model_name = deployment.properties.model.name
                     if model_name and (
                         "gpt" in model_name.lower() or
-                        re.search(r"o\d+", model_name.lower())
-                    ) and "image" not in model_name.lower():
+                        re.search(r"o\d+", model_name.lower()) or
+                        supports_model_capability({"modelName": model_name}, "image_generation", provider)
+                    ):
                         count += 1
                 return jsonify({"success": True, "count": count})
 

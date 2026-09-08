@@ -117,6 +117,8 @@ export interface AdminModelCatalogEntry {
     endpoint_id?: string | null;
     model_name: string;
     supports_vision: boolean;
+    supports_chat?: boolean;
+    capability_status?: { chat?: { supported: boolean; available?: boolean } };
     /**
      * Where the vision answer came from: `declared` when an administrator set it,
      * `catalog` when the shipped capability data says so, and `inferred` when it was
@@ -192,6 +194,8 @@ export interface AdminField {
     settings_path?: string[];
     /** Reports a value that something else owns. Never editable here. */
     readonly?: boolean;
+    /** Compatibility definitions retained for Classic recovery, never normal V2 controls. */
+    legacy?: boolean;
     /** Where a read-only mirror is actually configured. */
     managed_by?: string;
     /** Entry list fields only: what one row's identifier is called. */
@@ -604,7 +608,7 @@ export function isFieldVisible(
     fieldsByKey?: Map<string, AdminField>,
     runtimeFlags?: Record<string, boolean>,
 ): boolean {
-    return evaluateDependency(field.depends_on, (key) =>
+    return !field.legacy && evaluateDependency(field.depends_on, (key) =>
         readDependencyValue(key, settings, draft, fieldsByKey),
     runtimeFlags);
 }

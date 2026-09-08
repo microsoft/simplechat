@@ -1,5 +1,6 @@
 // ModelSelectionPicker.tsx
-// Chooses the single deployment an embedding or image-generation route uses.
+// Chooses a deployment from a legacy catalog (currently used for embeddings).
+// Shared image defaults are rendered by CapabilityModelPicker instead.
 //
 // Unlike the chat connections, these routes have no list to draw from: there is one Azure
 // OpenAI resource, and the only way to learn what it has deployed is to ask it. So the

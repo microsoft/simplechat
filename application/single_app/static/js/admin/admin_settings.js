@@ -5064,6 +5064,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderGPTModels();
     renderEmbeddingModels();
     renderImageModels();
+    initializeSharedImageModels();
 
     updateGptHiddenInput();
     updateEmbeddingHiddenInput();
@@ -5428,32 +5429,194 @@ function renderEmbeddingModels() {
 function renderImageModels() {
     const listDiv = document.getElementById('image_models_list');
     if (!listDiv) return;
-
+    listDiv.replaceChildren();
     if (!imageAll || imageAll.length === 0) {
-        listDiv.innerHTML = '<p class="text-warning">No image models found. Click "Fetch Image Models" to populate.</p>';
+        const notice = document.createElement('p');
+        notice.className = 'text-warning';
+        notice.textContent = 'No legacy image models found. Fetch models to recover the old configuration.';
+        listDiv.appendChild(notice);
         return;
     }
-
-    let html = '<ul class="list-group">';
-    imageAll.forEach(m => {
-        const isSelected = imageSelected.some(sel =>
-            sel.deploymentName === m.deploymentName &&
-            sel.modelName === m.modelName
-        );
-        const buttonLabel = isSelected ? 'Selected' : 'Select';
-        const buttonDisabled = isSelected ? 'disabled' : '';
-        html += `
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                <span>${m.deploymentName} (Model: ${m.modelName})</span>
-                <button class="btn btn-sm btn-primary" ${buttonDisabled}
-                    onclick="selectImageModel('${m.deploymentName}', '${m.modelName}')">
-                    ${buttonLabel}
-                </button>
-            </li>
-        `;
+    const list = document.createElement('ul');
+    list.className = 'list-group';
+    imageAll.forEach(model => {
+        const selected = imageSelected.some(item => item.deploymentName === model.deploymentName);
+        const row = document.createElement('li');
+        row.className = 'list-group-item d-flex justify-content-between align-items-center';
+        const name = document.createElement('span');
+        name.textContent = `${model.deploymentName} (Model: ${model.modelName || model.deploymentName})`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-primary';
+        button.disabled = selected;
+        button.textContent = selected ? 'Selected' : 'Select';
+        button.addEventListener('click', () => window.selectImageModel(model.deploymentName, model.modelName));
+        row.append(name, button);
+        list.appendChild(row);
     });
-    html += '</ul>';
-    listDiv.innerHTML = html;
+    listDiv.appendChild(list);
+}
+
+let sharedImageModels = null;
+let sharedImageBusy = false;
+let sharedImageBindingAuthoritative = document.getElementById('shared-image-model-settings')?.dataset.sharedBindingAuthoritative === 'true';
+
+function isImageImportFailure(migration) {
+    return migration?.status === 'error' || migration?.status === 'failed';
+}
+
+function canEditLegacyImageSettings() {
+    return !sharedImageBindingAuthoritative && isImageImportFailure(sharedImageModels?.migration);
+}
+
+function setImageNotice(id, message, tone = 'warning') {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.className = `alert alert-${tone} mt-2`;
+    element.classList.toggle('d-none', !message);
+    element.textContent = message || '';
+}
+
+function sharedImageChoiceIndex() {
+    if (!sharedImageModels) return -1;
+    return sharedImageModels.choices.findIndex(choice =>
+        choice.endpoint_id === sharedImageModels.selection?.endpoint_id &&
+        choice.model_id === sharedImageModels.selection?.model_id
+    );
+}
+
+function renderSharedImageModels() {
+    const select = document.getElementById('image-generation-default-model');
+    if (!select || !sharedImageModels) return;
+    select.replaceChildren(new Option('No default image model', ''));
+    const groups = new Map();
+    sharedImageModels.choices.forEach((choice, index) => {
+        let group = groups.get(choice.endpoint_id);
+        if (!group) {
+            group = document.createElement('optgroup');
+            group.label = choice.connection_name || 'Connection';
+            groups.set(choice.endpoint_id, group);
+            select.appendChild(group);
+        }
+        const name = choice.label || choice.deployment_name || choice.model_id;
+        const deployment = choice.deployment_name && choice.deployment_name !== name
+            ? ` (${choice.deployment_name})` : '';
+        group.appendChild(new Option(`${name}${deployment}`, String(index)));
+    });
+    const selectedIndex = sharedImageChoiceIndex();
+    const dangling = Boolean(sharedImageModels.selection?.endpoint_id && selectedIndex < 0);
+    if (dangling) {
+        const stale = new Option('Saved model — no longer available', 'unavailable');
+        stale.disabled = true;
+        select.appendChild(stale);
+    }
+    select.value = dangling ? 'unavailable' : selectedIndex < 0 ? '' : String(selectedIndex);
+    select.disabled = sharedImageBusy;
+    const refresh = document.getElementById('refresh-image-generation-models');
+    if (refresh) refresh.disabled = sharedImageBusy;
+    const test = document.getElementById('test_image_button');
+    if (test) test.disabled = sharedImageBusy || selectedIndex < 0 || !sharedImageModels.enabled;
+    const support = sharedImageModels.choices[selectedIndex]?.capability;
+    const capability = document.getElementById('image-generation-model-capability');
+    if (capability) {
+        capability.textContent = support
+            ? `${support.api === 'images' ? 'Direct image output' : 'Image output through the Responses image tool'} · ${support.source || 'unknown source'}`
+            : '';
+    }
+    const emptyMessage = !sharedImageModels.choices.length
+        ? 'No saved connection publishes a compatible image model. Add or enable one in AI Connections and save the connection first.'
+        : sharedImageModels.enabled && selectedIndex < 0
+          ? 'Choose a default image model before generating images. A cleared selection never restores the legacy model.'
+          : !sharedImageModels.enabled
+            ? 'Image generation is off. You can configure the default without enabling it. Save the feature switch before testing.'
+            : '';
+    setImageNotice('image-generation-model-notice', sharedImageModels.reason || emptyMessage);
+    const migration = sharedImageModels.migration;
+    if (migration?.status === 'complete') sharedImageBindingAuthoritative = true;
+    const recoveryAllowed = canEditLegacyImageSettings();
+    const migrationMessage = isImageImportFailure(migration) && sharedImageBindingAuthoritative
+        ? 'An earlier image import failed. Image configuration now uses AI Connections; legacy settings are retained and cannot be edited here.'
+        : migration?.message || '';
+    setImageNotice('image-generation-migration-notice', migrationMessage, recoveryAllowed ? 'warning' : 'info');
+    document.getElementById('legacy-image-recovery')?.classList.toggle('d-none', !recoveryAllowed);
+    const legacy = document.getElementById('legacy-image-settings');
+    if (legacy) legacy.disabled = !recoveryAllowed || sharedImageBusy;
+}
+
+async function readSharedImageResponse(response) {
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'The image default could not be saved.');
+    }
+    if (data.capability !== 'image_generation' || !Array.isArray(data.choices) || typeof data.enabled !== 'boolean') {
+        throw new Error('The image model list could not be read. Reload and try again.');
+    }
+    return {
+        ...data,
+        choices: data.choices.filter(choice => choice && typeof choice.endpoint_id === 'string' &&
+            typeof choice.model_id === 'string' && choice.capability?.supported === true),
+    };
+}
+
+async function loadSharedImageModels() {
+    if (!document.getElementById('image-generation-default-model') || sharedImageBusy) return;
+    sharedImageBusy = true;
+    renderSharedImageModels();
+    try {
+        sharedImageModels = await readSharedImageResponse(await fetch('/api/v2/admin/capability-models/image_generation'));
+        setImageNotice('image-generation-model-error', '', 'danger');
+    } catch (error) {
+        setImageNotice('image-generation-model-error', error.message || 'Image models could not be loaded.', 'danger');
+    } finally {
+        sharedImageBusy = false;
+        renderSharedImageModels();
+    }
+}
+
+async function saveSharedImageModel(event) {
+    if (!sharedImageModels || sharedImageBusy) return;
+    const choice = event.target.value === '' ? null : sharedImageModels.choices[Number(event.target.value)];
+    if (event.target.value !== '' && !choice) return;
+    const selection = choice
+        ? { endpoint_id: choice.endpoint_id, model_id: choice.model_id, provider: choice.provider }
+        : { endpoint_id: '', model_id: '', provider: '' };
+    const previous = sharedImageModels;
+    sharedImageBusy = true;
+    sharedImageModels = { ...sharedImageModels, selection };
+    document.getElementById('image-generation-model-saving')?.classList.remove('d-none');
+    document.getElementById('test_image_result')?.replaceChildren();
+    renderSharedImageModels();
+    try {
+        sharedImageModels = await readSharedImageResponse(await fetch('/api/v2/admin/capability-models/image_generation', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selection }),
+        }));
+        sharedImageBindingAuthoritative = true;
+        setImageNotice('image-generation-model-error', '', 'danger');
+    } catch (error) {
+        sharedImageModels = previous;
+        setImageNotice('image-generation-model-error', error.message || 'The image default could not be saved.', 'danger');
+    } finally {
+        sharedImageBusy = false;
+        document.getElementById('image-generation-model-saving')?.classList.add('d-none');
+        renderSharedImageModels();
+    }
+}
+
+function initializeSharedImageModels() {
+    const select = document.getElementById('image-generation-default-model');
+    if (!select) return;
+    select.addEventListener('change', saveSharedImageModel);
+    document.getElementById('refresh-image-generation-models')?.addEventListener('click', loadSharedImageModels);
+    window.addEventListener('simplechat:model-connections-changed', (event) => {
+        if (event.detail?.saved) {
+            void loadSharedImageModels();
+        } else {
+            setImageNotice('image-generation-model-notice', 'Save the connection first, then refresh choices. Only saved connections are offered here.');
+        }
+    });
+    void loadSharedImageModels();
 }
 
 const fetchGptBtn = document.getElementById('fetch_gpt_models_btn');
@@ -5560,11 +5723,16 @@ function updateEmbeddingHiddenInput() {
 const fetchImageBtn = document.getElementById('fetch_image_models_btn');
 if (fetchImageBtn) {
     fetchImageBtn.addEventListener('click', async () => {
+        if (!canEditLegacyImageSettings()) {
+            setImageNotice('image-generation-model-error', 'Legacy image configuration is not editable. Choose a shared image model instead.', 'danger');
+            return;
+        }
         const listDiv = document.getElementById('image_models_list');
-        listDiv.innerHTML = 'Fetching...';
+        listDiv.textContent = 'Fetching...';
         try {
             const resp = await fetch('/api/models/image');
             const data = await resp.json();
+            if (!canEditLegacyImageSettings()) return;
             if (resp.ok && data.models && data.models.length > 0) {
                 // Clear old models and replace with new ones
                 imageAll = data.models;
@@ -5578,15 +5746,19 @@ if (fetchImageBtn) {
                 updateImageHiddenInput();
                 markFormAsModified();
             } else {
-                listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No image models found'}</p>`;
+                listDiv.textContent = data.error || 'No image models found.';
             }
         } catch (err) {
-            listDiv.innerHTML = `<p class="text-danger">Error fetching image models: ${err.message}</p>`;
+            listDiv.textContent = err.message || 'Image models could not be fetched.';
         }
     });
 }
 
 window.selectImageModel = (deploymentName, modelName) => {
+    if (!canEditLegacyImageSettings()) {
+        setImageNotice('image-generation-model-error', 'Legacy image configuration is not editable. Choose a shared image model instead.', 'danger');
+        return;
+    }
     imageSelected = [{ deploymentName, modelName: modelName || null }];
     document.getElementById('image_gen_model').value = deploymentName;
     renderImageModels();
@@ -6761,7 +6933,8 @@ function setupToggles() {
     const enableImageGen = document.getElementById('enable_image_generation');
     if (enableImageGen) {
         enableImageGen.addEventListener('change', function () {
-            document.getElementById('image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            document.getElementById('image_gen_settings')?.classList.toggle('d-none', !this.checked);
+            renderSharedImageModels();
             markFormAsModified();
         });
     }
@@ -6769,8 +6942,8 @@ function setupToggles() {
     const enableImageGenApim = document.getElementById('enable_image_gen_apim');
     if (enableImageGenApim) {
         enableImageGenApim.addEventListener('change', function () {
-            document.getElementById('non_apim_image_gen_settings').style.display = this.checked ? 'none' : 'block';
-            document.getElementById('apim_image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            document.getElementById('non_apim_image_gen_settings')?.classList.toggle('d-none', this.checked);
+            document.getElementById('apim_image_gen_settings')?.classList.toggle('d-none', !this.checked);
             markFormAsModified();
         });
     }
@@ -7240,8 +7413,7 @@ function setupToggles() {
     const imgAuthType = document.getElementById('azure_openai_image_gen_authentication_type');
     if (imgAuthType) {
         imgAuthType.addEventListener('change', function () {
-            document.getElementById('image_gen_key_container').style.display =
-                (this.value === 'key') ? 'block' : 'none';
+            document.getElementById('image_gen_key_container')?.classList.toggle('d-none', this.value !== 'key');
             markFormAsModified();
         });
     }
@@ -8247,49 +8419,34 @@ function setupTestButtons() {
     const testImageBtn = document.getElementById('test_image_button');
     if (testImageBtn) {
         testImageBtn.addEventListener('click', async () => {
-            const resultDiv = document.getElementById('test_image_result');
-            resultDiv.innerHTML = 'Testing Image Generation...';
-
-            const enableApim = document.getElementById('enable_image_gen_apim').checked;
-
-            const payload = {
-                test_type: 'image',
-                enable_apim: enableApim,
-                selected_model: imageSelected[0] || null
-            };
-
-            if (enableApim) {
-                payload.apim = {
-                    endpoint: document.getElementById('azure_apim_image_gen_endpoint').value,
-                    api_version: document.getElementById('azure_apim_image_gen_api_version').value,
-                    deployment: document.getElementById('azure_apim_image_gen_deployment').value,
-                    subscription_key: document.getElementById('azure_apim_image_gen_subscription_key').value
-                };
-            } else {
-                payload.direct = {
-                    endpoint: document.getElementById('azure_openai_image_gen_endpoint').value,
-                    auth_type: document.getElementById('azure_openai_image_gen_authentication_type').value,
-                    subscription_id: document.getElementById('azure_openai_image_gen_subscription_id').value,
-                    resource_group: document.getElementById('azure_openai_image_gen_resource_group').value,
-                    key: document.getElementById('azure_openai_image_gen_key').value,
-                    api_version: document.getElementById('azure_openai_image_gen_api_version').value
-                };
+            if (sharedImageBusy || !sharedImageModels || sharedImageChoiceIndex() < 0) return;
+            if (typeof window.hasUnsavedAIConnectionEdits === 'function' && window.hasUnsavedAIConnectionEdits()) {
+                setImageNotice('test_image_result', 'Save the connection first. Image tests only use the saved model and credentials.');
+                return;
             }
-
+            if (!document.getElementById('enable_image_generation')?.checked || !sharedImageModels.enabled) {
+                setImageNotice('test_image_result', 'Enable Image Generation and save settings before testing.');
+                return;
+            }
+            sharedImageBusy = true;
+            renderSharedImageModels();
+            setImageNotice('test_image_result', 'Testing the saved image model…', 'info');
             try {
-                const resp = await fetch('/api/admin/settings/test_connection', {
+                const resp = await fetch('/api/v2/admin/settings/test-connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify({ test_type: 'image', selection: sharedImageModels.selection })
                 });
                 const data = await resp.json();
-                if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
-                } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Image Gen'}</span>`;
+                if (!resp.ok || data.success !== true) {
+                    throw new Error(data.error || 'The saved model did not return an image.');
                 }
+                setImageNotice('test_image_result', 'The saved image model generated an image successfully.', 'success');
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                setImageNotice('test_image_result', err.message || 'Image generation could not be tested.', 'danger');
+            } finally {
+                sharedImageBusy = false;
+                renderSharedImageModels();
             }
         });
     }
@@ -10711,6 +10868,9 @@ function checkOptionalFeaturesEnabled(stepNumber) {
             
             // For image generation, check if it's properly configured when enabled
             if (imageGenEnabled) {
+                if (sharedImageBindingAuthoritative) {
+                    return citationsEnabled || sharedImageChoiceIndex() >= 0;
+                }
                 const imageApim = document.getElementById('enable_image_gen_apim')?.checked;
                 if (imageApim) {
                     const apimEndpoint = document.getElementById('azure_apim_image_gen_endpoint')?.value;

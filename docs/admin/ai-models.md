@@ -1,10 +1,11 @@
 ---
 layout: page
 title: "AI Models settings"
-description: "AI Models configures chat, embedding, image generation, APIM, multi-endpoint routing, and model endpoint identity behavior."
+description: "Configure shared chat and image connections, independent task defaults, embeddings, APIM, and model request identity."
 section: "Administration"
 audience: admin
 admin_tab: ai-models
+version: "0.261.102"
 ---
 
 
@@ -12,7 +13,7 @@ admin_tab: ai-models
 
 ## What this group controls
 
-AI Models configures chat, embedding, image generation, APIM, multi-endpoint routing, and model endpoint identity behavior.
+AI Models configures chat, embedding, image generation, APIM, multi-endpoint routing, and model endpoint identity behavior. Chat and images can now use the same AI Connections registry with independent defaults; embedding and other service configuration remain separate.
 
 ## Why it matters
 
@@ -26,39 +27,41 @@ Model endpoints are production dependencies for every generated answer, embeddin
 
 - Provision Azure OpenAI, APIM, and image resources before pointing SimpleChat to them.
 - Choose key or managed identity authentication and grant required permissions.
-- Name fallback deployments deliberately so background tasks use approved models.
+- Identify the models used by background tasks before retiring a connection.
 
-## Connections {#model-endpoints}
+## AI Connections {#model-endpoints}
 
-### Connections {#multi-endpoint-configuration}
+### Shared connection manager {#multi-endpoint-configuration}
 
-A connection is one Azure OpenAI or Azure AI Foundry resource: where it is, how SimpleChat authenticates to it, and which of its deployed models may be used. Several connections can serve models at once, so a deployment in one subscription and a Foundry project in another can both appear in the chat model picker.
+A connection records a resource's address, provider, authentication, and deployed models. Configure those details once, then select compatible models for chat or image generation without copying endpoint and key settings into each task. Different resources remain separate connections, including an image-only resource in another region.
 
-Connections are consulted only when **Use connections for chat** is on. With it off, chat runs on the single classic endpoint configured under Chat instead, and anything listed here is ignored.
+**Use AI Connections for chat** controls chat only. With it off, chat uses the classic endpoint under Chat, but image generation can still use AI Connections. Do not enable this irreversible chat switch merely to configure images.
 
-Each connection is stored on its own. Adding, editing or deleting one takes effect when you save that connection, rather than when the surrounding settings page is saved.
+Each connection is stored on its own. Adding, editing, or deleting one takes effect when you save that connection, rather than when the surrounding settings page is saved. Task defaults retain connection/model IDs, so equally named deployments on different resources are not confused.
 
-#### Authentication and model discovery
+For a task-oriented walkthrough, see [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }}).
+
+### Authentication and model discovery
 
 The authentication method determines whether SimpleChat can enumerate a resource's deployments for you:
 
-- **Managed identity** and **service principal** can reach Azure Resource Manager, so **Discover models** lists the deployments the resource already has. For an Azure OpenAI resource this needs the subscription id and resource group, because that is how the deployment list is addressed.
+- **Managed identity** and **service principal**, with the required read permissions, can list existing deployments through Azure Resource Manager or the Foundry project API. For an Azure OpenAI resource this needs the subscription id and resource group, because that is how the deployment list is addressed.
 - **API key** authenticates to inference only. Discovery is unavailable, so deployment names have to be entered by hand.
 
-Discovered models arrive switched off. Finding a deployment is not the same as publishing it, so each one has to be turned on before people can pick it.
+Discovered models arrive switched off. Finding a deployment is not the same as publishing it, so each one has to be enabled and made available for the intended task before it can be selected. Discovery includes supported image models as well as chat models; it does not perform paid image generation or prove that an image operation works.
 
 Secrets are never returned to the browser. When a key or client secret is already stored, its field shows that it exists and stays empty; leaving it empty keeps the stored value, and typing a new one replaces it. Deleting a connection removes the secrets it owned.
 
-#### Identity header
+### Identity header
 
 Model requests reach a gateway under SimpleChat's own credentials, so a gateway cannot tell one user's traffic from another's. The identity header adds a header naming the signed-in user, which lets a gateway attribute usage or apply per-user quotas. The value is HMAC-hashed before it leaves SimpleChat, and a request with no identity omits the header rather than sending a blank one.
 
 Individual connections can override the global choice, which is useful when only some of them sit behind a gateway that expects the header.
 
-#### Image support
+### Image input versus image generation
 
 Each model within a connection also records whether it can accept image input. This is what
-[Multi-Modal Vision Analysis](knowledge.md#multimodal-vision-section) filters on, and
+[Multi-Modal Vision Analysis](knowledge.md#multimodal-vision-section) requires alongside text output, and
 getting it wrong is only discovered when a document fails to process.
 
 The checkbox arrives pre-filled. The application ships capability data for known models and
@@ -76,35 +79,50 @@ came from:
 Correcting the checkbox records your answer on the model, and it is then used in preference
 to the catalog from that point on.
 
-#### Settings
+Accepting image input is not the same as generating images. Chat output and image
+generation have separate capability information, and a model can be technically
+capable of both while being published for only one task. Known image-only models
+are not offered as text-chat models.
+
+Image-tool support uses exact catalog IDs, declared aliases, or valid dated
+snapshots. An arbitrary `gpt-4o-*` variant does not gain image generation merely
+by sharing a prefix. The vision/name fallback described above remains separate.
+
+Technical support does not prove current service readiness. An enabled model can
+still fail because of provider permissions, quota, gateway operations, or missing
+image-tool access. Do not declare image support simply because the model can accept
+pictures or call generic tools.
+
+### Connection settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Use connections for chat | Routes chat through the connections listed here instead of the single classic endpoint. Switching this on cannot be undone, and carries the classic endpoint over as the first connection. | Off | `enable_multi_model_endpoints`; capability toggle |
-| Connections | The list of model connections, each saved on its own. | Empty | `model_endpoints`; edited through its own API |
+| Use AI Connections for chat | Migrates chat from the classic endpoint to shared connections. Switching this on cannot be undone; it carries over the classic chat configuration when needed without replacing image connections. | Off | `enable_multi_model_endpoints`; chat-only capability toggle, not required for images |
+| AI Connections | Shared resource/authentication/model records, each saved individually. Chat and image defaults reference these records. | Empty before configuration/import | `model_endpoints`; edited through its own API |
+| Model availability | Limits a model to the supported tasks administrators intend to publish. Changing availability does not change the model's technical capabilities. | No task-specific restriction when absent | Model `enabled_capabilities`; `chat` and `image_generation` are the implemented operations |
 | Send an identity header with model requests | Adds a header identifying the signed-in user to every model request. | Off | `model_endpoint_identity_header_enabled` |
 | Header name | Rejected if it collides with a header the model call already sets, such as `authorization`. | x-simplechat-identity-key | `model_endpoint_identity_header_name` |
 | Identity sent in the header | Object id is stable across a rename; UPN is readable in gateway logs. Tenant variants qualify the value for a multi-tenant gateway. | Object id and tenant id | `model_endpoint_identity_header_value_type` |
 
 ### Chat {#gpt-config}
 
-SimpleChat has two ways to reach a chat model and only one of them is in force at a time. When **Use connections for chat** is on, chat draws from the connections above. When it is off, chat runs on a single classic endpoint — one Azure OpenAI resource, or API Management in front of one — whose address, credentials, API version and deployment are configured on the server-rendered admin page rather than here.
+SimpleChat has two ways to reach a chat model and only one of them is in force at a time. When **Use AI Connections for chat** is on, chat draws from the connections above. When it is off, chat runs on a single classic endpoint — one Azure OpenAI resource, or API Management in front of one — whose address, credentials, API version and deployment are configured on the server-rendered admin page rather than here.
 
-That distinction is worth stating because the two are easy to confuse: connections can be fully configured and still be unused, with nothing failing to signal it. This section names the route that is actually live, and links to the classic page when that route is the classic one.
+That distinction is worth stating because the two are easy to confuse: connections can be configured and serving images while chat still uses the classic route. This section names the chat route that is actually live, and links to the classic page when that route is the classic one.
 
-Turning connections on is not reversible from the admin interface. The setting is stored as "already on or newly on", so an attempt to switch back is refused rather than silently discarded. The switch also carries the classic endpoint over as the first connection, so the change does not begin with an empty model list. Treat it as a migration.
+Turning connections on is not reversible from the admin interface. The setting is stored as "already on or newly on", so an attempt to switch back is refused rather than silently discarded. When the registry has no chat-eligible configuration, the switch carries the classic chat endpoint into it without replacing imported image connections. Treat it as a chat migration.
 
-#### Default model
+### Default model
 
 The default model is the one chat uses when nothing else has chosen — a conversation started before the user has picked anything, or work that begins outside the chat window. It is stored as a reference to a connection and one of that connection's models, not as a copy of the model, so it outlives what it names: deleting a connection, disabling one, or switching off a single model all leave it pointing at nothing.
 
-Rather than let that reference decay into a silent fallback to some other model, SimpleChat clears it whenever the thing it names stops being available, and says so. Only models that are enabled on an enabled connection can be chosen, for the same reason — anything else would be cleared again on the next save.
+Rather than let that reference decay into a silent fallback to some other model, SimpleChat clears it whenever the thing it names stops being available, and says so. Only chat-compatible models published on an enabled connection can be chosen. An image-only model cannot become the chat default merely because it is enabled.
 
 The default applies to connections only. With chat on the classic single endpoint there is nothing for it to select from, and a choice made in that state is refused rather than stored.
 
-#### Settings
+### Chat settings
 
-The classic single endpoint is configured on the server-rendered admin page. Its values are listed here because they are what chat uses while **Use connections for chat** is off, and because API Management applies to GPT requests that use the classic endpoint whichever mode chat is in.
+The classic single endpoint is configured on the server-rendered admin page. Its values are listed here because they are what chat uses while **Use AI Connections for chat** is off, and because API Management applies to GPT requests that use the classic endpoint whichever mode chat is in.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
@@ -166,95 +184,158 @@ An embedding is only comparable with other embeddings from the same model. Chang
 
 ### Image Generation {#image-config}
 
-Image generation gives chat a tool that produces pictures from a prompt. It is off by default and configured entirely separately from chat and embeddings, because image models are deployed on their own and are frequently in a different region from the chat deployment.
+Image generation gives chat a tool that produces pictures from a prompt. It is off by
+default and has its own global default model, selected from AI Connections. That model
+can share a resource with chat or use a separate image-only connection.
 
-With **Enable Image Generation** off, nothing else in this section is consulted, and the rest of it stays out of the way rather than inviting configuration that would have no effect.
+The image feature does not depend on **Use AI Connections for chat**. Its default can be
+configured while images are disabled, and saving a default does not turn either feature
+on. Embedding, speech, and other service settings are unchanged.
 
-#### Direct or through API Management
+### Choose the image default
 
-As with embeddings, the direct and gateway routes are alternatives and only the selected one is used. The gateway has its own address, version, deployment name and subscription key.
+Choose one image-compatible model from the picker grouped by connection. Its saved
+reference identifies the connection and model, not just a deployment name. Two resources
+can each have a deployment called `production`; their connection labels distinguish
+the choices and their IDs keep requests on the intended resource.
 
-#### Which API produces the image
+The connection and model must be enabled, technically support the image operation
+through their provider, and publish image generation. Changing the chat default does
+not change this selection. Users keep the existing chat **Image** control; no second
+per-chat image-model picker is introduced.
 
-Azure OpenAI produces images two different ways, and which one applies is decided by the model behind the deployment you select rather than by a setting.
+Deleting or disabling the selected connection/model, or withdrawing its image
+availability, invalidates the default with a notice. Choose a compatible replacement;
+SimpleChat does not silently substitute another model.
 
-A `gpt-image-*` or DALL-E deployment serves the images endpoint and is asked for a picture directly. That is the route SimpleChat has always used, and it remains the route for every deployment that can take it.
+### Which API produces the image
 
-A chat deployment — `gpt-5.6-*`, `gpt-4o` and their relations — serves no image endpoint at all. It can still produce an image, through the Responses API's hosted `image_generation` tool, and SimpleChat sends it that way instead. This matters where an image model is not available to a subscription or region: a chat deployment is then the difference between image generation working and not being offered. It is not the better route where both exist, because it cannot change part of an existing image and puts the orchestrating model in front of every picture.
+A compatible dedicated image deployment uses the Images API. A GPT deployment with
+established hosted-image-tool support uses Azure v1 Responses with the
+`image_generation` tool. Capability and connection metadata select the route internally:
+there is no mandatory API-mode setting or second backing-image chooser.
 
-Two things follow from selecting a chat deployment:
+Not every GPT or Responses deployment supports image generation. A GPT-only resource is
+not guaranteed to work: any required image backend/default, entitlement, and provider
+permissions must already be available and verified. Generic tools or image-input support
+are not enough, and SimpleChat does not guess or provision a missing deployment.
 
-- The image editor offers whole-image regeneration only. Changing part of an image needs `/images/edits`, which the Responses tool has no equivalent for, and the editor says so before you paint a region rather than after.
-- **Azure OpenAI Image Gen API Version** does not apply to it. That setting governs the image endpoints, and its default predates the Responses API entirely, so this route uses a version new enough for it regardless of what is set. A value newer than that is honoured.
+Responses image generation offers whole-image regeneration in SimpleChat, not masked
+editing. Existing direct-image masked editing remains subject to the selected model
+and Images API support.
 
-A deployment reached through API Management always uses the images endpoint. The gateway records a deployment name and no model name, so there is nothing to decide from, and the operation the gateway publishes determines the shape of the call in any case.
+New shared Images connections without an image-specific API version use
+`2025-04-01-preview` for generations and edits. Explicit image operation versions,
+including older imported versions, are preserved. Unmigrated legacy Images settings
+retain their `2024-12-01-preview` fallback when no image version is configured.
 
-A deployment saved before SimpleChat began recording model names also stays on the images endpoint, because an unknown model is not the same as a chat model. Re-running **Fetch deployments** and re-selecting it records the name and lets it be classified.
+These versions do not come from the chat connection's API version or legacy root
+settings after shared selection. The hosted image tool instead uses v1 Responses
+without a dated `api-version` query. No image operation changes the chat API version.
 
-#### Authentication and deployment discovery
+### Direct connections and API Management
 
-Managed identity stores no credential and is what allows SimpleChat to list the resource's deployments, using the subscription id and resource group. A key authenticates to inference only.
+Store the intended route and credentials in the selected connection. An APIM-backed
+connection must retain its gateway path, authentication convention, and supported
+operation; a failing gateway request must not be redirected to the backend resource.
 
-**Fetch deployments** reads the saved endpoint, subscription id and resource group, so save changes to those first. It lists both the image models and the chat models the resource exposes, since either can produce an image, and excludes embedding deployments, which can produce neither. A deployment the resource no longer reports is dropped from the selection rather than left to fail on the next request.
+Imported legacy APIM image configurations retain their Images route. A shared model
+configured for Responses still needs the gateway to publish the matching operation.
+Discovery/read permissions and image-inference permissions are separate, so test the
+image operation rather than relying on a successful deployment listing or chat test.
 
-The stored key is never shown, and leaving its field empty keeps what is stored. **Remove stored value** clears it.
+### Existing installations and import warnings
 
-#### Changing the image model
+Startup imports configured direct and APIM image settings into AI Connections, or
+reuses a compatible connection. It preserves the active deployment, credentials, and
+operation settings. Newly imported model records initially publish images only,
+without changing chat mode or enabling image generation.
 
-Image deployments differ in the sizes, quality settings and response formats they accept, so a change here can alter what the image tool is able to produce, not only how the results look. Moving between an image model and a chat model changes the API the request takes as well, and with it whether the editor can change part of an image. Generate one test image after changing it.
+The original legacy values remain as backup. After successful import or an explicit
+shared-default save, the image reference is authoritative: clearing it does not revive
+the old route. The normal configuration workflow no longer needs a duplicate image
+endpoint/key form.
 
-#### Settings
+A failed import shows a warning and retains legacy image operation. Review the safe
+notice and `[AI_CONNECTIONS]` server logs, correct the identified settings or
+permissions, and restart to retry. Do not remove working legacy credentials during
+recovery.
+
+### Image settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Image Generation | Offers image generation in chat. With it off, nothing else here is consulted. | Off | `enable_image_generation`; capability toggle |
-| Use APIM instead of direct to Azure OpenAI endpoint | Sends image requests through API Management rather than straight to the Azure OpenAI resource. Only the selected route is used. | Off | `enable_image_gen_apim`; capability toggle |
-| Azure OpenAI Image Generation Endpoint | The resource holding the image deployment. Rarely the same as the chat endpoint. | Empty | `azure_openai_image_gen_endpoint` |
-| Authentication Type | Managed identity stores no credential and enables deployment discovery; a key authenticates to inference only. | key | `azure_openai_image_gen_authentication_type` |
-| Subscription ID | Addresses the resource when listing its deployments. Inference does not need it. | Empty | `azure_openai_image_gen_subscription_id` |
-| Resource Group | The other half of the address the deployment list is fetched from. | Empty | `azure_openai_image_gen_resource_group` |
-| Azure OpenAI Image Generation Key | Used only with key authentication. Leaving it blank keeps the stored key. | Empty | `azure_openai_image_gen_key` |
-| Image model | The single deployment every generated image comes from. An image model is asked through the images endpoint; a chat model through the Responses image tool. | None selected | `image_gen_model`; written through its own API |
-| Azure OpenAI Image Gen API Version | Image generation moves on its own API schedule, which is why this defaults later than the chat and embedding versions. Governs the image endpoints only. | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
-| Azure APIM Endpoint | The API Management address that fronts the image deployment. | Empty | `azure_apim_image_gen_endpoint` |
-| Azure APIM API Version | Whatever version the API Management operation publishes; there is no default, because a gateway can publish any. | Empty | `azure_apim_image_gen_api_version` |
-| Azure APIM Deployment | The deployment name to send image requests to. Discovery does not reach through a gateway, so this is typed. | Empty | `azure_apim_image_gen_deployment` |
-| Azure APIM Subscription Key | Leaving it blank keeps the stored key. | Empty | `azure_apim_image_gen_subscription_key` |
+| Enable Image Generation | Makes the Image task available in chat. Disabling it stops image requests without changing either task's default. | Off | `enable_image_generation`; independent capability toggle |
+| Default image model | The global image model selected from shared connections, independently of the chat default. | None until imported or selected | `image_generation_model_selection`; connection/model/provider reference |
+
+### Legacy image values retained for import
+
+These are the pre-migration image fields, not a second active configuration system.
+They remain operational only while import is incomplete and no shared selection has
+been saved. After import, edit the shared connection and image default instead.
+
+For API integrations, both `GET` and `PUT /api/v2/admin/model-selection/image`
+return `409` with `code: image_catalog_migrated` after import or an explicit shared
+selection. This is an intentional handoff, not a successful legacy save. Read or
+write the current image reference through
+`/api/v2/admin/capability-models/image_generation` instead. The legacy embedding
+model-selection API is unchanged.
+
+| Legacy value | What the import preserves | Original default | Settings key |
+| --- | --- | --- | --- |
+| Use APIM for images | Which legacy route was active when selecting the imported default | Off | `enable_image_gen_apim` |
+| Azure OpenAI Image Generation Endpoint | Direct resource address | Empty | `azure_openai_image_gen_endpoint` |
+| Authentication Type | Direct image authentication method | key | `azure_openai_image_gen_authentication_type` |
+| Subscription ID | Direct-resource discovery context | Empty | `azure_openai_image_gen_subscription_id` |
+| Resource Group | Direct-resource discovery context | Empty | `azure_openai_image_gen_resource_group` |
+| Azure OpenAI Image Generation Key | Direct-route credential, through scoped secret helpers | Empty | `azure_openai_image_gen_key` |
+| Image model | Active direct deployment and saved model metadata | None selected | `image_gen_model` |
+| Azure OpenAI Image Gen API Version | Direct Images operation version; not the Azure v1 Responses contract | 2024-12-01-preview | `azure_openai_image_gen_api_version` |
+| Azure APIM Endpoint | Gateway address and path | Empty | `azure_apim_image_gen_endpoint` |
+| Azure APIM API Version | Gateway image operation version | Empty | `azure_apim_image_gen_api_version` |
+| Azure APIM Deployment | Active gateway deployment name | Empty | `azure_apim_image_gen_deployment` |
+| Azure APIM Subscription Key | Gateway credential and existing authentication convention | Empty | `azure_apim_image_gen_subscription_key` |
 
 
 ## Common tasks
 
-1. **Publish models from a new resource.** Add a connection, choose its provider and authentication, run **Test connection**, then **Discover models** and turn on the ones people may use. Save the connection. Outcome to verify: the enabled models appear in the chat model picker.
-2. **Rotate a stored key.** Edit the connection, type the new key over the empty field, and save. Outcome to verify: **Test connection** succeeds with the replacement.
+1. **Publish models from a new resource.** Add a connection, configure its provider/authentication, discover or enter deployments, then enable and publish the intended operations. Save the connection. Outcome to verify: compatible models appear in the corresponding task picker, not every picker.
+2. **Rotate a stored connection key.** Edit the connection, type the replacement into the empty secret field, and save. Outcome to verify: each task using that connection works with the replacement; no copied image key needs updating.
 3. **Choose the model chat starts from.** With connections in force, pick a default under Chat. Outcome to verify: a new conversation opens on that model without anyone selecting it.
-4. **Retire a connection.** Disable it first and confirm chat still works, then delete it. Outcome to verify: its models stop being offered, and a default model that named it is cleared.
+4. **Retire a connection.** Disable it, review affected chat/image defaults, and select replacements before deleting it. Outcome to verify: its models stop being offered and unavailable defaults are reported instead of silently substituted.
 5. **Configure embeddings.** Set the endpoint, authentication and — with managed identity — the subscription id and resource group, then save. Fetch the deployments, choose one, and index a small document. Outcome to verify: indexing completes and the document's citations are found by a question that does not repeat its wording.
-6. **Enable image generation.** Turn the capability on, set the endpoint and authentication, save, fetch the deployments and choose one. Outcome to verify: the image tool returns a picture from the deployment you chose.
-7. **Rotate an embedding or image key.** Type the new key over the empty field and save. Outcome to verify: **Test connection** on the classic admin page succeeds, and indexing or generation still works.
-8. **Move a route behind API Management.** Turn on **Use APIM**, then fill in the gateway address, version, deployment name and subscription key. Outcome to verify: requests appear in the gateway's logs, and the direct settings are left untouched in case you switch back.
+6. **Enable image generation.** Select an image-compatible model from AI Connections, then enable the image feature. Outcome to verify: a real Image request returns and stores a picture from that binding without changing chat mode.
+7. **Rotate an embedding key.** Update the embedding route's own stored key and save. Outcome to verify: indexing still works. Image keys are rotated in their shared connection instead.
+8. **Move images behind API Management.** Configure an APIM-backed connection with the published path, authentication, and image operation, then select its image model. Outcome to verify: generation succeeds through the gateway and no request bypasses it.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| A connection's models never appear in chat | **Use connections for chat** is off, so chat is running on the classic single endpoint. | Turn it on, or configure the classic endpoint instead. Chat says which route is live. |
-| **Use connections for chat** will not turn off | Enabling connections is one-way, because chats, agents and workflows may already reference a model published from one. | Disable the individual connections instead, or point chat at the model you want by making it the default. |
+| A connection's models never appear in chat | Chat may still use the classic endpoint, or the models may not be chat-compatible and published. | Check the chat route and model availability. Do not enable the irreversible chat switch just to use images. |
+| **Use AI Connections for chat** will not turn off | Enabling connections is one-way, because chats, agents and workflows may already reference a model published from one. | Disable the individual connections instead, or point chat at the model you want by making it the default. |
 | **Discover models** is unavailable | The connection authenticates with an API key, which reaches inference but not Azure Resource Manager. | Switch to managed identity or a service principal, or add the deployment names by hand. |
 | Discovery returns nothing for an Azure OpenAI connection | The subscription id or resource group does not match the resource. | Correct them, then run **Test connection** before discovering again. |
-| Models are listed but nobody can choose them | Discovered models arrive switched off. | Turn on each model that should be available, then save the connection. |
-| The default model reverted to none | The connection or model it named was deleted or disabled, so the reference no longer resolved. | Choose a default that points at an enabled model on an enabled connection. |
-| The default model list is empty | Either chat is on the classic single endpoint, or no connection currently has an enabled model on an enabled connection. | Turn on **Use connections for chat**, then enable at least one model. |
-| A default model choice is refused | Chat is on the classic single endpoint, so the choice would be cleared on the next save rather than taking effect. | Turn on **Use connections for chat** first. |
+| Models are listed but nobody can choose them | Discovery does not publish models; they may be disabled or unavailable for the requested task. | Enable the connection/model and publish a technically supported operation. |
+| A default model reverted to none | The connection/model was deleted, disabled, or made incompatible/unpublished. | Review the notice and select a compatible published model. No alternate image or legacy default is substituted. |
+| The chat default model list is empty | Chat may be on the classic route, or no connection has an enabled chat-compatible published model. | Check chat mode and publication. Changing chat mode is a migration, not an image prerequisite. |
+| A chat default choice is refused | Chat is on the classic single endpoint. | Keep the classic configuration or deliberately migrate with **Use AI Connections for chat**. |
+| The image default list is empty | No enabled connection has a supported, published image model. | Check image capabilities, provider support, and publication in AI Connections; do not change chat mode. |
 | Embeddings fail during indexing | Endpoint, deployment, API version, or authentication does not match the Azure resource. | Validate the embedding route with a small document before bulk indexing. |
 | **Fetch deployments** returns nothing | Either the endpoint, subscription id and resource group do not name the resource the deployment lives in, or those changes have not been saved yet — fetching reads the saved values. | Save the connection details first, then fetch again. |
 | **Fetch deployments** is refused | The route authenticates with a key, which reaches inference but not Azure Resource Manager. | Switch to managed identity, and grant it read access to the resource. |
-| An embedding or image deployment disappeared from the list | The deployment was removed or renamed in Azure, so discovery no longer reports it. The selection is cleared rather than kept, because a request naming it would fail. | Choose a replacement from the refreshed list. |
+| An embedding deployment disappeared from the list | The deployment was removed or renamed in Azure, so discovery no longer reports it. The selection is cleared rather than kept, because a request naming it would fail. | Choose a replacement from the refreshed list. |
 | Search quality dropped after changing the embedding model | Embeddings are only comparable with others from the same model, and existing chunks were not rewritten. | Re-index the affected workspaces so every chunk comes from one model. |
 | A key was cleared without anyone changing it | Nothing in the V2 admin surface clears a secret by saving an empty field, so check the classic admin page, where a blank key field does store a blank. | Re-enter the key. Use the V2 surface's **Remove stored value** when removal is what you want. |
-| Image generation is configured but never offered | **Enable Image Generation** is off, so the rest of the section is not consulted. | Turn it on, then confirm a deployment is selected. |
+| Image generation is configured but never offered | **Enable Image Generation** is off. | Enable it and verify the shared image default. |
+| A GPT responds with text or rejects the image tool | That deployment/resource or gateway may lack the required image operation or backend binding. | Verify image-specific support and permissions on the selected resource; a successful chat test is not sufficient. |
+| Image import reports a warning | Connection, settings-write, or Key Vault preparation did not complete. | Retain working legacy values, correct the reported problem, and restart to retry. |
+| Images stop after clearing an imported default | The shared selection is authoritative and no longer falls back to legacy values. | Choose a new shared image default or disable image generation. |
 
 ## Related
 
+- [Configure AI connections]({{ '/guides/configure-ai-connections/' | relative_url }})
+- [Generate images]({{ '/guides/generate-images/' | relative_url }})
 - [Administration settings overview]({{ '/admin/' | relative_url }})
 - [Agents & Actions settings]({{ '/admin/agents-actions/' | relative_url }})
 - [Chat settings]({{ '/admin/chat/' | relative_url }})

@@ -87,6 +87,23 @@ from functions_group import (
 )
 from functions_group_assignment_ids import normalize_group_workflow_allowed_group_ids
 from functions_image_edit import resolve_image_edit_capability
+from functions_ai_connections import (
+    AIConnectionError,
+    CAPABILITY_DEFINITIONS,
+    EMPTY_MODEL_SELECTION,
+    IMAGE_MIGRATION_VERSION,
+    IMAGE_MIGRATION_VERSION_KEY,
+    IMAGE_SELECTION_KEY,
+    build_capability_model_catalog,
+    filter_model_endpoints_by_capability,
+    get_capability_definition,
+    is_capability_enabled,
+    image_settings_use_connections,
+    normalize_capability_selection,
+    resolve_capability_model_selection,
+    supports_model_capability,
+)
+from functions_ai_connection_migration import MIGRATION_NOTICE_KEY
 from functions_public_workspaces import (
     find_public_workspace_by_id,
     get_user_visible_public_workspace_ids_from_settings,
@@ -916,31 +933,6 @@ def _persist_global_model_endpoints(normalized, existing):
         for endpoint in normalized
     ]
 
-    for endpoint in saved_endpoints:
-        if not isinstance(endpoint, dict):
-            continue
-        endpoint_id = endpoint.get("id")
-        if not endpoint_id:
-            continue
-        keyvault_model_endpoint_cleanup_helper(
-            existing_by_id.get(endpoint_id),
-            endpoint,
-            endpoint_id,
-            scope="global",
-        )
-
-    saved_endpoint_ids = {
-        endpoint.get("id")
-        for endpoint in saved_endpoints
-        if isinstance(endpoint, dict) and endpoint.get("id")
-    }
-    for endpoint in existing:
-        if not isinstance(endpoint, dict):
-            continue
-        endpoint_id = endpoint.get("id")
-        if endpoint_id and endpoint_id not in saved_endpoint_ids:
-            keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
-
     settings = get_settings()
     updates = {"model_endpoints": saved_endpoints}
     multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
@@ -966,11 +958,31 @@ def _persist_global_model_endpoints(normalized, existing):
     if resolved_metadata != settings.get("metadata_extraction_model_selection"):
         updates["metadata_extraction_model_selection"] = resolved_metadata
 
-    # ``update_settings`` swallows its own exceptions and answers False. The Key Vault
-    # passes above have already run and cannot be undone, so reporting success on a failed
-    # write would leave an endpoint referencing a secret that no longer exists.
+    if IMAGE_SELECTION_KEY in settings:
+        resolved_image, image_reason = resolve_capability_model_selection(
+            settings.get(IMAGE_SELECTION_KEY), saved_endpoints, "image_generation"
+        )
+        if resolved_image != settings.get(IMAGE_SELECTION_KEY):
+            updates[IMAGE_SELECTION_KEY] = resolved_image
+            notices = dict(settings.get("ai_connection_default_notices") or {})
+            notices["image_generation"] = image_reason or "The image default was cleared."
+            updates["ai_connection_default_notices"] = notices
+
+    # Obsolete credentials remain usable until their dependent settings commit.
     if not update_settings(updates):
         raise RuntimeError("The settings document could not be updated.")
+
+    saved_endpoint_ids = {endpoint.get("id") for endpoint in saved_endpoints}
+    for endpoint in saved_endpoints:
+        endpoint_id = endpoint.get("id")
+        if endpoint_id:
+            keyvault_model_endpoint_cleanup_helper(
+                existing_by_id.get(endpoint_id), endpoint, endpoint_id, scope="global"
+            )
+    for endpoint in existing:
+        endpoint_id = endpoint.get("id")
+        if endpoint_id and endpoint_id not in saved_endpoint_ids:
+            keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
 
     return saved_endpoints
 
@@ -990,7 +1002,8 @@ def _seed_connections_on_first_enable(updates, current_settings):
         return
     if current_settings.get("enable_multi_model_endpoints", False):
         return
-    if _load_global_model_endpoints(current_settings):
+    existing = _load_global_model_endpoints(current_settings)
+    if filter_model_endpoints_by_capability(existing, "chat"):
         return
 
     migrated = build_migrated_model_endpoints_from_legacy(current_settings)
@@ -998,7 +1011,7 @@ def _seed_connections_on_first_enable(updates, current_settings):
         return
 
     normalized, _ = normalize_model_endpoints(migrated)
-    updates["model_endpoints"] = [
+    updates["model_endpoints"] = existing + [
         keyvault_model_endpoint_save_helper(
             endpoint, endpoint.get("id"), scope="global", existing_endpoint=None
         )
@@ -1041,8 +1054,10 @@ def register_route_backend_v2_admin(bp):
                 ).strip()
                 if not deployment or deployment in seen:
                     continue
-                seen.add(deployment)
 
+                if not supports_model_capability(model, "chat", endpoint.get("provider")):
+                    continue
+                seen.add(deployment)
                 supports_vision, vision_source = resolve_model_vision_support(model)
                 catalog.append(
                     {
@@ -1558,6 +1573,8 @@ def register_route_backend_v2_admin(bp):
                         "multi_endpoint_enabled": bool(
                             get_settings().get("enable_multi_model_endpoints", False)
                         ),
+                        "migration": get_settings().get(MIGRATION_NOTICE_KEY),
+                        "default_notices": get_settings().get("ai_connection_default_notices", {}),
                     }
                 ),
                 200,
@@ -1601,6 +1618,8 @@ def register_route_backend_v2_admin(bp):
                 level=logging.INFO,
             )
             return _model_endpoint_response(saved, endpoint_id, 201)
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to create model endpoint: {exc}",
@@ -1669,6 +1688,8 @@ def register_route_backend_v2_admin(bp):
                 level=logging.INFO,
             )
             return _model_endpoint_response(saved, current.get("id"), 200)
+        except AIConnectionError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         except Exception as exc:
             log_event(
                 f"[V2_ADMIN_ENDPOINTS] Failed to update model endpoint: {exc}",
@@ -1785,6 +1806,84 @@ def register_route_backend_v2_admin(bp):
                 exceptionTraceback=True,
             )
             return jsonify({"error": "Failed to load groups"}), 500
+
+    def _capability_model_payload(settings, capability):
+        definition = get_capability_definition(capability)
+        selection, reason = resolve_capability_model_selection(
+            settings.get(definition.selection_key),
+            _load_global_model_endpoints(settings),
+            capability,
+        )
+        enabled = is_capability_enabled(settings, capability)
+        if capability == "chat" and not enabled:
+            selection = dict(EMPTY_MODEL_SELECTION)
+        return {
+            "capability": capability,
+            "selection": selection,
+            "choices": build_capability_model_catalog(_load_global_model_endpoints(settings), capability),
+            "reason": reason or (settings.get("ai_connection_default_notices") or {}).get(capability),
+            "enabled": enabled,
+            "migration": settings.get(MIGRATION_NOTICE_KEY),
+        }
+
+    @bp.route("/api/v2/admin/capability-models/<capability>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_capability_model(capability):
+        """Read a task-specific reference and its eligible shared model choices."""
+        if capability not in CAPABILITY_DEFINITIONS:
+            return jsonify({"error": "This AI capability is not implemented."}), 404
+        settings = get_settings()
+        if not isinstance(settings, dict):
+            return jsonify({"error": "AI connection settings are unavailable."}), 503
+        return jsonify(_capability_model_payload(settings, capability)), 200
+
+    @bp.route("/api/v2/admin/capability-models/<capability>", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_set_capability_model(capability):
+        """Store only a validated, globally authorized capability/model reference."""
+        if capability not in CAPABILITY_DEFINITIONS:
+            return jsonify({"error": "This AI capability is not implemented."}), 404
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not isinstance(payload.get("selection"), dict):
+            return jsonify({"error": "Supply the model selection as an object."}), 400
+        settings = get_settings()
+        if not isinstance(settings, dict):
+            return jsonify({"error": "AI connection settings are unavailable."}), 503
+        definition = get_capability_definition(capability)
+        requested = normalize_capability_selection(payload["selection"])
+        clearing = not requested["endpoint_id"] and not requested["model_id"]
+        if capability == "chat" and not clearing and not settings.get("enable_multi_model_endpoints"):
+            return jsonify({"error": "Turn on Use connections for chat before selecting its default."}), 400
+        resolved, reason = resolve_capability_model_selection(
+            requested, _load_global_model_endpoints(settings), capability
+        )
+        if not clearing and not resolved["endpoint_id"]:
+            return jsonify({"error": reason or "Choose a connection and a compatible enabled model."}), 400
+        notices = dict(settings.get("ai_connection_default_notices") or {})
+        notices.pop(capability, None)
+        updates = {definition.selection_key: resolved, "ai_connection_default_notices": notices}
+        if capability == "image_generation":
+            updates[IMAGE_MIGRATION_VERSION_KEY] = IMAGE_MIGRATION_VERSION
+            previous_notice = settings.get(MIGRATION_NOTICE_KEY)
+            imported_count = (
+                previous_notice.get("imported_connections", 0)
+                if isinstance(previous_notice, dict) else 0
+            )
+            updates[MIGRATION_NOTICE_KEY] = {
+                "status": "complete",
+                "imported_connections": imported_count if isinstance(imported_count, int) else 0,
+                "message": "Image generation is managed through AI Connections.",
+            }
+        if not update_settings(updates):
+            return jsonify({"error": "The default model could not be stored."}), 500
+        log_event("[AI_CONNECTIONS] Capability default updated", extra={"capability": capability})
+        updated = dict(settings)
+        updated.update(updates)
+        return jsonify(_capability_model_payload(updated, capability)), 200
 
     # ---------------------------------------------------------------------
     # Default chat model
@@ -1944,6 +2043,11 @@ def register_route_backend_v2_admin(bp):
 
         try:
             settings = get_settings()
+            if kind == "image" and image_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Image models are now selected through AI Connections.",
+                    "code": "image_catalog_migrated",
+                }), 409
             selected, available = _read_model_catalog(
                 settings, catalog_kind["settings_key"]
             )
@@ -1983,6 +2087,11 @@ def register_route_backend_v2_admin(bp):
         settings_key = catalog_kind["settings_key"]
         try:
             settings = get_settings()
+            if kind == "image" and image_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Image models are now selected through AI Connections.",
+                    "code": "image_catalog_migrated",
+                }), 409
             _selected, stored_available = _read_model_catalog(settings, settings_key)
             catalog, error = normalize_model_catalog(payload, stored_available)
             if error:

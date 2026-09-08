@@ -1,6 +1,7 @@
 // workspace_workflows.js
 
 import { showToast } from "../chat/chat-toast.js";
+import { isChatModelAvailable } from "../agents_common.js";
 import {
     ensureDocumentPickerReady,
     setEffectiveScopes,
@@ -3244,7 +3245,7 @@ function getCustomEndpointOptions() {
             }
 
             const enabledModels = Array.isArray(endpoint.models)
-                ? endpoint.models.filter((model) => model && model.enabled !== false)
+                ? endpoint.models.filter(isChatModelAvailable)
                 : [];
 
             if (!enabledModels.length) {

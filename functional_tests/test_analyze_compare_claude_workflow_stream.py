@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Analyze/Compare Claude workflow stream support.
-Version: 0.241.193
+Version: 0.261.102
 Implemented in: 0.241.193
 
 This test ensures chat and workflow document actions can resolve Claude model
@@ -16,6 +16,7 @@ import sys
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ CHAT_ROUTE = APP_DIR / "route_backend_chats.py"
 CONFIG = APP_DIR / "config.py"
 sys.path.insert(0, str(APP_DIR))
 
+from functions_ai_connections import AIConnectionError, require_model_capability  # noqa: E402
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -75,7 +77,19 @@ def load_workflow_helpers(function_names):
         "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
         "keyvault_model_endpoint_get_helper": lambda endpoint, *args, **kwargs: endpoint,
         "normalize_model_endpoints": lambda endpoints: (list(endpoints or []), False),
+        "AIConnectionError": AIConnectionError,
+        "require_model_capability": require_model_capability,
+        "build_model_endpoint_identity_headers": lambda *args, **kwargs: {},
     }
+    runtime_path = APP_DIR / "functions_model_endpoint_runtime.py"
+    runtime_tree = ast.parse(runtime_path.read_text(encoding="utf-8"))
+    runtime_nodes = [
+        node for node in runtime_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in {
+            "_require_chat_model_for_endpoint", "build_model_endpoint_sync_chat_client",
+        }
+    ]
+    exec(compile(ast.Module(body=runtime_nodes, type_ignores=[]), runtime_path, "exec"), namespace)
     exec(compile(helper_module, WORKFLOW_RUNNER, "exec"), namespace)
     return namespace
 
@@ -237,9 +251,7 @@ def test_chat_document_action_stream_uses_workflow_executor():
 
 def test_version_bumped_for_fix():
     """Validate config.py version was bumped for this fix."""
-    config_text = CONFIG.read_text(encoding="utf-8")
-    if 'VERSION = "0.241.193"' not in config_text:
-        raise AssertionError("Expected config.py VERSION to be 0.241.193")
+    assert_app_version_at_least("0.241.193")
 
 
 def main():

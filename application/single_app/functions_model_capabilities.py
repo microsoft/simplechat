@@ -34,6 +34,7 @@ import os
 import re
 import threading
 from collections.abc import Mapping
+from datetime import date
 
 
 MODEL_IDENTIFIER_SEPARATOR_PATTERN = re.compile(r"[\s_.]+")
@@ -146,6 +147,32 @@ def _model_identifiers(model):
     if isinstance(model, Mapping):
         return [model.get(field) for field in MODEL_IDENTIFIER_FIELDS]
     return [getattr(model, field, None) for field in MODEL_IDENTIFIER_FIELDS]
+
+
+def get_model_catalog_capabilities(model):
+    """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
+
+    Vision retains its legacy deployment-name heuristic separately. Image tool
+    support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
+    """
+    if isinstance(model, Mapping):
+        underlying = model.get("modelName")
+    else:
+        underlying = getattr(model, "modelName", None)
+    identifiers = [underlying] if str(underlying or "").strip() else _model_identifiers(model)
+    catalog = load_model_capability_catalog()
+    for identifier in identifiers:
+        normalized = _normalize_model_identifier(identifier)
+        if normalized in catalog:
+            return dict(catalog[normalized])
+        snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
+        if snapshot and snapshot.group(1) in catalog:
+            try:
+                date(*(int(value) for value in snapshot.groups()[1:]))
+            except ValueError:
+                continue
+            return dict(catalog[snapshot.group(1)])
+    return None
 
 
 def _declared_vision_support(model):

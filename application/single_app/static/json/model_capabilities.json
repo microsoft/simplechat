@@ -1,13 +1,14 @@
 {
   "$schema": "https://simplechat.local/schemas/model-capabilities.schema.json",
   "schemaVersion": 1,
-  "lastUpdated": "2026-08-04",
-  "description": "SimpleChat model capability catalog. Capability flags remain data-only; optional model token-limit fields are consumed by durable tabular batch planning when present.",
+  "lastUpdated": "2026-09-08",
+  "description": "SimpleChat model capability catalog. Capability flags inform task-specific eligibility alongside provider adapters and publication policy; optional model token-limit fields are consumed by durable tabular batch planning when present.",
   "capabilityFields": {
     "processesText": "Accepts text input.",
     "generatesText": "Produces text output.",
     "processesImages": "Accepts image input for vision or image understanding.",
-    "generatesImages": "Produces image output directly or through the provider's documented image generation model/API.",
+    "generatesImages": "Produces native/direct image output through an image model/API; distinct from orchestrating an image generation tool.",
+    "imageGenerationTool": "Verified support for orchestrating the hosted image_generation tool in the Responses API, not native image output or vision. Deployment, provider, region, API version, and image-backend prerequisites still apply.",
     "processesAudio": "Accepts audio input or supports speech/audio understanding.",
     "generatesAudio": "Produces audio or speech output.",
     "processesVideo": "Accepts video input or documented video-clip summarization input.",
@@ -18,7 +19,12 @@
     "structuredOutput": "Supports structured outputs, JSON-schema outputs, or provider-equivalent constrained structured responses."
   },
   "coverageNotes": [
-    "OpenAI coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry.",
+    "OpenAI coverage includes GPT-5.x model IDs seen through Foundry, older Responses orchestration models, and direct GPT Image models.",
+    "Image-generation tool metadata was checked against official model-specific Supported tools documentation on 2026-09-08. Generic function calling, image input, and inclusion in a Responses model list alone do not establish hosted image-generation support; a false or omitted flag means it is not verified for this integration.",
+    "OpenAI model pages describe api.openai.com, not Azure deployment readiness. Azure requires its v1 Responses surface for the hosted image tool; the dated 2025-04-01-preview Responses contract is not equivalent to v1. Direct Images API versions are a separate contract.",
+    "Azure lists GPT-5.6 Sol, Terra, and Luna version 2026-07-09 for Responses. Its image-tool examples may require a deployed GPT Image backend and the x-ms-oai-image-generation-deployment header. Catalog support does not promise deployment-free routing, entitlement, region availability, or a successful live request.",
+    "Azure -chat entries are not automatically equated with OpenAI -chat-latest model IDs. OpenAI's documented tools for a similarly named chat snapshot do not establish the Azure entry's image tool support.",
+    "Capabilities classify model behavior, not live availability. New legacy/deprecated/retired entries describe the cited API lifecycle; OpenAI retirement dates do not automatically apply to Azure. Retained DALL-E compatibility must not be interpreted as an operational service.",
     "Claude coverage includes current, legacy, deprecated, and recently retired Claude models that fall within the requested two-year window.",
     "Meta coverage focuses on public Llama model families with clear model cards for text, vision, and coding support.",
     "xAI coverage includes Grok chat/coding models plus documented Imagine and Voice model SKUs.",
@@ -48,6 +54,216 @@
       "provider": "microsoft",
       "title": "Azure OpenAI in Microsoft Foundry model catalog",
       "url": "https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure"
+    },
+    {
+      "id": "azure-openai-responses",
+      "provider": "microsoft",
+      "title": "Azure OpenAI Responses API supported models and image generation",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses"
+    },
+    {
+      "id": "azure-openai-v1",
+      "provider": "microsoft",
+      "title": "Azure OpenAI v1 API version lifecycle",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/api-version-lifecycle"
+    },
+    {
+      "id": "azure-openai-images",
+      "provider": "microsoft",
+      "title": "Azure OpenAI image models, Images API, and DALL-E retirement",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/dall-e"
+    },
+    {
+      "id": "openai-gpt5-6-terra",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.6 Terra model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+    },
+    {
+      "id": "openai-gpt5-6-luna",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.6 Luna model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+    },
+    {
+      "id": "openai-gpt5-5",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.5 model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.5"
+    },
+    {
+      "id": "openai-gpt5-4",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.4 model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4"
+    },
+    {
+      "id": "openai-gpt5-4-pro",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.4 Pro model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro"
+    },
+    {
+      "id": "openai-gpt5-4-mini",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.4 Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+    },
+    {
+      "id": "openai-gpt5-4-nano",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.4 Nano model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.4-nano"
+    },
+    {
+      "id": "openai-gpt5-3-codex",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.3 Codex model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
+    },
+    {
+      "id": "openai-gpt5-2",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.2 model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.2"
+    },
+    {
+      "id": "openai-gpt5-2-codex",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.2 Codex model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.2-codex"
+    },
+    {
+      "id": "openai-gpt5-1-codex",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.1 Codex model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex"
+    },
+    {
+      "id": "openai-gpt5-1-codex-mini",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.1 Codex Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-mini"
+    },
+    {
+      "id": "openai-gpt5-1-codex-max",
+      "provider": "openai",
+      "title": "OpenAI GPT-5.1 Codex Max model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max"
+    },
+    {
+      "id": "openai-gpt5-pro",
+      "provider": "openai",
+      "title": "OpenAI GPT-5 Pro model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-pro"
+    },
+    {
+      "id": "openai-gpt5-codex",
+      "provider": "openai",
+      "title": "OpenAI GPT-5 Codex model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-codex"
+    },
+    {
+      "id": "openai-gpt5-mini",
+      "provider": "openai",
+      "title": "OpenAI GPT-5 Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-mini"
+    },
+    {
+      "id": "openai-gpt5-nano",
+      "provider": "openai",
+      "title": "OpenAI GPT-5 Nano model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-5-nano"
+    },
+    {
+      "id": "openai-gpt4o",
+      "provider": "openai",
+      "title": "OpenAI GPT-4o model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o"
+    },
+    {
+      "id": "openai-gpt4o-mini",
+      "provider": "openai",
+      "title": "OpenAI GPT-4o Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+    },
+    {
+      "id": "openai-gpt4-1",
+      "provider": "openai",
+      "title": "OpenAI GPT-4.1 model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1"
+    },
+    {
+      "id": "openai-gpt4-1-mini",
+      "provider": "openai",
+      "title": "OpenAI GPT-4.1 Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-mini"
+    },
+    {
+      "id": "openai-gpt4-1-nano",
+      "provider": "openai",
+      "title": "OpenAI GPT-4.1 Nano model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/gpt-4.1-nano"
+    },
+    {
+      "id": "openai-o1",
+      "provider": "openai",
+      "title": "OpenAI o1 model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/o1"
+    },
+    {
+      "id": "openai-o3",
+      "provider": "openai",
+      "title": "OpenAI o3 model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/o3"
+    },
+    {
+      "id": "openai-o3-mini",
+      "provider": "openai",
+      "title": "OpenAI o3 Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/o3-mini"
+    },
+    {
+      "id": "openai-o4-mini",
+      "provider": "openai",
+      "title": "OpenAI o4 Mini model and supported tools",
+      "url": "https://developers.openai.com/api/docs/models/o4-mini"
+    },
+    {
+      "id": "openai-gpt-image-2",
+      "provider": "openai",
+      "title": "OpenAI GPT Image 2 model",
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-2"
+    },
+    {
+      "id": "openai-gpt-image-1-5",
+      "provider": "openai",
+      "title": "OpenAI GPT Image 1.5 model",
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-1.5"
+    },
+    {
+      "id": "openai-gpt-image-1",
+      "provider": "openai",
+      "title": "OpenAI GPT Image 1 model",
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-1"
+    },
+    {
+      "id": "openai-gpt-image-1-mini",
+      "provider": "openai",
+      "title": "OpenAI GPT Image 1 Mini model",
+      "url": "https://developers.openai.com/api/docs/models/gpt-image-1-mini"
+    },
+    {
+      "id": "openai-dalle3",
+      "provider": "openai",
+      "title": "OpenAI DALL-E 3 historical model documentation",
+      "url": "https://developers.openai.com/api/docs/models/dall-e-3"
+    },
+    {
+      "id": "openai-deprecations",
+      "provider": "openai",
+      "title": "OpenAI API model deprecations and shutdown dates",
+      "url": "https://developers.openai.com/api/docs/deprecations"
     },
     {
       "id": "anthropic-models",
@@ -160,6 +376,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -169,8 +386,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Frontier GPT-5.6 tier; text and image input with text output."],
-      "sourceIds": ["openai-gpt5-6", "azure-openai-gpt5"]
+      "notes": ["Frontier GPT-5.6 tier; text and image input with text output.", "OpenAI explicitly documents image_generation as a Responses tool. Azure lists version 2026-07-09; its v1 and image-backend prerequisites still apply."],
+      "sourceIds": ["openai-gpt5-6", "azure-openai-gpt5", "azure-openai-responses", "azure-openai-v1"]
     },
     {
       "id": "gpt-5.6-terra",
@@ -185,6 +402,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -194,8 +412,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["GPT-5.6 lower-latency tier; Azure catalog documents text and image processing."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["GPT-5.6 lower-latency tier; Azure catalog documents text and image processing.", "OpenAI explicitly documents image_generation as a Responses tool. Azure lists version 2026-07-09; its v1 and image-backend prerequisites still apply."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-6-terra", "azure-openai-responses", "azure-openai-v1"]
     },
     {
       "id": "gpt-5.6-luna",
@@ -210,6 +428,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -219,8 +438,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["GPT-5.6 smallest tier; Azure catalog documents text and image processing."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["GPT-5.6 smallest tier; Azure catalog documents text and image processing.", "OpenAI explicitly documents image_generation as a Responses tool. Azure lists version 2026-07-09; its v1 and image-backend prerequisites still apply."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-6-luna", "azure-openai-responses", "azure-openai-v1"]
     },
     {
       "id": "gpt-5.5",
@@ -235,6 +454,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -244,8 +464,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents reasoning, Responses API, structured outputs, text and image processing, and tool calling."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents reasoning, Responses API, structured outputs, text and image processing, and tool calling.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-5", "azure-openai-responses"]
     },
     {
       "id": "gpt-chat-latest",
@@ -260,6 +480,7 @@
         "generatesText": true,
         "processesImages": false,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -269,7 +490,7 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog describes this preview model as Chat Completions/Responses with structured outputs and tools."],
+      "notes": ["Azure catalog describes this preview model as Chat Completions/Responses with structured outputs and tools.", "Hosted image-generation support is not independently established for this Azure chat alias; generic tool calling is not proof."],
       "sourceIds": ["azure-openai-gpt5"]
     },
     {
@@ -285,6 +506,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -294,8 +516,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents text and image processing plus tools."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents text and image processing plus tools.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-4", "azure-openai-responses"]
     },
     {
       "id": "gpt-5.4-pro",
@@ -310,6 +532,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -319,8 +542,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents Responses API, text and image processing, and functions/tools."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents Responses API, text and image processing, and functions/tools.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-4-pro", "azure-openai-responses"]
     },
     {
       "id": "gpt-5.4-mini",
@@ -335,6 +558,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -344,8 +568,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents text and image processing plus parallel tool calling."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents text and image processing plus parallel tool calling.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-4-mini", "azure-openai-responses"]
     },
     {
       "id": "gpt-5.4-nano",
@@ -360,6 +584,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -369,8 +594,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents text and image processing plus parallel tool calling."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents text and image processing plus parallel tool calling.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-4-nano", "azure-openai-responses"]
     },
     {
       "id": "gpt-5.3-codex",
@@ -385,6 +610,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -394,8 +620,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents optimization for Codex CLI and Codex VS Code extension."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents optimization for Codex CLI and Codex VS Code extension.", "OpenAI's model-specific Responses tool list does not include image_generation; coding, vision, and function calling do not imply this tool."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-3-codex"]
     },
     {
       "id": "gpt-5.3-chat",
@@ -410,6 +636,7 @@
         "generatesText": true,
         "processesImages": false,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -419,7 +646,7 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Preview chat model; Azure catalog does not list image processing for this entry."],
+      "notes": ["Preview chat model; Azure catalog does not list image processing for this entry.", "Image-generation tool support is unverified for this Azure ID; OpenAI gpt-5.3-chat-latest documentation describes a different API model ID."],
       "sourceIds": ["azure-openai-gpt5"]
     },
     {
@@ -435,6 +662,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -444,8 +672,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents optimization for Codex CLI and Codex VS Code extension."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents optimization for Codex CLI and Codex VS Code extension.", "OpenAI's model-specific Responses tool list does not include image_generation; coding, vision, and function calling do not imply this tool."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-2-codex"]
     },
     {
       "id": "gpt-5.2",
@@ -460,6 +688,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -469,8 +698,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents text and image processing plus tools."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents text and image processing plus tools.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-2", "azure-openai-responses"]
     },
     {
       "id": "gpt-5.2-chat",
@@ -485,6 +714,7 @@
         "generatesText": true,
         "processesImages": false,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -494,7 +724,7 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Preview chat model; Azure catalog does not list image processing for this entry."],
+      "notes": ["Preview chat model; Azure catalog does not list image processing for this entry.", "Image-generation tool support is unverified for this Azure ID; OpenAI gpt-5.2-chat-latest documentation describes a different API model ID."],
       "sourceIds": ["azure-openai-gpt5"]
     },
     {
@@ -510,6 +740,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -519,8 +750,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["OpenAI and Azure docs document text and image input with text output."],
-      "sourceIds": ["openai-gpt5-1", "azure-openai-gpt5"]
+      "notes": ["OpenAI and Azure docs document text and image input with text output.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["openai-gpt5-1", "azure-openai-gpt5", "azure-openai-responses"]
     },
     {
       "id": "gpt-5.1-chat",
@@ -535,6 +766,7 @@
         "generatesText": true,
         "processesImages": false,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -544,7 +776,7 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Preview chat model; Azure catalog documents tools and structured outputs but not image processing."],
+      "notes": ["Preview chat model; Azure catalog documents tools and structured outputs but not image processing.", "Image-generation tool support is unverified for this Azure ID; OpenAI gpt-5.1-chat-latest documentation describes a different API model ID."],
       "sourceIds": ["azure-openai-gpt5"]
     },
     {
@@ -560,6 +792,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -569,8 +802,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents Responses API only and Codex optimization."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents Responses API only and Codex optimization.", "OpenAI's model-specific Responses tool list does not include image_generation; coding, vision, and function calling do not imply this tool."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-1-codex"]
     },
     {
       "id": "gpt-5.1-codex-mini",
@@ -585,6 +818,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -594,8 +828,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents Responses API only and Codex optimization."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents Responses API only and Codex optimization.", "OpenAI's model-specific Responses tool list does not include image_generation; coding, vision, and function calling do not imply this tool."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-1-codex-mini"]
     },
     {
       "id": "gpt-5.1-codex-max",
@@ -610,6 +844,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -619,8 +854,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents Responses API only, Codex optimization, and xhigh reasoning effort."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents Responses API only, Codex optimization, and xhigh reasoning effort.", "OpenAI's model-specific Responses tool list does not include image_generation; coding, vision, and function calling do not imply this tool."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-1-codex-max"]
     },
     {
       "id": "gpt-5",
@@ -635,6 +870,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -644,8 +880,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["OpenAI and Azure docs document text and image input with text output."],
-      "sourceIds": ["openai-gpt5", "azure-openai-gpt5"]
+      "notes": ["OpenAI and Azure docs document text and image input with text output.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["openai-gpt5", "azure-openai-gpt5", "azure-openai-responses"]
     },
     {
       "id": "gpt-5-pro",
@@ -660,6 +896,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -669,8 +906,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents Responses API, text and image processing, and functions/tools."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents Responses API, text and image processing, and functions/tools.", "OpenAI documents image_generation as a Responses tool; native output remains text."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-pro", "azure-openai-responses"]
     },
     {
       "id": "gpt-5-codex",
@@ -685,6 +922,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -694,8 +932,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["Azure catalog documents Responses API only and Codex optimization."],
-      "sourceIds": ["azure-openai-gpt5"]
+      "notes": ["Azure catalog documents Responses API only and Codex optimization.", "OpenAI's model-specific Responses tool list does not include image_generation; coding, vision, and function calling do not imply this tool."],
+      "sourceIds": ["azure-openai-gpt5", "openai-gpt5-codex"]
     },
     {
       "id": "gpt-5-mini",
@@ -710,6 +948,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -719,8 +958,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["OpenAI and Azure docs document text and image input with text output."],
-      "sourceIds": ["openai-gpt5", "azure-openai-gpt5"]
+      "notes": ["OpenAI and Azure docs document text and image input with text output.", "The model-specific OpenAI Responses tool list omits image_generation; this entry does not inherit the parent GPT-5 model's tool support."],
+      "sourceIds": ["openai-gpt5", "azure-openai-gpt5", "openai-gpt5-mini"]
     },
     {
       "id": "gpt-5-nano",
@@ -735,6 +974,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": true,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -744,8 +984,8 @@
         "toolCalling": true,
         "structuredOutput": true
       },
-      "notes": ["OpenAI positions this as fastest and cost-efficient for summarization and classification."],
-      "sourceIds": ["openai-gpt5", "azure-openai-gpt5"]
+      "notes": ["OpenAI positions this as fastest and cost-efficient for summarization and classification.", "OpenAI's model-specific tool list explicitly includes image_generation; this decision is not inferred from the GPT-5 family."],
+      "sourceIds": ["openai-gpt5", "azure-openai-gpt5", "openai-gpt5-nano", "azure-openai-responses"]
     },
     {
       "id": "gpt-5-chat",
@@ -760,6 +1000,7 @@
         "generatesText": true,
         "processesImages": true,
         "generatesImages": false,
+        "imageGenerationTool": false,
         "processesAudio": false,
         "generatesAudio": false,
         "processesVideo": false,
@@ -769,8 +1010,371 @@
         "toolCalling": false,
         "structuredOutput": false
       },
-      "notes": ["Azure catalog explicitly lists input as text/image and output as text only."],
+      "notes": ["Azure catalog explicitly lists input as text/image and output as text only.", "Image-generation tool support is unverified for this Azure ID; OpenAI gpt-5-chat-latest documentation describes a different API model ID."],
       "sourceIds": ["azure-openai-gpt5"]
+    },
+    {
+      "id": "gpt-4o",
+      "provider": "openai",
+      "displayName": "GPT-4o",
+      "aliases": [],
+      "family": "gpt-4o",
+      "lifecycle": "legacy",
+      "releaseDate": "2024-05-13",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["The text/vision API model produces text; OpenAI explicitly lists image_generation as a Responses tool. Audio, realtime, transcription, and search variants are separate models.", "Azure lists deployed GPT-4o versions for Responses; image-tool backend and regional prerequisites remain separate from this capability flag."],
+      "sourceIds": ["openai-gpt4o", "azure-openai-responses"]
+    },
+    {
+      "id": "gpt-4o-mini",
+      "provider": "openai",
+      "displayName": "GPT-4o Mini",
+      "aliases": [],
+      "family": "gpt-4o",
+      "lifecycle": "legacy",
+      "releaseDate": "2024-07-18",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI's GPT-4o Mini tool matrix explicitly lists image_generation for Responses; this is not inferred from GPT-4o or vision support.", "Azure lists version 2024-07-18 for Responses; availability and image-backend routing still depend on the deployment."],
+      "sourceIds": ["openai-gpt4o-mini", "azure-openai-responses"]
+    },
+    {
+      "id": "gpt-4.1",
+      "provider": "openai",
+      "displayName": "GPT-4.1",
+      "aliases": [],
+      "family": "gpt-4.1",
+      "lifecycle": "legacy",
+      "releaseDate": "2025-04-14",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI documents text/image input, text output, and the image_generation Responses tool. Azure lists version 2025-04-14 for Responses; this is not a native image model."],
+      "sourceIds": ["openai-gpt4-1", "azure-openai-responses"]
+    },
+    {
+      "id": "gpt-4.1-mini",
+      "provider": "openai",
+      "displayName": "GPT-4.1 Mini",
+      "aliases": [],
+      "family": "gpt-4.1",
+      "lifecycle": "legacy",
+      "releaseDate": "2025-04-14",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["The model-specific OpenAI Responses tool list omits image_generation. Vision and function calling do not establish this tool, and GPT-4.1's flag must not be inherited."],
+      "sourceIds": ["openai-gpt4-1-mini", "azure-openai-responses"]
+    },
+    {
+      "id": "gpt-4.1-nano",
+      "provider": "openai",
+      "displayName": "GPT-4.1 Nano",
+      "aliases": [],
+      "family": "gpt-4.1",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-04-14",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI's model-specific tool matrix explicitly includes image_generation; this decision is not inherited from GPT-4.1.", "OpenAI schedules this model's shutdown for 2026-10-23. Azure lists version 2025-04-14 for Responses and has a separate deployment lifecycle."],
+      "sourceIds": ["openai-gpt4-1-nano", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "o1",
+      "provider": "openai",
+      "displayName": "o1",
+      "aliases": [],
+      "family": "o1",
+      "lifecycle": "deprecated",
+      "releaseDate": "2024-12-17",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI documents image input but does not list image_generation among this model's Responses tools.", "OpenAI schedules o1 shutdown for 2026-10-23; Azure deployment availability is separate."],
+      "sourceIds": ["openai-o1", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "o3",
+      "provider": "openai",
+      "displayName": "o3",
+      "aliases": [],
+      "family": "o3",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-04-16",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI explicitly lists the image_generation Responses tool; native output remains text.", "OpenAI schedules the 2025-04-16 snapshot's shutdown for 2026-12-11. Azure lists this version for Responses and has separate availability requirements."],
+      "sourceIds": ["openai-o3", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "o3-mini",
+      "provider": "openai",
+      "displayName": "o3 Mini",
+      "aliases": [],
+      "family": "o3",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-01-31",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": false,
+        "generatesImages": false,
+        "imageGenerationTool": true,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": false,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI lists text-only input while explicitly documenting image_generation among this model's Responses tools. Hosted image generation and image understanding are distinct capabilities.", "OpenAI schedules o3-mini shutdown for 2026-10-23; Azure lists version 2025-01-31 for Responses and has a separate lifecycle."],
+      "sourceIds": ["openai-o3-mini", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "o4-mini",
+      "provider": "openai",
+      "displayName": "o4 Mini",
+      "aliases": [],
+      "family": "o4",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-04-16",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": false,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": true,
+        "optimizedForCoding": true,
+        "toolCalling": true,
+        "structuredOutput": true
+      },
+      "notes": ["OpenAI documents image input and generic tools but does not list image_generation in this model's Responses tool matrix.", "OpenAI schedules o4-mini shutdown for 2026-10-23; Azure deployment availability is separate."],
+      "sourceIds": ["openai-o4-mini", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "gpt-image-2",
+      "provider": "openai",
+      "displayName": "GPT Image 2",
+      "aliases": [],
+      "family": "gpt-image",
+      "lifecycle": "current",
+      "releaseDate": "2026-04-21",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": false,
+        "optimizedForCoding": false,
+        "toolCalling": false,
+        "structuredOutput": false
+      },
+      "notes": ["Direct image generation/editing model with text/image input and image output, not a chat orchestrator. Azure documents general availability but still requires an appropriate model deployment."],
+      "sourceIds": ["openai-gpt-image-2", "azure-openai-images"]
+    },
+    {
+      "id": "gpt-image-1.5",
+      "provider": "openai",
+      "displayName": "GPT Image 1.5",
+      "aliases": [],
+      "family": "gpt-image",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-12-16",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": true,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": false,
+        "optimizedForCoding": false,
+        "toolCalling": false,
+        "structuredOutput": false
+      },
+      "notes": ["OpenAI's model page lists image and text output but no Chat Completions support. Azure's Images API documents image-only output. This remains a direct image model, never a chat or text-producing vision-analysis selection.", "OpenAI schedules shutdown for 2026-12-01. Azure documents limited-access preview with separate deployment/access requirements."],
+      "sourceIds": ["openai-gpt-image-1-5", "azure-openai-images", "openai-deprecations"]
+    },
+    {
+      "id": "gpt-image-1",
+      "provider": "openai",
+      "displayName": "GPT Image 1",
+      "aliases": [],
+      "family": "gpt-image",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-04-15",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": false,
+        "optimizedForCoding": false,
+        "toolCalling": false,
+        "structuredOutput": false
+      },
+      "notes": ["Direct image generation/editing model with text/image input and image-only output; it is an image backend, not a chat model that orchestrates tools.", "OpenAI schedules shutdown for 2026-10-23. Azure lists model version 2025-04-15 and documents limited-access preview with a separate lifecycle."],
+      "sourceIds": ["openai-gpt-image-1", "azure-openai-images", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "gpt-image-1-mini",
+      "provider": "openai",
+      "displayName": "GPT Image 1 Mini",
+      "aliases": [],
+      "family": "gpt-image",
+      "lifecycle": "deprecated",
+      "releaseDate": "2025-10-06",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": true,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": false,
+        "optimizedForCoding": false,
+        "toolCalling": false,
+        "structuredOutput": false
+      },
+      "notes": ["Direct image generation/editing model with text/image input and image-only output; not a chat orchestrator.", "OpenAI schedules shutdown for 2026-12-01. Azure lists model version 2025-10-06 and documents limited-access preview with separate access requirements."],
+      "sourceIds": ["openai-gpt-image-1-mini", "azure-openai-images", "azure-openai-responses", "openai-deprecations"]
+    },
+    {
+      "id": "dall-e-3",
+      "provider": "openai",
+      "displayName": "DALL-E 3 (retired)",
+      "aliases": ["dalle-3"],
+      "family": "dall-e",
+      "lifecycle": "retired",
+      "capabilities": {
+        "processesText": true,
+        "generatesText": false,
+        "processesImages": false,
+        "generatesImages": true,
+        "imageGenerationTool": false,
+        "processesAudio": false,
+        "generatesAudio": false,
+        "processesVideo": false,
+        "generatesVideo": false,
+        "processesBinaryFiles": false,
+        "optimizedForCoding": false,
+        "toolCalling": false,
+        "structuredOutput": false
+      },
+      "notes": ["Historical text-to-image classification is retained for legacy configuration compatibility, not as a live availability claim.", "Azure retired DALL-E 3 on 2026-03-04 and states existing deployments are non-functional. OpenAI removed DALL-E 2 and 3 from its API on 2026-05-12. Use an available GPT Image deployment instead."],
+      "sourceIds": ["openai-dalle3", "azure-openai-images", "openai-deprecations"]
     },
     {
       "id": "claude-fable-5",

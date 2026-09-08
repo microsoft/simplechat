@@ -222,7 +222,9 @@ export function agentModelChoices(options: AgentEditorOptions): AgentModelChoice
     for (const endpoint of options.model_endpoints) {
         if (endpoint.enabled === false) continue;
         for (const model of endpoint.models ?? []) {
-            if (model.enabled === false) continue;
+            const chatStatus = agentObject(agentObject(model.capability_status).chat);
+            if (model.enabled === false || model.supportsChat === false || chatStatus.available === false ||
+                (Array.isArray(model.enabled_capabilities) && !model.enabled_capabilities.includes('chat'))) continue;
             const id = agentText(model.id || model.deploymentName || model.deployment || model.modelName || model.name);
             if (!id) continue;
             const deployment = agentText(model.deploymentName || model.deployment || model.modelName || model.name || id);
@@ -238,7 +240,7 @@ export function agentModelChoices(options: AgentEditorOptions): AgentModelChoice
             });
         }
     }
-    if (options.model_endpoints.length) return choices;
+    if (options.settings.enable_multi_model_endpoints === true || choices.length) return choices;
     const settings = options.settings;
     if (settings.enable_gpt_apim === true) {
         return agentText(settings.azure_apim_gpt_deployment).split(',').map((item) => item.trim()).filter(Boolean).map((id) => ({

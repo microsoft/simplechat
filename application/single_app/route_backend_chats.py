@@ -207,13 +207,17 @@ from functions_conversation_metadata import collect_conversation_metadata, updat
 from functions_conversation_unread import mark_conversation_unread
 from functions_image_messages import build_image_message_documents, decode_image_content, get_complete_image_content
 from functions_icon_utils import normalize_icon_payload
-from functions_image_api_route import resolve_selected_image_deployment_name
+from functions_ai_connections import AIConnectionError
+from functions_image_api_route import ImageGenerationError, resolve_selected_image_deployment_name
 from functions_image_generation import (
     build_image_proposal_guidance_message,
     generate_chat_image_message,
+    image_generation_error_log_context,
+    image_generation_error_response,
     image_generation_is_enabled,
     normalize_image_proposal,
     request_generated_image_source,
+    resolve_generated_image_bytes,
     user_request_supports_image_proposals,
 )
 from functions_appinsights import log_event
@@ -279,7 +283,7 @@ from functions_message_image_revisions import (
     serialize_image_revisions,
     set_current_image_revision,
 )
-from functions_image_edit import ImageEditError, revise_image_message
+from functions_image_edit import revise_image_message
 from functions_document_actions import (
     DOCUMENT_ACTION_CONTEXT_CHAT,
     DOCUMENT_ACTION_TYPE_COMPARISON,
@@ -2178,28 +2182,7 @@ def _get_user_message_image_context(conversation_id, user_message_id):
 
 def _resolve_generated_image_bytes(generated_image_url):
     """Resolve generated image output into bytes and a MIME type for blob storage."""
-    normalized_image_url = str(generated_image_url or '').strip()
-    if not normalized_image_url:
-        raise ValueError('Generated image URL is empty')
-
-    if normalized_image_url.startswith('data:image/'):
-        return decode_image_content(normalized_image_url)
-
-    parsed_url = urlparse(normalized_image_url)
-    if parsed_url.scheme not in {'http', 'https'}:
-        raise ValueError('Generated image output is not a supported image source')
-
-    response = requests.get(normalized_image_url, timeout=30)
-    response.raise_for_status()
-    image_bytes = response.content
-    if not image_bytes:
-        raise ValueError('Generated image download returned empty content')
-
-    content_type = str(response.headers.get('Content-Type') or '').split(';', 1)[0].strip()
-    if not content_type or not content_type.startswith('image/'):
-        content_type = mimetypes.guess_type(parsed_url.path)[0] or 'image/png'
-
-    return content_type, image_bytes
+    return resolve_generated_image_bytes(generated_image_url)
 
 
 def _normalize_generated_analysis_artifact_metadata(raw_artifact, default_capability='analysis'):
@@ -16243,45 +16226,37 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'Conversation or source message not found'}), 404
         except PermissionError as exc:
             log_event(
-                f'[IMAGE_GENERATION] Proposal approval authorization failed: {exc}',
+                '[IMAGE_GENERATION] Proposal approval authorization failed',
                 extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
                 level=logging.WARNING,
-                exceptionTraceback=True,
             )
             return jsonify({'error': 'You do not have access to this conversation'}), 403
+        except AIConnectionError as exc:
+            log_event(
+                '[IMAGE_GENERATION] Proposal image connection unavailable',
+                extra=image_generation_error_log_context(exc),
+                level=logging.WARNING,
+            )
+            error_payload, status_code = image_generation_error_response(exc)
+            return jsonify(error_payload), status_code
         except ValueError as exc:
             log_event(
-                f'[IMAGE_GENERATION] Proposal approval validation failed: {exc}',
+                '[IMAGE_GENERATION] Proposal approval validation failed',
                 extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
                 level=logging.WARNING,
-                exceptionTraceback=True,
             )
             return jsonify({'error': 'Image generation request is invalid. Please review the prompt and try again.'}), 400
         except Exception as exc:
-            error_message = str(exc)
-            status_code = 500
-            if is_content_safety_error(error_message):
-                error_message = 'Image generation was blocked by content safety policies. Please edit the prompt and try again.'
-                status_code = 400
-            elif is_rate_limit_error(error_message, exc):
-                error_message = get_rate_limit_message()
-                status_code = 429
-            elif is_provider_bad_request_error(error_message, exc):
-                error_message = 'Image generation request was invalid. Please edit the prompt and try again.'
-                status_code = 400
-            else:
-                error_message = 'Image generation failed due to a technical error. Please try again.'
-
+            error_payload, status_code = image_generation_error_response(exc)
             log_event(
-                f'[IMAGE_GENERATION] Proposal approval failed: {exc}',
-                extra={'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None},
+                '[IMAGE_GENERATION] Proposal approval failed',
+                extra={
+                    'conversation_id': data.get('conversation_id') if isinstance(data, dict) else None,
+                    **image_generation_error_log_context(exc),
+                },
                 level=logging.ERROR,
-                exceptionTraceback=True,
             )
-            return jsonify({
-                'error': error_message,
-                **({'rate_limited': True} if status_code == 429 else {}),
-            }), status_code
+            return jsonify(error_payload), status_code
 
     @bp.route('/api/chat/image-proposals/status/<conversation_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -16781,7 +16756,7 @@ def register_route_backend_chats(bp):
                     settings,
                     identity_context={'user_id': user_id},
                 )
-                if settings.get('enable_multi_model_endpoints', False):
+                if not image_gen_enabled and settings.get('enable_multi_model_endpoints', False):
                     multi_endpoint_config = resolve_streaming_multi_endpoint_gpt_config(
                         settings,
                         data,
@@ -16791,7 +16766,11 @@ def register_route_backend_chats(bp):
                     )
                     if multi_endpoint_config and should_use_default_model and not data.get('model_endpoint_id'):
                         debug_print("[GPT_CLIENT] Using default multi-endpoint model for agent request.")
-                if multi_endpoint_config:
+                if image_gen_enabled:
+                    # Image mode has its own capability binding. It must not require a
+                    # text deployment or initialize a text-only client first.
+                    pass
+                elif multi_endpoint_config:
                     (
                         gpt_client,
                         gpt_model,
@@ -16887,20 +16866,21 @@ def register_route_backend_chats(bp):
                             default_headers=legacy_identity_headers or None
                         )
 
-                if not gpt_client or not gpt_model:
+                if not image_gen_enabled and (not gpt_client or not gpt_model):
                     raise ValueError("GPT Client or Model could not be initialized.")
 
-                tabular_model_context = build_model_endpoint_context(
-                    provider=gpt_provider,
-                    endpoint=gpt_endpoint,
-                    auth=gpt_auth,
-                    api_version=gpt_api_version,
-                    endpoint_id=gpt_endpoint_id or data.get('model_endpoint_id'),
-                    model_id=gpt_model_id or data.get('model_id'),
-                    model_deployment=gpt_model,
-                    user_id=user_id,
-                    active_group_ids=active_group_ids,
-                )
+                if not image_gen_enabled:
+                    tabular_model_context = build_model_endpoint_context(
+                        provider=gpt_provider,
+                        endpoint=gpt_endpoint,
+                        auth=gpt_auth,
+                        api_version=gpt_api_version,
+                        endpoint_id=gpt_endpoint_id or data.get('model_endpoint_id'),
+                        model_id=gpt_model_id or data.get('model_id'),
+                        model_deployment=gpt_model,
+                        user_id=user_id,
+                        active_group_ids=active_group_ids,
+                    )
 
             except Exception as e:
                 debug_print(f"Error initializing GPT client/model: {e}")
@@ -17601,7 +17581,8 @@ def register_route_backend_chats(bp):
                     debug_print(f"[CONTENT_SAFETY] Unexpected error: {ex}")
 
             if (
-                not original_hybrid_search_enabled
+                not image_gen_enabled
+                and not original_hybrid_search_enabled
                 and not explicit_external_retrieval_requested
                 and not mixed_source_explicit_selection
                 and not prior_grounded_source_merge
@@ -18392,11 +18373,13 @@ def register_route_backend_chats(bp):
 
             # Image Generation
             if image_gen_enabled:
-                image_gen_model = resolve_selected_image_deployment_name(settings)
-
                 try:
-                    debug_print(f"Generating image with model: {image_gen_model}")
-                    debug_print(f"Using prompt: {user_message}")
+                    image_gen_model = resolve_selected_image_deployment_name(settings)
+                    log_event(
+                        '[IMAGE_GENERATION] Generating chat image',
+                        extra={'model_deployment_name': image_gen_model},
+                        debug_only=True,
+                    )
 
                     # Route selection, the request itself and the response shape all
                     # differ between the images endpoint and the Responses image tool,
@@ -18405,7 +18388,7 @@ def register_route_backend_chats(bp):
 
                     # Validate we have a valid image source
                     if not generated_image_url or generated_image_url == 'null':
-                        raise ValueError("Generated image URL is null or empty")
+                        raise ImageGenerationError('The image service returned no usable image.', 'image_output_missing')
 
                     image_message_id = f"{conversation_id}_image_{int(time.time())}_{random.randint(1000,9999)}"
 
@@ -18480,38 +18463,18 @@ def register_route_backend_chats(bp):
                         'user_message_id': user_message_id
                     }), 200
                 except Exception as e:
-                    debug_print(f"Image generation error: {str(e)}")
-                    debug_print(f"Error type: {type(e)}")
-                    debug_print(f"Traceback: {traceback.format_exc()}")
-
-                    # Handle different types of errors appropriately
-                    error_message = str(e)
-                    status_code = 500
-
-                    # Check if this is a content moderation error
-                    if is_content_safety_error(error_message):
-                        user_friendly_message = "Image generation was blocked by content safety policies. Please try a different prompt that doesn't involve potentially harmful content."
-                        status_code = 400  # Bad request rather than server error
-                    elif is_rate_limit_error(error_message, e):
-                        user_friendly_message = get_rate_limit_message()
-                        status_code = 429
-                    elif is_provider_bad_request_error(error_message, e):
-                        user_friendly_message = "Image generation request was invalid. Please edit the prompt and try again."
-                        status_code = 400
-                    else:
-                        user_friendly_message = "Image generation failed due to a technical error. Please try again."
-
+                    error_payload, status_code = image_generation_error_response(e)
                     log_event(
-                        f'[IMAGE_GENERATION] Chat image generation failed: {e}',
-                        extra={'conversation_id': conversation_id, 'user_id': user_id},
+                        '[IMAGE_GENERATION] Chat image generation failed',
+                        extra={
+                            'conversation_id': conversation_id,
+                            'user_id': user_id,
+                            **image_generation_error_log_context(e),
+                        },
                         level=logging.ERROR,
-                        exceptionTraceback=True,
                     )
 
-                    return jsonify({
-                        'error': user_friendly_message,
-                        **({'rate_limited': True} if status_code == 429 else {}),
-                    }), status_code
+                    return jsonify(error_payload), status_code
 
             workspace_tabular_file_contexts = []
             workspace_tabular_files = set()
@@ -25678,14 +25641,14 @@ def register_route_backend_chats(bp):
                 }), 409
             except ImageRevisionError as ex:
                 return jsonify({'error': str(ex)}), 400
-            except ImageEditError as ex:
+            except (AIConnectionError, ImageGenerationError) as ex:
                 log_event(
-                    f'[IMAGE_REVISION] Edit failed: {ex}',
-                    extra={'message_id': message_id, 'user_id': user_id},
+                    '[IMAGE_GENERATION] Image revision request failed',
+                    extra={'message_id': message_id, **image_generation_error_log_context(ex)},
                     level=logging.WARNING,
                 )
-                return jsonify({'error': str(ex)}), 502
-
+                error_payload, status_code = image_generation_error_response(ex)
+                return jsonify(error_payload), status_code
             # From here on the freshly re-read document is the one being written, so the
             # transcript and the upsert must both use it rather than the stale copy.
             message_doc = result['message']

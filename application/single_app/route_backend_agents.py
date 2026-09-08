@@ -16,6 +16,7 @@ from config import (
 )
 from semantic_kernel_loader import get_agent_orchestration_types, resolve_agent_config
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings, sanitize_model_endpoints_for_frontend
+from functions_ai_connections import filter_model_endpoints_by_capability, supports_model_capability
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent, update_global_agent_enabled
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
 from functions_group import require_active_group, assert_group_role
@@ -673,6 +674,15 @@ def _summarize_model_binding(endpoint_candidates, binding):
         }
 
     resolved_provider = str(endpoint_cfg.get('provider') or provider or '').strip().lower()
+    if not supports_model_capability(model_cfg, provider=resolved_provider or 'aoai'):
+        return {
+            'valid': False,
+            'state': 'model_incompatible',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': resolved_provider,
+            'label': 'Saved model is not available for chat',
+        }
     endpoint_name = endpoint_cfg.get('name') or endpoint_cfg.get('connection', {}).get('endpoint') or endpoint_id
     model_name = model_cfg.get('displayName') or model_cfg.get('deploymentName') or model_cfg.get('modelName') or model_id
     scope_name = str(endpoint_cfg.get('scope') or '').strip().title()
@@ -2518,7 +2528,9 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
             except PermissionError:
                 pass
 
-    return sanitize_model_endpoints_for_frontend(endpoints)
+    return sanitize_model_endpoints_for_frontend(
+        filter_model_endpoints_by_capability(endpoints, preserve_empty=True),
+    )
 
 
 def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id=None):    
@@ -2533,7 +2545,7 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
     if should_include_endpoints:
         combined_endpoints = build_combined_model_endpoints(settings, user_id=user_id, group_id=group_id)
 
-    effective_multi_flag = bool(multi_flag or combined_endpoints)
+    effective_multi_flag = bool(multi_flag or any(endpoint.get("models") for endpoint in combined_endpoints))
     
     # Return selected_agent and any other relevant settings for admin UI
     return jsonify({

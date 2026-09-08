@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 # test_image_proposal_pipeline.py
 """
 Functional test for opt-in chat image proposal pipeline.
-Version: 0.241.138
+Version: 0.261.102
 Implemented in: 0.241.138
 
 This test ensures the reusable image proposal helpers normalize model-authored
@@ -18,13 +17,14 @@ APP_ROOT = os.path.join(REPO_ROOT, 'application', 'single_app')
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
-from functions_image_generation import (  # noqa: E402
-    INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE,
-    build_image_proposal_guidance_message,
-    image_generation_is_enabled,
-    normalize_image_proposal,
-    user_request_supports_image_proposals,
-)
+from test_support.app_stubs import import_app_module  # noqa: E402
+
+image_helpers = import_app_module('functions_image_generation')
+INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE = image_helpers.INLINE_IMAGE_PROPOSAL_BLOCK_LANGUAGE
+build_image_proposal_guidance_message = image_helpers.build_image_proposal_guidance_message
+image_generation_is_enabled = image_helpers.image_generation_is_enabled
+normalize_image_proposal = image_helpers.normalize_image_proposal
+user_request_supports_image_proposals = image_helpers.user_request_supports_image_proposals
 
 
 def test_normalize_image_proposal():

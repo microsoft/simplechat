@@ -11,6 +11,7 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from config import cosmos_conversations_container
 from functions_agent_delegation import resolve_delegation_agent
 from functions_appinsights import log_event
+from functions_ai_connections import AIConnectionError, supports_model_capability
 from functions_assigned_knowledge import build_assigned_knowledge_runtime_filters
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -712,14 +713,20 @@ def resolve_fill_client(settings, user_id):
         if error or not selection.get("model_id"):
             raise PromptKnowledgeFillError("Configure an enabled default chat model before filling variables.", 503)
         context = {**selection, "user_id": user_id}
-        endpoint = resolve_model_endpoint_from_context(settings, context)
+        try:
+            endpoint = resolve_model_endpoint_from_context(settings, context)
+        except AIConnectionError as exc:
+            raise PromptKnowledgeFillError("The configured default chat model is unavailable.", 503) from exc
         if not endpoint:
             raise PromptKnowledgeFillError("The configured default chat model is unavailable.", 503)
         model = next(
             (item for item in endpoint.get("models", []) if item.get("id") == selection["model_id"]),
             None,
         )
-        if not model or not model.get("enabled", True) or not endpoint.get("enabled", True):
+        if (
+            not model or not endpoint.get("enabled", True)
+            or not supports_model_capability(model, provider=endpoint.get("provider") or "aoai")
+        ):
             raise PromptKnowledgeFillError("The configured default chat model is unavailable.", 503)
         deployment = model.get("deploymentName") or model.get("deployment")
         if not deployment:
