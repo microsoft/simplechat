@@ -13,12 +13,11 @@ It also means none of this touches ``route_backend_chats.py``. That file is over
 lines and carries the entire existing chat contract; adding a second execution model to it
 would put every existing conversation at risk for a feature that is off by default.
 
-Request data is read out of the Flask request *before* any generator starts. A streamed
-response outlives the request context, so touching ``request`` from inside the generator
-raises rather than returning the value it would have had -- a failure that only appears
-once streaming is actually exercised.
+Request data is captured before streaming. The planning stream retains authenticated
+request context for model authorization after canonical turn state is restored.
+Execution workers receive explicit identity and model bindings, never Flask state.
 
-Version: 0.261.099
+Version: 0.261.104
 """
 
 import hashlib
@@ -34,7 +33,8 @@ from datetime import datetime, timezone
 from azure.cosmos import exceptions
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Response, jsonify, request, session
+from flask import Response, jsonify, request, session, stream_with_context
+from openai import OpenAIError
 
 from config import cosmos_conversations_container, cosmos_messages_container
 from functions_appinsights import log_event
@@ -51,7 +51,9 @@ from functions_orchestration_context import (
     ElicitationContextError,
     HISTORY_MAX_MESSAGES,
     HISTORY_SCAN_LIMIT,
+    CatalogResolutionError,
     ConversationContextError,
+    build_capability_request_context as _capability_request_context,
     build_conversation_snapshot,
     build_conversation_signals,
     build_elicitation_user_request,
@@ -77,22 +79,56 @@ from functions_orchestration_events import (
     build_conversation_metadata_event,
     build_elicitation_event,
     build_error_event,
+    build_model_reasoning_metadata,
     build_plan_event,
     build_planning_thought,
+    build_reasoning_adjustment_event,
     build_run_done_event,
     build_step_event,
     build_step_thought,
     build_synthesis_thought,
-    build_triage_thought,
+    merge_reasoning_adjustments,
+    serialize_sse,
 )
 from functions_orchestration_executor import RunContext, execute_plan
+from functions_orchestration_memory import (
+    OrchestrationMemoryError,
+    load_orchestration_memory,
+    validate_memory_context,
+)
+from functions_orchestration_plan_editing import (
+    build_plan_edit_outcome,
+    revision_allowed_urls,
+    validate_edited_plan,
+)
+from functions_orchestration_plan_revisions import (
+    PlanRevisionError,
+    begin_plan_edit,
+    claim_plan_revision,
+    claim_plan_run,
+    complete_plan_revision,
+    plan_editor_state,
+    read_revision_run,
+    release_plan_revision,
+)
 from functions_orchestration_planner import (
     ConversationResolutionError,
-    build_trivial_plan,
+    PlannerError,
+    PlannerResponseError,
     plan_request,
     resolve_conversation_request,
     resolve_planner_client,
-    triage_request,
+)
+from functions_orchestration_models import (
+    OrchestrationModel,
+    OrchestrationModelError,
+    has_planner_model_override,
+    resolve_orchestration_model,
+)
+from functions_orchestration_registry import (
+    CapabilityResolutionError,
+    required_capability_ids,
+    resolve_available_capability_ids,
 )
 from functions_orchestration_runs import (
     ElicitationStateError,
@@ -114,8 +150,6 @@ from functions_orchestration_runs import (
     update_orchestration_run,
 )
 from functions_orchestration_schema import (
-    APPROVAL_STATE_APPROVED,
-    COMPLEXITY_TRIVIAL,
     ELICITATION_ACTION_ACCEPT,
     ELICITATION_ACTION_CANCEL,
     PLAN_STATUS_CANCELLED,
@@ -123,12 +157,12 @@ from functions_orchestration_schema import (
     PLAN_STATUS_FAILED,
     PLAN_STATUS_RUNNING,
     apply_plan_edits,
-    normalize_plan,
     normalize_elicitation,
     summarize_plan,
 )
 from functions_settings import get_settings, get_user_settings
 from functions_prompt_metadata import build_prompt_selection_metadata
+from model_endpoint_clients import extract_chat_completion_response_text
 from swagger_wrapper import get_auth_security, swagger_route
 
 # SSE responses must not be buffered by an intermediary, or progress arrives all at once at
@@ -183,7 +217,7 @@ def _orchestration_enabled(settings):
     return bool((settings or {}).get('enable_chat_orchestration'))
 
 
-def _build_invoke_prompt(settings, token_usage=None):
+def _build_invoke_prompt(settings, token_usage=None, model=None):
     """A closure the adapters call to ask the model something.
 
     The signature is not ours to choose. ``run_document_analysis``,
@@ -199,18 +233,17 @@ def _build_invoke_prompt(settings, token_usage=None):
     model call either way. They are named rather than swallowed by ``**kwargs`` so this
     file states the contract it is honouring.
 
-    Shares the planner's client resolution, which already handles APIM, managed identity
-    and key auth, but deliberately not its deployment: planning may be pointed at a small
-    model, while the answer should come from the deployment the administrator chose for
-    chat.
+    The run supplies an authorized model binding resolved from its saved selection or
+    the administrator's default. The legacy branch remains for callers without a binding.
     """
-    client, planner_deployment = resolve_planner_client(settings)
-
-    deployment = None
-    gpt_model = (settings or {}).get('gpt_model') or {}
-    if gpt_model.get('selected'):
-        deployment = (gpt_model['selected'][0] or {}).get('deploymentName')
-    deployment = deployment or planner_deployment
+    if model is None:
+        client, planner_deployment = resolve_planner_client(settings)
+        gpt_model = (settings or {}).get('gpt_model') or {}
+        deployment = (
+            (gpt_model['selected'][0] or {}).get('deploymentName')
+            if gpt_model.get('selected') else None
+        ) or planner_deployment
+        model = OrchestrationModel(client, deployment)
 
     def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
         messages = (
@@ -218,12 +251,19 @@ def _build_invoke_prompt(settings, token_usage=None):
             if isinstance(prompt_text, list)
             else [{'role': 'user', 'content': str(prompt_text or '')}]
         )
-        response = client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-            temperature=ANSWER_TEMPERATURE,
-            max_tokens=ANSWER_MAX_TOKENS,
-        )
+        try:
+            response = model.create_completion(
+                messages=messages,
+                temperature=ANSWER_TEMPERATURE,
+                max_tokens=ANSWER_MAX_TOKENS,
+                use_model_response_length=True,
+            )
+        except (OpenAIError, AzureError) as exc:
+            log_event(
+                '[ORCHESTRATION] The answer model request failed.',
+                level=logging.WARNING, extra={'stage': stage, 'error_type': type(exc).__name__},
+            )
+            raise PlannerResponseError('model_request_failed') from exc
 
         # Accumulated here because this is the only place every model call an orchestration
         # run makes passes through. A run's cost was previously reported as zero for that
@@ -240,8 +280,14 @@ def _build_invoke_prompt(settings, token_usage=None):
                 f"[ORCHESTRATION] The model returned no choices at stage '{stage}'.",
                 level=logging.WARNING,
             )
-            return ''
-        return response.choices[0].message.content or ''
+            raise PlannerResponseError('empty_completion')
+        choice = response.choices[0]
+        if getattr(choice, 'finish_reason', None) == 'content_filter' or getattr(choice.message, 'refusal', None):
+            raise PlannerResponseError('model_refusal')
+        text = extract_chat_completion_response_text(response)
+        if not text.strip():
+            raise PlannerResponseError('empty_completion')
+        return text
 
     return invoke_prompt
 
@@ -605,35 +651,6 @@ def _request_identity(user_id=None, seeded_agent=None):
     }
 
 
-def _capability_request_context(
-    user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None
-):
-    """Describe this caller, so the capability request gates can answer for them.
-
-    Distinct from the deployment-level gates: those answer "does this installation have
-    URL access at all", these answer "may this person read a URL, and is there one to
-    read". Without it the planner would be offered capabilities the caller cannot use --
-    reading links in a message containing none, or an agent they have none of -- and
-    produce plans whose steps could only fail.
-
-    Built in the route because that is where the request is. The registry stays free of
-    Flask, and the gates stay next to the capabilities they belong to.
-    """
-    identity = identity or {}
-    urls = list(allowed_user_urls) if allowed_user_urls is not None else conversation_user_urls(user_message)
-
-    return {
-        'user_id': user_id,
-        'user_message': user_message or '',
-        'message_urls': urls,
-        'user_roles': identity.get('user_roles') or [],
-        'user_email': identity.get('user_email'),
-        'user_enable_agents': identity.get('user_enable_agents', True),
-        'agent_catalog': list(agent_catalog or ()),
-        'action_catalog': list(action_catalog or ()),
-    }
-
-
 def _partition_citations(citations):
     """Split citations into the document, web, and tool fields chat already renders.
 
@@ -724,7 +741,31 @@ def _save_message(conversation_id, role, content, metadata=None, extra=None, mes
     return message_id
 
 
-def _elicitation_outcome_events(outcome):
+def _validate_turn_memory_context(turn_context, user_id, conversation_id):
+    validate_memory_context(
+        _authorize_context_conversation(conversation_id, user_id), user_id,
+        turn_context.get('memory_audience'), turn_context.get('memory_scope'),
+    )
+
+
+def _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id):
+    context = {
+        **turn_context,
+        **{key: outcome[key] for key in ('memory_audience', 'memory_scope') if key in outcome},
+    }
+    try:
+        _validate_turn_memory_context(context, user_id, conversation_id)
+    except (OrchestrationMemoryError, ConversationContextError, AzureError) as exc:
+        log_event(
+            '[ORCHESTRATION] Saved context could not be authorized for publication.',
+            level=logging.WARNING, extra={'error_type': type(exc).__name__},
+        )
+        yield build_error_event(
+            exc.message if isinstance(exc, OrchestrationMemoryError)
+            else 'Conversation context changed or is unavailable. Create a new request.',
+            conversation_id,
+        )
+        return
     if outcome['kind'] == 'elicitation':
         yield build_elicitation_event(outcome['document'])
     else:
@@ -732,7 +773,15 @@ def _elicitation_outcome_events(outcome):
         yield build_plan_event(outcome['document'])
 
 
-def _persist_planned_turn(plan, turn_context, user_id, conversation_id, submission=None):
+def _persist_planned_turn(
+    plan, turn_context, user_id, conversation_id, submission=None, expected_previous_run=None,
+):
+    _validate_turn_memory_context(turn_context, user_id, conversation_id)
+    latest = get_latest_turn_run(conversation_id, user_id, turn_context['turn_id'])
+    if latest and latest['run_id'] != plan['run_id']:
+        expected_previous_run = expected_previous_run or read_revision_run(
+            latest['run_id'], user_id, conversation_id,
+        )
     message_id, fingerprint = _save_turn_message(
         conversation_id, user_id, turn_context['turn_id'], turn_context['user_message'],
         previous=turn_context, prompt_selection=turn_context.get('prompt_selection'),
@@ -741,7 +790,7 @@ def _persist_planned_turn(plan, turn_context, user_id, conversation_id, submissi
     turn_context['user_message_fingerprint'] = fingerprint
     create_orchestration_run(
         plan, user_id, conversation_id=conversation_id, idempotent=True,
-        turn_context=turn_context,
+        turn_context=turn_context, expected_previous_run=expected_previous_run,
     )
     if submission:
         prepare_elicitation_outcome(submission, 'plan', plan, turn_context)
@@ -809,6 +858,7 @@ def _save_pending_elicitation(
     elicitation, turn_context, user_id, conversation_id, turn_id,
     *, submission=None, expected_pending=None,
 ):
+    _validate_turn_memory_context(turn_context, user_id, conversation_id)
     question = {
         **elicitation,
         'turn_id': turn_id,
@@ -901,8 +951,95 @@ def _run_detail_row(record):
     """
     record = record if isinstance(record, dict) else {}
     row = _run_summary_row(record)
-    row['plan'] = record.get('plan') or {}
+    row['plan'] = deepcopy(record['plan']) if isinstance(record.get('plan'), dict) else {}
+    if row['plan']:
+        if not isinstance(row['plan'].get('inputs'), dict):
+            row['plan']['inputs'] = {}
+        if isinstance(record.get('seeds'), dict):
+            row['plan']['inputs']['required_capabilities'] = required_capability_ids(record['seeds'])
+        else:
+            row['plan']['inputs'].setdefault('required_capabilities', [])
+        row['plan']['reasoning_adjustments'] = merge_reasoning_adjustments(
+            row['plan'].get('reasoning_adjustments'), record.get('reasoning_adjustments'),
+        )
     return row
+
+
+def _plan_edit_identity(data, settings):
+    if not isinstance(data, dict):
+        raise PlanRevisionError('An editor request must be an object.', code='invalid_request', status_code=400)
+    user_id = get_current_user_id()
+    if not user_id:
+        raise PlanRevisionError('User not authenticated.', code='unauthenticated', status_code=401)
+    if not _orchestration_enabled(settings):
+        raise PlanRevisionError('Chat orchestration is not enabled.', code='disabled', status_code=403)
+    conversation_id = data.get('conversation_id')
+    if not isinstance(conversation_id, str) or not conversation_id.strip():
+        raise PlanRevisionError('A conversation is required.', code='invalid_request', status_code=400)
+    conversation_id = conversation_id.strip()
+    try:
+        _authorize_context_conversation(conversation_id, user_id)
+    except ConversationContextError as exc:
+        raise PlanRevisionError('Plan not found.', code='not_found', status_code=404) from exc
+    return user_id, conversation_id
+
+
+def _plan_edit_error(exc):
+    if isinstance(exc, PlanRevisionError):
+        payload = {'error': exc.message, 'code': exc.code}
+        if exc.current_run_id:
+            payload['current_run_id'] = exc.current_run_id
+        status = exc.status_code
+    elif isinstance(exc, OrchestrationMemoryError):
+        payload = {'error': exc.message, 'code': exc.code}
+        status = 409 if exc.code in ('memory_audience_changed', 'memory_scope_unavailable') else 503
+    elif isinstance(exc, ElicitationContextError):
+        payload = {'error': 'The answers were not valid.', 'code': 'invalid_request', 'details': [exc.message]}
+        if exc.field:
+            payload['field_errors'] = {exc.field: exc.message}
+        status = 400
+    elif isinstance(exc, ConversationContextError):
+        payload = {
+            'error': 'Conversation context changed or is unavailable. Create a new plan.',
+            'code': 'plan_changed',
+        }
+        status = 409
+    elif isinstance(exc, PlannerError):
+        payload = {
+            'error': 'The requested change could not be planned. Your previous plan is unchanged. Please retry.',
+            'code': 'unavailable',
+        }
+        status = 503
+    elif isinstance(exc, CatalogResolutionError):
+        payload = {'error': exc.message, 'code': exc.code}
+        status = 409 if exc.code == 'selected_agent_unavailable' else 503
+    elif isinstance(exc, CapabilityResolutionError):
+        payload = {
+            'error': 'Available capabilities could not be loaded. Your previous plan is unchanged. Please retry.',
+            'code': 'capability_context_unavailable',
+        }
+        status = 503
+    else:
+        payload = {
+            'error': 'The plan change could not be confirmed. Reload the plan or retry to recover its saved state.',
+            'code': 'unavailable',
+        }
+        status = 503
+    log_event(
+        '[ORCHESTRATION] Plan editor request could not be completed.',
+        level=logging.WARNING, extra={'error_type': type(exc).__name__, 'code': payload['code']},
+    )
+    return payload, status
+
+
+def _plan_editor_event(record, user_id):
+    editor = plan_editor_state(record, user_id)
+    question = editor['pending']
+    return serialize_sse({
+        'type': 'orchestration_elicitation' if question else 'orchestration_plan',
+        **({'elicitation': question} if question else {'plan': editor['plan']}),
+        'editor': editor, 'done': True,
+    })
 
 
 def register_route_backend_orchestration(bp):
@@ -1016,7 +1153,10 @@ def register_route_backend_orchestration(bp):
                     _conversation_context_for_run({
                         **submission['record']['turn_context'], 'conversation_id': conversation_id,
                     }, user_id, settings)
-                    return _sse(_elicitation_outcome_events(submission['outcome']))
+                    return _sse(_elicitation_outcome_events(
+                        submission['outcome'], submission['record']['turn_context'],
+                        user_id, conversation_id,
+                    ))
                 pending = submission['record']
                 if submission.get('outcome'):
                     turn_context = deepcopy(pending['prepared']['turn_context'])
@@ -1097,22 +1237,30 @@ def register_route_backend_orchestration(bp):
                 )
                 return jsonify({'error': 'The answer could not be checked. Please retry.'}), 503
 
-        # Captured on the request thread, before the streamed generator body runs. See
-        # _request_identity: a generator runs after the view returns, when the session is
-        # already gone.
+        # Capture stable caller identity now; resolve the model only after the stream
+        # restores the original turn's canonical seeds.
         identity = _request_identity(user_id)
+        planner_model = None
+
+        def close_planning_resources():
+            try:
+                if planner_model is not None:
+                    planner_model.close()
+            finally:
+                release_elicitation_submission(submission)
 
         def generate():
-            nonlocal turn_context, seeds, answered_record, approval_mode, replan_hint
+            nonlocal turn_context, seeds, answered_record, approval_mode, replan_hint, planner_model
             try:
                 if submission and submission.get('outcome'):
                     outcome = submission['outcome']
+                    _validate_turn_memory_context(turn_context, user_id, conversation_id)
                     if outcome['kind'] == 'plan':
                         _persist_planned_turn(
                             outcome['document'], turn_context, user_id, conversation_id, submission,
                         )
                     complete_elicitation_submission(submission)
-                    yield from _elicitation_outcome_events(outcome)
+                    yield from _elicitation_outcome_events(outcome, turn_context, user_id, conversation_id)
                     return
                 if submission:
                     _authorize_context_conversation(conversation_id, user_id)
@@ -1133,6 +1281,7 @@ def register_route_backend_orchestration(bp):
 
                 observed_pending = None
                 current_revision = revision
+                planning_base = None
                 if submission:
                     snapshot = _conversation_context_for_run({
                         **turn_context, 'conversation_id': resolved_conversation_id,
@@ -1149,7 +1298,10 @@ def register_route_backend_orchestration(bp):
                         _conversation_context_for_run({
                             **pending_context, 'conversation_id': resolved_conversation_id,
                         }, user_id, settings)
-                        yield build_elicitation_event(observed_pending['question'])
+                        yield from _elicitation_outcome_events(
+                            {'kind': 'elicitation', 'document': observed_pending['question']},
+                            pending_context, user_id, resolved_conversation_id,
+                        )
                         return
                     if observed_pending:
                         completed = (observed_pending.get('submissions') or [])[-1:]
@@ -1163,13 +1315,24 @@ def register_route_backend_orchestration(bp):
                             if not previous:
                                 raise ConversationContextError('The last plan could not be opened. Submit a new request.')
                     if previous:
+                        planning_base = read_revision_run(
+                            previous['run_id'], user_id, resolved_conversation_id,
+                        )
+                        if (
+                            planning_base.get('edit_version') or planning_base.get('started_at')
+                            or planning_base.get('status') not in ('draft', 'awaiting_approval', 'approved')
+                        ):
+                            raise PlanRevisionError(
+                                'Use the plan editor to revise this plan, or send a new request.',
+                                current_run_id=planning_base.get('superseded_by_run_id') or planning_base['run_id'],
+                            )
                         if previous.get('user_message') != message:
                             raise ConversationContextError('This turn changed. Submit a new request.')
                         snapshot = _conversation_context_for_run(previous, user_id, settings)
                         current_revision = max(revision, int(previous.get('revision') or 0) + 1)
                         for key in (
                             'user_message_id', 'user_message_fingerprint', 'seeds', 'original_seeds',
-                            'answered_questions', 'prompt_selection',
+                            'answered_questions', 'prompt_selection', 'memory_audience', 'memory_scope',
                         ):
                             if key in previous:
                                 turn_context[key] = deepcopy(previous[key])
@@ -1193,9 +1356,35 @@ def register_route_backend_orchestration(bp):
                 planning_identity = dict(identity)
                 if isinstance(seeds.get('agent'), dict) and seeds['agent'].get('name'):
                     planning_identity['user_enable_agents'] = True
+                try:
+                    planner_model = resolve_orchestration_model(
+                        settings, user_id=user_id, seeds=seeds, planner=True,
+                        identity_context=planning_identity,
+                    )
+                    seeds['model'] = planner_model.answer_model_selection()
+                    turn_context['original_seeds'] = {
+                        **(turn_context.get('original_seeds') or seeds),
+                        'model': dict(seeds['model']),
+                    }
+                except (ValueError, PermissionError, PlannerError, AzureError) as exc:
+                    log_event(
+                        '[ORCHESTRATION] The planner model could not be selected.',
+                        level=logging.WARNING, extra={'error_type': type(exc).__name__},
+                    )
+                    yield build_error_event(
+                        'The selected model is unavailable. Choose an enabled model you can access.',
+                        resolved_conversation_id,
+                    )
+                    return
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
+                    planner_model=planner_model,
                 )
+                reasoning_adjustments = build_model_reasoning_metadata(
+                    planner_model, 'planner',
+                ).get('reasoning_adjustments', [])
+                if reasoning_adjustments:
+                    yield build_reasoning_adjustment_event(reasoning_adjustments)
                 planning_usage = _sum_token_usage(
                     turn_context.get('planning_token_usage'), resolution.get('token_usage')
                 )
@@ -1222,13 +1411,24 @@ def register_route_backend_orchestration(bp):
                         elicitation, turn_context, user_id, resolved_conversation_id, turn_id,
                         submission=submission, expected_pending=observed_pending,
                     )
-                    yield from _elicitation_outcome_events(outcome)
+                    yield from _elicitation_outcome_events(
+                        outcome, turn_context, user_id, resolved_conversation_id,
+                    )
                     return
 
                 effective_message = resolution['resolved_message']
                 turn_context['request_resolution'] = resolution
                 turn_context['resolved_message'] = effective_message
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
+                memory_context = load_orchestration_memory(
+                    user_id, _authorize_context_conversation(resolved_conversation_id, user_id),
+                    effective_request, settings=settings, seeds=seeds,
+                    expected_audience=turn_context.get('memory_audience'),
+                )
+                turn_context['memory_audience'] = memory_context['audience']
+                turn_context['memory_scope'] = memory_context['scope']
+                for notice in memory_context['notices']:
+                    yield build_planning_thought(notice)
                 if (
                     resolution.get('requires_retrieval') is False
                     and not seeds.get('document_ids') and not seeds.get('elicitation_references')
@@ -1249,74 +1449,41 @@ def register_route_backend_orchestration(bp):
                 )
                 signals['urls'] = allowed_user_urls
 
+                authorized = _authorized_document_ids(candidates, seeds)
+                labels = _document_labels(candidates)
+
+                yield build_planning_thought('Deciding what this question needs.')
+                agent_catalog = resolve_agent_catalog(
+                    user_id, seeds=seeds, settings=settings,
+                    user_groups=seeds.get('active_group_ids') or None,
+                ) if planning_identity.get('user_enable_agents', True) else []
+
                 context = build_planner_context(
                     effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
-                    signals=signals, original_message=message, request_resolution=resolution,
-                    actions=action_catalog, answered_questions=answered_record,
+                    signals=signals, agents=agent_catalog, original_message=message,
+                    request_resolution=resolution, actions=action_catalog,
+                    answered_questions=answered_record,
+                    memory_context=memory_context,
                 )
                 if answered_record:
                     context['answered_now'] = answered_record
 
-                complexity = triage_request(effective_message, context)
-                yield build_triage_thought(complexity)
-
-                authorized = _authorized_document_ids(candidates, seeds)
-                labels = _document_labels(candidates)
-
-                if complexity == COMPLEXITY_TRIVIAL and not replan_hint:
-                    # No planning round trip. The point of triage is to make a
-                    # conversational reply feel instant rather than sent away to think.
-                    plan = normalize_plan(
-                        build_trivial_plan(effective_message, context),
-                        resolved_conversation_id, user_id, settings=settings,
-                        approval_mode=approval_mode,
-                        authorized_document_ids=authorized,
-                        turn_id=turn_id, seeds=seeds, document_labels=labels,
-                    )
-                    kind = 'plan'
-                else:
-                    yield build_planning_thought('Deciding what this question needs.')
-                    # The agent catalog is resolved here rather than above so a
-                    # conversational message never pays for it: it is a multi-query Cosmos
-                    # traversal with no cache, and a trivial reply has no plan for an agent
-                    # to appear in. Once per plan, never per step.
-                    agent_catalog = resolve_agent_catalog(
-                        user_id, seeds=seeds, settings=settings,
-                        user_groups=seeds.get('active_group_ids') or None,
-                    )
-
-                    # The context is rebuilt rather than having 'agents' assigned into it,
-                    # because build_planner_context is the single place the catalog is
-                    # projected down to its naming fields. Writing the key directly would
-                    # put an agent's full instructions in front of the planner.
-                    context = build_planner_context(
-                        effective_message, candidates=candidates, seeds=seeds, ledger=ledger,
-                        signals=signals, agents=agent_catalog, original_message=message,
-                        request_resolution=resolution, actions=action_catalog,
-                        answered_questions=answered_record,
-                    )
-                    if answered_record:
-                        context['answered_now'] = answered_record
-
-                    kind, plan = plan_request(
-                        effective_message, context, resolved_conversation_id, user_id,
-                        settings=settings,
-                        approval_mode=approval_mode,
-                        authorized_document_ids=authorized,
-                        replan_hint=replan_hint or None,
-                        revision=current_revision,
-                        allow_elicitation=allow_elicitation,
-                        turn_id=turn_id, seeds=seeds, document_labels=labels,
-                        # Narrows one resolution and thereby three things: what the planner
-                        # is offered, what the validator will accept, and so what can reach
-                        # an adapter. Without it a plan could propose reading links in a
-                        # message that has none, or an agent this user does not have.
-                        request_context=_capability_request_context(
-                            user_id, planning_identity, message, agent_catalog,
-                            action_catalog,
-                            allowed_user_urls=allowed_user_urls,
-                        ),
-                    )
+                kind, plan = plan_request(
+                    effective_message, context, resolved_conversation_id, user_id,
+                    settings=settings,
+                    approval_mode=approval_mode,
+                    authorized_document_ids=authorized,
+                    replan_hint=replan_hint or None,
+                    revision=current_revision,
+                    allow_elicitation=allow_elicitation,
+                    turn_id=turn_id, seeds=seeds, document_labels=labels,
+                    request_context=_capability_request_context(
+                        user_id, planning_identity, message, agent_catalog,
+                        action_catalog,
+                        allowed_user_urls=allowed_user_urls,
+                    ),
+                    planner_model=planner_model,
+                )
 
                 planning_usage = _sum_token_usage(planning_usage, plan.get('token_usage'))
                 turn_context['planning_token_usage'] = planning_usage
@@ -1326,19 +1493,43 @@ def register_route_backend_orchestration(bp):
                         plan, turn_context, user_id, resolved_conversation_id, turn_id,
                         submission=submission, expected_pending=observed_pending,
                     )
-                    yield from _elicitation_outcome_events(outcome)
+                    yield from _elicitation_outcome_events(
+                        outcome, turn_context, user_id, resolved_conversation_id,
+                    )
                     return
 
                 plan['revision'] = current_revision
                 outcome = {'kind': kind, 'document': plan}
                 if submission:
                     outcome = prepare_elicitation_outcome(submission, kind, plan, turn_context)
-                _persist_planned_turn(plan, turn_context, user_id, resolved_conversation_id, submission)
+                _persist_planned_turn(
+                    plan, turn_context, user_id, resolved_conversation_id, submission,
+                    expected_previous_run=planning_base,
+                )
                 if submission:
                     complete_elicitation_submission(submission)
-                yield from _elicitation_outcome_events(outcome)
+                yield from _elicitation_outcome_events(
+                    outcome, turn_context, user_id, resolved_conversation_id,
+                )
 
-            except (ConversationContextError, ConversationResolutionError) as exc:
+            except PlanRevisionError as exc:
+                payload, _status = _plan_edit_error(exc)
+                yield serialize_sse(payload)
+            except ConversationResolutionError as exc:
+                log_event(
+                    '[ORCHESTRATION] The conversational request could not be interpreted.',
+                    level=logging.WARNING,
+                    extra={
+                        'stage': 'request_resolution', 'reason': exc.reason,
+                        'attempt': exc.attempts, 'error_type': type(exc).__name__,
+                        'resource': f"conversation:{hashlib.sha256(resolved_conversation_id.encode('utf-8')).hexdigest()}",
+                    },
+                )
+                yield build_error_event(
+                    'The conversation could not be interpreted. Please retry your request.',
+                    resolved_conversation_id,
+                )
+            except ConversationContextError as exc:
                 log_event(
                     '[ORCHESTRATION] Conversation context could not be used for planning.',
                     level=logging.WARNING, extra={'error_type': type(exc).__name__},
@@ -1347,6 +1538,14 @@ def register_route_backend_orchestration(bp):
                     'Conversation context could not be used. Retry or create a new plan.',
                     conversation_id,
                 )
+            except (PlannerError, OrchestrationMemoryError) as exc:
+                yield build_error_event(exc.message, resolved_conversation_id)
+            except (CatalogResolutionError, CapabilityResolutionError) as exc:
+                log_event(
+                    '[ORCHESTRATION] Capability context could not be loaded.',
+                    level=logging.WARNING, extra={'reason': 'capability_context_failed', 'error_type': type(exc).__name__},
+                )
+                yield build_error_event(exc.message, resolved_conversation_id)
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION] Planning failed.',
@@ -1354,11 +1553,112 @@ def register_route_backend_orchestration(bp):
                 )
                 yield build_error_event('The request could not be planned or saved. Please retry.', conversation_id)
             finally:
-                release_elicitation_submission(submission)
+                close_planning_resources()
 
-        streamed = _sse(generate())
-        if submission:
-            streamed.call_on_close(lambda: release_elicitation_submission(submission))
+        streamed = _sse(stream_with_context(generate()))
+        streamed.call_on_close(close_planning_resources)
+        return streamed
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/editor", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_plan_editor(run_id):
+        """Read the current revision and paged history without approving or pausing it."""
+        try:
+            settings = get_settings()
+            user_id, conversation_id = _plan_edit_identity(request.args.to_dict(), settings)
+            before = request.args.get('before_revision')
+            if before is not None:
+                if len(before) > 10 or not before.isdecimal():
+                    raise PlanRevisionError('Invalid history cursor.', code='invalid_request', status_code=400)
+                before = int(before)
+            record = read_revision_run(run_id, user_id, conversation_id, follow_current=True)
+            return jsonify({'editor': plan_editor_state(record, user_id, before_revision=before)})
+        except (PlanRevisionError, ConversationContextError, AzureError) as exc:
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/edit", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_begin_plan_edit(run_id):
+        """Acquire a durable manual approval hold before editing."""
+        try:
+            settings = get_settings()
+            data = request.get_json(silent=True)
+            user_id, conversation_id = _plan_edit_identity(data, settings)
+            if set(data) - {'conversation_id', 'plan_id', 'edits', 'expected_version'}:
+                raise PlanRevisionError('Invalid edit request fields.', code='invalid_request', status_code=400)
+            record = read_revision_run(run_id, user_id, conversation_id)
+            _conversation_context_for_run(record, user_id, settings)
+            record = begin_plan_edit(
+                run_id, user_id, conversation_id, plan_id=data.get('plan_id'),
+                edits=data.get('edits'), expected_version=data.get('expected_version'),
+            )
+            return jsonify({'editor': plan_editor_state(record, user_id)})
+        except (PlanRevisionError, ConversationContextError, AzureError) as exc:
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+
+    @bp.route("/api/v2/orchestration/runs/<run_id>/revisions", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def orchestration_revise_plan(run_id):
+        """Ask, answer a planner question, restore a version, or discard a pending change."""
+        claim = None
+        try:
+            settings = get_settings()
+            data = request.get_json(silent=True)
+            user_id, conversation_id = _plan_edit_identity(data, settings)
+            record = read_revision_run(run_id, user_id, conversation_id)
+            snapshot = _conversation_context_for_run(record, user_id, settings)
+            claim = claim_plan_revision(run_id, user_id, conversation_id, data)
+            identity = _request_identity(user_id, seeded_agent=(record.get('seeds') or {}).get('agent'))
+        except (PlanRevisionError, ConversationContextError, ElicitationContextError, AzureError) as exc:
+            release_plan_revision(claim)
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+
+        def generate_revision():
+            try:
+                if claim.get('replayed'):
+                    saved = read_revision_run(
+                        claim['outcome_run_id'], user_id, conversation_id, follow_current=True,
+                    )
+                else:
+                    yield build_planning_thought('Updating the plan without running it.')
+                    outcome = build_plan_edit_outcome(
+                        claim['record'], claim['request'], user_id, settings,
+                        identity=identity, conversation_context=snapshot,
+                        conversation=_authorize_context_conversation(conversation_id, user_id),
+                        ledger=_load_ledger(conversation_id, user_id, settings),
+                    )
+                    _conversation_context_for_run(record, user_id, settings)
+                    _validate_turn_memory_context(
+                        outcome.get('turn_context') or record, user_id, conversation_id,
+                    )
+                    if outcome['kind'] == 'plan':
+                        outcome['document'] = validate_edited_plan(
+                            outcome['document'], outcome['turn_context'], user_id,
+                            get_settings(), identity,
+                        )
+                    saved = complete_plan_revision(claim, **outcome)
+                _validate_turn_memory_context(saved, user_id, conversation_id)
+                yield _plan_editor_event(saved, user_id)
+            except (
+                PlanRevisionError, ConversationContextError, ElicitationContextError,
+                PlannerError, CatalogResolutionError, CapabilityResolutionError, OrchestrationMemoryError, AzureError,
+            ) as exc:
+                payload, _status = _plan_edit_error(exc)
+                yield serialize_sse(payload)
+            finally:
+                release_plan_revision(claim)
+
+        streamed = _sse(stream_with_context(generate_revision()))
+        streamed.call_on_close(lambda: release_plan_revision(claim))
         return streamed
 
     @bp.route("/api/v2/orchestration/run", methods=["POST"])
@@ -1376,6 +1676,8 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict) or 'plan' in data:
+            return jsonify({'error': 'Run the saved plan by its ID, not a submitted plan.'}), 400
         run_id = _text(data.get('run_id'))
         conversation_id = _text(data.get('conversation_id'))
         if not run_id:
@@ -1389,20 +1691,15 @@ def register_route_backend_orchestration(bp):
 
         plan = record.get('plan') or {}
         if record.get('status') in (PLAN_STATUS_RUNNING, PLAN_STATUS_COMPLETED):
-            return jsonify({'error': 'This plan has already been run.'}), 409
-
-        try:
-            plan = apply_plan_edits(plan, data.get('edits'))
-        except Exception as exc:
-            log_event(f"[ORCHESTRATION] Rejected plan edits: {exc}", level=logging.WARNING)
-            return jsonify({'error': 'The plan edits were not valid.'}), 400
+            return jsonify({'error': 'This plan has already been run.', 'code': 'already_run'}), 409
 
         conversation_id = conversation_id or _text(record.get('conversation_id'))
         try:
             snapshot = _conversation_context_for_run(record, user_id, settings)
         except ConversationContextError:
             return jsonify({
-                'error': 'Conversation context changed or is unavailable. Create a new plan.'
+                'error': 'Conversation context changed or is unavailable. Create a new plan.',
+                'code': 'plan_changed',
             }), 409
         except AzureError as exc:
             log_event(
@@ -1423,25 +1720,20 @@ def register_route_backend_orchestration(bp):
         except ElicitationContextError as exc:
             return jsonify({
                 'error': 'Some accepted answer context is no longer available.',
+                'code': 'plan_changed',
                 'details': [exc.message],
             }), 409
 
         # One accumulator for the whole run, filled by every model call the closure makes.
         run_token_usage = _sum_token_usage(record.get('planning_token_usage'))
-        try:
-            invoke_prompt = _build_invoke_prompt(settings, token_usage=run_token_usage)
-        except Exception as exc:
-            log_event(f"[ORCHESTRATION] No usable chat model: {exc}", level=logging.ERROR)
-            return jsonify({'error': 'No chat model is configured.'}), 503
-
         user_message = _text(record.get('user_message')) or _text(
             (plan.get('intent') or {}).get('summary')
         )
         resolution = record.get('request_resolution') or {}
         context_message_ids = resolution.get('message_ids')
-        allowed_user_urls = conversation_user_urls(
-            user_message, snapshot, context_message_ids, record.get('answered_questions')
-        )
+        allowed_user_urls = revision_allowed_urls({
+            **record, 'user_message': user_message, 'conversation_context': snapshot,
+        })
 
         # Captured out here, on the request thread, and closed over by the generator. A
         # streamed response's generator body runs after the view has returned, so reading
@@ -1453,42 +1745,130 @@ def register_route_backend_orchestration(bp):
         # separate requests, and an agent the user could reach when the plan was made is not
         # necessarily one they can reach now -- the same reason document authorization is
         # rechecked before the answer is composed. Still once per run, never per step.
-        agent_catalog = resolve_agent_catalog(
-            user_id, seeds=seeds, settings=settings,
-            user_groups=seeds.get('active_group_ids') or None,
-        )
-        action_catalog = resolve_action_catalog(
-            user_id, seeds=seeds, settings=settings,
-            user_groups=seeds.get('active_group_ids') or None,
-        )
-        selected_model = seeds.get('model') or {}
+        try:
+            agent_catalog = resolve_agent_catalog(
+                user_id, seeds=seeds, settings=settings,
+                user_groups=seeds.get('active_group_ids') or None,
+            ) if identity.get('user_enable_agents', True) else []
+            action_catalog = resolve_action_catalog(
+                user_id, seeds=seeds, settings=settings,
+                user_groups=seeds.get('active_group_ids') or None,
+            )
+            effective_plan = apply_plan_edits(
+                deepcopy(plan), data.get('edits', record.get('edit_narrowing')),
+            )
+            required_steps = {
+                step['capability_id'] for step in effective_plan.get('steps') or []
+                if step.get('enabled', True)
+            }
+            available_steps = set(resolve_available_capability_ids(
+                settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+                candidate_ids=required_steps,
+                request_context=_capability_request_context(
+                    user_id, identity, user_message, agent_catalog, action_catalog,
+                    allowed_user_urls=allowed_user_urls,
+                ),
+            ))
+            if required_steps - available_steps:
+                return jsonify({
+                    'error': 'A planned operation is no longer available. Review or recreate the plan.',
+                    'code': 'plan_changed',
+                }), 409
+        except (CatalogResolutionError, CapabilityResolutionError, AzureError) as exc:
+            log_event(
+                '[ORCHESTRATION] Execution capability context could not be loaded.',
+                level=logging.WARNING, extra={'reason': 'capability_context_failed', 'error_type': type(exc).__name__},
+            )
+            return jsonify({
+                'error': exc.message if isinstance(exc, (CatalogResolutionError, CapabilityResolutionError))
+                else 'Available capabilities could not be loaded. Please retry.',
+                'code': exc.code if isinstance(exc, CatalogResolutionError) else 'capability_context_unavailable',
+            }), 409 if isinstance(exc, CatalogResolutionError) and exc.code == 'selected_agent_unavailable' else 503
+        answer_model = None
+        research_model = None
+        try:
+            _validate_turn_memory_context(record, user_id, conversation_id)
+            memory_context = load_orchestration_memory(
+                user_id, _authorize_context_conversation(conversation_id, user_id),
+                build_elicitation_user_request(
+                    record.get('resolved_message') or user_message, record.get('answered_questions'),
+                ),
+                settings=settings, seeds=seeds, expected_audience=record.get('memory_audience'),
+            )
+        except (OrchestrationMemoryError, ConversationContextError, AzureError) as exc:
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+
+        def close_models():
+            try:
+                if research_model is not None:
+                    research_model.close()
+            finally:
+                if answer_model is not None:
+                    answer_model.close()
+
+        try:
+            answer_model = resolve_orchestration_model(
+                settings, user_id=user_id, seeds=seeds, identity_context=identity,
+            )
+            research_model = (
+                resolve_orchestration_model(
+                    settings, user_id=user_id, seeds=seeds, planner=True, identity_context=identity,
+                ) if has_planner_model_override(settings) else answer_model
+            )
+            bound_invoke_prompt = _build_invoke_prompt(
+                settings, token_usage=run_token_usage, model=answer_model,
+            )
+
+            def invoke_prompt(prompt_text, stage='window_analysis', metadata=None):
+                reply = bound_invoke_prompt(prompt_text, stage=stage, metadata=metadata)
+                validate_memory_context(
+                    _authorize_context_conversation(conversation_id, user_id), user_id,
+                    memory_context['audience'], memory_context['scope'],
+                )
+                return reply
+        except (ValueError, PermissionError, PlannerError, AzureError) as exc:
+            close_models()
+            log_event(
+                '[ORCHESTRATION] The execution model could not be selected.',
+                level=logging.WARNING, extra={'error_type': type(exc).__name__},
+            )
+            return jsonify({
+                'error': 'The selected model is unavailable. Choose an enabled model you can access.',
+            }), 403 if isinstance(exc, (PermissionError, OrchestrationModelError)) else 503
+
         action_model_context = {
-            'model_id': selected_model.get('model_id'),
-            'endpoint_id': selected_model.get('model_endpoint_id'),
-            'provider': selected_model.get('model_provider'),
-            'model_deployment': selected_model.get('model_deployment'),
+            'model_id': answer_model.model_id,
+            'endpoint_id': answer_model.endpoint_id,
+            'provider': answer_model.provider,
+            'model_deployment': answer_model.deployment,
             'user_id': user_id,
             'active_group_ids': seeds.get('active_group_ids') or [],
         }
+        worker_started = False
+
+        try:
+            record = claim_plan_run(
+                run_id, user_id, conversation_id, plan_id=data.get('plan_id'),
+                expected_version=data.get('expected_version'), edits=data.get('edits'),
+                conversation_context=snapshot,
+            )
+        except (PlanRevisionError, AzureError) as exc:
+            close_models()
+            payload, status = _plan_edit_error(exc)
+            return jsonify(payload), status
+        plan = record['plan']
 
         def generate():
-            approved_at = _now_iso()
-            try:
-                update_orchestration_run(run_id, user_id, {
-                    'status': PLAN_STATUS_RUNNING,
-                    'started_at': approved_at,
-                    'plan': plan,
-                    'plan_summary': summarize_plan(plan),
-                    'conversation_context': snapshot,
-                    'approval': {**(plan.get('approval') or {}),
-                                 'state': APPROVAL_STATE_APPROVED,
-                                 'approved_at': approved_at,
-                                 'approved_by': user_id},
-                }, conversation_id=conversation_id)
-            except Exception as exc:
-                log_event(f"[ORCHESTRATION] Could not mark a run started: {exc}",
-                          level=logging.ERROR)
-
+            nonlocal worker_started
+            initial_reasoning = merge_reasoning_adjustments(
+                plan.get('reasoning_adjustments'),
+                build_model_reasoning_metadata(answer_model).get('reasoning_adjustments'),
+                build_model_reasoning_metadata(research_model, 'planner').get('reasoning_adjustments')
+                if research_model is not answer_model else [],
+            )
+            if initial_reasoning:
+                yield build_reasoning_adjustment_event(initial_reasoning)
             # Progress is streamed from a worker thread rather than collected and flushed at
             # the end. The executor is synchronous and calls `emit` from inside its own loop,
             # and a generator cannot yield from a callback -- so buffering was the obvious
@@ -1539,6 +1919,21 @@ def register_route_backend_orchestration(bp):
                     log_event(f"[ORCHESTRATION] Progress not persisted: {exc}",
                               level=logging.WARNING)
 
+            def reload_memory_context():
+                nonlocal memory_context
+                refreshed = load_orchestration_memory(
+                    user_id, _authorize_context_conversation(conversation_id, user_id),
+                    build_elicitation_user_request(
+                        record.get('resolved_message') or user_message, record.get('answered_questions'),
+                    ),
+                    settings=get_settings(), seeds=seeds,
+                    expected_audience=memory_context['audience'],
+                )
+                for notice in refreshed['notices']:
+                    frames.put(build_planning_thought(notice))
+                memory_context = refreshed
+                return refreshed
+
             context = RunContext(
                 run_id=run_id,
                 plan_id=plan.get('plan_id'),
@@ -1546,6 +1941,8 @@ def register_route_backend_orchestration(bp):
                 user_id=user_id,
                 turn_index=record.get('turn_index') or 0,
                 invoke_prompt=invoke_prompt,
+                planner_client=research_model.as_planner_client(),
+                planner_deployment=research_model.deployment,
                 user_message=user_message,
                 user_message_id=record.get('user_message_id'),
                 answered_questions=record.get('answered_questions') or [],
@@ -1559,6 +1956,8 @@ def register_route_backend_orchestration(bp):
                 revalidate_conversation_context=lambda: _conversation_context_for_run(
                     record, user_id, settings
                 ),
+                memory_context=memory_context,
+                reload_memory_context=reload_memory_context,
                 doc_scope=seeds.get('doc_scope') or 'all',
                 tags=seeds.get('tags') or None,
                 document_filter_mode=seeds.get('document_filter_mode') or None,
@@ -1572,7 +1971,7 @@ def register_route_backend_orchestration(bp):
                 active_group_id=(seeds.get('active_group_ids') or [None])[0],
                 agent_catalog=agent_catalog,
                 action_catalog=action_catalog,
-                gpt_model=selected_model.get('model_deployment'),
+                gpt_model=answer_model.deployment,
                 model_context=action_model_context,
                 agent_execution_identity=agent_execution_identity,
             )
@@ -1600,12 +1999,16 @@ def register_route_backend_orchestration(bp):
                     # The sentinel is what ends the drain loop. Sent from `finally` so a
                     # thrown worker cannot leave the response waiting on a queue nothing
                     # will ever write to again.
-                    frames.put(None)
+                    try:
+                        close_models()
+                    finally:
+                        frames.put(None)
 
             thread = threading.Thread(
                 target=worker, name=f'orchestration-run-{run_id}', daemon=True
             )
             thread.start()
+            worker_started = True
 
             while True:
                 try:
@@ -1622,7 +2025,17 @@ def register_route_backend_orchestration(bp):
 
             thread.join(timeout=RUN_JOIN_TIMEOUT_SECONDS)
 
-            if 'error' in outcome or 'result' not in outcome:
+            failed_result = outcome.get('result') or {}
+            reasoning_metadata = build_model_reasoning_metadata(answer_model)
+            reasoning_metadata['reasoning_adjustments'] = merge_reasoning_adjustments(
+                plan.get('reasoning_adjustments'), reasoning_metadata.get('reasoning_adjustments'),
+                build_model_reasoning_metadata(research_model, 'planner').get('reasoning_adjustments')
+                if research_model is not answer_model else [],
+            )
+            if (
+                'error' in outcome or 'result' not in outcome
+                or failed_result.get('status') == PLAN_STATUS_FAILED
+            ):
                 error_message = (
                     'Conversation context changed. Create a new plan.'
                     if isinstance(outcome.get('error'), ConversationContextError)
@@ -1633,7 +2046,10 @@ def register_route_backend_orchestration(bp):
                         'status': PLAN_STATUS_FAILED,
                         'error': error_message,
                         'completed_at': _now_iso(),
-                        'token_usage': run_token_usage,
+                        'reasoning_adjustments': reasoning_metadata['reasoning_adjustments'],
+                        'token_usage': _combined_token_usage(
+                            run_token_usage, failed_result.get('token_usage'),
+                        ),
                     }, conversation_id=conversation_id)
                 except AzureError as exc:
                     log_event(
@@ -1658,6 +2074,7 @@ def register_route_backend_orchestration(bp):
 
             summary = summarize_plan(plan)
             summary['status'] = result.get('status')
+            summary['capabilities_used'] = list(result.get('capabilities_used') or [])
 
             # Everything the run gathered, split the way an assistant message carries it.
             document_citations, web_citations, tool_citations = _partition_citations(result.get('citations'))
@@ -1674,8 +2091,11 @@ def register_route_backend_orchestration(bp):
                         'plan_summary': summary,
                     },
                     'token_usage': combined_usage,
+                    **reasoning_metadata,
                 },
                 extra={
+                    **answer_model.metadata(),
+                    **reasoning_metadata,
                     'hybrid_citations': document_citations,
                     'web_search_citations': web_citations,
                     'agent_citations': tool_citations,
@@ -1696,12 +2116,14 @@ def register_route_backend_orchestration(bp):
                 update_orchestration_run(run_id, user_id, {
                     'assistant_message_id': message_id,
                     'token_usage': combined_usage,
+                    'reasoning_adjustments': reasoning_metadata['reasoning_adjustments'],
                 }, conversation_id=conversation_id)
             except Exception:
                 # The answer is already saved and streamed; failing to cross-reference it
                 # is not worth failing the run over.
                 pass
 
+            answer_metadata = {**answer_model.metadata(), **reasoning_metadata}
             yield build_run_done_event(
                 conversation_id,
                 message_id=message_id,
@@ -1713,9 +2135,12 @@ def register_route_backend_orchestration(bp):
                 artifacts=result.get('artifacts'),
                 plan_summary=summary,
                 status=result.get('status') or PLAN_STATUS_COMPLETED,
+                **answer_metadata,
             )
 
-        return _sse(generate())
+        response = _sse(generate())
+        response.call_on_close(lambda: close_models() if not worker_started else None)
+        return response
 
     @bp.route("/api/v2/orchestration/cancel/<run_id>", methods=["POST"])
     @swagger_route(security=get_auth_security())

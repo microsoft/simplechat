@@ -9,7 +9,7 @@
 // them on window.OrchHarness so a test can seed the stores, mount a component into a real DOM, and
 // drive it with genuine clicks. Nothing here is stubbed: the code under test is the code that ships.
 
-import { createElement, StrictMode, type ComponentProps, type ReactElement } from 'react';
+import { createElement, StrictMode, useEffect, type ComponentProps, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -28,9 +28,29 @@ import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/
 import { OrchestrationPlanPanel } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanPanel';
 import { OrchestrationRunView } from '../../../application/v2_ui/src/components/chat/OrchestrationRunView';
 import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
+import { OrchestrationPlanEditorHost } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanEditor';
 import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
 import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
+
+function PlanEditorExperience() {
+    const conversationId = chatStore.useChatStore((state) => state.activeConversationId);
+    const drawer = chatStore.useChatStore((state) => state.drawerMode);
+    const setVisible = orchestrationStore.useOrchestrationStore((state) => state.setVisibleConversation);
+    useEffect(() => {
+        setVisible(conversationId);
+        return () => setVisible(null);
+    }, [conversationId, setVisible]);
+    return (
+        <div className="flex h-[100dvh] min-h-0 min-w-0">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col"><MessageList /></div>
+            {drawer === 'plan' ? (
+                <aside aria-label="Review drawer" className="w-80 shrink-0"><OrchestrationPlanPanel /></aside>
+            ) : null}
+            <OrchestrationPlanEditorHost />
+        </div>
+    );
+}
 
 function PromptExperience() {
     return (
@@ -79,6 +99,8 @@ type ComponentName =
     | 'Composer'
     | 'PromptExperience'
     | 'ApprovalPreferenceWorkflow'
+    | 'PlanEditorExperience'
+    | 'OrchestrationPlanEditorHost'
     | 'ContextWorkflow';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -92,6 +114,8 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     Composer,
     PromptExperience,
     ApprovalPreferenceWorkflow,
+    PlanEditorExperience,
+    OrchestrationPlanEditorHost,
     ContextWorkflow,
 };
 
@@ -167,6 +191,8 @@ function reset(): void {
         pinnedRunId: null,
         visibleConversationId: null,
         activeTurns: {},
+        planEditors: {},
+        editorTarget: null,
     });
     chatStore.useChatStore.setState({
         activeConversationId: null,

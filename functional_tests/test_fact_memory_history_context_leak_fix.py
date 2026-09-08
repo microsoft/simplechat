@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for fact-memory history context leak fix.
-Version: 0.241.128
+Version: 0.261.104
 Implemented in: 0.241.128
 
 This test ensures saved instruction/fact memory citations stay available as
@@ -21,6 +21,7 @@ from test_support.versioning import assert_app_version_at_least
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'config.py')
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
+CONTEXT_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'functions_conversation_context.py')
 FIX_DOC = os.path.join(
     ROOT_DIR,
     'docs',
@@ -63,6 +64,16 @@ def load_history_helpers():
     assert found_function_names == TARGET_FUNCTIONS, (
         f'Expected helpers {sorted(TARGET_FUNCTIONS)}, '
         f'found {sorted(found_function_names)}'
+    )
+    context_tree = ast.parse(read_file_text(CONTEXT_FILE), filename=CONTEXT_FILE)
+    selected_nodes.extend(
+        copy.deepcopy(node) for node in context_tree.body
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id in {
+                'CONVERSATION_CONTEXT_METADATA_TYPE', 'CONVERSATION_CONTEXT_FUNCTION_NAME',
+            }
+            for target in node.targets
+        )
     )
 
     module = ast.Module(body=selected_nodes, type_ignores=[])

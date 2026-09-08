@@ -23,7 +23,7 @@ import {
 } from '../../lib/elicitationAnswers';
 import { messageToPlainText } from '../../lib/messageText';
 import type { ComposerDraft } from '../../lib/composerDraft';
-import type { Elicitation, ElicitationAction } from '../../lib/orchestration';
+import type { Elicitation, ElicitationAction, ElicitationContext, ElicitationResponse } from '../../lib/orchestration';
 import type { PromptResolutionContext } from '../../lib/promptVariables';
 
 export function ElicitationCard({
@@ -37,6 +37,46 @@ export function ElicitationCard({
         selectElicitation(state, conversationId, turnId));
     const draft = useOrchestrationStore((state) =>
         selectElicitationDraft(state, conversationId, turnId));
+    if (!elicitation || !draft) {
+        return null;
+    }
+    return (
+        <ElicitationForm
+            conversationId={conversationId}
+            elicitation={elicitation}
+            draft={draft}
+            onDraftChange={(update) => useOrchestrationStore.getState().updateElicitationDraft(
+                conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0, update,
+            )}
+            onAnswer={(response, context) => void answerElicitation({
+                conversationId, turnId, response, context,
+                elicitationId: elicitation.elicitation_id,
+                elicitationRevision: elicitation.revision ?? 0,
+            })}
+        />
+    );
+}
+
+/** Shared question inputs; the caller owns either the main-turn or editor-scoped continuation. */
+export function ElicitationForm({
+    conversationId,
+    elicitation,
+    draft,
+    onDraftChange,
+    onAnswer,
+    onCancel,
+    cancelLabel = 'Cancel and abandon this request',
+    ariaLabel = 'Follow-up questions',
+}: {
+    conversationId: string;
+    elicitation: Elicitation;
+    draft: ElicitationDraft;
+    onDraftChange: (update: (current: ElicitationDraft) => ElicitationDraft) => void;
+    onAnswer: (response: ElicitationResponse, context?: ElicitationContext) => void;
+    onCancel?: () => void;
+    cancelLabel?: string;
+    ariaLabel?: string;
+}) {
     const bootstrap = useBootstrapStore((state) => state.data);
     const messages = useChatStore((state) => state.messages);
     const conversations = useChatStore((state) => state.conversations);
@@ -72,24 +112,21 @@ export function ElicitationCard({
     }
     const isLastPage = pageIndex === pages.length - 1;
     const canFinish = Object.keys(answer.errors).length === 0 && !answer.pendingUploads;
-    const updateDraft = (update: (current: ElicitationDraft) => ElicitationDraft) =>
-        useOrchestrationStore.getState().updateElicitationDraft(
-            conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0, update,
-        );
+    const updateDraft = onDraftChange;
     const changePage = (index: number) =>
         updateDraft((current) => ({ ...current, pageIndex: index }));
     const send = (action: ElicitationAction) => {
         if (draft.submitting || (action === 'accept' && !canFinish)) {
             return;
         }
-        void answerElicitation({
-            conversationId,
-            turnId,
-            elicitationId: elicitation.elicitation_id,
-            elicitationRevision: elicitation.revision ?? 0,
-            response: action === 'accept' ? answer.response : { action, content: {} },
-            context: action === 'accept' ? answer.context : undefined,
-        });
+        if (action === 'cancel' && onCancel) {
+            onCancel();
+        } else {
+            onAnswer(
+                action === 'accept' ? answer.response : { action, content: {} },
+                action === 'accept' ? answer.context : undefined,
+            );
+        }
     };
     const advance = () => {
         if (draft.submitting) {
@@ -104,7 +141,7 @@ export function ElicitationCard({
 
     return (
         <section
-            aria-label="Follow-up questions"
+            aria-label={ariaLabel}
             className="my-3 rounded-2xl border border-edge-strong bg-surface-sunken p-3"
         >
             <div className="flex items-start gap-2">
@@ -162,7 +199,7 @@ export function ElicitationCard({
                         variant="ghost"
                         onClick={() => send('cancel')}
                         disabled={draft.submitting}
-                        aria-label="Cancel and abandon this request"
+                        aria-label={cancelLabel}
                     >
                         <X size={14} aria-hidden="true" />
                         Cancel

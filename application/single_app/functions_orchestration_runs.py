@@ -21,7 +21,7 @@ rather than trusting the key.
 Shaped and styled after ``functions_personal_workflows.py`` so the run/step CRUD reads the
 same as the workflow-run CRUD it sits beside.
 
-Version: 0.261.099
+Version: 0.261.104
 """
 
 import hashlib
@@ -56,7 +56,9 @@ PENDING_TURN_PREFIX = 'oturn_'
 PENDING_TURN_MAX_BYTES = 65536
 RUN_RECORD_FILTER = (
     '(NOT IS_DEFINED(c.record_type) OR c.record_type = "run" '
-    'OR c.record_type = "orchestration_run")'
+    'OR c.record_type = "orchestration_run") '
+    'AND NOT IS_DEFINED(c.superseded_by_run_id) '
+    'AND (NOT IS_DEFINED(c.status) OR c.status != "superseded")'
 )
 
 
@@ -80,6 +82,13 @@ def _coerce_int(value, default=0):
 def _is_run_record(document):
     return isinstance(document, dict) and document.get('record_type') in (
         None, RUN_RECORD_TYPE, 'orchestration_run',
+    )
+
+
+def _is_current_run_record(document):
+    return (
+        _is_run_record(document) and 'superseded_by_run_id' not in document
+        and document.get('status') != 'superseded'
     )
 
 
@@ -207,6 +216,7 @@ def create_orchestration_run(
     initial_updates=None,
     idempotent=False,
     turn_context=None,
+    expected_previous_run=None,
 ):
     """Persist a new run record for a validated plan.
 
@@ -214,6 +224,9 @@ def create_orchestration_run(
     resolved from the conversation when the caller does not supply one -- the ordering that
     the ledger and the map view rely on has to be assigned somewhere, and assigning it at
     creation keeps it monotonic without the route having to track a counter.
+
+    ``expected_previous_run`` is the owned raw record observed before ordinary replanning.
+    It makes publication conditional on that unstarted plan remaining unchanged.
     """
     plan = plan if isinstance(plan, dict) else {}
     conversation_id = conversation_id or plan.get('conversation_id')
@@ -225,6 +238,17 @@ def create_orchestration_run(
     run_id = plan.get('run_id') or new_run_id()
     if str(run_id).startswith((PENDING_TURN_PREFIX, 'elicitation_')):
         raise ValueError('The plan uses a reserved run ID.')
+    if expected_previous_run is not None:
+        if (
+            not _is_run_record(expected_previous_run)
+            or expected_previous_run.get('user_id') != user_id
+            or expected_previous_run.get('conversation_id') != conversation_id
+            or not expected_previous_run.get('_etag')
+            or not expected_previous_run.get('id')
+        ):
+            raise ConversationContextError('The previous plan could not be matched to this turn.')
+        if turn_index is None:
+            turn_index = expected_previous_run.get('turn_index', 0)
     if turn_index is None:
         turn_index = next_turn_index(conversation_id, user_id)
 
@@ -269,6 +293,7 @@ def create_orchestration_run(
         'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id', 'seeds',
         'answered_questions', 'conversation_context', 'request_resolution',
         'resolved_message', 'planning_token_usage', 'original_seeds', 'prompt_selection',
+        'memory_audience', 'memory_scope',
     ):
         if isinstance(turn_context, dict) and key in turn_context:
             record[key] = turn_context[key]
@@ -279,7 +304,11 @@ def create_orchestration_run(
     })
 
     try:
-        if idempotent:
+        if expected_previous_run is not None:
+            record = _publish_replanned_run(
+                record, expected_previous_run, idempotent=idempotent,
+            )
+        elif idempotent:
             try:
                 cosmos_orchestration_runs_container.create_item(body=record)
             except exceptions.CosmosResourceExistsError:
@@ -302,6 +331,105 @@ def create_orchestration_run(
         raise
 
     return _strip_cosmos_metadata(record)
+
+
+def _replanned_outcome(record, previous):
+    """Replay only a matching owned run, never a guessed or unrelated result ID."""
+    if (
+        not _is_run_record(previous)
+        or previous.get('user_id') != record['user_id']
+        or previous.get('conversation_id') != record['conversation_id']
+        or previous.get('turn_id') != record.get('turn_id')
+    ):
+        raise ConversationContextError('The saved plan could not be matched to this turn.')
+    if previous['id'] == record['id']:
+        existing = previous
+    elif previous.get('superseded_by_run_id') == record['id']:
+        existing = cosmos_orchestration_runs_container.read_item(
+            item=record['id'], partition_key=record['conversation_id'],
+        )
+        if (
+            existing.get('parent_run_id') != previous['id']
+            or existing.get('revision_root_run_id')
+            != (previous.get('revision_root_run_id') or previous['id'])
+        ):
+            raise ConversationContextError('The saved plan could not be matched to this turn.')
+    else:
+        return None
+    if (
+        not _is_run_record(existing)
+        or existing.get('id') != record['id']
+        or existing.get('user_id') != record['user_id']
+        or existing.get('conversation_id') != record['conversation_id']
+        or existing.get('turn_id') != record.get('turn_id')
+        or (existing.get('plan') or {}).get('plan_id') != record['plan'].get('plan_id')
+        or existing.get('revision') != record.get('revision')
+    ):
+        raise ConversationContextError('The saved plan could not be matched to this turn.')
+    return existing
+
+
+def _publish_replanned_run(record, expected_previous_run, *, idempotent=False):
+    """An ordinary replan must also lose to an editor hold or execution claim."""
+    previous = cosmos_orchestration_runs_container.read_item(
+        item=expected_previous_run['id'], partition_key=record['conversation_id'],
+    )
+    if idempotent:
+        replay = _replanned_outcome(record, previous)
+        if replay is not None:
+            return replay
+    if (
+        not _is_current_run_record(previous)
+        or previous.get('user_id') != record['user_id']
+        or previous.get('conversation_id') != record['conversation_id']
+        or previous.get('turn_id') != record.get('turn_id')
+        or previous.get('_etag') != expected_previous_run['_etag']
+        or previous.get('status') not in ('draft', 'awaiting_approval', 'approved')
+        or previous.get('started_at') or previous.get('edit_version')
+        or (previous.get('plan') or {}).get('edit_version')
+        or previous['id'] == record['id']
+        or _coerce_int(record.get('revision')) <= _coerce_int(previous.get('revision'))
+    ):
+        raise ConversationContextError('The plan changed while planning. Reload the latest plan.')
+    for key in (
+        'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id',
+        'original_seeds', 'conversation_context', 'snapshot', 'request_fingerprint',
+    ):
+        if key in previous:
+            record[key] = deepcopy(previous[key])
+    record['turn_index'] = previous.get('turn_index', 0)
+    record['revision_root_run_id'] = previous.get('revision_root_run_id') or previous['id']
+    record['parent_run_id'] = previous['id']
+    record['revision_origin'] = 'ai'
+    record['revision_note'] = 'Plan regenerated.'
+    predecessor = deepcopy(_strip_cosmos_metadata(previous))
+    predecessor.update({
+        'status': 'superseded', 'superseded_by_run_id': record['id'],
+        'revision_root_run_id': record['revision_root_run_id'],
+        'superseded_at': _utc_now_iso(), 'updated_at': _utc_now_iso(),
+    })
+    try:
+        cosmos_orchestration_runs_container.execute_item_batch(
+            batch_operations=[
+                ('replace', (previous['id'], predecessor), {'if_match_etag': previous['_etag']}),
+                ('create', (record,)),
+            ],
+            partition_key=record['conversation_id'],
+        )
+    except (exceptions.CosmosBatchOperationError, exceptions.CosmosHttpResponseError) as exc:
+        if exc.status_code in (404, 409, 412):
+            if idempotent:
+                latest = cosmos_orchestration_runs_container.read_item(
+                    item=previous['id'], partition_key=record['conversation_id'],
+                )
+                replay = _replanned_outcome(record, latest)
+                if replay is not None:
+                    return replay
+            raise ConversationContextError(
+                'The plan changed while planning. Reload the latest plan.'
+            ) from exc
+        raise
+    return record
 
 
 def get_orchestration_run(run_id, user_id, conversation_id=None):
@@ -372,7 +500,12 @@ def get_latest_turn_run(conversation_id, user_id, turn_id):
         ],
         partition_key=conversation_id,
     ))
-    return _strip_cosmos_metadata(rows[0]) if rows else None
+    current = [
+        row for row in rows if _is_current_run_record(row)
+        and row.get('conversation_id') == conversation_id
+        and row.get('user_id') == user_id and row.get('turn_id') == turn_id
+    ]
+    return _strip_cosmos_metadata(current[0]) if current else None
 
 
 def update_orchestration_run(run_id, user_id, updates, conversation_id=None):
@@ -451,7 +584,10 @@ def list_conversation_runs(conversation_id, user_id, limit=10):
         )
         return []
 
-    trimmed = [item for item in items if _is_run_record(item)][:limit]
+    trimmed = [
+        item for item in items if _is_current_run_record(item)
+        and item.get('user_id') == user_id and item.get('conversation_id') == conversation_id
+    ][:limit]
     trimmed.reverse()
     return [_strip_cosmos_metadata(item) for item in trimmed]
 
@@ -713,6 +849,9 @@ def prepare_elicitation_outcome(submission, kind, document, turn_context):
     """Durably choose IDs and output before any idempotent run/message writes."""
     current = _read_claimed_record(submission)
     outcome = {'kind': kind, 'document': deepcopy(document)}
+    for key in ('memory_audience', 'memory_scope'):
+        if key in turn_context:
+            outcome[key] = deepcopy(turn_context[key])
     updated = _replace_pending(current, {
         'prepared': {
             'submission': deepcopy(submission['claim']),

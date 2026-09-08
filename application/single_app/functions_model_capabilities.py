@@ -1,5 +1,5 @@
 # functions_model_capabilities.py
-"""Model capability resolution backed by the SimpleChat model capability catalog.
+"""Resolve catalog-backed model capabilities and reasoning effort.
 
 Capability answers resolve through a precedence chain so that a model which is not
 present in the shipped catalog -- a customer's on-premises or bespoke model -- can
@@ -31,6 +31,8 @@ MODEL_IDENTIFIER_FIELDS = (
     "deployment",
     "name",
 )
+REASONING_IDENTIFIER_FIELDS = ("modelName", "behavior_name", "deploymentName", "deployment")
+REASONING_EFFORTS = frozenset(("none", "minimal", "low", "medium", "high", "xhigh"))
 
 CATALOG_RELATIVE_PATH = ("static", "json", "model_capabilities.json")
 CATALOG_FILENAME = os.path.join(*CATALOG_RELATIVE_PATH)
@@ -116,9 +118,12 @@ def load_model_capability_catalog(force_refresh=False):
     for record in document.get("models") or []:
         if not isinstance(record, Mapping):
             continue
-        capabilities = record.get("capabilities")
+        capabilities = record.get("capabilities") or {}
         if not isinstance(capabilities, Mapping):
             continue
+        capabilities = dict(capabilities)
+        if isinstance(record.get("reasoningPolicy"), Mapping):
+            capabilities["reasoningPolicy"] = record["reasoningPolicy"]
         for identifier in _iter_catalog_record_identifiers(record):
             catalog[identifier] = dict(capabilities)
     return catalog
@@ -268,6 +273,96 @@ def get_model_catalog_capabilities(model):
         if any(isinstance(value, bool) for value in capabilities.values()):
             return dict(capabilities)
     return None
+
+
+def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):
+    """Resolve the V2 reasoning policy independently of audited token-capacity matching."""
+    normalized = _normalize_model_identifier(identifier)
+    if not normalized:
+        return None
+    catalog = load_model_capability_catalog()
+    if normalized in catalog and (capability is None or capability in catalog[normalized]):
+        return catalog[normalized]
+
+    best = None
+    best_length = 0
+    for candidate, capabilities in catalog.items():
+        if capability is not None and capability not in capabilities:
+            continue
+        if len(candidate) <= best_length or not normalized.startswith(f"{candidate}-"):
+            continue
+        if reject_version_suffix and re.match(
+            r"^\d{1,3}(?:-|$)", normalized[len(candidate) + 1:]
+        ):
+            # A new version is not a deployment suffix (dated snapshots still match).
+            continue
+        best = capabilities
+        best_length = len(candidate)
+    return best
+
+
+def resolve_model_reasoning_policy(model_name):
+    """Return an allowlisted Chat Completions reasoning policy, never a name guess.
+
+    Records must already be authorized by the caller. Prefer their canonical model
+    name to a deployment alias; configuration UUIDs and display labels are not
+    capability identities. ``default_effort`` is the application's fallback for an
+    invalid selection, not the provider's default for an omitted parameter.
+    """
+    if not isinstance(model_name, str):
+        model = model_name
+        model_name = ""
+        for field in REASONING_IDENTIFIER_FIELDS:
+            value = model.get(field) if isinstance(model, Mapping) else getattr(model, field, None)
+            if isinstance(value, str) and value.strip():
+                model_name = value
+                break
+    capabilities = _catalog_lookup(model_name, reject_version_suffix=True) or {}
+    policy = capabilities.get("reasoningPolicy") or {}
+    unknown = {"status": "unknown", "efforts": [], "default_effort": None}
+    if not isinstance(policy, Mapping):
+        return unknown
+    if policy.get("status") == "unsupported":
+        return {"status": "unsupported", "efforts": [], "default_effort": None}
+    efforts = policy.get("efforts")
+    if (
+        policy.get("status") != "supported" or not isinstance(efforts, list) or not efforts
+        or any(not isinstance(effort, str) or effort not in REASONING_EFFORTS for effort in efforts)
+        or len(set(efforts)) != len(efforts) or policy.get("default_effort") not in efforts
+    ):
+        return unknown
+    return {
+        "status": "supported",
+        "efforts": list(efforts),
+        "default_effort": policy["default_effort"],
+    }
+
+
+def resolve_model_reasoning_effort(model_name, requested_effort):
+    """Keep absent, explicit ``none``, and a corrected unsupported choice distinct."""
+    requested = requested_effort.strip().lower() if isinstance(requested_effort, str) else None
+    requested = requested or None
+    resolution = {
+        "requested_effort": requested,
+        "effective_effort": None,
+        "mode": "model_default",
+        "adjustment_reason": None,
+    }
+    if requested is None:
+        return resolution
+    policy = resolve_model_reasoning_policy(model_name)
+    if policy["status"] == "supported":
+        effective = requested
+        if requested not in policy["efforts"]:
+            effective = "low" if "low" in policy["efforts"] else policy["default_effort"]
+            resolution["adjustment_reason"] = "reasoning_effort_unsupported"
+        resolution.update(effective_effort=effective, mode="explicit")
+    else:
+        resolution["adjustment_reason"] = (
+            "reasoning_parameter_unsupported" if policy["status"] == "unsupported"
+            else "reasoning_capability_unknown"
+        )
+    return resolution
 
 
 def _heuristic_capability(capability_name, model):

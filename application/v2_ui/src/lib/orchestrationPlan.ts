@@ -31,6 +31,7 @@ import type {
     PlanStatus,
     StepStatus,
 } from './orchestration';
+import { normalizeReasoningAdjustments } from './reasoning';
 
 /**
  * The capability id of the answering step, from `TERMINAL_CAPABILITY_ID` in the registry.
@@ -213,7 +214,9 @@ export function normalizePlan(raw: unknown): OrchestrationPlan | null {
 
     return {
         plan_id: asString(source.plan_id),
+        reasoning_adjustments: normalizeReasoningAdjustments(source.reasoning_adjustments),
         run_id: asString(source.run_id),
+        edit_version: typeof source.edit_version === 'string' ? source.edit_version : undefined,
         turn_id: asString(source.turn_id),
         revision: typeof source.revision === 'number' ? source.revision : 0,
         conversation_id: asString(source.conversation_id),
@@ -276,6 +279,7 @@ function normalizeInputs(raw: unknown): OrchestrationPlanInputs {
     }
 
     return {
+        required_capabilities: asStringList(source.required_capabilities),
         documents,
         actions: source.actions !== undefined ? actions : undefined,
         web: asBoolean(source.web, false),

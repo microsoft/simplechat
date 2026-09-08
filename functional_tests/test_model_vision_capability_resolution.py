@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for how the application decides a model can accept images.
-Version: 0.261.102
+Version: 0.261.105
 Implemented in: 0.261.084
 
 Multi-Modal Vision Analysis sends page images to a model, so it can only offer
@@ -45,13 +45,13 @@ is_vision_capable = capabilities_module.is_vision_capable_model
 
 
 def test_the_catalog_declares_vision_support_for_every_model():
-    """A model missing the field falls through to a guess it should not need."""
+    """Boolean capability records stay complete; reasoning-only records stay separate."""
     print("Testing catalog completeness...")
 
     assert_app_version_at_least("0.261.084")
 
     document = json.loads(CATALOG.read_text(encoding="utf-8"))
-    models = document.get("models") or []
+    models = [model for model in document.get("models") or [] if "capabilities" in model]
     assert models, "The capability catalog lists no models."
 
     missing = [

@@ -13,10 +13,10 @@ safely when the world has changed underneath it.
 Two properties are worth stating because they are the reason this is an engine and not a
 loop:
 
-**A plan always produces an answer.** A gather step can fail, be skipped because its
+**A plan always attempts an answer.** A gather step can fail, be skipped because its
 dependency failed, or be cut off by a budget, and the run still reaches ``respond`` and
 answers with whatever evidence survived. The terminal step is therefore exempt from every
-skip rule; the only thing that stops it is an explicit cancellation.
+skip rule except an explicit cancellation. A failed answer completion still fails the run.
 
 **Access is re-checked at answer time, not trusted from plan time.** Between the planner
 naming a document and the executor answering from it, the user's access to that document can
@@ -31,7 +31,7 @@ collects those and returns them, bounded by the replan budget, but it never call
 itself. The route owns that loop, because only the route can decide to spend another planner
 round trip.
 
-Version: 0.261.099
+Version: 0.261.104
 """
 
 import logging
@@ -169,6 +169,8 @@ class RunContext:
         user_id=None,
         turn_index=0,
         invoke_prompt=None,
+        planner_client=None,
+        planner_deployment=None,
         user_message='',
         user_message_id=None,
         answered_questions=None,
@@ -180,6 +182,8 @@ class RunContext:
         context_message_ids=None,
         allowed_user_urls=None,
         revalidate_conversation_context=None,
+        memory_context=None,
+        reload_memory_context=None,
         chat_type='personal',
         selection_mode=None,
         doc_scope='all',
@@ -209,6 +213,8 @@ class RunContext:
         self.turn_index = turn_index
 
         self.invoke_prompt = invoke_prompt
+        self.planner_client = planner_client
+        self.planner_deployment = planner_deployment
         self.user_message = user_message
         self.answered_questions = deepcopy(answered_questions or [])
         self.resolved_message = resolved_message if resolved_message is not None else user_message
@@ -223,6 +229,8 @@ class RunContext:
         )
         self.allowed_user_urls = list(allowed_user_urls) if allowed_user_urls is not None else None
         self.revalidate_conversation_context = revalidate_conversation_context
+        self.memory_context = deepcopy(memory_context or {})
+        self.reload_memory_context = reload_memory_context
         self.chat_type = chat_type
 
         self.selection_mode = selection_mode
@@ -819,8 +827,8 @@ def execute_plan(
         if is_terminal:
             terminal_result = result
         else:
-            # The terminal step's citations echo what the run already accumulated; merging
-            # them would double every citation, so only non-terminal results are merged.
+            # Terminal citations include accumulated evidence plus freshly recalled memory.
+            # Return that final set below instead of merging and duplicating its sources.
             context.merge_step_result(result, step_id=step_id)
             executed_non_terminal += 1
 
@@ -873,7 +881,7 @@ def execute_plan(
         'message': message,
         'summary': _text((terminal_result or {}).get('summary')),
         'evidence': list(context.evidence or []),
-        'citations': list(context.citations or []),
+        'citations': list((terminal_result or {}).get('citations') or context.citations or []),
         'artifacts': list(context.artifacts or []),
         'notes': list(context.notes or []),
         'documents_touched': documents_touched,

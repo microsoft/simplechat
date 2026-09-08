@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
+# test_v2_orchestration_composer.py
 """
 UI test for the V2 Composer's orchestration mode: the toggle, the manual-controls disclosure.
-Version: 0.261.059
-Implemented in: 0.261.059
+Version: 0.261.104
+Implemented in: 0.261.085
 
 Orchestration inverts the composer. The Orchestrate toggle appears only where the deployment ships
 the feature, is on by default wherever the deployment offers it, and -- while on -- folds the
@@ -14,7 +14,7 @@ spoken prompt is still just input to the question, so they stay on the bar.
 This test drives the REAL Composer over a seeded bootstrap (no server, no credentials) and asserts:
 
   * The Orchestrate toggle is absent unless both the feature flag and the bootstrap switch are on.
-  * When available it is off by default and the classic manual controls are shown.
+  * When available it is on by default and manual controls are collapsed.
   * Turning it on collapses the capability toggles and the model/agent/reasoning pickers behind the
     disclosure, while the attach-a-file and voice-input controls stay visible; opening the
     disclosure brings the manual controls back.
@@ -32,7 +32,7 @@ import harness_build as hb  # noqa: E402
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
-IMPLEMENTED_IN = "0.261.059"
+IMPLEMENTED_IN = "0.261.085"
 
 _PAGE = None
 
@@ -223,11 +223,33 @@ def test_disclosure_restores_the_manual_controls():
         return False
 
 
+def test_orchestration_controls_do_not_advertise_image_generation():
+    """Unsupported image generation is disabled without blocking available Deep Research."""
+    page = _PAGE
+    page.evaluate(_SEED_COMPOSER, {
+        "features": _features(
+            enable_source_review=True, enable_deep_source_review=True,
+            enable_image_generation=True, enable_web_search=True,
+        ),
+        "orchestration": _orchestration(),
+    })
+    page.click('#mount-a [title="Manual controls"]')
+    image = page.get_by_title("Image unavailable in Orchestrate", exact=True)
+    assert image.is_disabled()
+    assert page.get_by_title("Deep research", exact=True).is_enabled()
+    page.get_by_title("Deep research", exact=True).click()
+    assert page.get_by_title("Web", exact=True).get_attribute("aria-pressed") == "false"
+    page.get_by_title("Orchestrate", exact=True).click()
+    assert page.get_by_title("Image", exact=True).is_enabled()
+    return True
+
+
 PAGE_TESTS = [
     test_toggle_hidden_unless_feature_and_switch_are_on,
     test_toggle_is_on_by_default_with_controls_collapsed,
     test_turning_off_restores_the_classic_composer,
     test_disclosure_restores_the_manual_controls,
+    test_orchestration_controls_do_not_advertise_image_generation,
 ]
 
 

@@ -6,11 +6,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Optional
 
 from config import cosmos_activity_logs_container
+from functions_action_catalog import resolve_current_user_groups
 from functions_appinsights import log_event
 from functions_assigned_knowledge import get_agent_assigned_knowledge
 from functions_global_actions import get_global_actions
 from functions_global_agents import get_global_agents
-from functions_group import get_group_model_endpoints, get_user_groups
+from functions_group import get_group_model_endpoints
 from functions_group_actions import get_group_actions
 from functions_group_agents import get_group_agents
 from functions_governance import filter_actions_by_action_type_access, filter_governed_global_actions_for_user
@@ -276,12 +277,15 @@ def build_accessible_agent_catalog(
     user_id: str,
     *,
     settings: Optional[Dict[str, Any]] = None,
-    user_groups: Optional[Iterable[Dict[str, Any]]] = None,
+    user_groups: Optional[Iterable[Dict[str, Any] | str]] = None,
 ) -> List[Dict[str, Any]]:
     """Return safe catalog records for agents the user can select in chat."""
     resolved_settings = settings or get_settings()
     catalog: List[Dict[str, Any]] = []
-    resolved_groups = list(user_groups) if user_groups is not None else get_user_groups(user_id)
+    resolved_groups = (
+        resolve_current_user_groups(user_id, user_groups)
+        if resolved_settings.get("enable_group_workspaces", False) else []
+    )
     model_labels = _build_model_label_map(user_id, resolved_settings, resolved_groups)
     action_labels = _build_action_label_map(user_id, resolved_settings, resolved_groups)
 

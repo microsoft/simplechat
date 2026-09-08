@@ -35,7 +35,9 @@
     "OpenAI model pages describe api.openai.com, not Azure deployment readiness. Azure requires its v1 Responses surface for the hosted image tool; the dated 2025-04-01-preview Responses contract is not equivalent to v1. Direct Images API versions are a separate contract.",
     "Azure lists GPT-5.6 Sol, Terra, and Luna version 2026-07-09 for Responses. Its image-tool examples may require a deployed GPT Image backend and the x-ms-oai-image-generation-deployment header. Catalog support does not promise deployment-free routing, entitlement, region availability, or a successful live request.",
     "Azure -chat entries are not automatically equated with OpenAI -chat-latest model IDs. OpenAI's documented tools for a similarly named chat snapshot do not establish the Azure entry's image tool support.",
-    "Capabilities classify model behavior, not live availability. New legacy/deprecated/retired entries describe the cited API lifecycle; OpenAI retirement dates do not automatically apply to Azure. Retained DALL-E compatibility must not be interpreted as an operational service."
+    "Capabilities classify model behavior, not live availability. New legacy/deprecated/retired entries describe the cited API lifecycle; OpenAI retirement dates do not automatically apply to Azure. Retained DALL-E compatibility must not be interpreted as an operational service.",
+    "OpenAI boolean capability coverage starts at GPT-5.0 model families and includes Azure OpenAI GPT-5.x model IDs that SimpleChat commonly sees through Foundry; reasoning-only entries additionally cover legacy GPT and o-series models.",
+    "Reasoning policies describe effort support, not endpoint/API availability. No Responses API migration is implied. Responses-only max effort is excluded from this Chat Completions policy. Models without verified level lists remain unknown."
   ],
   "sources": [
     {
@@ -1020,7 +1022,7 @@
     {
       "id": "openai-gpt5-4-pro",
       "provider": "openai",
-      "title": "OpenAI GPT-5.4 Pro model and supported tools",
+      "title": "OpenAI GPT-5.4 Pro model and supported tools; GPT-5.4 Pro model-specific effort support",
       "url": "https://developers.openai.com/api/docs/models/gpt-5.4-pro"
     },
     {
@@ -1038,19 +1040,19 @@
     {
       "id": "openai-gpt5-3-codex",
       "provider": "openai",
-      "title": "OpenAI GPT-5.3 Codex model and supported tools",
+      "title": "OpenAI GPT-5.3 Codex model and supported tools; GPT-5.3 Codex model-specific effort support",
       "url": "https://developers.openai.com/api/docs/models/gpt-5.3-codex"
     },
     {
       "id": "openai-gpt5-2",
       "provider": "openai",
-      "title": "OpenAI GPT-5.2 model and supported tools",
+      "title": "OpenAI GPT-5.2 model and supported tools; GPT-5.2 model-specific effort support",
       "url": "https://developers.openai.com/api/docs/models/gpt-5.2"
     },
     {
       "id": "openai-gpt5-2-codex",
       "provider": "openai",
-      "title": "OpenAI GPT-5.2 Codex model and supported tools",
+      "title": "OpenAI GPT-5.2 Codex model and supported tools; GPT-5.2 Codex model-specific effort support",
       "url": "https://developers.openai.com/api/docs/models/gpt-5.2-codex"
     },
     {
@@ -1184,6 +1186,24 @@
       "provider": "openai",
       "title": "OpenAI API model deprecations and shutdown dates",
       "url": "https://developers.openai.com/api/docs/deprecations"
+    },
+    {
+      "id": "azure-openai-reasoning",
+      "provider": "microsoft",
+      "title": "Azure OpenAI reasoning effort and per-model API support (verified 2026-09-07)",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic"
+    },
+    {
+      "id": "luna-deployed-contract",
+      "provider": "microsoft",
+      "title": "Observed GPT-5.6 Luna Chat Completions rejection on 2026-09-07: minimal rejected; none, low, medium, high, xhigh explicitly accepted",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning?view=foundry-classic"
+    },
+    {
+      "id": "openai-chat-completions",
+      "provider": "openai",
+      "title": "Chat Completions reasoning_effort is supported only by reasoning models",
+      "url": "https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create"
     }
   ],
   "models": [
@@ -1347,7 +1367,21 @@
             "Validate the explicit request effort against toolReasoningEfforts when function tools are present. The string none is a supported value, not an omitted setting."
           ]
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.6-terra",
@@ -1505,7 +1539,21 @@
             "Validate the explicit request effort against toolReasoningEfforts when function tools are present. The string none is a supported value, not an omitted setting."
           ]
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.6-luna",
@@ -1663,7 +1711,22 @@
             "Validate the explicit request effort against toolReasoningEfforts when function tools are present. The string none is a supported value, not an omitted setting."
           ]
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning",
+          "luna-deployed-contract"
+        ]
+      }
     },
     {
       "id": "gpt-5.5",
@@ -1807,7 +1870,21 @@
             "Apply this additional approximate ceiling only to Azure Responses. Do not replace advertised context or remove the runtime counting margin."
           ]
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-chat-latest",
@@ -2127,7 +2204,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.4-pro",
@@ -2250,7 +2341,19 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "medium",
+        "sourceIds": [
+          "openai-gpt5-4-pro"
+        ]
+      }
     },
     {
       "id": "gpt-5.4-mini",
@@ -2373,7 +2476,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.4-nano",
@@ -2496,7 +2613,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.3-codex",
@@ -2618,7 +2749,20 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "openai-gpt5-3-codex"
+        ]
+      }
     },
     {
       "id": "gpt-5.3-chat",
@@ -2863,7 +3007,20 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "openai-gpt5-2-codex"
+        ]
+      }
     },
     {
       "id": "gpt-5.2",
@@ -2986,7 +3143,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "openai-gpt5-2"
+        ]
+      }
     },
     {
       "id": "gpt-5.2-chat",
@@ -3232,7 +3403,20 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.1-chat",
@@ -3477,7 +3661,20 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.1-codex-mini",
@@ -3599,7 +3796,20 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5.1-codex-max",
@@ -3721,7 +3931,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "none",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5",
@@ -3844,7 +4068,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning",
+          "openai-gpt5"
+        ]
+      }
     },
     {
       "id": "gpt-5-pro",
@@ -3968,7 +4206,17 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "high"
+        ],
+        "default_effort": "high",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5-codex",
@@ -4090,7 +4338,19 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-5-mini",
@@ -4213,7 +4473,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning",
+          "openai-gpt5"
+        ]
+      }
     },
     {
       "id": "gpt-5-nano",
@@ -4337,7 +4611,21 @@
             }
           }
         }
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning",
+          "openai-gpt5"
+        ]
+      }
     },
     {
       "id": "gpt-5-chat",
@@ -9511,7 +9799,15 @@
       "sourceIds": [
         "openai-gpt4o",
         "azure-openai-responses"
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      }
     },
     {
       "id": "gpt-4o-mini",
@@ -9574,7 +9870,15 @@
       "sourceIds": [
         "openai-gpt4-1",
         "azure-openai-responses"
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      }
     },
     {
       "id": "gpt-4.1-mini",
@@ -9671,7 +9975,19 @@
         "openai-o1",
         "azure-openai-responses",
         "openai-deprecations"
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "o3",
@@ -9704,7 +10020,19 @@
         "openai-o3",
         "azure-openai-responses",
         "openai-deprecations"
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "o3-mini",
@@ -9737,7 +10065,19 @@
         "openai-o3-mini",
         "azure-openai-responses",
         "openai-deprecations"
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "o4-mini",
@@ -9770,7 +10110,19 @@
         "openai-o4-mini",
         "azure-openai-responses",
         "openai-deprecations"
-      ]
+      ],
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     },
     {
       "id": "gpt-image-2",
@@ -9937,6 +10289,79 @@
         "azure-openai-images",
         "openai-deprecations"
       ]
+    },
+    {
+      "id": "gpt-4",
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      }
+    },
+    {
+      "id": "gpt-4.5",
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      }
+    },
+    {
+      "id": "gpt-35-turbo",
+      "aliases": [
+        "gpt-3.5-turbo"
+      ],
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      }
+    },
+    {
+      "id": "o1-mini",
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
+    },
+    {
+      "id": "o1-preview",
+      "reasoningPolicy": {
+        "status": "unsupported",
+        "efforts": [],
+        "default_effort": null,
+        "sourceIds": [
+          "openai-chat-completions"
+        ]
+      }
+    },
+    {
+      "id": "o3-pro",
+      "reasoningPolicy": {
+        "status": "supported",
+        "efforts": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "default_effort": "low",
+        "sourceIds": [
+          "azure-openai-reasoning"
+        ]
+      }
     }
   ]
 }

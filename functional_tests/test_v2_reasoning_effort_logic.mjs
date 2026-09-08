@@ -1,150 +1,140 @@
 // test_v2_reasoning_effort_logic.mjs
-//
-// Runtime test for the V2 per-model reasoning effort resolution.
-// Version: 0.261.036
-// Implemented in: 0.261.036
-//
-// The companion test, test_v2_reasoning_effort_persistence.py, asserts that the composer is
-// wired to the shared user setting and that the keys it writes are ones the route accepts.
-// Those are source assertions: they prove the pieces are connected, not that the right level
-// comes out.
-//
-// This file executes the resolution itself, because its failure modes are all silent. A level
-// stored under the wrong key is simply never found again. A stored level that the newly
-// selected model does not accept is sent and then stripped by the endpoint, so the user sees a
-// control claiming an effort that was never applied. And `none` is a real choice in the picker
-// but not a value the endpoint takes, so sending it looks like a working request.
-//
-// Run directly with `node functional_tests/test_v2_reasoning_effort_logic.mjs`. Requires Node
-// 22.6 or newer, which strips the TypeScript types so the real module can be imported rather
-// than a copy of it.
+// Version: 0.261.104
+// Implemented in: 0.261.104
+// Execute real frontend resolution against the canonical Python policy, not a second family table.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import {
-    getModelSupportedLevels,
-    reasoningModelKey,
-    requestReasoningEffort,
-    resolveReasoningEffort,
-    supportsReasoning,
+    getModelSupportedLevels, reasoningModelKey, requestReasoningEffort,
+    resolveReasoningEffort, resolveReasoningSelection, supportsReasoning,
+    normalizeReasoningAdjustments, reasoningAdjustmentMessage,
+    reasoningMetadataForEvent,
 } from '../application/v2_ui/src/lib/reasoning.ts';
 
+const root = fileURLToPath(new URL('../', import.meta.url));
+const policies = JSON.parse(execFileSync('python', ['-c', `
+import json, sys
+sys.path.insert(0, r'application\\single_app')
+from functions_model_capabilities import resolve_model_reasoning_policy
+print(json.dumps({name: resolve_model_reasoning_policy(name) for name in
+    ['gpt-5.6-luna', 'gpt-5', 'gpt-5.1', 'gpt-5-pro', 'o3', 'gpt-4o', 'unknown-private-model']}))
+`], { cwd: root, encoding: 'utf8' }));
+const luna = policies['gpt-5.6-luna'];
 const checks = [];
-function check(name, fn) {
-    checks.push([name, fn]);
+const check = (name, run) => checks.push([name, run]);
+
+check('storage keys stay id-first, independently of canonical identity', () => {
+    assert.equal(reasoningModelKey({ model_id: 'opaque-uuid', deployment_name: 'chat-prod' }), 'opaque-uuid');
+    assert.equal(reasoningModelKey({ deployment_name: 'chat-prod' }), 'chat-prod');
+    assert.equal(reasoningModelKey(undefined, 'old-key'), 'old-key');
+    assert.equal(reasoningModelKey(undefined), '');
+});
+check('Luna accepts exactly the observed endpoint levels', () => {
+    assert.deepEqual(getModelSupportedLevels(luna), ['none', 'low', 'medium', 'high', 'xhigh']);
+    assert.equal(getModelSupportedLevels(policies['gpt-5']).includes('minimal'), true);
+    assert.equal(getModelSupportedLevels(policies['gpt-5.1']).includes('low'), true);
+});
+check('stale Minimal resolves to Low without mutating unrelated preferences', () => {
+    const saved = { 'opaque-uuid': 'minimal', other: 'high' };
+    assert.deepEqual(resolveReasoningSelection('opaque-uuid', saved, luna), {
+        requested_effort: 'minimal', effective_effort: 'low',
+        mode: 'explicit', adjustment_reason: 'unsupported_effort',
+    });
+    assert.deepEqual(saved, { 'opaque-uuid': 'minimal', other: 'high' });
+    assert.equal(resolveReasoningEffort('other', saved, luna), 'high');
+    assert.equal(resolveReasoningEffort('new-model', saved, luna), 'low');
+});
+check('every catalog-supported choice survives unchanged, including None', () => {
+    for (const policy of Object.values(policies)) {
+        for (const level of getModelSupportedLevels(policy)) {
+            assert.equal(resolveReasoningEffort('id', { id: level }, policy), level);
+            assert.equal(requestReasoningEffort(level, policy), level);
+        }
+    }
+    assert.equal(requestReasoningEffort('none', luna), 'none');
+    assert.equal(requestReasoningEffort(undefined, luna), undefined);
+    assert.equal(requestReasoningEffort('minimal', luna), undefined);
+});
+check('unknown and unsupported policies never invent supported levels', () => {
+    for (const policy of [undefined, policies['gpt-4o'], policies['unknown-private-model']]) {
+        assert.deepEqual(getModelSupportedLevels(policy), []);
+        assert.equal(supportsReasoning(policy), false);
+        assert.equal(resolveReasoningEffort('id', { id: 'high' }, policy), undefined);
+        assert.equal(requestReasoningEffort('none', policy), undefined);
+    }
+});
+check('a single-level policy uses its supported fallback', () => {
+    assert.equal(resolveReasoningEffort('pro', { pro: 'low' }, policies['gpt-5-pro']), 'high');
+});
+check('safe notices describe omission as Model default and ignore provider error prose', () => {
+    const adjustment = {
+        requested_effort: 'minimal', effective_effort: null, mode: 'model_default',
+        adjustment_reason: '<script>provider secrets</script>', stage: 'answer',
+    };
+    assert.equal(normalizeReasoningAdjustments([null, {}, adjustment]).length, 1);
+    assert.equal(reasoningAdjustmentMessage(adjustment), 'Answer: Minimal could not be used; using Model default.');
+});
+check('latest stage/model correction wins without merging planner and answer notices', () => {
+    const first = {
+        requested_effort: 'minimal', effective_effort: 'low', mode: 'explicit',
+        adjustment_reason: 'unsupported_effort', stage: 'answer', model_name: 'gpt-5.6-luna',
+    };
+    const planner = { ...first, stage: 'planner' };
+    const latest = { ...first, effective_effort: null, mode: 'model_default', adjustment_reason: 'provider_rejected' };
+    assert.deepEqual(normalizeReasoningAdjustments([first, planner, latest]), [latest, planner]);
+    assert.deepEqual(normalizeReasoningAdjustments([first, { ...latest, adjustment_reason: null }]), []);
+    const cleared = { ...first, requested_effort: 'low', adjustment_reason: null };
+    assert.deepEqual(normalizeReasoningAdjustments([cleared], [latest, planner]), [planner]);
+    assert.deepEqual(normalizeReasoningAdjustments(undefined, [latest, planner]), [latest, planner]);
+    assert.deepEqual(reasoningMetadataForEvent({
+        reasoning_adjustments: [cleared],
+    }, [latest, planner]), { reasoning_adjustments: [planner] });
+    assert.deepEqual(reasoningMetadataForEvent({
+        metadata: { unrelated: 'keep', reasoning_adjustments: [cleared] },
+    }, [latest, planner]), { unrelated: 'keep', reasoning_adjustments: [planner] });
+});
+check('terminal public reasoning fields override stale metadata without losing other fields', () => {
+    assert.deepEqual(reasoningMetadataForEvent({
+        metadata: { reasoning_effort: 'minimal', unrelated: 'keep' },
+        reasoning_effort: null,
+        requested_reasoning_effort: 'minimal',
+        reasoning_mode: 'model_default',
+        reasoning_adjustments: [],
+    }), {
+        unrelated: 'keep', reasoning_effort: null, requested_reasoning_effort: 'minimal',
+        reasoning_mode: 'model_default', reasoning_adjustments: [],
+    });
+});
+check('classic and V2 agree for the same projected policy and stored preference', () => {
+    const option = { dataset: {
+        modelId: 'opaque-uuid', modelName: 'gpt-5.6-luna', deploymentName: 'prod',
+        reasoningCapabilities: JSON.stringify(luna),
+    } };
+    const modelSelect = { value: 'prod', selectedIndex: 0, options: [option] };
+    const source = readFileSync(new URL('../application/single_app/static/js/chat/chat-reasoning.js', import.meta.url), 'utf8')
+        .replace(/^import .*;$/gm, '').replace(/^export /gm, '');
+    const context = vm.createContext({
+        document: { getElementById: (id) => id === 'model-select' ? modelSelect : null },
+        console,
+    });
+    vm.runInContext(source, context);
+    for (const level of ['minimal', ...luna.efforts]) {
+        vm.runInContext(`reasoningEffortSettings = { 'opaque-uuid': '${level}' };`, context);
+        assert.equal(
+            vm.runInContext('getCurrentReasoningEffort()', context),
+            resolveReasoningEffort('opaque-uuid', { 'opaque-uuid': level }, luna),
+        );
+    }
+    option.dataset.reasoningCapabilities = JSON.stringify(policies['unknown-private-model']);
+    assert.equal(vm.runInContext('getCurrentReasoningEffort()', context), null);
+});
+
+for (const [name, run] of checks) {
+    await run();
+    console.log(`ok ${name}`);
 }
-
-/* --------------------------------- the key ---------------------------------- */
-
-check('a model is keyed by its model id, not its deployment name', () => {
-    // getCurrentModelName() in chat-reasoning.js reads dataset.modelId first, so a level
-    // stored by either interface has to land on the same entry.
-    assert.equal(
-        reasoningModelKey({ model_id: 'gpt-5-mini', deployment_name: 'chat-prod' }),
-        'gpt-5-mini',
-    );
-});
-
-check('the deployment name is used when there is no model id', () => {
-    assert.equal(reasoningModelKey({ deployment_name: 'gpt-5-mini' }), 'gpt-5-mini');
-    assert.equal(reasoningModelKey({ model_id: '   ', deployment_name: 'gpt-5' }), 'gpt-5');
-});
-
-check('a missing catalog record falls back to what the picker shows', () => {
-    assert.equal(reasoningModelKey(undefined, 'gpt-5-mini'), 'gpt-5-mini');
-    assert.equal(reasoningModelKey(undefined, undefined), '');
-});
-
-/* ------------------------------ stored levels -------------------------------- */
-
-check('a stored level is restored for its own model', () => {
-    const saved = { 'gpt-5-mini': 'high' };
-    assert.equal(resolveReasoningEffort('gpt-5-mini', saved), 'high');
-});
-
-check('a level stored for one model does not follow the user to another', () => {
-    const saved = { 'gpt-5-mini': 'high' };
-    // o3 has its own entry, or it has not been chosen for and takes the default.
-    assert.equal(resolveReasoningEffort('o3', saved), 'low');
-});
-
-check('a stored level the model does not accept is ignored', () => {
-    // The 5.1 series skips `low`, so a level carried over from an o-series model cannot be
-    // honoured and must not be sent for the endpoint to strip. It falls back the way
-    // getCurrentModelReasoningEffort() does: `low` when offered, otherwise the first level,
-    // which for this family is `none`.
-    assert.equal(resolveReasoningEffort('gpt-5.1', { 'gpt-5.1': 'low' }), 'none');
-    // gpt-5 has no `none`, so a stored `none` from a 5.1 model is discarded for `low`.
-    assert.equal(resolveReasoningEffort('gpt-5', { 'gpt-5': 'none' }), 'low');
-});
-
-/* --------------------------------- defaults ---------------------------------- */
-
-check('an unset model defaults to low, as the classic client does', () => {
-    assert.equal(resolveReasoningEffort('gpt-5-mini', {}), 'low');
-    assert.equal(resolveReasoningEffort('gpt-5-mini', undefined), 'low');
-    assert.equal(resolveReasoningEffort('o3', undefined), 'low');
-});
-
-check('a model without low takes its first supported level', () => {
-    // The 5.1 series offers none, minimal, medium and high.
-    assert.equal(resolveReasoningEffort('gpt-5.1', {}), 'none');
-});
-
-check('gpt-5-pro is always high, whatever was stored', () => {
-    assert.equal(resolveReasoningEffort('gpt-5-pro', {}), 'high');
-    assert.equal(resolveReasoningEffort('gpt-5-pro', { 'gpt-5-pro': 'minimal' }), 'high');
-});
-
-check('no model selected still resolves to a level', () => {
-    assert.equal(resolveReasoningEffort(undefined, undefined), 'low');
-    assert.equal(resolveReasoningEffort('', {}), 'low');
-});
-
-/* ------------------------------- what is sent -------------------------------- */
-
-check('none is never sent to the endpoint', () => {
-    // getCurrentReasoningEffort() returns null for none; the endpoint takes no such value.
-    assert.equal(requestReasoningEffort('none'), undefined);
-    assert.equal(requestReasoningEffort(''), undefined);
-    assert.equal(requestReasoningEffort(undefined), undefined);
-});
-
-check('a real level is passed through unchanged', () => {
-    assert.equal(requestReasoningEffort('minimal'), 'minimal');
-    assert.equal(requestReasoningEffort('high'), 'high');
-});
-
-/* ------------------------- models with no choice ----------------------------- */
-
-check('a model with no reasoning offers nothing to choose', () => {
-    for (const model of ['gpt-4o', 'gpt-4.1-mini', 'gpt-5-chat', 'gpt-5-codex']) {
-        assert.deepEqual(getModelSupportedLevels(model), ['none'], model);
-        assert.equal(supportsReasoning(model), false, model);
-    }
-});
-
-check('a reasoning model does offer a choice', () => {
-    for (const model of ['gpt-5', 'gpt-5.1', 'gpt-5-pro', 'o3']) {
-        assert.equal(supportsReasoning(model), true, model);
-    }
-});
-
-/* ----------------------------------- runner ---------------------------------- */
-
-let passed = 0;
-let failed = 0;
-
-for (const [name, fn] of checks) {
-    try {
-        await fn();
-        console.log(`ok   ${name}`);
-        passed += 1;
-    } catch (error) {
-        console.log(`FAIL ${name}`);
-        console.log(`     ${error.message}`);
-        failed += 1;
-    }
-}
-
-console.log(`\n${passed}/${passed + failed} runtime checks passed`);
-process.exit(failed > 0 ? 1 : 0);
+console.log(`${checks.length}/${checks.length} reasoning behavior checks passed`);
