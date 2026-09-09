@@ -84,6 +84,16 @@ shared settings record. Old `APP_SETTINGS_CACHE` and `APP_SETTINGS_CACHE_VERSION
 keys are labeled legacy; their presence does not mean workers still read them.
 Previews redact credentials and the Cosmos session token in ready or pending records.
 
+In **0.261.027**, cache initialization uses the settings object supplied by the web
+or scheduler startup path. The settings owner supplies database handles and logging
+callbacks separately; the startup path supplies the Redis client factory. Cache
+helpers no longer import `config` or rediscover configuration while initializing.
+These runtime dependencies are never added to the stored settings document.
+Before cache initialization, settings reads remain available through the owning
+settings layer, but Redis-required writes remain blocked until its client is configured.
+`functional_tests/test_app_settings_import_boundaries.py` checks cold imports,
+dependency direction, and normal/optimized Python startup probes without network access.
+
 ### Redis Metrics {#redis-monitoring-section}
 
 The Redis Metrics section reports the service and port SimpleChat resolved, along with live

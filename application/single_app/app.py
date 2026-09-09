@@ -285,9 +285,10 @@ def initialize_application(force=False):
         print("Initializing application...")
         settings = get_settings(use_cosmos=True)
         redis_hostname = settings.get('redis_url', '').strip().split('.')[0]
-        app_settings_cache.configure_app_cache(
+        configure_application_cache(
             settings,
-            get_redis_cache_infrastructure_endpoint(redis_hostname)
+            get_redis_cache_infrastructure_endpoint(redis_hostname),
+            redis_client_factory=functions_redis_client.create_redis_client,
         )
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")

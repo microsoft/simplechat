@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for shared app settings and governance cache versioning.
-Version: 0.261.025
+Version: 0.261.027
 Implemented in: 0.242.020
 
 Settings versions are now carried with the shared document. Governance caches
@@ -35,7 +35,7 @@ def test_app_settings_cache_shared_version_contract():
     for marker in [
         "get_settings_store",
         "get_app_settings_cache_version = _get_settings_revision",
-        "cosmos_settings_container",
+        "dependencies.settings_container",
     ]:
         assert marker in cache_content, f"Missing app settings cache version marker: {marker}"
 
@@ -63,7 +63,7 @@ def test_governance_cache_cosmos_fallback_contract():
         "bump_governance_cache_version_redis",
         "get_governance_cache_version_mem",
         "bump_governance_cache_version_mem",
-        "cosmos_governance_policies_container",
+        "dependencies.governance_container",
     ]:
         assert marker in cache_content, f"Missing governance cache version marker: {marker}"
 

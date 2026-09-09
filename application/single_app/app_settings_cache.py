@@ -10,25 +10,31 @@ import logging
 import copy
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Callable
+
 from azure.core.exceptions import AzureError
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.cosmos import ContainerProxy
+from redis import Redis
 from redis.exceptions import RedisError
 
 from app_settings_store import AppSettingsStore, SETTINGS_REVISION_FIELD
 
-# Redis client construction lives in functions_redis_client so session, cache, and admin
-# diagnostics code paths share one place that resolves service type, port, and credentials.
-from functions_redis_client import (
-    AUTH_TYPE_MANAGED_IDENTITY,
-    CREDENTIAL_PURPOSE_APP_CACHE,
-    create_redis_client,
-)
 
-# Logging/configuration imports are deferred to avoid startup dependency cycles.
+@dataclass(frozen=True)
+class AppCacheDependencies:
+    """Runtime dependencies supplied by the settings owner, never stored in settings."""
+
+    settings_container: ContainerProxy
+    governance_container: ContainerProxy
+    create_redis_client: Callable[..., Redis]
+    log_event: Callable[..., None]
+
 
 _logger = logging.getLogger(__name__)
 APP_SETTINGS_STORE = None
+APP_CACHE_DEPENDENCIES = None
 APP_USER_UI_SETTINGS_CACHE = {}
 APP_STREAM_SESSION_METADATA = {}
 APP_STREAM_SESSION_EVENTS = {}
@@ -67,10 +73,10 @@ def create_redis_managed_identity_client(redis_url, settings=None, **redis_kwarg
     Retained as a thin wrapper so existing callers keep working; the port, TLS, and
     credential provider are resolved by functions_redis_client.
     """
-    return create_redis_client(
+    return _get_cache_dependencies().create_redis_client(
         settings=settings,
         redis_url=redis_url,
-        auth_type=AUTH_TYPE_MANAGED_IDENTITY,
+        auth_type='managed_identity',
         **redis_kwargs
     )
 
@@ -146,50 +152,53 @@ def _set_ttl_cached_version(version_cache, version):
 
 
 def _log_settings_fallback(error):
-    # Logging reads settings itself; the logging entrypoint guards re-entrancy.
-    from functions_appinsights import log_event
-
-    log_event(
+    _get_cache_dependencies().log_event(
         "[ASC] Shared settings unavailable; reading Cosmos without a worker snapshot.",
         extra={'error_type': type(error).__name__},
         level=logging.WARNING,
     )
 
 
-def get_settings_store():
-    """Initialize connections lazily, without retaining any settings payload."""
-    global APP_SETTINGS_STORE, get_settings_cache, update_settings_cache
+def _get_cache_dependencies():
+    if APP_CACHE_DEPENDENCIES is None:
+        raise RuntimeError("App cache dependencies must be supplied by the settings owner before use.")
+    return APP_CACHE_DEPENDENCIES
+
+
+def configure_settings_store(settings, *, dependencies):
+    """Build connections from supplied settings and separately injected runtime dependencies."""
+    global APP_SETTINGS_STORE, APP_CACHE_DEPENDENCIES, get_settings_cache, update_settings_cache
     global get_app_settings_cache_version
 
-    if APP_SETTINGS_STORE is None:
-        # config imports logging/cache during startup; defer until it is initialized.
-        from config import cosmos_settings_container
-
-        try:
-            initial = cosmos_settings_container.read_item(item='app_settings', partition_key='app_settings')
-        except CosmosResourceNotFoundError:
-            initial = {}
-        required = bool(initial.get('enable_redis_cache', False))
-        redis_client = None
-        if required:
-            try:
-                redis_client = create_redis_client(
-                    settings=initial,
-                    credential_purpose=CREDENTIAL_PURPOSE_APP_CACHE,
-                    socket_connect_timeout=5,
-                    socket_timeout=5,
-                )
-            except (RedisError, AzureError, ValueError) as error:
-                _log_settings_fallback(error)
-        APP_SETTINGS_STORE = AppSettingsStore(
-            cosmos_settings_container,
-            redis_client,
-            redis_required=required,
-            on_fallback=_log_settings_fallback,
-        )
+    if not isinstance(settings, dict):
+        raise TypeError("App cache configuration requires a settings object.")
+    APP_CACHE_DEPENDENCIES = dependencies
+    required = bool(settings.get('enable_redis_cache', False))
+    APP_SETTINGS_STORE = AppSettingsStore(
+        dependencies.settings_container,
+        redis_required=required,
+        on_fallback=_log_settings_fallback,
+    )
     get_settings_cache = APP_SETTINGS_STORE.read
     update_settings_cache = _refresh_authoritative_settings
     get_app_settings_cache_version = _get_settings_revision
+    if required:
+        try:
+            APP_SETTINGS_STORE.redis = dependencies.create_redis_client(
+                settings=settings,
+                credential_purpose='app_cache',
+                socket_connect_timeout=5,
+                socket_timeout=5,
+            )
+        except (RedisError, AzureError, ValueError) as error:
+            _log_settings_fallback(error)
+    return APP_SETTINGS_STORE
+
+
+def get_settings_store():
+    """Return initialized shared storage without importing or loading configuration."""
+    if APP_SETTINGS_STORE is None:
+        raise RuntimeError("App settings store must be configured by the settings owner before use.")
     return APP_SETTINGS_STORE
 
 
@@ -221,8 +230,7 @@ def _build_cosmos_cache_doc_id(cache_key):
 
 
 def _get_cosmos_cache_container():
-    from config import cosmos_settings_container
-    return cosmos_settings_container
+    return _get_cache_dependencies().settings_container
 
 
 def _serialize_datetime(value):
@@ -309,10 +317,9 @@ def _get_settings_cache_fallback(log_event_func=None):
 def _get_governance_cache_version_fallback(log_event_func=None):
     global APP_GOVERNANCE_CACHE_VERSION
     try:
-        from config import cosmos_governance_policies_container
         return _get_ttl_cached_cosmos_version(
             APP_GOVERNANCE_SHARED_VERSION_CACHE,
-            cosmos_governance_policies_container,
+            _get_cache_dependencies().governance_container,
             GOVERNANCE_CACHE_VERSION_DOC_ID,
             APP_GOVERNANCE_CACHE_VERSION,
             log_event_func=log_event_func,
@@ -332,9 +339,8 @@ def _get_governance_cache_version_fallback(log_event_func=None):
 def _bump_governance_cache_version_fallback(log_event_func=None):
     global APP_GOVERNANCE_CACHE_VERSION
     try:
-        from config import cosmos_governance_policies_container
         bumped_version = _bump_cosmos_cache_version(
-            cosmos_governance_policies_container,
+            _get_cache_dependencies().governance_container,
             GOVERNANCE_CACHE_VERSION_DOC_ID,
             log_event_func=log_event_func,
         )
@@ -594,8 +600,8 @@ def get_app_cache_redis_client():
     return APP_REDIS_CLIENT if app_cache_is_using_redis else None
 
 
-def configure_app_cache(settings, redis_cache_endpoint=None):
-    global update_settings_cache, get_settings_cache, APP_SETTINGS_STORE
+def configure_app_cache(settings, redis_cache_endpoint=None, *, dependencies):
+    global update_settings_cache, get_settings_cache
     global APP_USER_UI_SETTINGS_CACHE, APP_STREAM_SESSION_METADATA, APP_STREAM_SESSION_EVENTS
     global APP_GOVERNANCE_CACHE_VERSION, APP_GOVERNANCE_SHARED_VERSION_CACHE
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
@@ -605,17 +611,10 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
     global get_governance_cache_version, bump_governance_cache_version
     global app_cache_is_using_redis
     global APP_REDIS_CLIENT
-    # Local import to avoid circular dependency: functions_keyvault imports app_settings_cache.
-    from functions_appinsights import log_event
-    from config import cosmos_settings_container
+    log_event = dependencies.log_event
 
     use_redis = settings.get('enable_redis_cache', False)
-    APP_SETTINGS_STORE = AppSettingsStore(
-        cosmos_settings_container,
-        redis_required=use_redis,
-        on_fallback=_log_settings_fallback,
-    )
-    get_settings_store()
+    store = configure_settings_store(settings, dependencies=dependencies)
     app_cache_is_using_redis = False
     APP_REDIS_CLIENT = None
 
@@ -632,17 +631,12 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
             else:
                 log_event("[ASC] Redis enabled using Access Key", level=logging.INFO)
 
-            # Pass settings directly: get_settings_cache() is still None at this point
-            # because configure_app_cache has not finished initialising the cache yet.
-            redis_client = create_redis_client(
-                settings=settings,
-                credential_purpose=CREDENTIAL_PURPOSE_APP_CACHE,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-            )
+            redis_client = store.redis
+            if redis_client is None:
+                _assign_fallback_cache_functions(log_event_func=log_event)
+                return
             app_cache_is_using_redis = True
             APP_REDIS_CLIENT = redis_client
-            APP_SETTINGS_STORE.redis = redis_client
         except Exception as redis_init_error:
             _log_cache_fallback('redis_initialization', redis_init_error, log_event_func=log_event)
             _assign_fallback_cache_functions(log_event_func=log_event)
@@ -911,10 +905,9 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
         def get_governance_cache_version_mem():
             global APP_GOVERNANCE_CACHE_VERSION
             try:
-                from config import cosmos_governance_policies_container
                 return _get_ttl_cached_cosmos_version(
                     APP_GOVERNANCE_SHARED_VERSION_CACHE,
-                    cosmos_governance_policies_container,
+                    dependencies.governance_container,
                     GOVERNANCE_CACHE_VERSION_DOC_ID,
                     APP_GOVERNANCE_CACHE_VERSION,
                     log_event_func=log_event,
@@ -932,9 +925,8 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
         def bump_governance_cache_version_mem():
             global APP_GOVERNANCE_CACHE_VERSION
             try:
-                from config import cosmos_governance_policies_container
                 bumped_version = _bump_cosmos_cache_version(
-                    cosmos_governance_policies_container,
+                    dependencies.governance_container,
                     GOVERNANCE_CACHE_VERSION_DOC_ID,
                     log_event_func=log_event,
                 )

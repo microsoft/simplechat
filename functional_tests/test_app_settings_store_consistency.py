@@ -1,7 +1,7 @@
 # test_app_settings_store_consistency.py
 """
 Regression tests for shared settings and conditional writes.
-Version: 0.261.025
+Version: 0.261.027
 Implemented in: 0.261.025
 
 Independent store objects represent workers. Fake services exercise ETag conflicts,
@@ -18,7 +18,6 @@ import socket
 import secrets
 import sys
 from types import SimpleNamespace
-import types
 
 import pytest
 from azure.core import MatchConditions
@@ -141,25 +140,31 @@ def change(**updates):
 
 
 def test_every_worker_reads_shared_state_after_completed_save(world):
-    assert not world.a.read()["enabled"]
-    assert not world.b.read()["enabled"]
+    initial_a = world.a.read()
+    initial_b = world.b.read()
+    assert not initial_a["enabled"]
+    assert not initial_b["enabled"]
     stored = world.a.write(change(enabled=True))
     for worker in (world.b, world.a, world.c, world.b):
-        assert worker.read()["enabled"]
-        assert worker.read()["_etag"] == stored["_etag"]
+        observed = worker.read()
+        assert observed["enabled"]
+        assert observed["_etag"] == stored["_etag"]
 
 
 def test_no_redis_mode_has_no_worker_snapshot(world):
     a, b = AppSettingsStore(world.cosmos), AppSettingsStore(world.cosmos)
-    assert not b.read()["enabled"]
+    before = b.read()
+    assert not before["enabled"]
     a.write(change(enabled=True))
-    assert b.read()["enabled"]
+    after = b.read()
+    assert after["enabled"]
 
 
 def test_returned_settings_do_not_mutate_shared_document(world):
     settings = world.a.read()
     settings["enabled"] = "unsaved"
-    assert world.b.read()["enabled"] is False
+    observed = world.b.read()
+    assert observed["enabled"] is False
 
 
 def test_partial_writes_merge_authoritative_document_on_conflict(world):
@@ -178,7 +183,8 @@ def test_stale_form_is_rejected_without_poisoning_cache(world):
     with pytest.raises(SettingsConflictError):
         world.a.write(change(enabled=False), expected_etag=stale["_etag"])
     assert world.redis.raw == before
-    assert world.b.read()["enabled"]
+    observed = world.b.read()
+    assert observed["enabled"]
 
 
 def test_unavailable_redis_rejects_save_before_cosmos_write(world):
@@ -188,7 +194,8 @@ def test_unavailable_redis_rejects_save_before_cosmos_write(world):
     with pytest.raises(SettingsUnavailableError):
         world.a.write(change(enabled=True))
     assert world.cosmos.document == before
-    assert world.b.read() == before
+    observed = world.b.read()
+    assert observed == before
     assert world.fallback
 
 
@@ -196,7 +203,8 @@ def test_client_construction_failure_does_not_enable_cosmos_only_writes(world):
     store = AppSettingsStore(world.cosmos, redis_required=True)
     with pytest.raises(SettingsUnavailableError):
         store.write(change(enabled=True))
-    assert store.read()["enabled"] is False
+    observed = store.read()
+    assert observed["enabled"] is False
     assert world.cosmos.writes == 0
 
 
@@ -206,10 +214,12 @@ def test_interrupted_publication_never_restores_previous_payload(world):
     with pytest.raises(SettingsUnavailableError):
         world.a.write(change(enabled=True))
     assert json.loads(world.redis.raw)["state"] == "pending"
-    assert world.b.read()["enabled"]
+    observed = world.b.read()
+    assert observed["enabled"]
     world.redis.fail_publication = False
     world.now[0] += store_module.WRITE_LEASE_SECONDS + 1
-    assert world.c.read()["enabled"]
+    recovered = world.c.read()
+    assert recovered["enabled"]
     assert json.loads(world.redis.raw)["state"] == "ready"
 
 
@@ -224,7 +234,8 @@ def test_expired_writer_cannot_commit_over_recovery_and_new_save(world):
     world.cosmos.before_replace = take_over
     with pytest.raises(SettingsConflictError):
         world.a.write(change(enabled=False))
-    assert world.c.read()["enabled"]
+    observed = world.c.read()
+    assert observed["enabled"]
 
 
 def test_delayed_publication_cannot_replace_newer_ready_state(world):
@@ -238,7 +249,8 @@ def test_delayed_publication_cannot_replace_newer_ready_state(world):
     world.cosmos.after_replace = newer_save
     with pytest.raises(SettingsUnavailableError):
         world.a.write(change(enabled=False))
-    assert world.c.read()["enabled"]
+    observed = world.c.read()
+    assert observed["enabled"]
 
 
 def test_migration_retries_against_newer_document(world):
@@ -249,7 +261,8 @@ def test_migration_retries_against_newer_document(world):
         current.setdefault("new_default", "default")
         return current
 
-    assert store.write(migrate)["enabled"]
+    migrated = store.write(migrate)
+    assert migrated["enabled"]
     assert world.cosmos.document["new_default"] == "default"
 
 
@@ -288,7 +301,7 @@ def load_update_settings(store):
         "copy": copy, "logging": logging,
         "COSMOS_METADATA_FIELDS": store_module.COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": store_module.SETTINGS_REVISION_FIELD,
-        "app_settings_cache": SimpleNamespace(get_settings_store=lambda: store),
+        "_get_app_settings_store": lambda: store,
         "log_event": lambda *_args, **_kwargs: None,
         "is_tabular_processing_enabled": lambda _settings: False,
     }
@@ -307,12 +320,17 @@ def load_update_settings(store):
 def test_real_update_settings_rejects_old_full_snapshot_and_merges_deltas(world):
     old = world.a.read()
     update_a, update_b = load_update_settings(world.a), load_update_settings(world.b)
-    assert update_a({"enabled": True})
-    assert update_b({"last_update_check_time": "new"})
-    assert world.c.read()["enabled"]
+    saved_a = update_a({"enabled": True})
+    saved_b = update_b({"last_update_check_time": "new"})
+    observed = world.c.read()
+    assert saved_a
+    assert saved_b
+    assert observed["enabled"]
     old["last_update_check_time"] = "stale"
-    assert update_b(old) is False
-    assert world.c.read()["enabled"]
+    stale_saved = update_b(old)
+    observed = world.c.read()
+    assert stale_saved is False
+    assert observed["enabled"]
 
 
 def test_startup_does_not_publish_bootstrap_snapshot():
@@ -328,7 +346,7 @@ def load_get_settings(store):
     getter = definitions["get_settings"]
     namespace = {
         "copy": copy, "logging": logging, "secrets": secrets,
-        "app_settings_cache": SimpleNamespace(get_settings_store=lambda: store),
+        "_get_app_settings_store": lambda: store,
         "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
         "SettingsConflictError": SettingsConflictError,
         "SettingsUnavailableError": SettingsUnavailableError,
@@ -391,13 +409,16 @@ def test_real_get_settings_defers_migration_during_redis_outage(world):
 def test_real_get_settings_creates_defaults_without_overwriting_winner(world):
     world.cosmos.document = None
     getter = load_get_settings(AppSettingsStore(world.cosmos))
-    assert getter() is not None
+    created = getter()
+    assert created is not None
     assert world.cosmos.document["id"] == "app_settings"
 
 
 def test_missing_shared_document_can_be_initialized_without_an_abandoned_marker(world):
     world.cosmos.document = None
-    assert load_get_settings(world.a)() is not None
+    getter = load_get_settings(world.a)
+    created = getter()
+    assert created is not None
     assert json.loads(world.redis.raw)["state"] == "ready"
 
 
@@ -413,44 +434,48 @@ def test_logging_guard_handles_recursive_cache_failure():
 
     def recursive_cache_read():
         calls.append(1)
-        assert namespace["_load_logging_settings"]() == {}
+        recursive_result = namespace["_load_logging_settings"]()
+        assert recursive_result == {}
         raise RedisConnectionError("offline")
 
     namespace["app_settings_cache"] = SimpleNamespace(get_settings_cache=recursive_cache_read)
     exec(compile(ast.Module(body=[definition], type_ignores=[]), "functions_appinsights.py", "exec"), namespace)
-    assert namespace["_load_logging_settings"]() == {}
+    result = namespace["_load_logging_settings"]()
+    assert result == {}
     assert calls == [1]
     assert namespace["_logging_settings_load_state"].active is False
 
 
 def load_cache_module(world, monkeypatch):
     monkeypatch.syspath_prepend(str(APP))
-    config = types.ModuleType("config")
-    config.cosmos_settings_container = world.cosmos
-    insights = types.ModuleType("functions_appinsights")
-    insights.log_event = lambda *_args, **_kwargs: None
-    client_module = types.ModuleType("functions_redis_client")
-    client_module.AUTH_TYPE_MANAGED_IDENTITY = "managed_identity"
-    client_module.CREDENTIAL_PURPOSE_APP_CACHE = "app_cache"
-    client_module.create_redis_client = lambda **_kwargs: world.redis
-    monkeypatch.setitem(sys.modules, "config", config)
-    monkeypatch.setitem(sys.modules, "functions_appinsights", insights)
-    monkeypatch.setitem(sys.modules, "functions_redis_client", client_module)
     spec = importlib.util.spec_from_file_location("cache_wiring_under_test", APP / "app_settings_cache.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+def cache_dependencies(cache, world, factory=None):
+    return cache.AppCacheDependencies(
+        settings_container=world.cosmos,
+        governance_container=world.cosmos,
+        create_redis_client=factory or (lambda **_kwargs: world.redis),
+        log_event=lambda *_args, **_kwargs: None,
+    )
+
+
 def test_actual_worker_configuration_does_not_publish_startup_snapshot(world, monkeypatch):
     world.cosmos.document.update(enable_redis_cache=True, redis_url="unused.invalid")
     cache = load_cache_module(world, monkeypatch)
-    snapshot = cache.get_settings_store().read()
+    snapshot = copy.deepcopy(world.cosmos.document)
+    dependencies = cache_dependencies(cache, world)
+    cache.configure_settings_store(snapshot, dependencies=dependencies)
     world.b.write(change(enabled=True))
-    cache.configure_app_cache(snapshot)
-    assert cache.get_settings_cache()["enabled"]
+    cache.configure_app_cache(snapshot, dependencies=dependencies)
+    observed = cache.get_settings_cache()
+    assert observed["enabled"]
     cache.update_settings_cache(snapshot)
-    assert world.c.read()["enabled"]
+    observed = world.c.read()
+    assert observed["enabled"]
     assert not hasattr(cache, "APP_SETTINGS_CACHE")
 
 
@@ -461,10 +486,13 @@ def test_actual_cache_initialization_failure_keeps_write_requirement(world, monk
     def unavailable_client(**_kwargs):
         raise ValueError("Client cannot be created")
 
-    cache.create_redis_client = unavailable_client
-    cache.configure_app_cache(world.cosmos.document)
+    cache.configure_app_cache(
+        world.cosmos.document,
+        dependencies=cache_dependencies(cache, world, unavailable_client),
+    )
     assert cache.APP_SETTINGS_STORE.redis_required is True
-    assert cache.get_settings_cache()["enabled"] is False
+    observed = cache.get_settings_cache()
+    assert observed["enabled"] is False
     with pytest.raises(RuntimeError, match="Configured Redis is unavailable"):
         cache.APP_SETTINGS_STORE.write(change(enabled=True))
     assert world.cosmos.writes == 0

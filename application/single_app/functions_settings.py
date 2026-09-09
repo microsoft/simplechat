@@ -2,10 +2,12 @@
 
 from functools import wraps
 import logging
+import threading
 
 from flask import g, has_request_context, jsonify, request, session
 
 from app_settings_store import (
+    AppSettingsStore,
     COSMOS_METADATA_FIELDS,
     SETTINGS_REVISION_FIELD,
     SettingsConflictError,
@@ -56,6 +58,7 @@ from support_menu_config import (
 
 
 USER_SETTINGS_REQUEST_CACHE_ATTR = "simplechat_user_settings_request_cache"
+_settings_store_init_lock = threading.Lock()
 FONT_SIZE_PREFERENCES = ("xs", "s", "m", "l", "xl")
 DEFAULT_FONT_SIZE_PREFERENCE = "m"
 CHAT_COMPLETION_AUDIO_SOUND_IDS = (
@@ -1209,6 +1212,45 @@ def _should_sync_session_profile(target_user_id, actor_user_id, allow_cross_user
     return bool(normalized_target_user_id and normalized_actor_user_id and normalized_target_user_id == normalized_actor_user_id)
 
 
+def _get_app_cache_dependencies(redis_client_factory):
+    return app_settings_cache.AppCacheDependencies(
+        settings_container=cosmos_settings_container,
+        governance_container=cosmos_governance_policies_container,
+        create_redis_client=redis_client_factory,
+        log_event=log_event,
+    )
+
+
+def _get_app_settings_store():
+    """Read bootstrap settings here; the cache must never import its owner or config."""
+    with _settings_store_init_lock:
+        if app_settings_cache.APP_SETTINGS_STORE is None:
+            try:
+                settings = cosmos_settings_container.read_item(
+                    item="app_settings",
+                    partition_key="app_settings",
+                )
+            except CosmosResourceNotFoundError:
+                settings = {}
+            # Before web/scheduler configuration, Redis-required writes must fail
+            # closed. This temporary reader is not installed as a worker cache.
+            return AppSettingsStore(
+                cosmos_settings_container,
+                redis_required=bool(settings.get('enable_redis_cache', False)),
+            )
+        return app_settings_cache.get_settings_store()
+
+
+def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_client_factory):
+    """Supply runtime dependencies separately from the persisted settings object."""
+    with _settings_store_init_lock:
+        app_settings_cache.configure_app_cache(
+            settings,
+            redis_cache_endpoint,
+            dependencies=_get_app_cache_dependencies(redis_client_factory),
+        )
+
+
 def _env_flag_enabled(name):
     return str(os.environ.get(name, '')).strip().lower() in {'1', 'true', 'yes', 'on'}
 
@@ -1962,7 +2004,7 @@ def get_settings(use_cosmos=False, include_source=False):
         return merged
 
     try:
-        store = app_settings_cache.get_settings_store()
+        store = _get_app_settings_store()
         settings_source = "cosmos_forced" if use_cosmos else "shared"
         try:
             settings_item = store.read(use_cosmos=use_cosmos)
@@ -2042,7 +2084,7 @@ def update_settings(new_settings, *, expected_etag=None):
         return settings_item
 
     try:
-        app_settings_cache.get_settings_store().write(apply_updates, expected_etag=expected_etag)
+        _get_app_settings_store().write(apply_updates, expected_etag=expected_etag)
         log_event(
             "[ASC] App settings updated and published successfully.",
             level=logging.INFO

@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.027)**
+
+#### Bug Fixes
+
+*   **Settings Cache Bootstrap Import Boundaries**
+    *   Removed reverse imports from cache helpers into application configuration, preventing the import cycle identified during review.
+    *   Web and scheduler startup now configure the cache from the supplied settings object, with storage handles, the Redis factory, and logging callbacks passed separately.
+    *   Preserves shared settings reads and fail-closed Redis writes without restoring worker-local settings snapshots.
+    *   Added real-module cold-start probes for normal and optimized Python, moved state-changing test operations outside assertions, and strengthened repository instructions for dependency and startup validation.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), [PR #1478](https://github.com/microsoft/simplechat/pull/1478), `app_settings_cache.py`, `functions_settings.py`, `test_app_settings_import_boundaries.py`)
+
 ### **(v0.261.026)**
 
 #### Bug Fixes

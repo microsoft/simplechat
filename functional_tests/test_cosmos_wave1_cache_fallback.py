@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 1 cache fallback behavior.
-Version: 0.261.025
+Version: 0.261.027
 Implemented in: 0.250.005
 
 This test ensures Redis failures in the app cache layer fall back to
@@ -13,7 +13,6 @@ import copy
 import importlib
 import os
 import sys
-import types
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 
@@ -98,32 +97,26 @@ class FailingRedis:
 
 class RaisingRedis(FailingRedis):
     def __init__(self, *args, **kwargs):
-        raise RuntimeError("redis initialization failed")
+        raise RedisConnectionError("redis initialization failed")
 
 
-def _install_fake_modules(container):
-    fake_config = types.ModuleType("config")
-    fake_config.cosmos_settings_container = container
-    fake_config.exceptions = types.SimpleNamespace()
-    sys.modules["config"] = fake_config
-
-    fake_appinsights = types.ModuleType("functions_appinsights")
-    fake_appinsights.log_event = lambda *args, **kwargs: None
-    sys.modules["functions_appinsights"] = fake_appinsights
-
-
-def _load_cache_module(container):
-    _install_fake_modules(container)
-    sys.modules.pop("app_settings_cache", None)
-    sys.modules.pop("functions_redis_client", None)
-    return importlib.import_module("app_settings_cache")
+def _load_cache_module():
+    spec = importlib.util.spec_from_file_location(
+        "cache_fallback_under_test",
+        os.path.join(SINGLE_APP_DIR, "app_settings_cache.py"),
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def _set_redis_client_class(redis_class):
-    """Redis clients are built in functions_redis_client, so patch it there."""
-    redis_client_module = importlib.import_module("functions_redis_client")
-    redis_client_module.Redis = redis_class
-    return redis_client_module
+def _dependencies(cache, container, redis_class):
+    return cache.AppCacheDependencies(
+        settings_container=container,
+        governance_container=container,
+        create_redis_client=redis_class,
+        log_event=lambda *args, **kwargs: None,
+    )
 
 
 def test_redis_runtime_failure_falls_back_to_cosmos_settings():
@@ -139,15 +132,14 @@ def test_redis_runtime_failure_falls_back_to_cosmos_settings():
         "type": "cache_version",
         "version": 7,
     }
-    cache_module = _load_cache_module(container)
-    _set_redis_client_class(FailingRedis)
+    cache_module = _load_cache_module()
 
     cache_module.configure_app_cache({
         "enable_redis_cache": True,
         "redis_url": "simplechat.redis.cache.windows.net",
         "redis_key": "test-key",
         "redis_auth_type": "key",
-    })
+    }, dependencies=_dependencies(cache_module, container, FailingRedis))
 
     cached_settings = cache_module.get_settings_cache()
 
@@ -158,15 +150,14 @@ def test_redis_runtime_failure_falls_back_to_cosmos_settings():
 def test_redis_write_failure_persists_user_ui_cache_to_cosmos():
     """A Redis write failure should persist lightweight UI cache data in Cosmos."""
     container = FakeCosmosContainer()
-    cache_module = _load_cache_module(container)
-    _set_redis_client_class(FailingRedis)
+    cache_module = _load_cache_module()
 
     cache_module.configure_app_cache({
         "enable_redis_cache": True,
         "redis_url": "simplechat.redis.cache.windows.net",
         "redis_key": "test-key",
         "redis_auth_type": "key",
-    })
+    }, dependencies=_dependencies(cache_module, container, FailingRedis))
 
     cache_module.set_user_ui_settings_cache("user-1", {"theme": "dark"}, ttl_seconds=60)
     cached_settings = cache_module.get_user_ui_settings_cache("user-1")
@@ -182,15 +173,14 @@ def test_redis_initialization_failure_assigns_fallback_functions():
         "id": "app_settings",
         "feature_flag": "fallback-configured",
     }
-    cache_module = _load_cache_module(container)
-    _set_redis_client_class(RaisingRedis)
+    cache_module = _load_cache_module()
 
     cache_module.configure_app_cache({
         "enable_redis_cache": True,
         "redis_url": "simplechat.redis.cache.windows.net",
         "redis_key": "test-key",
         "redis_auth_type": "key",
-    })
+    }, dependencies=_dependencies(cache_module, container, RaisingRedis))
 
     assert cache_module.app_cache_is_using_redis is False
     assert cache_module.get_settings_cache()["feature_flag"] == "fallback-configured"

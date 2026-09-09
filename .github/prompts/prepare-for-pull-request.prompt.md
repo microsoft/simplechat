@@ -83,6 +83,14 @@ Always run:
 - A Python syntax compile check for changed Python files, and at minimum the Python files under `application/single_app` that GitHub compiles.
 - Any new or changed test files directly.
 
+When imports, settings/cache initialization, or logging bootstrap changed:
+
+- Trace the complete dependency chain, including function-local imports and both web and scheduler startup. A local import is not proof that a cycle was removed.
+- Verify lower-level cache helpers use the caller's settings object and explicitly supplied runtime dependencies; do not let them import `config` or the settings owner back into the cache.
+- Run `functional_tests/test_app_settings_import_boundaries.py` and the relevant real-module bootstrap tests with network access blocked. Do not rely only on syntax compilation, AST-extracted functions, or stubs for modules at the boundary under test.
+- Inspect test assertions for side effects, including getters that populate caches. Execute those operations before assertions and assert only on their results.
+- Review CodeQL alert annotations and review threads, not only the workflow job conclusion. A successful analysis job can still publish blocking findings. Do not mark those findings resolved based on compilation alone.
+
 When Python route files changed:
 
 - Run `python scripts/check_swagger_routes.py <changed-python-files>`.

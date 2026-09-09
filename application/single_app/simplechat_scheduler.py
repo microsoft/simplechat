@@ -6,11 +6,11 @@ import logging
 import os
 import sys
 
-import app_settings_cache
 from background_tasks import run_scheduler_forever
+import functions_redis_client
 from config import get_redis_cache_infrastructure_endpoint, initialize_clients
 from functions_appinsights import setup_appinsights_logging
-from functions_settings import get_settings
+from functions_settings import configure_application_cache, get_settings
 
 
 def initialize_scheduler_runtime():
@@ -18,9 +18,10 @@ def initialize_scheduler_runtime():
     print('Initializing SimpleChat scheduler runtime...')
     settings = get_settings(use_cosmos=True)
     redis_hostname = settings.get('redis_url', '').strip().split('.')[0]
-    app_settings_cache.configure_app_cache(
+    configure_application_cache(
         settings,
-        get_redis_cache_infrastructure_endpoint(redis_hostname)
+        get_redis_cache_infrastructure_endpoint(redis_hostname),
+        redis_client_factory=functions_redis_client.create_redis_client,
     )
     initialize_clients(settings)
     setup_appinsights_logging(settings)

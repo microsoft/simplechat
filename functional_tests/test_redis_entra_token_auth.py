@@ -1,7 +1,8 @@
+# test_redis_entra_token_auth.py
 #!/usr/bin/env python3
 """
 Functional test for Redis Microsoft Entra token authentication wiring.
-Version: 0.261.010
+Version: 0.261.027
 Implemented in: 0.242.070
 Updated in: 0.261.010 for Azure Managed Redis support.
 
@@ -18,6 +19,7 @@ import os
 import sys
 import time
 from types import SimpleNamespace
+from unittest.mock import patch
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.join(ROOT_DIR, "application", "single_app")
@@ -83,9 +85,16 @@ def test_create_redis_managed_identity_client_uses_credential_provider():
     import app_settings_cache
     import functions_redis_client as redis_client
 
-    original_redis = redis_client.Redis
-    try:
-        redis_client.Redis = _CapturingRedis
+    dependencies = app_settings_cache.AppCacheDependencies(
+        settings_container=None,
+        governance_container=None,
+        create_redis_client=redis_client.create_redis_client,
+        log_event=lambda *args, **kwargs: None,
+    )
+    with (
+        patch.object(redis_client, "Redis", _CapturingRedis),
+        patch.object(app_settings_cache, "APP_CACHE_DEPENDENCIES", dependencies),
+    ):
 
         app_settings_cache.create_redis_managed_identity_client(
             "example.redis.cache.usgovcloudapi.net",
@@ -100,8 +109,6 @@ def test_create_redis_managed_identity_client_uses_credential_provider():
             socket_timeout=5,
         )
         managed = dict(_CapturingRedis.captured_kwargs)
-    finally:
-        redis_client.Redis = original_redis
 
     assert classic["host"] == "example.redis.cache.usgovcloudapi.net"
     assert classic["port"] == 6380

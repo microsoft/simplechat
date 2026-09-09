@@ -121,6 +121,15 @@ if __name__ == "__main__":
 
 ## 🔍 **Test Discovery & Reuse**
 
+### Import Lifecycle and Assertion Safety
+
+- Execute setup, mutations, database/cache operations, callbacks, and any getter that can initialize or refresh state **before** an assertion. Assert on the captured result. Python removes `assert` expressions under `-O`; pytest rewriting does not justify side effects in them.
+- For example, use `saved = update_settings(changes)` followed by `assert saved`, not `assert update_settings(changes)`.
+- Import-cycle regressions need fresh-process tests of real modules, with network calls blocked. Include both import orders, early bootstrap, web/scheduler wiring, and failure paths; a fake `config` module or an AST-only function test can conceal the exact cycle being tested.
+- Test normal and optimized Python when verifying that required test operations cannot disappear. An optimized run is not proof of assertion coverage; use explicit checks in its subprocess probe.
+- Restore every injected module, callback, environment variable, and monkeypatch after a test. Prefer scoped fixtures/context managers over persistent `sys.modules` replacements.
+- Read each CodeQL alert's exact rule and path. Cover the full affected pattern, not just the one flagged line, and rerun the relevant integration tests.
+
 ### **Before Creating New Tests:**
 1. **Search existing tests**: `grep -r "test_.*{feature}" functional_tests/`
 2. **Check for similar patterns**: Look for tests in the same feature area
