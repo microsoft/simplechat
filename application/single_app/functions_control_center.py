@@ -233,29 +233,32 @@ def execute_control_center_refresh(manual_execution=False):
             settings = get_settings()
             if settings:
                 current_time = datetime.now(timezone.utc)
-                settings['control_center_last_refresh'] = current_time.isoformat()
-                
-                schedule = get_control_center_auto_refresh_schedule(settings)
-                settings['control_center_auto_refresh_time'] = schedule['time']
-                settings['control_center_auto_refresh_hour'] = schedule['hour']
-                settings['control_center_auto_refresh_minute'] = schedule['minute']
-                settings['control_center_auto_refresh_timezone'] = schedule['timezone']
+                settings_updates = {
+                    'control_center_last_refresh': current_time.isoformat(),
+                }
 
                 # Calculate next scheduled auto-refresh time if enabled
                 if settings.get('control_center_auto_refresh_enabled', True):
                     next_run = calculate_next_control_center_auto_refresh_run(settings, current_time=current_time)
-                    settings['control_center_auto_refresh_next_run'] = next_run.isoformat()
+                    settings_updates['control_center_auto_refresh_next_run'] = next_run.isoformat()
                 else:
-                    settings['control_center_auto_refresh_next_run'] = None
+                    settings_updates['control_center_auto_refresh_next_run'] = None
                 
-                update_success = update_settings(settings)
+                update_success = update_settings(settings_updates)
                 
                 if update_success:
                     debug_print("✅ [AUTO-REFRESH] Admin settings updated with refresh timestamp")
                 else:
+                    results['success'] = False
+                    results['error'] = 'Unable to save Control Center refresh settings.'
                     debug_print("⚠️ [AUTO-REFRESH] Failed to update admin settings")
-                    
+            else:
+                results['success'] = False
+                results['error'] = 'Unable to load Control Center refresh settings.'
+
         except Exception as settings_error:
+            results['success'] = False
+            results['error'] = 'Unable to save Control Center refresh settings.'
             debug_print(f"❌ [AUTO-REFRESH] Admin settings update failed: {settings_error}")
         
         # Log the activity

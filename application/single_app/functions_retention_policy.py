@@ -544,16 +544,21 @@ def execute_retention_policy(workspace_scopes=None, manual_execution=False):
             results['public'] = public_results
         
         # Update last run time in settings
-        settings['retention_policy_last_run'] = datetime.now(timezone.utc).isoformat()
+        settings_updates = {
+            'retention_policy_last_run': datetime.now(timezone.utc).isoformat(),
+        }
         
         # Calculate next run time (scheduled for configured hour next day)
         execution_hour = settings.get('retention_policy_execution_hour', 2)
         next_run = datetime.now(timezone.utc).replace(hour=execution_hour, minute=0, second=0, microsecond=0)
         if next_run <= datetime.now(timezone.utc):
             next_run += timedelta(days=1)
-        settings['retention_policy_next_run'] = next_run.isoformat()
+        settings_updates['retention_policy_next_run'] = next_run.isoformat()
         
-        update_settings(settings)
+        if not update_settings(settings_updates):
+            results['success'] = False
+            results['errors'].append('Unable to save retention policy execution settings.')
+            return results
         
         debug_print(f"Retention policy execution completed: {results}")
         return results

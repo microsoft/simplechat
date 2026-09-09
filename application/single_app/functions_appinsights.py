@@ -312,16 +312,19 @@ def _build_external_event_extra(
 
 
 def _load_logging_settings() -> Dict[str, Any]:
-    """Read cached settings first and fall back to live settings when needed."""
+    """Read shared settings without recursively logging a cache failure."""
     if getattr(_logging_settings_load_state, 'active', False):
         return {}
 
+    _logging_settings_load_state.active = True
     try:
         cache = app_settings_cache.get_settings_cache()
         if isinstance(cache, dict):
             return cache
     except Exception:
         pass
+    finally:
+        _logging_settings_load_state.active = False
 
     return {}
 

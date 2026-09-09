@@ -5827,25 +5827,24 @@ def register_route_backend_control_center(bp):
             # Update admin settings with refresh timestamp
             debug_print("🔄 [REFRESH DEBUG] Updating admin settings...")
             try:
-                from functions_settings import get_settings, update_settings
-                
-                settings = get_settings()
-                if settings:
-                    settings['control_center_last_refresh'] = datetime.now(timezone.utc).isoformat()
-                    update_success = update_settings(settings)
-                    
-                    if not update_success:
-                        debug_print("⚠️ [REFRESH DEBUG] Failed to update admin settings")
-                        debug_print("Failed to update admin settings with refresh timestamp")
-                    else:
-                        debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
-                        debug_print("Updated admin settings with refresh timestamp")
-                else:
-                    debug_print("⚠️ [REFRESH DEBUG] Could not get admin settings")
+                update_success = update_settings({
+                    'control_center_last_refresh': datetime.now(timezone.utc).isoformat(),
+                })
+                if not update_success:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Data refreshed, but the refresh timestamp could not be saved.'
+                    }), 500
+                debug_print("✅ [REFRESH DEBUG] Admin settings updated successfully")
+                debug_print("Updated admin settings with refresh timestamp")
                     
             except Exception as admin_error:
                 debug_print(f"❌ [REFRESH DEBUG] Admin settings update failed: {admin_error}")
                 debug_print(f"Error updating admin settings: {admin_error}")
+                return jsonify({
+                    'success': False,
+                    'error': 'Data refreshed, but the refresh timestamp could not be saved.'
+                }), 500
             
             debug_print(f"🎉 [REFRESH DEBUG] Refresh completed! Users - Refreshed: {refreshed_count}, Failed: {failed_count}. Groups - Refreshed: {groups_refreshed_count}, Failed: {groups_failed_count}")
             debug_print(f"Control Center data refresh completed. Users: {refreshed_count} refreshed, {failed_count} failed. Groups: {groups_refreshed_count} refreshed, {groups_failed_count} failed")

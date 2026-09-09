@@ -2,6 +2,39 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.027)**
+
+#### Bug Fixes
+
+*   **Settings Cache Bootstrap Import Boundaries**
+    *   Removed reverse imports from cache helpers into application configuration, preventing the import cycle identified during review.
+    *   Web and scheduler startup now configure the cache from the supplied settings object, with storage handles, the Redis factory, and logging callbacks passed separately.
+    *   Preserves shared settings reads and fail-closed Redis writes without restoring worker-local settings snapshots.
+    *   Added real-module cold-start probes for normal and optimized Python, moved state-changing test operations outside assertions, and strengthened repository instructions for dependency and startup validation.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), [PR #1478](https://github.com/microsoft/simplechat/pull/1478), `app_settings_cache.py`, `functions_settings.py`, `test_app_settings_import_boundaries.py`)
+
+### **(v0.261.026)**
+
+#### Bug Fixes
+
+*   **Redis Explorer Shared Settings Compatibility**
+    *   Fixed key browsing and previews failing after removal of the worker-local settings cache.
+    *   Explorer now recognizes the current shared settings record and labels leftover settings payload/version keys as legacy, without restoring worker caching.
+    *   Preserves credential and Cosmos session-token redaction in previews.
+    *   Added offline coverage for Azure Managed Redis and Azure Cache for Redis, including service-specific ports, key/managed-identity authentication, and app-cache/session clients.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), `functions_redis_monitoring.py`, `test_cosmos_wave5a3_redis_monitoring.py`)
+
+### **(v0.261.025)**
+
+#### Bug Fixes
+
+*   **Admin Settings Consistency Across Workers**
+    *   Removed worker-local admin settings snapshots so reloads read shared Redis settings, or Cosmos directly when Redis is disabled.
+    *   Added conflict-checked writes and coordinated cache publication to prevent stale metadata updates, worker startup, and interrupted saves from restoring older settings.
+    *   Stale admin forms now require a reload. Saves are rejected when configured Redis is unavailable; unconfirmed saves prompt verification rather than reporting success.
+    *   Reads retain Cosmos fallback without serving an old worker snapshot. Deploy all web workers and the scheduler together; Cosmos fallback remains subject to Session consistency.
+    *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), `app_settings_store.py`, `app_settings_cache.py`, `functions_settings.py`, admin settings form, auxiliary settings writers, `docs/admin/scale.md`)
+
 ### **(v0.261.023)**
 
 #### New Features

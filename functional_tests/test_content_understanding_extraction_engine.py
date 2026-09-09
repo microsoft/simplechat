@@ -2,7 +2,7 @@
 # test_content_understanding_extraction_engine.py
 """
 Functional test for Enhanced extraction backed by Azure AI Content Understanding.
-Version: 0.250.224
+Version: 0.261.025
 Implemented in: 0.250.221
 
 This test ensures that the Content Understanding client parses analyzer results into the same
@@ -631,11 +631,11 @@ def test_enhanced_extraction_upgrade_migration_contract():
     assert_contains(settings, "legacy_enhanced_extraction = 'enable_enhanced_extraction' not in settings_item", "legacy toggle detection before merge")
     assert_contains(settings, "if legacy_enhanced_extraction and legacy_enhanced_extraction_mode in ('layout', 'auto'):", "migration condition")
     assert_contains(settings, "merged['enable_enhanced_extraction'] = True", "migration backfill")
-    assert_contains(settings, "or enhanced_extraction_migration_updated", "migration persisted to Cosmos")
+    assert_contains(settings, "merged = store.write(normalize_loaded_settings)", "migration conditionally persisted to Cosmos")
 
     # The migration must run before the merge fills the key in with its False default.
     detection_index = settings.index("legacy_enhanced_extraction = 'enable_enhanced_extraction' not in settings_item")
-    merge_index = settings.index("merge_changed = deep_merge_dicts(default_settings, settings_item)")
+    merge_index = settings.index("deep_merge_dicts(default_settings, settings_item)")
     if detection_index > merge_index:
         raise AssertionError("Legacy toggle detection must happen before deep_merge_dicts fills the default.")
 

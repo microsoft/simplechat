@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the tabular durable-preflight parity stale-settings migration.
-Version: 0.250.198
+Version: 0.261.025
 Implemented in: 0.250.198
 
 deep_merge_dicts() (used by get_settings() to merge code-level defaults into a
@@ -144,18 +144,17 @@ def test_migration_is_wired_into_get_settings_merge_flow():
     assert_app_version_at_least(IMPLEMENTED_VERSION)
     source = SETTINGS_FILE.read_text(encoding="utf-8")
 
-    assert "tabular_parity_durable_preflight_settings_updated = normalize_tabular_parity_durable_preflight_defaults(merged)" in source, (
+    assert "normalize_tabular_parity_durable_preflight_defaults(merged)" in source, (
         "get_settings() must call normalize_tabular_parity_durable_preflight_defaults(merged) "
         "during its merge/migration step"
     )
 
     get_settings_start = source.index("def get_settings(")
-    upsert_condition_start = source.index("cosmos_settings_container.upsert_item(merged)", get_settings_start)
-    condition_block = source[get_settings_start:upsert_condition_start]
+    write_start = source.index("merged = store.write(normalize_loaded_settings)", get_settings_start)
+    condition_block = source[get_settings_start:write_start]
 
-    assert "or tabular_parity_durable_preflight_settings_updated" in condition_block, (
-        "tabular_parity_durable_preflight_settings_updated must be included in the "
-        "upsert-trigger condition so corrected values are persisted back to Cosmos DB"
+    assert "if merged != settings_item:" in condition_block, (
+        "Corrected values must trigger conflict-safe persistence."
     )
 
 
