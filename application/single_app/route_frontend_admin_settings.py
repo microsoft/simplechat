@@ -576,7 +576,8 @@ def register_route_frontend_admin_settings(bp):
 
         normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
         if endpoints_changed:
-            update_settings({'model_endpoints': normalized_endpoints})
+            if update_settings({'model_endpoints': normalized_endpoints}, expected_etag=settings.get('_etag')):
+                settings = get_settings()
         settings['model_endpoints'] = normalized_endpoints
         frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
 
@@ -973,8 +974,8 @@ def register_route_frontend_admin_settings(bp):
                             new_settings['update_available'] = False
                         
                         # Update settings to persist these values
-                        update_settings(new_settings)
-                        settings.update(new_settings)
+                        if update_settings(new_settings):
+                            settings = get_settings()
                 except Exception as e:
                     print(f"Error checking for updates: {e}")
                     log_event(f"Error checking for updates: {e}", level=logging.ERROR)
@@ -984,8 +985,8 @@ def register_route_frontend_admin_settings(bp):
             update_available = _is_update_version_newer(latest_version, current_version)
             if settings.get('update_available') != update_available:
                 try:
-                    update_settings({'update_available': update_available})
-                    settings['update_available'] = update_available
+                    if update_settings({'update_available': update_available}):
+                        settings = get_settings()
                 except Exception as e:
                     log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
             
@@ -1049,6 +1050,10 @@ def register_route_frontend_admin_settings(bp):
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
             user_id = get_current_user_id()
+            settings_etag = form_data.get('admin_settings_etag', '')
+            if not settings_etag or settings_etag != settings.get('_etag'):
+                flash("Settings changed since this page was loaded. Review the latest settings and try again.", "warning")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             def admin_secret(field_name, form_field_name=None):
                 submitted_value = form_data.get(form_field_name or field_name, '').strip()
@@ -3215,7 +3220,7 @@ def register_route_frontend_admin_settings(bp):
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
-            if update_settings(new_settings):
+            if update_settings(new_settings, expected_etag=settings_etag):
                 flash("Admin settings updated successfully.", "success")
                 if enable_custom_pages and not custom_pages_was_enabled and custom_pages_restart_acknowledged:
                     log_general_admin_action(
@@ -3300,7 +3305,11 @@ def register_route_frontend_admin_settings(bp):
                         print(f"Warning sending chunk size notification: {e}")
 
             else:
-                flash("Failed to update admin settings.", "danger")
+                flash(
+                    "Unable to confirm the settings save. Reload and verify the values before retrying. "
+                    "Another save may be in progress, or Redis may be unavailable.",
+                    "danger",
+                )
 
 
             # Redirect back to settings page

@@ -7,6 +7,7 @@ import time
 
 import app_settings_cache
 import functions_redis_client
+from app_settings_store import SETTINGS_STATE_KEY
 
 
 REDIS_MONITORING_STATUS_DISABLED = "disabled"
@@ -38,6 +39,10 @@ REDIS_EXPLORER_SENSITIVE_FIELD_TOKENS = REDIS_EXPLORER_RESTRICTED_KEY_TOKENS + (
     "key",
 )
 REDIS_EXPLORER_REDACTED_VALUE = "[REDACTED]"
+# Old deployments can leave these keys behind; recognize them without depending
+# on the removed worker-cache implementation or treating them as current state.
+REDIS_LEGACY_SETTINGS_PAYLOAD_KEY = "APP_SETTINGS_CACHE"
+REDIS_LEGACY_SETTINGS_VERSION_KEY = "APP_SETTINGS_CACHE_VERSION"
 REDIS_EXPLORER_RESTRICTED_PREVIEW = (
     "Preview restricted because the Redis key name indicates session, token, cookie, or credential data."
 )
@@ -402,19 +407,26 @@ def _resolve_redis_keys(keys, dai_hash_resolver=None):
             )
             continue
 
-        if normalized_key == app_settings_cache.APP_SETTINGS_CACHE_KEY:
+        if normalized_key == SETTINGS_STATE_KEY:
+            resolutions[normalized_key] = _build_resolution_payload(
+                "app_settings_state",
+                "Shared app settings state",
+                resolved=True,
+                note="Current settings publication record: ready document/revision or pending write marker. Sensitive preview fields are redacted.",
+            )
+        elif normalized_key == REDIS_LEGACY_SETTINGS_PAYLOAD_KEY:
             resolutions[normalized_key] = _build_resolution_payload(
                 "app_settings_cache",
-                "App settings cache payload",
+                "Legacy app settings cache payload",
                 resolved=True,
-                note="Global app settings cache payload.",
+                note="Legacy settings payload; not used by the current shared settings store.",
             )
-        elif normalized_key == app_settings_cache.APP_SETTINGS_CACHE_VERSION_KEY:
+        elif normalized_key == REDIS_LEGACY_SETTINGS_VERSION_KEY:
             resolutions[normalized_key] = _build_resolution_payload(
                 "app_settings_cache_version",
-                "App settings cache version",
+                "Legacy app settings cache version",
                 resolved=True,
-                note="Global app settings cache invalidation version.",
+                note="Legacy invalidation counter; current settings carry their revision in the shared state record.",
             )
 
     if dai_version_hashes:

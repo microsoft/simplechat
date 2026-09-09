@@ -44,6 +44,46 @@ Azure Cache for Redis Basic, Standard, and Premium retire on September 30, 2028.
 deployments provision Azure Managed Redis; an existing Azure Cache for Redis instance keeps
 working, and moving to Azure Managed Redis is a host name change rather than a code change.
 
+### Admin settings consistency
+
+Implemented in **0.261.025**. App settings no longer have a worker-local snapshot or
+a 15-second version-check delay. With Redis enabled, workers read the shared settings
+document on every lookup; without Redis, they read Cosmos directly. Other caches,
+including conversation, user UI, and governance caches, retain their own policies.
+
+Settings changes use Cosmos ETag checks and a shared Redis write marker. An older
+writer or starting worker cannot replace the shared settings with its earlier
+snapshot. The admin form also carries the revision it displayed: if another save
+changed that revision, reload and review the new values before saving again.
+
+When configured Redis is unavailable, **settings saves are rejected** rather than
+silently writing only to Cosmos. Reads can fall back to Cosmos; if both services
+are unavailable, the app does not serve an old worker snapshot. Cosmos fallback
+reads still use the account/client's Session consistency, so this is not a promise
+of global strong consistency during an outage.
+
+A failure after the database write can leave the outcome unconfirmed. The UI asks
+you to reload and verify instead of reporting success or promising a rollback.
+The shared pending marker prevents readers from using the previous Redis value.
+After its 30-second write lease expires, a read can repair publication using a
+conditional Cosmos write. No fixed redirect delay is needed.
+
+Deploy this change to all web workers and the scheduler together. Older versions
+do not participate in the new publication protocol. Redis connection or enablement
+changes require a coordinated restart of all workers; do not leave workers using
+different cache backends. Do not share a Redis database between independent
+SimpleChat deployments: the cache keys are application-wide.
+
+Validation: `functional_tests/test_app_settings_store_consistency.py` covers
+multi-worker reads, conditional writes, failure recovery, and expired writers.
+`ui_tests/test_admin_settings_save_consistency.py` covers form revisions and includes
+an optional authenticated stale-form check.
+
+As of **0.261.026**, Redis Explorer identifies `APP_SETTINGS_STATE_V2` as the current
+shared settings record. Old `APP_SETTINGS_CACHE` and `APP_SETTINGS_CACHE_VERSION`
+keys are labeled legacy; their presence does not mean workers still read them.
+Previews redact credentials and the Cosmos session token in ready or pending records.
+
 ### Redis Metrics {#redis-monitoring-section}
 
 The Redis Metrics section reports the service and port SimpleChat resolved, along with live

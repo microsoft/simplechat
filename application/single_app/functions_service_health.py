@@ -107,7 +107,10 @@ def record_semantic_search_quota_exceeded(error=None, source="hybrid_search"):
             "source": source,
             "occurrence_count": occurrence_count,
         }
-        if not update_settings({"service_health": service_health}):
+        if not update_settings(
+            {"service_health": service_health},
+            expected_etag=settings.get("_etag"),
+        ):
             raise RuntimeError("update_settings returned False while recording semantic quota warning.")
         log_event(
             "[SERVICE_HEALTH] Azure AI Search semantic quota exceeded.",
@@ -144,7 +147,10 @@ def clear_semantic_search_quota_warning(source="hybrid_search"):
         cleared_health["last_cleared_at"] = _utc_now_iso()
         cleared_health["source"] = source
         service_health[SEMANTIC_SEARCH_HEALTH_KEY] = cleared_health
-        if not update_settings({"service_health": service_health}):
+        if not update_settings(
+            {"service_health": service_health},
+            expected_etag=settings.get("_etag"),
+        ):
             raise RuntimeError("update_settings returned False while clearing semantic quota warning.")
         log_event(
             "[SERVICE_HEALTH] Azure AI Search semantic quota warning cleared after successful search.",

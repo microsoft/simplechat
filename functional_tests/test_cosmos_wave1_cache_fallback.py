@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos Wave 1 cache fallback behavior.
-Version: 0.250.005
+Version: 0.261.025
 Implemented in: 0.250.005
 
 This test ensures Redis failures in the app cache layer fall back to
@@ -14,6 +14,7 @@ import importlib
 import os
 import sys
 import types
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,7 +40,7 @@ class FakeCosmosContainer:
         item["_etag"] = f"etag-{self._etag_counter}"
         return item
 
-    def read_item(self, item, partition_key):
+    def read_item(self, item, partition_key, **kwargs):
         if item not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
         return copy.deepcopy(self.items[item])
@@ -74,10 +75,10 @@ class FailingRedis:
         pass
 
     def get(self, *args, **kwargs):
-        raise RuntimeError("redis unavailable")
+        raise RedisConnectionError("redis unavailable")
 
     def set(self, *args, **kwargs):
-        raise RuntimeError("redis unavailable")
+        raise RedisConnectionError("redis unavailable")
 
     def setex(self, *args, **kwargs):
         raise RuntimeError("redis unavailable")
@@ -131,6 +132,7 @@ def test_redis_runtime_failure_falls_back_to_cosmos_settings():
     container.items["app_settings"] = {
         "id": "app_settings",
         "feature_flag": "from-cosmos",
+        "_settings_revision": 7,
     }
     container.items["app_settings_cache_version"] = {
         "id": "app_settings_cache_version",

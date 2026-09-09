@@ -197,7 +197,7 @@ def check_logging_timers_once():
     """Disable temporary logging settings after their timer expires."""
     settings = get_settings()
     current_time = datetime.now()
-    settings_changed = False
+    settings_updates = {}
 
     if (
         settings.get('enable_debug_logging', False)
@@ -213,10 +213,9 @@ def check_logging_timers_once():
 
         if turnoff_time and current_time >= turnoff_time:
             debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
-            settings['enable_debug_logging'] = False
-            settings['debug_logging_timer_enabled'] = False
-            settings['debug_logging_turnoff_time'] = None
-            settings_changed = True
+            settings_updates['enable_debug_logging'] = False
+            settings_updates['debug_logging_timer_enabled'] = False
+            settings_updates['debug_logging_turnoff_time'] = None
 
     if (
         settings.get('enable_file_processing_logs', False)
@@ -232,14 +231,12 @@ def check_logging_timers_once():
 
         if turnoff_time and current_time >= turnoff_time:
             print(f"File processing logs timer expired at {turnoff_time}. Disabling file processing logs.")
-            settings['enable_file_processing_logs'] = False
-            settings['file_processing_logs_timer_enabled'] = False
-            settings['file_processing_logs_turnoff_time'] = None
-            settings_changed = True
+            settings_updates['enable_file_processing_logs'] = False
+            settings_updates['file_processing_logs_timer_enabled'] = False
+            settings_updates['file_processing_logs_turnoff_time'] = None
 
-    if settings_changed:
-        update_settings(settings)
-        print("Logging settings updated due to timer expiration.")
+    if settings_updates:
+        return update_settings(settings_updates, expected_etag=settings.get('_etag'))
 
 
 def check_expired_approvals_once():
@@ -321,14 +318,15 @@ def _seed_control_center_auto_refresh_next_run(settings, current_time):
     """Persist the next Control Center auto-refresh run when schedule fields are missing."""
     schedule = get_control_center_auto_refresh_schedule(settings)
     next_run = calculate_next_control_center_auto_refresh_run(settings, current_time=current_time)
-    update_settings({
+    if not update_settings({
         'control_center_auto_refresh_enabled': settings.get('control_center_auto_refresh_enabled', True),
         'control_center_auto_refresh_time': schedule['time'],
         'control_center_auto_refresh_hour': schedule['hour'],
         'control_center_auto_refresh_minute': schedule['minute'],
         'control_center_auto_refresh_timezone': schedule['timezone'],
         'control_center_auto_refresh_next_run': next_run.isoformat(),
-    })
+    }, expected_etag=settings.get('_etag')):
+        raise RuntimeError('Unable to save the next Control Center refresh time.')
     return next_run
 
 
@@ -471,7 +469,11 @@ def check_cosmos_throughput_autoscale_once():
         result = evaluate_and_apply_cosmos_throughput_scaling(settings, refresh_id=refresh_id)
         settings_update = result.get('settings_update') or {}
         if settings_update:
-            update_settings(settings_update)
+            expected_etag = settings.get('_etag') if 'cosmos_throughput_container_policies' in settings_update else None
+            if not update_settings(settings_update, expected_etag=expected_etag):
+                result['success'] = False
+                result['error'] = 'Unable to save Cosmos throughput runtime settings.'
+                return result
         decision = result.get('decision') or {}
         scale_result = result.get('scale_result') or {}
         log_event(

@@ -22,7 +22,6 @@ def initialize_scheduler_runtime():
         settings,
         get_redis_cache_infrastructure_endpoint(redis_hostname)
     )
-    app_settings_cache.update_settings_cache(settings)
     initialize_clients(settings)
     setup_appinsights_logging(settings)
     logging.basicConfig(level=logging.DEBUG)

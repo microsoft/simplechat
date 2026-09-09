@@ -289,7 +289,6 @@ def initialize_application(force=False):
             settings,
             get_redis_cache_infrastructure_endpoint(redis_hostname)
         )
-        app_settings_cache.update_settings_cache(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
         sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())

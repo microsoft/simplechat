@@ -1,11 +1,12 @@
-#!/usr/bin/env python3
 # test_cosmos_wave5a3_redis_monitoring.py
+#!/usr/bin/env python3
 """
 Functional test for Wave 5A3 Redis monitoring.
-Version: 0.250.043
+Version: 0.261.026
 Implemented in: 0.250.026
 Redis Explorer implemented in: 0.250.040
 Redis Explorer DAI resolution implemented in: 0.250.043
+Shared settings state compatibility fixed in: 0.261.026
 
 This test ensures Redis monitoring reports sanitized health, memory, stats,
 keyspace, DAI cache hygiene, runtime signals, and read-only Redis Explorer
@@ -16,12 +17,15 @@ import fnmatch
 import json
 import os
 import sys
+from unittest.mock import patch
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_DIR = os.path.join(REPO_ROOT, "application", "single_app")
 sys.path.insert(0, APP_DIR)
 
 import app_settings_cache
+import functions_redis_client
+from app_settings_store import SETTINGS_STATE_KEY
 from functions_redis_monitoring import (
     get_redis_explorer_keys,
     get_redis_explorer_value,
@@ -385,6 +389,169 @@ def test_redis_explorer_restricts_session_key_preview():
     assert "session-cookie-secret" not in serialized_preview
 
 
+def test_redis_explorer_resolves_shared_and_legacy_settings_keys():
+    """Use the real cache module, which no longer exports legacy settings constants."""
+    client = FakeRedisClient()
+    settings = {"enable_redis_cache": True, "redis_url": "example.redis.cache.windows.net"}
+    expected_kinds = {
+        SETTINGS_STATE_KEY: "app_settings_state",
+        "APP_SETTINGS_CACHE": "app_settings_cache",
+        "APP_SETTINGS_CACHE_VERSION": "app_settings_cache_version",
+    }
+    for key in expected_kinds:
+        client.items[key] = {"type": "string", "value": "{}", "ttl": -1}
+
+    page = get_redis_explorer_keys(
+        settings,
+        app_cache_client=client,
+        key_filter="APP_SETTINGS",
+        dai_hash_resolver=_fake_dai_hash_resolver,
+    )
+    assert page["success"] is True
+    assert {item["key"]: item["resolution"]["kind"] for item in page["keys"]} == expected_kinds
+    for key, kind in expected_kinds.items():
+        preview = get_redis_explorer_value(settings, key=key, app_cache_client=client)
+        assert preview["success"] is True
+        assert preview["resolution"]["kind"] == kind
+        if key != SETTINGS_STATE_KEY:
+            assert "Legacy" in preview["resolution"]["label"]
+
+
+def test_redis_explorer_shared_state_previews_redact_credentials():
+    """Both ready and pending records must hide the Cosmos session token."""
+    client = FakeRedisClient()
+    settings = {"enable_redis_cache": True, "redis_url": "example.redis.cache.windows.net"}
+    for state in ("ready", "pending"):
+        payload = {
+            "state": state,
+            "session_token": "private-cosmos-session-value",
+        }
+        if state == "ready":
+            payload["document"] = {
+                "app_title": "Visible application title",
+                "_settings_revision": 12,
+                "redis_key": "private-redis-key",
+                "azure_openai_gpt_key": "private-model-key",
+                "nested": {"client_secret": "private-client-secret"},
+            }
+        else:
+            payload["owner"] = "write-owner"
+            payload["deadline"] = 1000
+        client.items[SETTINGS_STATE_KEY] = {
+            "type": "string",
+            "value": json.dumps(payload),
+            "ttl": -1,
+        }
+        preview = get_redis_explorer_value(settings, key=SETTINGS_STATE_KEY, app_cache_client=client)
+        assert preview["success"] is True
+        assert preview["redacted"] is True
+        decoded = json.loads(preview["preview"])
+        assert decoded["state"] == state
+        assert decoded["session_token"] == "[REDACTED]"
+        if state == "ready":
+            assert decoded["document"]["app_title"] == "Visible application title"
+        for secret in (
+            "private-cosmos-session-value",
+            "private-redis-key",
+            "private-model-key",
+            "private-client-secret",
+        ):
+            assert secret not in json.dumps(preview)
+
+
+def test_redis_explorer_client_factory_works_for_both_azure_services():
+    """Exercise real service/port routing and Explorer with fake Redis I/O only."""
+    services = (
+        ("example.redis.cache.windows.net", "azure_cache_for_redis", 6380),
+        ("example.eastus.redis.azure.net", "azure_managed_redis", 10000),
+    )
+    credential_provider = object()
+
+    class ExplorerRedisClient(FakeRedisClient):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.connection_options = kwargs
+            self.items[SETTINGS_STATE_KEY] = {
+                "type": "string",
+                "value": json.dumps({
+                    "state": "ready",
+                    "document": {"app_title": "Shared settings", "redis_key": "private-settings-key"},
+                    "session_token": "private-cosmos-token",
+                }),
+                "ttl": -1,
+            }
+
+        def info(self):
+            info = super().info()
+            if self.connection_options["port"] == 10000:
+                # Enterprise INFO can omit counters; Explorer must not depend on them.
+                for key in ("maxclients", "tracking_clients", "total_error_replies", "db0"):
+                    info.pop(key, None)
+            return info
+
+    for hostname, service_type, port in services:
+        for auth_type in ("key", "managed_identity"):
+            settings = {
+                "enable_redis_cache": True,
+                "redis_url": hostname,
+                "redis_auth_type": auth_type,
+                "redis_key": "private-connection-key",
+            }
+            with (
+                patch.object(functions_redis_client, "Redis", ExplorerRedisClient),
+                patch.object(functions_redis_client, "get_redis_credential_provider", return_value=credential_provider),
+            ):
+                client = functions_redis_client.create_redis_client(settings=settings)
+            assert client.connection_options["host"] == hostname
+            assert client.connection_options["port"] == port
+            assert client.connection_options["ssl"] is True
+            assert client.connection_options["db"] == 0
+            if auth_type == "managed_identity":
+                assert client.connection_options["credential_provider"] is credential_provider
+                assert "password" not in client.connection_options
+            else:
+                assert client.connection_options["password"] == "private-connection-key"
+
+            for source in ("app_cache", "session"):
+                client_args = (
+                    {"app_cache_client": client}
+                    if source == "app_cache"
+                    else {"session_redis_client": client, "session_type": "redis"}
+                )
+                with patch.object(app_settings_cache, "get_app_cache_redis_client", return_value=None):
+                    status = get_redis_monitoring_status(settings, **client_args)
+                    assert status["health"]["status"] == "healthy"
+                    assert status["configuration"]["service_type"] == service_type
+                    assert status["configuration"]["port"] == port
+                    assert status["runtime"]["monitoring_source"] == source
+                    seen_keys = []
+                    cursor = 0
+                    while True:
+                        page = get_redis_explorer_keys(
+                            settings,
+                            cursor=cursor,
+                            page_size=2,
+                            dai_hash_resolver=_fake_dai_hash_resolver,
+                            **client_args,
+                        )
+                        assert page["success"] is True
+                        seen_keys.extend(item["key"] for item in page["keys"])
+                        if not page["has_more"]:
+                            break
+                        cursor = page["next_cursor"]
+                        assert len(seen_keys) <= len(client.items)
+                    assert set(seen_keys) == set(client.items)
+                    preview = get_redis_explorer_value(settings, key=SETTINGS_STATE_KEY, **client_args)
+                    assert preview["success"] is True
+                    assert preview["resolution"]["kind"] == "app_settings_state"
+                    serialized = json.dumps(preview)
+                    assert "Shared settings" in serialized
+                    assert "private-settings-key" not in serialized
+                    assert "private-cosmos-token" not in serialized
+                    assert "private-connection-key" not in serialized
+                    print(f"PASS: {service_type}, TLS {port}, {auth_type}, {source}")
+
+
 if __name__ == "__main__":
     tests = [
         test_redis_monitoring_healthy_metrics,
@@ -394,6 +561,9 @@ if __name__ == "__main__":
         test_redis_explorer_resolves_dai_version_marker_metadata,
         test_redis_explorer_value_sanitizes_json_preview,
         test_redis_explorer_restricts_session_key_preview,
+        test_redis_explorer_resolves_shared_and_legacy_settings_keys,
+        test_redis_explorer_shared_state_previews_redact_credentials,
+        test_redis_explorer_client_factory_works_for_both_azure_services,
     ]
     results = []
     for test in tests:

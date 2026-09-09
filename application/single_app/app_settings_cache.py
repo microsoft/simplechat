@@ -2,7 +2,8 @@
 """
 WARNING: NEVER 'from app_settings_cache import' settings or any other module that imports settings.
 ALWAYS import app_settings_cache and use app_settings_cache.get_settings_cache() to get settings.
-This supports the dynamic selection of redis or in-memory caching of settings.
+App settings are read from Redis or Cosmos, never from a worker-local snapshot.
+Other cache families in this module retain their own fallback policies.
 """
 import json
 import logging
@@ -10,6 +11,11 @@ import copy
 import threading
 import time
 from datetime import datetime, timedelta
+from azure.core.exceptions import AzureError
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from redis.exceptions import RedisError
+
+from app_settings_store import AppSettingsStore, SETTINGS_REVISION_FIELD
 
 # Redis client construction lives in functions_redis_client so session, cache, and admin
 # diagnostics code paths share one place that resolves service type, port, and credentials.
@@ -19,24 +25,16 @@ from functions_redis_client import (
     create_redis_client,
 )
 
-# NOTE: functions_keyvault is imported locally inside configure_app_cache to avoid a circular
-# import (functions_keyvault -> app_settings_cache -> functions_keyvault).
-# functions_appinsights is also imported locally for the same reason.
+# Logging/configuration imports are deferred to avoid startup dependency cycles.
 
-_settings = None
 _logger = logging.getLogger(__name__)
-APP_SETTINGS_CACHE = {}
+APP_SETTINGS_STORE = None
 APP_USER_UI_SETTINGS_CACHE = {}
 APP_STREAM_SESSION_METADATA = {}
 APP_STREAM_SESSION_EVENTS = {}
-APP_SETTINGS_CACHE_VERSION = 0
 APP_GOVERNANCE_CACHE_VERSION = 0
-APP_SETTINGS_SHARED_VERSION_CACHE = {'value': 0, 'expires_at': 0}
 APP_GOVERNANCE_SHARED_VERSION_CACHE = {'value': 0, 'expires_at': 0}
 APP_REDIS_CLIENT = None
-APP_SETTINGS_CACHE_KEY = 'APP_SETTINGS_CACHE'
-APP_SETTINGS_CACHE_VERSION_KEY = 'APP_SETTINGS_CACHE_VERSION'
-APP_SETTINGS_CACHE_VERSION_DOC_ID = 'app_settings_cache_version'
 USER_UI_SETTINGS_CACHE_KEY_PREFIX = 'USER_UI_SETTINGS'
 USER_UI_SETTINGS_CACHE_TTL_SECONDS = 120
 GOVERNANCE_CACHE_VERSION_KEY = 'GOVERNANCE_CACHE_VERSION'
@@ -48,7 +46,6 @@ COSMOS_CACHE_ENTRY_PREFIX = 'app_cache_entry:'
 update_settings_cache = None
 get_settings_cache = None
 get_app_settings_cache_version = None
-bump_app_settings_cache_version = None
 initialize_stream_session_cache = None
 set_stream_session_meta = None
 get_stream_session_meta = None
@@ -146,6 +143,63 @@ def _set_ttl_cached_version(version_cache, version):
     with _app_cache_lock:
         version_cache['value'] = _normalize_cache_version(version)
         version_cache['expires_at'] = time.time() + CACHE_VERSION_READ_TTL_SECONDS
+
+
+def _log_settings_fallback(error):
+    # Logging reads settings itself; the logging entrypoint guards re-entrancy.
+    from functions_appinsights import log_event
+
+    log_event(
+        "[ASC] Shared settings unavailable; reading Cosmos without a worker snapshot.",
+        extra={'error_type': type(error).__name__},
+        level=logging.WARNING,
+    )
+
+
+def get_settings_store():
+    """Initialize connections lazily, without retaining any settings payload."""
+    global APP_SETTINGS_STORE, get_settings_cache, update_settings_cache
+    global get_app_settings_cache_version
+
+    if APP_SETTINGS_STORE is None:
+        # config imports logging/cache during startup; defer until it is initialized.
+        from config import cosmos_settings_container
+
+        try:
+            initial = cosmos_settings_container.read_item(item='app_settings', partition_key='app_settings')
+        except CosmosResourceNotFoundError:
+            initial = {}
+        required = bool(initial.get('enable_redis_cache', False))
+        redis_client = None
+        if required:
+            try:
+                redis_client = create_redis_client(
+                    settings=initial,
+                    credential_purpose=CREDENTIAL_PURPOSE_APP_CACHE,
+                    socket_connect_timeout=5,
+                    socket_timeout=5,
+                )
+            except (RedisError, AzureError, ValueError) as error:
+                _log_settings_fallback(error)
+        APP_SETTINGS_STORE = AppSettingsStore(
+            cosmos_settings_container,
+            redis_client,
+            redis_required=required,
+            on_fallback=_log_settings_fallback,
+        )
+    get_settings_cache = APP_SETTINGS_STORE.read
+    update_settings_cache = _refresh_authoritative_settings
+    get_app_settings_cache_version = _get_settings_revision
+    return APP_SETTINGS_STORE
+
+
+def _refresh_authoritative_settings(_obsolete_snapshot=None):
+    """Compatibility entrypoint: never publish a caller's potentially stale snapshot."""
+    return get_settings_store().write(lambda settings: settings)
+
+
+def _get_settings_revision():
+    return int(get_settings_store().read().get(SETTINGS_REVISION_FIELD, 0))
 
 
 def _log_cache_fallback(operation, exception, log_event_func=None):
@@ -248,94 +302,8 @@ def _delete_cosmos_cache_entry(cache_key, log_event_func=None):
         return False
 
 
-def _get_app_settings_cache_version_fallback(log_event_func=None):
-    global APP_SETTINGS_CACHE_VERSION
-    try:
-        from config import cosmos_settings_container
-        return _get_ttl_cached_cosmos_version(
-            APP_SETTINGS_SHARED_VERSION_CACHE,
-            cosmos_settings_container,
-            APP_SETTINGS_CACHE_VERSION_DOC_ID,
-            APP_SETTINGS_CACHE_VERSION,
-            log_event_func=log_event_func,
-        )
-    except Exception as ex:
-        _logger.warning("[ASC] Shared cache version read failed; using local version fallback: %s", ex)
-        if callable(log_event_func):
-            log_event_func(
-                "[ASC] Shared cache version read failed; using local version fallback.",
-                extra={'version_doc_id': APP_SETTINGS_CACHE_VERSION_DOC_ID, 'error': str(ex)},
-                level=logging.WARNING,
-            )
-        with _app_cache_lock:
-            return APP_SETTINGS_CACHE_VERSION
-
-
-def _bump_app_settings_cache_version_fallback(log_event_func=None):
-    global APP_SETTINGS_CACHE_VERSION
-    try:
-        from config import cosmos_settings_container
-        bumped_version = _bump_cosmos_cache_version(
-            cosmos_settings_container,
-            APP_SETTINGS_CACHE_VERSION_DOC_ID,
-            log_event_func=log_event_func,
-        )
-        if bumped_version is not None:
-            with _app_cache_lock:
-                APP_SETTINGS_CACHE_VERSION = bumped_version
-            _set_ttl_cached_version(APP_SETTINGS_SHARED_VERSION_CACHE, bumped_version)
-            return bumped_version
-    except Exception as ex:
-        _logger.warning("[ASC] Shared cache version bump failed; using local version fallback: %s", ex)
-        if callable(log_event_func):
-            log_event_func(
-                "[ASC] Shared cache version bump failed; using local version fallback.",
-                extra={'version_doc_id': APP_SETTINGS_CACHE_VERSION_DOC_ID, 'error': str(ex)},
-                level=logging.WARNING,
-            )
-
-    with _app_cache_lock:
-        APP_SETTINGS_CACHE_VERSION += 1
-        fallback_version = APP_SETTINGS_CACHE_VERSION
-    _set_ttl_cached_version(APP_SETTINGS_SHARED_VERSION_CACHE, fallback_version)
-    return fallback_version
-
-
-def _update_settings_cache_fallback(new_settings, log_event_func=None):
-    global APP_SETTINGS_CACHE, APP_SETTINGS_CACHE_VERSION
-    shared_version = _get_app_settings_cache_version_fallback(log_event_func=log_event_func)
-    with _app_cache_lock:
-        APP_SETTINGS_CACHE = copy.deepcopy(new_settings or {})
-        APP_SETTINGS_CACHE_VERSION = shared_version
-
-
 def _get_settings_cache_fallback(log_event_func=None):
-    global APP_SETTINGS_CACHE, APP_SETTINGS_CACHE_VERSION
-    shared_version = _get_app_settings_cache_version_fallback(log_event_func=log_event_func)
-    with _app_cache_lock:
-        if APP_SETTINGS_CACHE and APP_SETTINGS_CACHE_VERSION == shared_version:
-            return copy.deepcopy(APP_SETTINGS_CACHE)
-
-    try:
-        from config import cosmos_settings_container
-        loaded_settings = cosmos_settings_container.read_item(
-            item='app_settings',
-            partition_key='app_settings',
-        )
-        with _app_cache_lock:
-            APP_SETTINGS_CACHE = copy.deepcopy(loaded_settings or {})
-            APP_SETTINGS_CACHE_VERSION = shared_version
-        return copy.deepcopy(loaded_settings or {})
-    except Exception as ex:
-        _logger.warning("[ASC] Failed to refresh app settings cache from Cosmos; using local cache fallback: %s", ex)
-        if callable(log_event_func):
-            log_event_func(
-                "[ASC] Failed to refresh app settings cache from Cosmos; using local cache fallback.",
-                extra={'error': str(ex)},
-                level=logging.WARNING,
-            )
-        with _app_cache_lock:
-            return copy.deepcopy(APP_SETTINGS_CACHE)
+    return get_settings_store().read(use_cosmos=True)
 
 
 def _get_governance_cache_version_fallback(log_event_func=None):
@@ -552,24 +520,14 @@ def _assign_fallback_cache_functions(log_event_func=None):
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
     global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
-    global get_app_settings_cache_version, bump_app_settings_cache_version
+    global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
     global app_cache_is_using_redis
     global APP_REDIS_CLIENT
 
     app_cache_is_using_redis = False
     APP_REDIS_CLIENT = None
-    update_settings_cache = lambda new_settings: _update_settings_cache_fallback(
-        new_settings,
-        log_event_func=log_event_func,
-    )
-    get_settings_cache = lambda: _get_settings_cache_fallback(log_event_func=log_event_func)
-    get_app_settings_cache_version = lambda: _get_app_settings_cache_version_fallback(
-        log_event_func=log_event_func,
-    )
-    bump_app_settings_cache_version = lambda: _bump_app_settings_cache_version_fallback(
-        log_event_func=log_event_func,
-    )
+    get_settings_store()
     initialize_stream_session_cache = lambda cache_key, metadata, ttl_seconds=None: (
         _initialize_stream_session_cache_fallback(
             cache_key,
@@ -637,21 +595,27 @@ def get_app_cache_redis_client():
 
 
 def configure_app_cache(settings, redis_cache_endpoint=None):
-    global _settings, update_settings_cache, get_settings_cache, APP_SETTINGS_CACHE
+    global update_settings_cache, get_settings_cache, APP_SETTINGS_STORE
     global APP_USER_UI_SETTINGS_CACHE, APP_STREAM_SESSION_METADATA, APP_STREAM_SESSION_EVENTS
-    global APP_SETTINGS_CACHE_VERSION, APP_GOVERNANCE_CACHE_VERSION
-    global APP_SETTINGS_SHARED_VERSION_CACHE, APP_GOVERNANCE_SHARED_VERSION_CACHE
+    global APP_GOVERNANCE_CACHE_VERSION, APP_GOVERNANCE_SHARED_VERSION_CACHE
     global initialize_stream_session_cache, set_stream_session_meta, get_stream_session_meta
     global append_stream_session_event, get_stream_session_events, delete_stream_session_cache
     global get_user_ui_settings_cache, set_user_ui_settings_cache, delete_user_ui_settings_cache
-    global get_app_settings_cache_version, bump_app_settings_cache_version
+    global get_app_settings_cache_version
     global get_governance_cache_version, bump_governance_cache_version
     global app_cache_is_using_redis
     global APP_REDIS_CLIENT
     # Local import to avoid circular dependency: functions_keyvault imports app_settings_cache.
     from functions_appinsights import log_event
-    _settings = settings
-    use_redis = _settings.get('enable_redis_cache', False)
+    from config import cosmos_settings_container
+
+    use_redis = settings.get('enable_redis_cache', False)
+    APP_SETTINGS_STORE = AppSettingsStore(
+        cosmos_settings_container,
+        redis_required=use_redis,
+        on_fallback=_log_settings_fallback,
+    )
+    get_settings_store()
     app_cache_is_using_redis = False
     APP_REDIS_CLIENT = None
 
@@ -673,74 +637,16 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
             redis_client = create_redis_client(
                 settings=settings,
                 credential_purpose=CREDENTIAL_PURPOSE_APP_CACHE,
+                socket_connect_timeout=5,
+                socket_timeout=5,
             )
             app_cache_is_using_redis = True
             APP_REDIS_CLIENT = redis_client
+            APP_SETTINGS_STORE.redis = redis_client
         except Exception as redis_init_error:
             _log_cache_fallback('redis_initialization', redis_init_error, log_event_func=log_event)
             _assign_fallback_cache_functions(log_event_func=log_event)
             return
-
-        def get_app_settings_cache_version_redis():
-            try:
-                cached = redis_client.get(APP_SETTINGS_CACHE_VERSION_KEY)
-                if cached is None:
-                    redis_client.setnx(APP_SETTINGS_CACHE_VERSION_KEY, 0)
-                    return 0
-                return _normalize_cache_version(cached)
-            except Exception as ex:
-                _log_cache_fallback('get_app_settings_cache_version', ex, log_event_func=log_event)
-                return _get_app_settings_cache_version_fallback(log_event_func=log_event)
-
-        def bump_app_settings_cache_version_redis():
-            try:
-                return _normalize_cache_version(redis_client.incr(APP_SETTINGS_CACHE_VERSION_KEY))
-            except Exception as ex:
-                _log_cache_fallback('bump_app_settings_cache_version', ex, log_event_func=log_event)
-                return _bump_app_settings_cache_version_fallback(log_event_func=log_event)
-
-        def get_ttl_cached_app_settings_version_redis():
-            now = time.time()
-            with _app_cache_lock:
-                if APP_SETTINGS_SHARED_VERSION_CACHE.get('expires_at', 0) > now:
-                    return _normalize_cache_version(APP_SETTINGS_SHARED_VERSION_CACHE.get('value'))
-
-            shared_version = get_app_settings_cache_version_redis()
-            _set_ttl_cached_version(APP_SETTINGS_SHARED_VERSION_CACHE, shared_version)
-            return shared_version
-
-        def update_settings_cache_redis(new_settings):
-            global APP_SETTINGS_CACHE, APP_SETTINGS_CACHE_VERSION
-            try:
-                redis_client.set(APP_SETTINGS_CACHE_KEY, json.dumps(new_settings))
-                shared_version = get_app_settings_cache_version_redis()
-                with _app_cache_lock:
-                    APP_SETTINGS_CACHE = copy.deepcopy(new_settings or {})
-                    APP_SETTINGS_CACHE_VERSION = shared_version
-                _set_ttl_cached_version(APP_SETTINGS_SHARED_VERSION_CACHE, shared_version)
-            except Exception as ex:
-                _log_cache_fallback('update_settings_cache', ex, log_event_func=log_event)
-                _update_settings_cache_fallback(new_settings, log_event_func=log_event)
-
-        def get_settings_cache_redis():
-            global APP_SETTINGS_CACHE, APP_SETTINGS_CACHE_VERSION
-            try:
-                shared_version = get_ttl_cached_app_settings_version_redis()
-                with _app_cache_lock:
-                    if APP_SETTINGS_CACHE and APP_SETTINGS_CACHE_VERSION == shared_version:
-                        return copy.deepcopy(APP_SETTINGS_CACHE)
-
-                cached = redis_client.get(APP_SETTINGS_CACHE_KEY)
-                if cached is None:
-                    return _get_settings_cache_fallback(log_event_func=log_event)
-                loaded_settings = json.loads(cached)
-                with _app_cache_lock:
-                    APP_SETTINGS_CACHE = copy.deepcopy(loaded_settings or {})
-                    APP_SETTINGS_CACHE_VERSION = shared_version
-                return copy.deepcopy(loaded_settings or {})
-            except Exception as ex:
-                _log_cache_fallback('get_settings_cache', ex, log_event_func=log_event)
-                return _get_settings_cache_fallback(log_event_func=log_event)
 
         def get_stream_session_metadata_key(cache_key):
             return f'STREAM_SESSION_META:{cache_key}'
@@ -900,10 +806,6 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
                 _log_cache_fallback('bump_governance_cache_version', ex, log_event_func=log_event)
                 return _bump_governance_cache_version_fallback(log_event_func=log_event)
 
-        update_settings_cache = update_settings_cache_redis
-        get_settings_cache = get_settings_cache_redis
-        get_app_settings_cache_version = get_app_settings_cache_version_redis
-        bump_app_settings_cache_version = bump_app_settings_cache_version_redis
         initialize_stream_session_cache = initialize_stream_session_cache_redis
         set_stream_session_meta = set_stream_session_meta_redis
         get_stream_session_meta = get_stream_session_meta_redis
@@ -917,35 +819,6 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
         bump_governance_cache_version = bump_governance_cache_version_redis
 
     else:
-        def update_settings_cache_mem(new_settings):
-            global APP_SETTINGS_CACHE, APP_SETTINGS_CACHE_VERSION
-            shared_version = get_app_settings_cache_version_mem()
-            with _app_cache_lock:
-                APP_SETTINGS_CACHE = new_settings
-                APP_SETTINGS_CACHE_VERSION = shared_version
-
-        def get_settings_cache_mem():
-            global APP_SETTINGS_CACHE, APP_SETTINGS_CACHE_VERSION
-            shared_version = get_app_settings_cache_version_mem()
-            with _app_cache_lock:
-                if APP_SETTINGS_CACHE and APP_SETTINGS_CACHE_VERSION == shared_version:
-                    return APP_SETTINGS_CACHE
-
-            try:
-                from config import cosmos_settings_container
-                loaded_settings = cosmos_settings_container.read_item(
-                    item='app_settings',
-                    partition_key='app_settings',
-                )
-                with _app_cache_lock:
-                    APP_SETTINGS_CACHE = loaded_settings
-                    APP_SETTINGS_CACHE_VERSION = shared_version
-                return loaded_settings
-            except Exception as ex:
-                _logger.warning("[ASC] Failed to refresh app settings cache from Cosmos; using local cache fallback: %s", ex)
-                with _app_cache_lock:
-                    return APP_SETTINGS_CACHE
-
         def initialize_stream_session_cache_mem(cache_key, metadata, ttl_seconds=None):
             expiration_timestamp = _get_expiration_timestamp(ttl_seconds)
             with _app_cache_lock:
@@ -1035,55 +908,6 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
             with _app_cache_lock:
                 APP_USER_UI_SETTINGS_CACHE.pop(user_id, None)
 
-        def get_app_settings_cache_version_mem():
-            global APP_SETTINGS_CACHE_VERSION
-            try:
-                from config import cosmos_settings_container
-                return _get_ttl_cached_cosmos_version(
-                    APP_SETTINGS_SHARED_VERSION_CACHE,
-                    cosmos_settings_container,
-                    APP_SETTINGS_CACHE_VERSION_DOC_ID,
-                    APP_SETTINGS_CACHE_VERSION,
-                    log_event_func=log_event,
-                )
-            except Exception as ex:
-                _logger.warning("[ASC] Shared cache version read failed; using local version fallback: %s", ex)
-                log_event(
-                    "[ASC] Shared cache version read failed; using local version fallback.",
-                    extra={'version_doc_id': APP_SETTINGS_CACHE_VERSION_DOC_ID, 'error': str(ex)},
-                    level=logging.WARNING,
-                )
-                with _app_cache_lock:
-                    return APP_SETTINGS_CACHE_VERSION
-
-        def bump_app_settings_cache_version_mem():
-            global APP_SETTINGS_CACHE_VERSION
-            try:
-                from config import cosmos_settings_container
-                bumped_version = _bump_cosmos_cache_version(
-                    cosmos_settings_container,
-                    APP_SETTINGS_CACHE_VERSION_DOC_ID,
-                    log_event_func=log_event,
-                )
-                if bumped_version is not None:
-                    with _app_cache_lock:
-                        APP_SETTINGS_CACHE_VERSION = bumped_version
-                    _set_ttl_cached_version(APP_SETTINGS_SHARED_VERSION_CACHE, bumped_version)
-                    return bumped_version
-            except Exception as ex:
-                _logger.warning("[ASC] Shared cache version bump failed; using local version fallback: %s", ex)
-                log_event(
-                    "[ASC] Shared cache version bump failed; using local version fallback.",
-                    extra={'version_doc_id': APP_SETTINGS_CACHE_VERSION_DOC_ID, 'error': str(ex)},
-                    level=logging.WARNING,
-                )
-
-            with _app_cache_lock:
-                APP_SETTINGS_CACHE_VERSION += 1
-                fallback_version = APP_SETTINGS_CACHE_VERSION
-            _set_ttl_cached_version(APP_SETTINGS_SHARED_VERSION_CACHE, fallback_version)
-            return fallback_version
-
         def get_governance_cache_version_mem():
             global APP_GOVERNANCE_CACHE_VERSION
             try:
@@ -1133,10 +957,6 @@ def configure_app_cache(settings, redis_cache_endpoint=None):
             _set_ttl_cached_version(APP_GOVERNANCE_SHARED_VERSION_CACHE, fallback_version)
             return fallback_version
 
-        update_settings_cache = update_settings_cache_mem
-        get_settings_cache = get_settings_cache_mem
-        get_app_settings_cache_version = get_app_settings_cache_version_mem
-        bump_app_settings_cache_version = bump_app_settings_cache_version_mem
         initialize_stream_session_cache = initialize_stream_session_cache_mem
         set_stream_session_meta = set_stream_session_meta_mem
         get_stream_session_meta = get_stream_session_meta_mem

@@ -1,7 +1,8 @@
+# test_get_settings_merge_bool_regression.py
 #!/usr/bin/env python3
 """
 Functional test for get_settings deep-merge bool regression.
-Version: 0.240.006
+Version: 0.261.025
 Implemented in: 0.240.006
 
 This test ensures get_settings treats deep_merge_dicts() return as a change flag
@@ -24,14 +25,14 @@ def test_get_settings_uses_merge_changed_flag():
         with open(target_path, 'r', encoding='utf-8') as file_handle:
             content = file_handle.read()
 
-        assert "merge_changed = deep_merge_dicts(default_settings, settings_item)" in content, (
-            "Expected merge_changed assignment not found"
+        assert "deep_merge_dicts(default_settings, settings_item)" in content, (
+            "Expected in-place default merge not found"
         )
         assert "merged = settings_item" in content, (
             "Expected merged dict assignment not found"
         )
-        assert "if merge_changed or migration_updated:" in content, (
-            "Expected merge change flag check not found"
+        assert "if merged != settings_item:" in content, (
+            "Expected change detection against the unmodified snapshot"
         )
 
         old_pattern = re.compile(r"merged\s*=\s*deep_merge_dicts\(default_settings,\s*settings_item\)")
