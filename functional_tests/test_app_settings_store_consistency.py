@@ -16,7 +16,6 @@ import logging
 from pathlib import Path
 import socket
 import secrets
-import sys
 from types import SimpleNamespace
 
 import pytest
