@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.025)**
+
+#### Bug Fixes
+
+*   **Delegated Action-Type Policies Now Override Broad Action Access**
+    *   Fixed a governance gap where an explicit delegated item policy for a personal, group, or global action type could still be bypassed by a broader feature-level allow.
+    *   Action-type governance now treats explicit item policies as authoritative once they exist, so a targeted policy such as `personal_action_type = azure_maps` can block that action type even when the broader action feature remains enabled.
+    *   This resolves cases where action types such as Azure Maps continued to appear in action creation flows after admins saved a delegated item policy intended to block them.
+    *   (Ref: delegated item governance, action-type enforcement, `functions_governance.py`)
+
 ### **(v0.261.023)**
 
 #### New Features
