@@ -1228,8 +1228,9 @@ def ensure_action_type_access(
         )
 
     if _passes_policy(feature_policy, normalized_user_id, user_group_ids):
-        _set_request_cache_value(decision_key, True)
-        return
+        if not action_type_policies:
+            _set_request_cache_value(decision_key, True)
+            return
 
     if any(_passes_policy(policy, normalized_user_id, user_group_ids) for policy in action_type_policies):
         _set_request_cache_value(decision_key, True)
