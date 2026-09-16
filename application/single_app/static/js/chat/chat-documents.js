@@ -179,6 +179,7 @@ function getConversationTaskDocumentMap(conversationId, createIfMissing = false)
 }
 
 function isConversationTaskDocumentReady(taskDocument = {}) {
+  if (window.ContentScreening?.isHeld(taskDocument)) return false;
   const statusText = String(taskDocument.status || '').trim().toLowerCase();
   const percentageComplete = Number(taskDocument.percentage_complete || taskDocument.percentageComplete || 0);
   if (statusText.includes('error') || statusText.includes('failed')) {
@@ -208,8 +209,10 @@ function normalizeConversationTaskDocument(documentInfo = {}, fallbackConversati
     status: attachment.status || documentInfo.status || '',
     percentage_complete: attachment.percentage_complete ?? documentInfo.percentage_complete ?? 0,
     link_state: attachment.link_state || documentInfo.link_state || 'linked',
+    content_screening: attachment.content_screening || documentInfo.content_screening || null,
   };
-  taskDocument.ready = documentInfo.ready === true || isConversationTaskDocumentReady(taskDocument);
+  taskDocument.ready = !window.ContentScreening?.isHeld(taskDocument)
+    && (documentInfo.ready === true || isConversationTaskDocumentReady(taskDocument));
   return taskDocument;
 }
 
@@ -1481,9 +1484,12 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
 
   documents.forEach(documentItem => {
     const doc = buildDocumentDescriptor(documentItem, sectionLabel);
+    const screeningHeld = window.ContentScreening?.isHeld(documentItem) === true;
+    window.ContentScreening?.rememberDocument(documentItem);
 
     const opt = document.createElement('option');
     opt.value = doc.id;
+    opt.disabled = screeningHeld;
     opt.textContent = doc.label;
     opt.dataset.tags = JSON.stringify(doc.tags || []);
     opt.dataset.classification = doc.classification || '';
@@ -1491,6 +1497,8 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
 
     const dropdownItem = document.createElement('button');
     dropdownItem.type = 'button';
+    dropdownItem.disabled = screeningHeld;
+    if (screeningHeld) dropdownItem.setAttribute('aria-disabled', 'true');
     dropdownItem.classList.add('dropdown-item', 'd-flex', 'align-items-center');
     dropdownItem.setAttribute('data-document-id', doc.id);
     dropdownItem.setAttribute('data-search-role', 'item');
@@ -1504,6 +1512,7 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
 
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
+    checkbox.disabled = screeningHeld;
     checkbox.classList.add('form-check-input', 'me-2', 'doc-checkbox');
     checkbox.style.pointerEvents = 'none';
     checkbox.style.minWidth = '16px';
@@ -1515,6 +1524,8 @@ function appendDocumentSection(sectionLabel, documents, sectionIndex) {
     primaryLabel.classList.add('chat-document-option-title');
     primaryLabel.textContent = doc.label;
     labelWrapper.appendChild(primaryLabel);
+    const screeningStatus = window.ContentScreening?.statusBadge(documentItem);
+    if (screeningStatus) labelWrapper.appendChild(screeningStatus);
 
     if (doc.secondaryLabel) {
       const secondaryLabel = document.createElement('span');
@@ -1699,7 +1710,7 @@ function applyDocumentSelectionForIds(documentIds, { clearMatchingDocuments = fa
   }
 
   Array.from(docSelectEl.options).forEach(option => {
-    if (!option.value) {
+    if (!option.value || option.disabled) {
       option.selected = false;
       return;
     }
@@ -2620,7 +2631,7 @@ export function filterDocumentsBySelectedTags() {
 function syncDropdownButtonText() {
   if (!docDropdownButton || !docSelectEl) return;
 
-  const selectedDocumentOptions = Array.from(docSelectEl.selectedOptions).filter(option => option.value);
+  const selectedDocumentOptions = Array.from(docSelectEl.selectedOptions).filter(option => option.value && !option.disabled);
   const count = selectedDocumentOptions.length;
   const textEl = docDropdownButton.querySelector(".selected-document-text");
   if (!textEl) return;
@@ -2903,7 +2914,7 @@ if (docDropdownItems) {
         const id = di.getAttribute('data-document-id');
         if (cb && cb.checked && id) {
           const matchingOpt = Array.from(docSelectEl.options).find(o => o.value === id);
-          if (matchingOpt) matchingOpt.selected = true;
+          if (matchingOpt && !matchingOpt.disabled) matchingOpt.selected = true;
         }
       });
     }
@@ -2924,11 +2935,17 @@ export function handleDocumentSelectChange() {
       return;
   }
 
+  const heldSelections = Array.from(docSelectEl.selectedOptions).filter(option => option.disabled);
+  if (heldSelections.length) {
+    heldSelections.forEach(option => { option.selected = false; });
+    showToast('A selected document is held for Content review and cannot be used in chat or analysis.', 'warning');
+  }
+
   // Sync button text from current hidden select state
   syncDropdownButtonText();
   window.dispatchEvent(new CustomEvent('chat:document-selection-changed', {
     detail: {
-      documentIds: Array.from(docSelectEl.selectedOptions).map(option => option.value).filter(Boolean),
+      documentIds: Array.from(docSelectEl.selectedOptions).filter(option => !option.disabled).map(option => option.value).filter(Boolean),
     },
   }));
 }

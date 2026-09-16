@@ -1,5 +1,33 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'content-safety' %} show active{% endif %}" id="content-safety" role="tabpanel" aria-labelledby="content-safety-tab">
 
+                <section class="card p-3 mb-3 content-screening" id="content-screening-section" aria-labelledby="content-screening-heading">
+                    <h5 id="content-screening-heading"><i class="bi bi-shield-check me-2" aria-hidden="true"></i>Content Screening</h5>
+                    <p class="text-body-secondary">
+                        Inspect extracted workspace knowledge for sensitive information and document-borne instructions before
+                        publication. This is separate from Azure AI Content Safety chat filtering.
+                    </p>
+                    <div class="form-check form-switch mb-3">
+                        <input type="checkbox" class="form-check-input" id="enable_content_screening" name="enable_content_screening"
+                            {% if settings.enable_content_screening|default(false) %}checked{% endif %} disabled
+                            aria-describedby="content-screening-dependency-help" />
+                        <label class="form-check-label" for="enable_content_screening">Enable Content Screening for new scans</label>
+                    </div>
+                    <p id="content-screening-dependency-help" class="small text-body-secondary">
+                        Off by default. Requires Enhanced Citations and its working private storage configuration.
+                        Save the mandatory policy below before enabling new scans. Disabling new scans never releases a held document.
+                        This switch saves immediately; detailed policies are saved separately below.
+                    </p>
+                    <div id="screening-admin-policy" data-content-screening-policy data-scope-type="global"></div>
+                    <div class="d-flex flex-wrap gap-2 mt-3">
+                        <a class="btn btn-outline-secondary" href="/content-review">Open content review</a>
+                        <button type="button" class="btn btn-outline-primary d-none" id="screening-scan-global" disabled>Scan all workspaces</button>
+                    </div>
+                    <p class="small text-body-secondary mt-2 mb-0">
+                        All-workspace scanning is an administrative operation, not permission to read private evidence.
+                    </p>
+                    <div id="screening-admin-jobs" class="mt-3" aria-live="polite"></div>
+                </section>
+
                  <p class="text-muted">
                     Configure content safety, archiving, and user feedback settings. If Content Safety is enabled, user
                     messages will be sent to the safety endpoint for analysis. If User Feedback is enabled, users will see

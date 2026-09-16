@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { WorkspaceDocument } from '../../lib/types';
+import { isScreeningAvailable } from '../../lib/contentScreening';
+import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 import {
     commonTags,
     documentDate,
@@ -103,6 +105,14 @@ function ActionButtons({
     actions: DocumentPaneActions;
 }) {
     const single = documents.length === 1 ? documents[0] : null;
+    if (documents.some((document) => !isScreeningAvailable(document))) {
+        return (
+            <p className="px-3 py-2.5 text-xs text-text-3">
+                Held sources cannot be selected, analyzed, shared, or downloaded here.
+                An authorized reviewer must resolve the hold in Content review.
+            </p>
+        );
+    }
 
     return (
         <div className="flex flex-wrap gap-1.5 px-3 py-2.5">
@@ -179,7 +189,7 @@ function ReextractSection({
     enhancedEnabled: boolean;
     onReextract: (documents: WorkspaceDocument[], mode: ExtractionMode) => void;
 }) {
-    const { supported, unsupported, current } = summarizeExtraction(documents);
+    const { supported, unsupported, current } = summarizeExtraction(documents.filter(isScreeningAvailable));
 
     if (supported.length === 0) {
         return null;
@@ -368,12 +378,13 @@ export function DocumentDetailsPane({
     }
 
     const document = documents[0];
+    const available = isScreeningAvailable(document);
     const { primary, secondary } = documentDisplayName(document);
     const tags = normalizeTags(document.tags);
-    const authors = normalizeStringList(document.authors);
-    const keywords = normalizeStringList(document.keywords);
+    const authors = available ? normalizeStringList(document.authors) : [];
+    const keywords = available ? normalizeStringList(document.keywords) : [];
     const classification = String(document.document_classification ?? '').trim();
-    const abstract = String(document.abstract ?? '').trim();
+    const abstract = available ? String(document.abstract ?? '').trim() : '';
     const currentExtraction = documentExtractionMode(document);
     const sharedCount = Array.isArray(document.shared_user_ids)
         ? document.shared_user_ids.length
@@ -396,6 +407,12 @@ export function DocumentDetailsPane({
                     </div>
                 </div>
 
+                {Object.prototype.hasOwnProperty.call(document, 'content_screening') ? (
+                    <Section title="Content screening">
+                        <ScreeningStatusBadge summary={document.content_screening ?? null} detail />
+                    </Section>
+                ) : null}
+
                 <Section title="Tags">
                     {tags.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
@@ -405,7 +422,7 @@ export function DocumentDetailsPane({
                                     name={tag}
                                     color={tagColors[tag]}
                                     onClick={() => actions.onSelectTag(tag)}
-                                    onRemove={() => actions.onRemoveTag([document], tag)}
+                                    onRemove={available ? () => actions.onRemoveTag([document], tag) : undefined}
                                 />
                             ))}
                         </div>
@@ -439,7 +456,7 @@ export function DocumentDetailsPane({
                     </dl>
                 </Section>
 
-                {authors.length > 0 || keywords.length > 0 || document.publication_date ? (
+                {available && (authors.length > 0 || keywords.length > 0 || document.publication_date) ? (
                     <Section title="Metadata">
                         <dl>
                             {authors.length > 0 ? (

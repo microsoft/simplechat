@@ -695,25 +695,26 @@ def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", sou
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
     return retrieve_secret_from_key_vault_by_full_name(full_secret_name)
 
-def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
+def retrieve_secret_from_key_vault_by_full_name(full_secret_name, *, strict=False):
     """
     Retrieve a secret from Key Vault using a preformatted full secret name.
 
     Args:
         full_secret_name (str): The full secret name (already formatted).
+        strict (bool): Reject recognized references that cannot resolve to a
+            nonempty secret value. Plaintext inputs are still returned unchanged.
 
     Returns:
         str: The value of the retrieved secret.
     Raises:
-        Exception: If retrieval fails or configuration is invalid.
+        ValueError: If strict retrieval cannot resolve a recognized reference.
     """
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
-    if not enable_key_vault_secret_storage:
-        return full_secret_name
-
     key_vault_name = settings.get("key_vault_name", None)
-    if not key_vault_name:
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        if strict and validate_secret_name_dynamic(full_secret_name):
+            raise ValueError("Unable to resolve the stored Key Vault credential.")
         return full_secret_name
 
     if not validate_secret_name_dynamic(full_secret_name):
@@ -724,10 +725,19 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
 
         retrieved_secret = secret_client.get_secret(full_secret_name)
-        log_event(f"Secret '{full_secret_name}' retrieved successfully from Key Vault.", level=logging.INFO)
-        return retrieved_secret.value
-    except Exception as e:
-        log_event(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
+        value = retrieved_secret.value
+        if strict and (
+            not isinstance(value, str) or not value.strip()
+            or validate_secret_name_dynamic(value)
+            or value in (ui_trigger_word, REDACTED_SECRET_VALUE)
+        ):
+            raise ValueError("Unable to resolve the stored Key Vault credential.")
+        log_event("[KEY_VAULT] Stored credential retrieved successfully.", level=logging.INFO, debug_only=True)
+        return value
+    except Exception:
+        log_event("[KEY_VAULT] Unable to retrieve a stored credential.", level=logging.ERROR, debug_only=True)
+        if strict:
+            raise ValueError("Unable to resolve the stored Key Vault credential.") from None
         return full_secret_name
 
 
@@ -1374,8 +1384,14 @@ def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="globa
     return updated
 
 
-def keyvault_model_endpoint_get_helper(endpoint_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
-    """Resolve model endpoint auth secrets from Key Vault for backend or frontend use."""
+def keyvault_model_endpoint_get_helper(
+    endpoint_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER, *, strict=False,
+):
+    """Resolve endpoint secrets, with optional fail-closed backend hydration.
+
+    ``strict`` only affects VALUE retrieval. NAME/TRIGGER and plaintext values
+    keep their legacy behavior, including when Key Vault storage is disabled.
+    """
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
@@ -1383,7 +1399,9 @@ def keyvault_model_endpoint_get_helper(endpoint_dict, scope_value, scope="global
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
-    if not enable_key_vault_secret_storage or not key_vault_name:
+    if not (strict and return_type == SecretReturnType.VALUE) and (
+        not enable_key_vault_secret_storage or not key_vault_name
+    ):
         return endpoint_dict
 
     updated = dict(endpoint_dict)
@@ -1395,10 +1413,14 @@ def keyvault_model_endpoint_get_helper(endpoint_dict, scope_value, scope="global
     auth_updated = False
     for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
         value = updated_auth.get(auth_field)
+        if strict and return_type == SecretReturnType.VALUE and value in (ui_trigger_word, REDACTED_SECRET_VALUE):
+            raise ValueError("Unable to resolve the stored Key Vault credential.")
         if not value or not validate_secret_name_dynamic(value):
             continue
         if return_type == SecretReturnType.VALUE:
-            updated_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(value)
+            updated_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(
+                value, **({"strict": True} if strict else {}),
+            )
         elif return_type == SecretReturnType.NAME:
             updated_auth[auth_field] = value
         else:

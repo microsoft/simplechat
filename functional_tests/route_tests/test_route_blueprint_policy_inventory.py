@@ -2,7 +2,7 @@
 # test_route_blueprint_policy_inventory.py
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.105
+Version: 0.261.106
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 
@@ -37,6 +37,7 @@ ROUTE_POLICY_BLUEPRINTS = {
 REGISTERED_BLUEPRINT_POLICIES = {
     "backend_chats": ("login_required", "user_required"),
     "backend_collaboration": ("login_required", "user_required"),
+    "backend_content_screening": ("login_required", "user_required"),
     "backend_control_center": ("login_required",),
     "backend_conversation_export": ("login_required", "user_required"),
     "backend_conversations": ("login_required", "user_required"),
@@ -80,6 +81,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "frontend_chats": ("login_required", "user_required"),
     "frontend_control_center": ("login_required",),
     "frontend_conversations": ("login_required", "user_required"),
+    "frontend_content_screening": ("login_required", "user_required"),
     "frontend_feedback": ("login_required",),
     "frontend_group_workspaces": ("login_required", "user_required"),
     "frontend_groups": ("login_required", "user_required"),
@@ -311,6 +313,29 @@ def test_plan_editor_routes_keep_the_orchestration_security_policy() -> None:
         assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
 
 
+def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
+    """Evidence and decisions never become public, even while enrollment is off."""
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name in {"route_backend_content_screening.py", "route_frontend_content_screening.py"}
+    ]
+    assert routes
+    attachments = {
+        "/api/content-screening/reviews/<scan_id>/downloads/original": "content_screening_download_original",
+        "/api/content-screening/reviews/<scan_id>/downloads/clean": "content_screening_download_clean",
+    }
+    for path, endpoint in attachments.items():
+        matches = [route for route in routes if route.path == path]
+        assert len(matches) == 1 and matches[0].function_name == endpoint
+        assert "user_required" in matches[0].decorator_names
+    for route in routes:
+        assert route.route_target == "bp"
+        assert {"swagger_route", "login_required"} <= set(route.decorator_names)
+        assert {"user_required", "admin_required"} & set(route.decorator_names)
+    for name in ("route_backend_content_screening.py", "route_frontend_content_screening.py"):
+        assert "bp.before_request(user_required_blueprint())" in read_text(APP_DIR / name)
+
+
 if __name__ == "__main__":
     tests = [
         test_route_policy_inventory_assets_and_version_are_current,
@@ -320,6 +345,7 @@ if __name__ == "__main__":
         test_explicit_app_route_exemptions_have_expected_security,
         test_public_routes_are_explicitly_listed,
         test_plan_editor_routes_keep_the_orchestration_security_policy,
+        test_content_screening_routes_keep_authenticated_blueprint_guards,
     ]
     results = []
     for test in tests:

@@ -51,6 +51,8 @@ import json
 import logging
 from copy import deepcopy
 
+from content_screening.access import guard_model_callable
+from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_orchestration_context import build_elicitation_user_request, conversation_reference_messages
 from functions_orchestration_memory import OrchestrationMemoryError
@@ -1908,8 +1910,12 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
                 mode='chat_orchestration',
                 telemetry_settings=settings,
                 request_correlation_id=_ctx(context, 'request_correlation_id', None),
+                user_id=user_id,
             )
             handoff_content = _text(handoff.get('content'))
+        except ScreeningError:
+            failure = build_failure('context_unavailable')
+            return build_step_result(status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'])
         except Exception as exc:
             # A handoff that cannot be built must not lose the answer; fall back to notes.
             log_event(
@@ -1933,7 +1939,11 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
     )
     messages.append({'role': 'user', 'content': prompt})
     try:
-        reply = _text(invoke_prompt(
+        reply = _text(guard_model_callable(
+            invoke_prompt,
+            [_ctx(context, "execution_manifest", []) or _ctx(context, "source_manifest", []), evidence, citations],
+            user_id,
+        )(
             messages,
             stage='orchestration_respond',
             metadata={

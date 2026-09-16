@@ -4,6 +4,7 @@ import logging
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
+from content_screening.access import PROVENANCE_FIELD, document_provenance, filter_available_results, public_document_payload
 from config import (
     cosmos_group_documents_container,
     cosmos_public_documents_container,
@@ -561,7 +562,7 @@ def resolve_assigned_knowledge_active_documents(
         active_documents.append(document)
 
     return sorted(
-        active_documents,
+        filter_available_results(active_documents, user_id=user_id),
         key=lambda document: (
             str(document.get("source_name") or "").lower(),
             str(document.get("title") or document.get("file_name") or "").lower(),
@@ -597,8 +598,10 @@ def _serialize_catalog_document(
     source_id: str,
     source_name: str,
 ) -> Dict[str, Any]:
+    provenance = document_provenance(document)
+    document = public_document_payload(document)
     tags = sanitize_tags_for_filter(document.get("tags", []))
-    return {
+    payload = {
         "id": document.get("id") or document.get("document_id") or "",
         "file_name": document.get("file_name") or document.get("title") or "Untitled document",
         "title": document.get("title") or document.get("file_name") or "Untitled document",
@@ -607,6 +610,10 @@ def _serialize_catalog_document(
         "source_name": source_name,
         "tags": tags,
     }
+    if "content_screening" in document:
+        payload["content_screening"] = document["content_screening"]
+        payload[PROVENANCE_FIELD] = provenance
+    return payload
 
 
 def _append_tag_counts(tag_counts: Dict[str, int], documents: List[Dict[str, Any]]) -> None:

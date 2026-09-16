@@ -814,6 +814,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
         <!-- End Metadata Filters -->
 
         <!-- View Controls (List/Grid Toggle) -->
+        {% with content_screening_scope = 'group' %}
+        {% include "_content_screening_toolbar.html" %}
+        {% endwith %}
         <div class="d-flex justify-content-between align-items-center mb-2">
           <div class="btn-group btn-group-sm" role="group" aria-label="View mode">
             <input type="radio" class="btn-check" name="group-docs-view-mode" id="group-docs-view-list" autocomplete="off" checked>
@@ -3102,6 +3105,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   async function downloadGroupDocumentFile(documentId, event) {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable([documentId])) return;
     if (event) {
       event.preventDefault();
       event.stopPropagation();
@@ -3121,6 +3125,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   window.downloadGroupDocumentFile = downloadGroupDocumentFile;
 
   async function downloadGroupSelectedDocuments() {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable(groupSelectedDocuments)) return;
     if (groupSelectedDocuments.size === 0) {
       return;
     }
@@ -4047,6 +4052,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function createGroupDocumentCard(doc, userRole) {
+    if (window.ContentScreening?.isHeld(doc)) {
+      return window.ContentScreening.createHeldDocument(doc, { scopeType: "group", scopeId: activeGroupId }, "card");
+    }
     const docId = doc.id;
     const { pct, docStatus, hasError, isComplete } = getGroupDocumentProcessingState(doc);
     const access = getGroupDocumentAccess(doc);
@@ -4214,6 +4222,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
         </div>
       </div>`;
 
+    window.ContentScreening?.decorateDocument(column, doc, { scopeType: "group", scopeId: activeGroupId });
     return column;
   }
 
@@ -4270,6 +4279,9 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function renderCurrentGroupDocuments() {
+    const visibleScreeningDocs = window.ContentScreening
+      ? window.ContentScreening.filterDocuments(groupLastFetchedDocs, { scopeType: "group", scopeId: activeGroupId })
+      : groupLastFetchedDocs;
     const filtersActive = groupDocsSearchTerm || groupDocsClassificationFilter || groupDocsAuthorFilter || groupDocsKeywordsFilter || groupDocsAbstractFilter || groupDocsTagsFilter;
 
     if (!groupHasFetchedDocuments && !groupLastFetchedDocsError) {
@@ -4286,15 +4298,15 @@ app_settings.app_title }} {% endblock %} {% block head %}
       groupDocumentsCardView.innerHTML = '';
     }
 
-    if (!groupLastFetchedDocs.length) {
+    if (!visibleScreeningDocs.length) {
       renderGroupDocumentsEmptyState(filtersActive);
       return;
     }
 
     if (groupCurrentView === 'cards') {
-      renderGroupDocumentCards(groupLastFetchedDocs);
+      renderGroupDocumentCards(visibleScreeningDocs);
     } else {
-      groupLastFetchedDocs.forEach(doc => renderGroupDocumentRow(doc, userRoleInActiveGroup));
+      visibleScreeningDocs.forEach(doc => renderGroupDocumentRow(doc, userRoleInActiveGroup));
     }
 
     syncGroupSelectionModeUI();
@@ -4550,6 +4562,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   async function extractGroupSelectedMetadata() {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable(groupSelectedDocuments)) return;
     const documentIds = Array.from(groupSelectedDocuments);
     if (documentIds.length === 0) {
       return;
@@ -5548,6 +5561,11 @@ app_settings.app_title }} {% endblock %} {% block head %}
           placeholder?.querySelector("#group-legacy-update-alert")?.remove();
         }
         groupLastFetchedDocs = data.documents || [];
+        window.ContentScreening?.registerWorkspace({
+          scopeType: "group", scopeId: activeGroupId, documents: groupLastFetchedDocs,
+          getSelectedIds: () => Array.from(groupSelectedDocuments),
+          refresh: fetchGroupDocuments, render: renderCurrentGroupDocuments
+        });
         groupLastFetchedDocsError = null;
         groupHasFetchedDocuments = true;
         groupFileDownloadsEnabled = Boolean(data.file_downloads_enabled);
@@ -6088,6 +6106,10 @@ app_settings.app_title }} {% endblock %} {% block head %}
   function renderGroupDocumentRow(doc, userRole) {
     // Added userRole param
     if (!groupDocumentsTableBody) return;
+    if (window.ContentScreening?.isHeld(doc)) {
+      groupDocumentsTableBody.appendChild(window.ContentScreening.createHeldDocument(doc, { scopeType: "group", scopeId: activeGroupId }));
+      return;
+    }
     const docId = doc.id;
     const pctString = String(doc.percentage_complete);
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
@@ -6282,6 +6304,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
     prependGroupGeneratedArtifactActionButtons(actionsCell, doc, userRole);
 
     docRow.__docData = doc; // Attach the full doc object for reference
+    window.ContentScreening?.decorateDocument(docRow, doc, { scopeType: "group", scopeId: activeGroupId });
     groupDocumentsTableBody.appendChild(docRow);
 
     // Details Row (only if complete and no error)
@@ -6721,6 +6744,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // --- Extract Group Document Metadata ---
   function onExtractGroupMetadata(docId, event) {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable([docId])) return;
     // Renamed function
     if (
       !(
@@ -7027,6 +7051,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // --- Search Group Document in Chat ---
   function searchGroupDocumentInChat(docId) {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable([docId])) return;
     // Renamed function
     // Redirect to chat page with group scope and document ID
     window.location.href = `/chats?search_documents=true&doc_scope=group&document_id=${docId}&group_id=${activeGroupId}`;
@@ -7035,6 +7060,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
 
   // --- Chat with Selected Group Documents ---
   function chatWithGroupSelected() {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable(groupSelectedDocuments)) return;
     if (groupSelectedDocuments.size === 0) return;
     const idsParam = encodeURIComponent(Array.from(groupSelectedDocuments).join(','));
     window.location.href = `/chats?search_documents=true&doc_scope=group&document_ids=${idsParam}&group_id=${activeGroupId}`;
@@ -8067,6 +8093,7 @@ app_settings.app_title }} {% endblock %} {% block head %}
   }
 
   function buildGroupFolderDocumentsTable(docs) {
+    docs = docs.filter(doc => !window.ContentScreening?.isHeld(doc));
     let sortIconFn = (field) => {
       if (groupFolderSortBy === field) {
         return groupFolderSortOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down';
@@ -8253,6 +8280,13 @@ app_settings.app_title }} {% endblock %} {% block head %}
         docs = data.documents || []; totalCount = data.total_count || docs.length;
       }
 
+      window.ContentScreening?.registerWorkspace({
+        scopeType: "group", scopeId: activeGroupId, documents: docs,
+        getSelectedIds: () => Array.from(groupSelectedDocuments),
+        refresh: () => renderGroupFolderContents(tagName),
+        render: () => renderGroupFolderContents(tagName)
+      });
+      if (window.ContentScreening) docs = window.ContentScreening.filterDocuments(docs, { scopeType: "group", scopeId: activeGroupId });
       let html = buildGroupBreadcrumbHtml(displayName, tagColor, groupCurrentFolderType || 'tag');
       html += `<div class="d-flex align-items-center gap-2 mb-2">
         <div class="input-group input-group-sm" style="max-width: 320px;">
@@ -8284,11 +8318,12 @@ app_settings.app_title }} {% endblock %} {% block head %}
       // xss-check: ignore reviewed folder view shell assembled from local escaped table/card builders.
       container.innerHTML = html;
       wireGroupBackButton(container);
+      window.ContentScreening?.decorateFolderTable(container.querySelector("#group-folder-docs-table"), docs, { scopeType: "group", scopeId: activeGroupId });
         if (groupCurrentView === 'folders-cards' && docs.length > 0) {
           renderGroupFolderDocumentCards(docs);
         }
         refreshGroupSelectionState();
-        wireGroupFolderGeneratedArtifactApproveButtons(docs);
+        wireGroupFolderGeneratedArtifactApproveButtons(docs.filter(doc => !window.ContentScreening?.isHeld(doc)));
 
       // Wire search
       const si = document.getElementById('group-folder-search-input');

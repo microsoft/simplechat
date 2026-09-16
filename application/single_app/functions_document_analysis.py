@@ -6,6 +6,8 @@ import logging
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from content_screening.access import PROVENANCE_FIELD, assert_evidence_available, guard_model_callable
+from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_generated_file_exports import get_requested_structured_artifact_format
@@ -949,6 +951,8 @@ def run_document_analysis(
         percent_override=1,
     )
     document_runs = []
+    source_evidence = []
+    invoke_prompt = guard_model_callable(invoke_prompt, lambda: source_evidence, user_id)
     reduction_items = []
     document_analysis_items = []
     raw_analysis_items = []
@@ -988,6 +992,7 @@ def run_document_analysis(
         )
 
         document_metadata = document_payload.get('document') if isinstance(document_payload.get('document'), dict) else {}
+        source_evidence.append(document_metadata)
         document_file_name = _resolve_document_file_name(document_metadata)
         document_title = _resolve_document_title(document_metadata)
         document_name = _resolve_document_name(document_metadata)
@@ -1013,6 +1018,8 @@ def run_document_analysis(
             'failed_ranges': [],
             'ranges': [],
         }
+        if PROVENANCE_FIELD in document_metadata:
+            document_summary[PROVENANCE_FIELD] = document_metadata[PROVENANCE_FIELD]
         coverage['documents'].append(document_summary)
         coverage['document_count'] += 1
         coverage['total_windows'] += len(windows)
@@ -1156,7 +1163,7 @@ def run_document_analysis(
                     if not analysis_text:
                         raise ValueError('The analysis runner returned an empty response.')
                     break
-                except MixedSourceCancellationError:
+                except (MixedSourceCancellationError, ScreeningError):
                     raise
                 except Exception as exc:
                     last_error = str(exc)
@@ -1550,6 +1557,7 @@ def run_document_analysis(
         f'final_analysis_reply_chars={len(final_analysis_reply)}'
     )
 
+    assert_evidence_available(source_evidence, user_id)
     return {
         'reply': final_reply,
         'analysis_reply': final_analysis_reply,

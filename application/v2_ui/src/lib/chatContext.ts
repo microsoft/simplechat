@@ -24,6 +24,7 @@ import {
     uniqueContextLabel,
 } from './chatContextTokens';
 import type { WorkspaceDocument, WorkspaceRef } from './types';
+import { isScreeningAvailable } from './contentScreening';
 
 export type ContextKind = 'document' | 'tag' | 'scope';
 
@@ -132,6 +133,9 @@ export function documentContextItem(
     origin: ContextOrigin = 'user',
     attachment: ContextAttachment = 'selection',
 ): ContextItem {
+    if (!isScreeningAvailable(document)) {
+        throw new Error('This source is held for content review and cannot be selected.');
+    }
     const id = documentId(document);
     const { primary, secondary } = documentDisplayName(document);
     const classification = String(document.document_classification ?? '').trim();

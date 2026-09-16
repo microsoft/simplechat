@@ -67,6 +67,9 @@
           <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_chats.chats') }}">
             <i class="bi bi-chat-dots me-2"></i>Chat
           </a>
+          <a class="list-group-item list-group-item-action" href="/content-review">
+            <i class="bi bi-shield-check me-2" aria-hidden="true"></i>Content Review
+          </a>
           {% if sidebar_settings.enable_semantic_kernel %}
           <a class="list-group-item list-group-item-action" href="{{ url_for('frontend_agents.agents') }}">
             <i class="bi bi-robot me-2"></i>Agents
@@ -102,6 +105,11 @@
             <i class="bi bi-chat-square-text me-2"></i><span class="nav-text">Chat</span>
           </a>
           {% endif %}
+        </li>
+        <li class="nav-item">
+          <a class="nav-link" href="/content-review">
+            <i class="bi bi-shield-check me-2" aria-hidden="true"></i><span class="nav-text">Content Review</span>
+          </a>
         </li>
         {% if sidebar_settings.enable_semantic_kernel %}
         <li class="nav-item">

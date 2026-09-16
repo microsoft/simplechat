@@ -102,6 +102,8 @@ from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
 from route_backend_data_management import register_route_backend_data_management
+from route_backend_content_screening import register_route_backend_content_screening
+from route_frontend_content_screening import register_route_frontend_content_screening
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
 from route_inbound_mcp import register_route_inbound_mcp
 from route_enhanced_citations import register_enhanced_citations_routes
@@ -1363,6 +1365,7 @@ register_route_blueprint('frontend_public_workspaces', register_route_frontend_p
 
 # ------------------- Safety Routes ----------------------
 register_route_blueprint('frontend_safety', register_route_frontend_safety, login_required_blueprint)
+register_route_blueprint('frontend_content_screening', register_route_frontend_content_screening, user_required_blueprint)
 
 # ------------------- Feedback Routes -------------------
 register_route_blueprint('frontend_feedback', register_route_frontend_feedback, login_required_blueprint)
@@ -1391,6 +1394,7 @@ register_route_blueprint('backend_orchestration', register_route_backend_orchest
 
 # ------------------- API Search Routes ------------------
 register_route_blueprint('backend_search', register_route_backend_search, user_required_blueprint)
+register_route_blueprint('backend_content_screening', register_route_backend_content_screening, user_required_blueprint)
 
 # ------------------- API Conversation Routes ------------
 register_route_blueprint('backend_conversations', register_route_backend_conversations, user_required_blueprint)

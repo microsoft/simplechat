@@ -1,3 +1,4 @@
+# utils_cache.py
 """
 Search Result Caching Utility
 
@@ -21,6 +22,7 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+from content_screening.contracts import SCREENING_FIELD, hash_payload
 from config import (
     cosmos_user_documents_container,
     cosmos_group_documents_container,
@@ -98,6 +100,13 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
     print(debug_message, flush=True)  # Also print to stdout for visibility
 
 
+def _document_cache_identity(document):
+    identity = f"{document['id']}:v{document.get('version') or 1}"
+    if SCREENING_FIELD in document:
+        identity = f"{identity}:screening:{hash_payload(document[SCREENING_FIELD])}"
+    return identity
+
+
 def get_personal_document_fingerprint(user_id: str) -> str:
     """
     Generate a fingerprint of user's personal documents (including shared with them).
@@ -112,12 +121,16 @@ def get_personal_document_fingerprint(user_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version
+            SELECT c.id, c.version, c.content_screening
             FROM c
             WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                OR ARRAY_CONTAINS(c.shared_user_ids, @approved_user_id)
             ORDER BY c.id
         """
-        parameters = [{"name": "@user_id", "value": user_id}]
+        parameters = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@approved_user_id", "value": f"{user_id},approved"},
+        ]
         
         documents = list(
             cosmos_user_documents_container.query_items(
@@ -128,7 +141,7 @@ def get_personal_document_fingerprint(user_id: str) -> str:
         )
         
         # Include both ID and version to detect document updates
-        doc_identifiers = [f"{doc['id']}:v{doc['version']}" for doc in documents]
+        doc_identifiers = [_document_cache_identity(doc) for doc in documents]
         doc_identifiers.sort()
         
         fingerprint_string = '|'.join(doc_identifiers)
@@ -164,12 +177,16 @@ def get_group_document_fingerprint(group_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version
+            SELECT c.id, c.version, c.content_screening
             FROM c
             WHERE c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                OR ARRAY_CONTAINS(c.shared_group_ids, @approved_group_id)
             ORDER BY c.id
         """
-        parameters = [{"name": "@group_id", "value": group_id}]
+        parameters = [
+            {"name": "@group_id", "value": group_id},
+            {"name": "@approved_group_id", "value": f"{group_id},approved"},
+        ]
         
         documents = list(
             cosmos_group_documents_container.query_items(
@@ -179,7 +196,7 @@ def get_group_document_fingerprint(group_id: str) -> str:
             )
         )
         
-        doc_identifiers = [f"{doc['id']}:v{doc['version']}" for doc in documents]
+        doc_identifiers = [_document_cache_identity(doc) for doc in documents]
         doc_identifiers.sort()
         
         fingerprint_string = '|'.join(doc_identifiers)
@@ -214,7 +231,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version
+            SELECT c.id, c.version, c.content_screening
             FROM c
             WHERE c.public_workspace_id = @public_workspace_id
             ORDER BY c.id
@@ -229,7 +246,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
             )
         )
         
-        doc_identifiers = [f"{doc['id']}:v{doc['version']}" for doc in documents]
+        doc_identifiers = [_document_cache_identity(doc) for doc in documents]
         doc_identifiers.sort()
         
         fingerprint_string = '|'.join(doc_identifiers)

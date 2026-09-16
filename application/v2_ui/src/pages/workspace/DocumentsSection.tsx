@@ -8,8 +8,11 @@
 import { FolderSync } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DocumentExplorer } from '../../components/documents/DocumentExplorer';
+import { ScreeningWorkspaceControls } from '../../components/screening/ScreeningWorkspaceControls';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
 
 export function DocumentsSection({ syncEnabled }: { syncEnabled: boolean }) {
+    const userId = useBootstrapStore((state) => state.data?.user.id);
     return (
         <div className="flex h-full min-h-0 flex-col gap-2">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -20,6 +23,8 @@ export function DocumentsSection({ syncEnabled }: { syncEnabled: boolean }) {
                         in this section is private to you.
                     </p>
                 </div>
+
+                {userId ? <ScreeningWorkspaceControls scope={{ scope_type: 'personal', scope_id: userId }} /> : null}
 
                 {syncEnabled ? (
                     <p className="text-xs text-text-3">

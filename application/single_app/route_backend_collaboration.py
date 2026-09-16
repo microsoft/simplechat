@@ -4,6 +4,8 @@ import json
 import threading
 import time
 
+from content_screening.access import build_available_document_response, public_history_messages
+from content_screening.contracts import ScreeningError
 import app_settings_cache
 from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
 
@@ -1570,6 +1572,7 @@ def register_route_backend_collaboration(bp):
             )
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
             attach_generated_file_approval_state(messages, current_user['user_id'])
+            messages = public_history_messages(messages, current_user['user_id'])
             return jsonify({'messages': messages}), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
@@ -2235,6 +2238,11 @@ def register_route_backend_collaboration(bp):
                 source_conversation_id,
                 source_message_id,
             )
+            if source_image_doc.get("workspace_document_id"):
+                return build_available_document_response(
+                    source_image_doc["workspace_document_id"],
+                    user_id=current_user["user_id"], purpose="image_preview",
+                )
 
             # Revisions are stored on the source image, which is the authoritative copy for
             # everyone: the owner's own view, the export and this shared view all read it. The
@@ -2266,6 +2274,8 @@ def register_route_backend_collaboration(bp):
                     'Cache-Control': 'public, max-age=3600',
                 },
             )
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative image not found'}), 404
         except PermissionError as exc:

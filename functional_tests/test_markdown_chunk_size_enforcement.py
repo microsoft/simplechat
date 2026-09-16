@@ -2,7 +2,7 @@
 # test_markdown_chunk_size_enforcement.py
 """
 Functional test for bounding Markdown chunks to the embedding token limit.
-Version: 0.261.002
+Version: 0.261.106
 Implemented in: 0.261.002
 
 Markdown was the only ingestion path with no maximum chunk size. MarkdownHeaderTextSplitter
@@ -119,6 +119,7 @@ def run_process_md(md_content, target_chunk_words=1200, max_chunk_characters=Non
         "split_text_by_word_limit": content_ns["split_text_by_word_limit"],
         "split_oversized_chunks": content_ns["split_oversized_chunks"],
         "get_settings": lambda: {},
+        "current_extraction": lambda document_id=None: None,
         "get_chunk_size_config": lambda settings=None: {"md": {"value": target_chunk_words, "unit": "words"}},
         "get_embedding_safe_chunk_characters": lambda settings=None: max_chunk_characters,
         "save_chunks": fake_save_chunks,
