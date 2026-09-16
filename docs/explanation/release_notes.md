@@ -2,6 +2,17 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.030)**
+
+#### Bug Fixes
+
+*   **Cross-Cloud Account Selection for Access-Denied Users**
+    *   Added a **Sign in with another account** action for authenticated users whose selected Microsoft Entra identity does not have the required SimpleChat app role.
+    *   The alternate flow requests the Entra account picker only through the controlled `/login?select_account=1` path; ordinary sign-in remains prompt-free, and arbitrary OAuth prompt values are ignored.
+    *   The access-denied state now identifies the current account using safe session claims while suppressing resource-tenant `#EXT#` UPNs, helping users distinguish native Azure Government and synchronized commercial identities.
+    *   Improved the action's light- and dark-theme contrast without changing tenant authority, app-role authorization, Easy Auth configuration, or login-hint behavior.
+    *   (Ref: `route_frontend_authentication.py`, `functions_authentication.py`, access-denied landing page, cross-cloud Microsoft Entra B2B sign-in)
+
 ### **(v0.261.027)**
 
 #### Bug Fixes

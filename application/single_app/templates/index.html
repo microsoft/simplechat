@@ -65,11 +65,26 @@
             <p class="lead">
                 {{ app_settings.access_denied_message | nl2br }}
             </p>
-            {% if app_settings.access_request_button_enabled and app_settings.access_request_page_url %}
-                <a href="{{ app_settings.access_request_page_url }}" class="btn btn-primary btn-lg">
-                    {{ app_settings.access_request_button_text or 'Request Access' }}
+            <div class="mb-3" aria-label="Current signed-in account">
+                <p class="mb-1">Signed in as</p>
+                <p class="mb-0 fw-semibold">
+                    {{ signed_in_account.name or 'Microsoft account' }}
+                </p>
+                {% if signed_in_account.account %}
+                    <p class="mb-0 text-body-secondary">{{ signed_in_account.account }}</p>
+                {% endif %}
+            </div>
+            <div class="d-flex flex-column flex-sm-row gap-2 justify-content-center">
+                {% if app_settings.access_request_button_enabled and app_settings.access_request_page_url %}
+                    <a href="{{ app_settings.access_request_page_url }}" class="btn btn-primary btn-lg">
+                        {{ app_settings.access_request_button_text or 'Request Access' }}
+                    </a>
+                {% endif %}
+                <a href="{{ url_for('frontend_authentication.login', select_account=1) }}"
+                    class="btn account-switch-button btn-lg">
+                    Sign in with another account
                 </a>
-            {% endif %}
+            </div>
         {% else %}
             <div>
                 {{ landing_html | safe }}

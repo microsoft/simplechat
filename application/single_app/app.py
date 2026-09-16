@@ -1149,8 +1149,14 @@ def index():
 
     # Convert Markdown to HTML safely
     landing_html = markdown_filter(landing_text)
+    signed_in_account = get_signed_in_account_display(session.get("user"))
 
-    return render_template('index.html', app_settings=public_settings, landing_html=landing_html)
+    return render_template(
+        'index.html',
+        app_settings=public_settings,
+        landing_html=landing_html,
+        signed_in_account=signed_in_account,
+    )
 
 @public_app_bp.route('/robots933456.txt')
 @swagger_route(security=get_auth_security())
