@@ -86,20 +86,25 @@ class FakeCosmosContainer:
         self.deletes.append((partition_key, item))
         del self.records[(partition_key, item)]
 
-    def query_items(self, *, query, parameters, partition_key, max_item_count):
+    def query_items(
+        self, *, query, parameters, max_item_count, partition_key=None, enable_cross_partition_query=False,
+    ):
+        if partition_key is None and not enable_cross_partition_query:
+            raise AssertionError("Cross-partition result cleanup must be explicit.")
         self.queries.append({
             "query": query,
             "parameters": json_copy(parameters),
             "partition_key": partition_key,
             "max_item_count": max_item_count,
+            "enable_cross_partition_query": enable_cross_partition_query,
         })
         if self.query_error is not None:
             raise self.query_error
         values = {parameter["name"][1:]: parameter["value"] for parameter in parameters}
         keys = [
             key for key, row in self.records.items()
-            if key[0] == partition_key
-            and all(row.get(field) == values[field] for field in ("run_id", "workflow_id", "scope_type", "scope_id"))
+            if (partition_key is None or key[0] == partition_key)
+            and all(row.get(field) == value for field, value in values.items() if field != "record_type")
             and row.get("type") == values["record_type"]
             and row.get("item_type") == values["record_type"]
         ]
@@ -289,6 +294,68 @@ class WorkflowResultStoreTests(unittest.TestCase):
                     self.assertNotIn("..", blob_name)
                     self.assertNotIn("owner-one", blob_name)
                     self.assertEqual(next(iter(service.records.values()))["content_type"], "application/json")
+
+    def test_pre_chat_workflow_records_paths_metadata_and_references_remain_compatible(self):
+        result = {"text": "legacy workflow result", "records": [None, True, 1.25]}
+        payload = canonical_bytes(result)
+        digest = hashlib.sha256(payload).hexdigest()
+        for blob in (False, True):
+            for group in (False, True):
+                with self.subTest(blob=blob, group=group):
+                    store, container, service = self.make_store(blob=blob, chunk_size_bytes=16)
+                    workflow = {**self.workflow, **({"group_id": "legacy-group"} if group else {})}
+                    identity = {
+                        "scope_type": "group" if group else "personal",
+                        "scope_id": "legacy-group" if group else workflow["user_id"],
+                        "workflow_id": workflow["id"], "run_id": self.run_id, "task_id": self.task_id,
+                    }
+                    token = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=True).encode("ascii")).hexdigest()
+                    reference = {
+                        "storage": "blob" if blob else "cosmos", "schema_version": 1,
+                        "sha256": digest, "size_bytes": len(payload),
+                        "chunk_count": 0 if blob else (len(payload) + 15) // 16,
+                    }
+                    record_prefix = f"workflow-result:v1:{token}:{reference['storage']}:{digest}:"
+                    manifest = {
+                        **identity, **reference, "id": f"{record_prefix}manifest",
+                        "type": "workflow_result_chunk", "item_type": "workflow_result_chunk",
+                        "record_kind": "manifest", "chunk_size_bytes": 0 if blob else 16,
+                        "media_type": "application/json",
+                    }
+                    if blob:
+                        hashes = {key: hashlib.sha256(value.encode("utf-8")).hexdigest()
+                                  for key, value in identity.items() if key != "scope_type"}
+                        name = (
+                            f"workflow-results/v1/{identity['scope_type']}/{hashes['scope_id']}/"
+                            f"{hashes['workflow_id']}/{hashes['run_id']}/{hashes['task_id']}/{digest}.json"
+                        )
+                        service.records[("personal-chat", name)] = {
+                            "data": payload, "etag": "legacy", "content_type": "application/json",
+                            "metadata": {
+                                "schema_version": "1", "scope_type": identity["scope_type"],
+                                "scope_hash": hashes["scope_id"], "workflow_hash": hashes["workflow_id"],
+                                "run_hash": hashes["run_id"], "task_hash": hashes["task_id"],
+                                "sha256": digest, "size_bytes": str(len(payload)), "media_type": "application/json",
+                            },
+                        }
+                    else:
+                        for index in range(reference["chunk_count"]):
+                            chunk = payload[index * 16:(index + 1) * 16]
+                            container.create_item(body={
+                                **manifest, "id": f"{record_prefix}chunk:{index}", "record_kind": "chunk",
+                                "chunk_index": index, "payload": chunk.decode("ascii"),
+                                "payload_size_bytes": len(chunk), "payload_sha256": hashlib.sha256(chunk).hexdigest(),
+                            })
+                    container.create_item(body=manifest)
+                    snapshot = json_copy(list(container.records.values()))
+                    self.assertEqual(store.load(workflow, self.run_id, self.task_id, reference), result)
+                    self.assertEqual(
+                        store.read_page(workflow, self.run_id, self.task_id, reference)["content"].encode("ascii"), payload,
+                    )
+                    self.assertEqual(store.save(workflow, self.run_id, self.task_id, result), reference)
+                    self.assertEqual(list(container.records.values()), snapshot)
+                    if blob:
+                        self.assertEqual(set(service.records), {("personal-chat", name)})
 
     def test_idempotent_writes_and_distinct_outputs_remain_immutable(self):
         for blob in (False, True):
