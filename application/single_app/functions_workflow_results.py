@@ -5,18 +5,53 @@ import json
 import re
 from collections.abc import Mapping
 
-from functions_workflow_result_store import load_workflow_task_result, save_workflow_task_result
+from functions_analysis_access import (
+    AnalysisResultUnavailable,
+    analysis_source_snapshot,
+    authorize_analysis_sources,
+)
+from functions_workflow_result_store import (
+    DEFAULT_MAX_RESULT_SIZE_MB,
+    _quota_bytes,
+    load_workflow_task_result,
+    save_workflow_task_result,
+)
 
 
 WORKFLOW_RESULT_CONTRACT_VERSION = "workflow-result-v1"
+ANALYSIS_SOURCE_ACCESS_VERSION = "analysis-source-access-v1"
+ANALYSIS_RECORD_PAGE_BYTES = 128 * 1024
+ANALYSIS_RECORD_PAGE_SIZE = 100
+ANALYSIS_MATERIALIZATION_BYTES = 8 * 1024 * 1024
 PENDING_OUTPUT_STATES = frozenset({
     "pending", "queued", "running", "retrying", "finalizing", "processing",
     "gate_disabled", "continuation_unavailable",
 })
+PUBLIC_ANALYSIS_VALIDATION_STATES = frozenset({"valid", "partial", "invalid", "pending", "not_validated"})
 
 
 class WorkflowResultNotReadyError(ValueError):
     """A downstream task cannot consume an unfinished output as final data."""
+
+
+def public_analysis_validation(validation):
+    """Project legacy or unknown statuses without claiming an unperformed check."""
+    public = _json_copy(validation) if isinstance(validation, Mapping) else {}
+
+    def without_superseded_values(value):
+        if isinstance(value, dict):
+            return {
+                key: without_superseded_values(item)
+                for key, item in value.items() if key != "reported_value"
+            }
+        if isinstance(value, list):
+            return [without_superseded_values(item) for item in value]
+        return value
+
+    public = without_superseded_values(public)
+    status = public.get("status")
+    public["status"] = status if isinstance(status, str) and status in PUBLIC_ANALYSIS_VALIDATION_STATES else "not_validated"
+    return public
 
 
 def _json_copy(value):
@@ -56,11 +91,22 @@ def get_workflow_result_text(result):
 
 
 def _execution_state(result, analysis, artifacts):
+    explicit = result.get("execution_status") or analysis.get("execution_status")
+    if explicit in {"pending", "incomplete", "failed", "cancelled", "canceled", "blocked", "unsupported", "skipped"}:
+        return explicit
     deferred = result.get("deferred_composition") or analysis.get("deferred_composition") or {}
     if isinstance(deferred, Mapping) and deferred.get("status") in PENDING_OUTPUT_STATES:
         return "pending"
     coverage = result.get("analysis_coverage") or analysis.get("coverage") or {}
     state = str((coverage.get("progress_meta") or {}).get("status") or "").lower()
+    if (
+        analysis.get("analysis_result_version") == "analyze-final-v1"
+        and (coverage.get("progress_meta") or {}).get("phase") == "ready_to_save"
+    ):
+        validation_state = (analysis.get("analysis_validation") or {}).get("status")
+        state = {"valid": "completed", "partial": "partial", "invalid": "failed", "pending": "pending"}.get(
+            validation_state, state,
+        )
     if state in PENDING_OUTPUT_STATES:
         return "pending"
     if state in {"failed", "cancelled", "canceled"}:
@@ -102,7 +148,7 @@ def _final_output(text, declared=None):
 def _provenance_references(values):
     fields = {
         "id", "document_id", "document_name", "file_name", "scope", "scope_type", "scope_id",
-        "group_id", "public_workspace_id", "version", "source_version", "etag", "_etag",
+        "group_id", "public_workspace_id", "version", "source_version", "source_revision", "etag", "_etag",
         "citation_id", "plugin_name", "function_name", "page_number", "chunk_id",
     }
     return [
@@ -113,6 +159,55 @@ def _provenance_references(values):
 
 def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=1):
     """Capture complete produced data without changing the existing chat reply."""
+    return _build_task_result(
+        result,
+        {
+            "workflow_id": str(workflow.get("id") or ""),
+            "run_id": str(run_id),
+            "task_id": str(task.get("id") or ""),
+            "attempt": int(attempt_count),
+        },
+        WORKFLOW_RESULT_CONTRACT_VERSION,
+    )
+
+
+def build_chat_analysis_result(result, *, user_id, conversation_id, message_id):
+    """Use the same result sections with a genuine chat producer identity."""
+    if not all(isinstance(value, str) and value.strip() for value in (user_id, conversation_id, message_id)):
+        raise ValueError("An analysis result requires a user, conversation, and message identity.")
+    envelope = _build_task_result(
+        result,
+        {
+            "kind": "chat",
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+        },
+        "analyze-final-v1",
+    )
+    if not envelope.get("analysis_access"):
+        raise AnalysisResultUnavailable("analysis_source_manifest_missing")
+    return envelope
+
+
+def build_orchestration_analysis_result(result, *, user_id, conversation_id, run_id, step_id):
+    """Bind an Analyze result to the real orchestration step that produced it."""
+    if not all(isinstance(value, str) and value.strip() for value in (user_id, conversation_id, run_id, step_id)):
+        raise ValueError("An analysis result requires a complete orchestration identity.")
+    envelope = _build_task_result(
+        result,
+        {
+            "kind": "orchestration", "user_id": user_id, "conversation_id": conversation_id,
+            "run_id": run_id, "step_id": step_id,
+        },
+        "analyze-final-v1",
+    )
+    if not envelope.get("analysis_access"):
+        raise AnalysisResultUnavailable("analysis_source_manifest_missing")
+    return envelope
+
+
+def _build_task_result(result, identity, contract_version):
     if not isinstance(result, Mapping):
         raise ValueError("Workflow execution did not return a task result.")
     analysis = get_workflow_analysis_result(result)
@@ -122,7 +217,11 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
     kind, value = _final_output(text, declared)
     outputs[kind] = {"kind": kind, "value": value}
     authoritative_output = kind
-    if analysis.get("per_document"):
+    if analysis.get("analysis_evidence") is not None:
+        outputs["evidence"] = {"kind": "evidence", "value": _json_copy(analysis["analysis_evidence"])}
+    if analysis.get("per_document") and not (
+        analysis.get("analysis_result_version") == "analyze-final-v1" and declared is not None
+    ):
         documents = []
         for document in analysis.get("document_results") or []:
             final = document.get("full_result")
@@ -146,18 +245,16 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
         if isinstance(artifact, Mapping)
     ]
     coverage = result.get("analysis_coverage") or analysis.get("coverage") or result.get("coverage") or {}
-    validation = result.get("validation") or analysis.get("validation") or {"status": "not_requested"}
+    validation = (
+        result.get("validation") or analysis.get("analysis_validation")
+        or analysis.get("validation") or {"status": "not_requested"}
+    )
     if not isinstance(coverage, Mapping) or not isinstance(validation, Mapping):
         raise ValueError("The task's coverage or validation metadata is invalid.")
     presentation = str(result.get("reply") or "")
     envelope = {
-        "contract_version": WORKFLOW_RESULT_CONTRACT_VERSION,
-        "identity": {
-            "workflow_id": str(workflow.get("id") or ""),
-            "run_id": str(run_id),
-            "task_id": str(task.get("id") or ""),
-            "attempt": int(attempt_count),
-        },
+        "contract_version": contract_version,
+        "identity": _json_copy(identity),
         "execution": {
             "status": _execution_state(result, analysis, artifacts),
             "deferred_composition": _json_copy(
@@ -165,6 +262,10 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
             ),
         },
         "summary": presentation[:4000],
+        "record_count": (
+            sum(len(item["value"]) if item["kind"] == "records" else 1 for item in documents)
+            if authoritative_output == "documents" else len(value) if kind == "records" else 1
+        ),
         "authoritative_output": authoritative_output,
         "outputs": outputs,
         "presentation": {
@@ -173,8 +274,12 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
             "artifacts": artifacts,
         },
         "diagnostics": {
+            "validation_audit": _json_copy(validation),
             "analysis": {key: _json_copy(value) for key, value in analysis.items()
-                         if key not in {"analysis_reply", "reply", "authoritative_result"}},
+                         if key not in {
+                             "analysis_reply", "reply", "authoritative_result", "analysis_evidence",
+                             "analysis_validation", "validation", "analysis_access",
+                         }},
         },
         "artifacts": [
             {key: value for key, value in artifact.items() if key in {
@@ -184,7 +289,7 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
             for artifact in artifacts
         ],
         "coverage": _json_copy(coverage),
-        "validation": _json_copy(validation),
+        "validation": public_analysis_validation(validation) if analysis.get("analysis_result_version") == "analyze-final-v1" else _json_copy(validation),
         "provenance": {
             "sources": _provenance_references(
                 result.get("mixed_source_manifest") or analysis.get("mixed_source_manifest")
@@ -196,24 +301,231 @@ def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=
             },
         },
     }
+    access = analysis["analysis_access"] if "analysis_access" in analysis else result.get("analysis_access")
+    if access is None and analysis.get("analysis_result_version") == "analyze-final-v1":
+        sources = (
+            analysis.get("analysis_sources") or analysis.get("mixed_source_manifest") or analysis.get("source_manifest")
+            or analysis.get("documents") or []
+        )
+        access = {
+            "version": ANALYSIS_SOURCE_ACCESS_VERSION,
+            "sources": [
+                source for source in sources
+                if isinstance(source, Mapping)
+                and source.get("authorization_status") in (None, "authorized")
+            ],
+        }
+    if access is not None:
+        if not isinstance(access, Mapping) or access.get("version") != ANALYSIS_SOURCE_ACCESS_VERSION:
+            raise AnalysisResultUnavailable("analysis_source_manifest_invalid")
+        sources = analysis_source_snapshot(access.get("sources"))
+        if not sources:
+            raise AnalysisResultUnavailable("analysis_source_manifest_missing")
+        envelope["analysis_access"] = {"version": ANALYSIS_SOURCE_ACCESS_VERSION, "sources": sources}
+        envelope["analysis_origin"] = (
+            analysis.get("analysis_result_version") == "analyze-final-v1"
+            and (result.get("analysis_consumption") or {}).get("mode") != "format_only"
+        )
+    if result.get("analysis_consumption"):
+        envelope["analysis_consumption"] = _json_copy(result["analysis_consumption"])
+    if analysis.get("native_result_references"):
+        envelope["native_result_references"] = _json_copy(analysis["native_result_references"])
     # Reject unsupported SDK objects/NaN before any output is marked durable.
     return _json_copy(envelope)
 
 
-def _require_completed_result(envelope):
+def authorize_workflow_task_result_read(
+    workflow, run_id, task_id, reference, *, reader_user_id=None, manifest=None,
+    load_result=load_workflow_task_result, source_resolver=None,
+):
+    """Recheck contributors of this result and every actually consumed ancestor."""
+    root = manifest if manifest is not None else load_result(workflow, run_id, task_id, reference)
+    sources = []
+    active = set()
+    visited = set()
+    loaded = {}
+
+    def load_parent(parent_task_id, parent_ref):
+        if not isinstance(parent_ref.get("sha256"), str) or not parent_ref["sha256"]:
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        key = (parent_task_id, parent_ref["sha256"])
+        if key in loaded:
+            prior_reference, parent = loaded[key]
+            if prior_reference != parent_ref:
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            return parent
+        parent = load_result(workflow, run_id, parent_task_id, parent_ref)
+        loaded[key] = (dict(parent_ref), parent)
+        return parent
+
+    def visit(current, current_task_id, current_ref):
+        identity = current.get("identity") if isinstance(current, Mapping) else None
+        if (
+            not isinstance(identity, Mapping)
+            or identity.get("workflow_id") != str(workflow.get("id") or "")
+            or identity.get("run_id") != str(run_id)
+            or identity.get("task_id") != str(current_task_id)
+            or current.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION
+            or not isinstance(current_ref, Mapping)
+            or not isinstance(current_ref.get("sha256"), str)
+        ):
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        key = (str(current_task_id), current_ref["sha256"])
+        if key in active:
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        if key in visited:
+            return
+        if len(visited) + len(active) >= 256:
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        active.add(key)
+        access = current.get("analysis_access")
+        if access is not None:
+            if not isinstance(access, Mapping) or access.get("version") != ANALYSIS_SOURCE_ACCESS_VERSION:
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            direct_sources = analysis_source_snapshot(access.get("sources"))
+            if not direct_sources:
+                raise AnalysisResultUnavailable("analysis_source_manifest_missing")
+            sources.extend(direct_sources)
+        consumed_inputs = current.get("consumed_inputs") or []
+        if not isinstance(consumed_inputs, list):
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        for consumed in consumed_inputs:
+            producer = consumed.get("producer") if isinstance(consumed, Mapping) else None
+            if (
+                not isinstance(producer, Mapping)
+                or producer.get("workflow_id") != str(workflow.get("id") or "")
+                or producer.get("run_id") != str(run_id)
+                or not isinstance(producer.get("task_id"), str) or not producer["task_id"]
+                or not isinstance(consumed.get("result_ref"), Mapping)
+            ):
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            parent = load_parent(producer["task_id"], consumed["result_ref"])
+            if not isinstance(parent, Mapping) or parent.get("identity") != producer:
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            output = (parent.get("outputs") or {}).get(consumed.get("output_name"))
+            if not isinstance(output, Mapping) or output.get("result_ref") != consumed.get("output_ref"):
+                raise AnalysisResultUnavailable("analysis_lineage_invalid")
+            visit(parent, producer["task_id"], consumed["result_ref"])
+        active.remove(key)
+        visited.add(key)
+
+    if isinstance(reference, Mapping) and isinstance(reference.get("sha256"), str):
+        loaded[(str(task_id), reference["sha256"])] = (dict(reference), root)
+    visit(root, task_id, reference)
+    snapshots = analysis_source_snapshot(sources)
+    access = (
+        authorize_analysis_sources(
+            reader_user_id if reader_user_id is not None else workflow.get("user_id"),
+            snapshots, resolver=source_resolver,
+        )
+        if snapshots else {"source_count": 0, "source_snapshot_changed": False}
+    )
+    return root, {**access, "sources": snapshots}
+
+
+def _require_completed_result(envelope, *, allow_partial=False):
     if envelope.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION:
         raise ValueError("This workflow task result version is not supported.")
     state = (envelope.get("execution") or {}).get("status")
-    if state != "succeeded":
+    validation = (envelope.get("validation") or {}).get("status")
+    if type(allow_partial) is not bool:
+        raise ValueError("Partial-result eligibility must be an explicit boolean.")
+    partial = validation == "partial" and state in {"succeeded", "incomplete"}
+    if (
+        validation in {"pending", "invalid"}
+        or (partial and not allow_partial)
+        or (state != "succeeded" and not (partial and allow_partial))
+    ):
         raise WorkflowResultNotReadyError(
             "The previous task has no completed authoritative output. Its result and diagnostics "
             "are retained; a preview or unfinished output cannot replace the required input."
         )
 
 
+def require_readable_analysis_result(manifest):
+    """Accepted partial findings are readable, but unfinished/invalid work is not final data."""
+    state = (manifest.get("execution") or {}).get("status")
+    validation = (manifest.get("validation") or {}).get("status")
+    if (
+        state not in {"succeeded", "incomplete"}
+        or validation in {"pending", "invalid"}
+        or (state == "incomplete" and validation != "partial")
+    ):
+        raise WorkflowResultNotReadyError(
+            "This analysis has no readable accepted result yet. Its native execution state "
+            "and diagnostics are retained; an unfinished summary cannot replace final records."
+        )
+
+
 def persist_workflow_task_result(envelope, *, workflow, run_id, task_id, settings=None,
-                                 save_result=save_workflow_task_result):
+                                 save_result=None):
     """Commit independently readable sections, then their small result manifest."""
+    if save_result is None:
+        save_result = save_workflow_task_result
+        if settings is None:
+            # Production callers need the actual quota, including paged result sections.
+            from functions_settings import get_settings
+            settings = get_settings()
+    return persist_result_sections(
+        envelope,
+        lambda section: save_result(workflow, run_id, task_id, section, settings=settings),
+        max_result_bytes=_quota_bytes(settings or {}),
+    )
+
+
+def _encoded_result_size(value):
+    return len(json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")))
+
+
+def _save_record_pages(envelope, name, rows, save_section, max_result_bytes, kind="records"):
+    pages = []
+    page = []
+    page_bytes = 2
+    total_bytes = _encoded_result_size({
+        "contract_version": envelope["contract_version"], "producer": envelope["identity"],
+        "output_name": name, "kind": kind, "value": [],
+    })
+    for record_index, record in enumerate(rows):
+        size = _encoded_result_size(record) + 1
+        total_bytes += size - 1 + int(record_index > 0)
+        if total_bytes > max_result_bytes:
+            raise ValueError("The complete analysis record collection exceeds its configured size limit.")
+        if page and (len(page) >= ANALYSIS_RECORD_PAGE_SIZE or page_bytes + size > ANALYSIS_RECORD_PAGE_BYTES):
+            pages.append(page)
+            page = []
+            page_bytes = 2
+        page.append(record)
+        page_bytes += size
+    if page:
+        pages.append(page)
+    if len(pages) <= 1:
+        return None
+    entries = []
+    offset = 0
+    for index, records in enumerate(pages):
+        page_name = f"{name}:page:{index}"
+        reference = save_section({
+            "contract_version": envelope["contract_version"], "producer": envelope["identity"],
+            "output_name": page_name, "kind": kind, "value": records,
+        })
+        entries.append({"output_name": page_name, "offset": offset, "count": len(records), "result_ref": reference})
+        offset += len(records)
+    reference = save_section({
+        "contract_version": envelope["contract_version"], "producer": envelope["identity"],
+        "output_name": name, "kind": "record_pages",
+        "value": {"record_count": len(rows), "pages": entries},
+    })
+    return {"kind": kind, "storage_kind": "record_pages", "result_ref": reference, "record_count": len(rows)}
+
+
+def persist_result_sections(
+    envelope, save_section, *, max_result_bytes=DEFAULT_MAX_RESULT_SIZE_MB * 1024 * 1024,
+):
+    """Share section persistence without inventing a workflow identity for chat."""
+    if type(max_result_bytes) is not int or max_result_bytes <= 0:
+        raise ValueError("The result size limit is invalid.")
+    if _encoded_result_size(envelope) > max_result_bytes:
+        raise ValueError("The complete analysis result exceeds its configured size limit.")
     manifest = {key: _json_copy(value) for key, value in envelope.items()
                 if key not in {"outputs", "presentation", "diagnostics"}}
     sections = dict(envelope["outputs"])
@@ -221,24 +533,124 @@ def persist_workflow_task_result(envelope, *, workflow, run_id, task_id, setting
     sections["diagnostics"] = {"kind": "diagnostics", "value": envelope["diagnostics"]}
     manifest["outputs"] = {}
     for name, output in sections.items():
+        if output["kind"] in {"records", "evidence"} and envelope.get("analysis_access") and isinstance(output["value"], list):
+            paged = _save_record_pages(envelope, name, output["value"], save_section, max_result_bytes, output["kind"])
+            if paged is not None:
+                manifest["outputs"][name] = paged
+                continue
         section = {
-            "contract_version": WORKFLOW_RESULT_CONTRACT_VERSION,
+            "contract_version": envelope["contract_version"],
             "producer": envelope["identity"],
             "output_name": name,
             "kind": output["kind"],
             "value": output["value"],
         }
-        reference = save_result(workflow, run_id, task_id, section, settings=settings)
+        reference = save_section(section)
         manifest["outputs"][name] = {"kind": output["kind"], "result_ref": reference}
-    reference = save_result(workflow, run_id, task_id, manifest, settings=settings)
+    reference = save_section(manifest)
     return manifest, reference
 
 
+def read_result_records(manifest, name, load_section, *, offset=0, limit=None):
+    """Read a complete-record range without loading unrelated record pages."""
+    output = (manifest.get("outputs") or {}).get(name)
+    if not isinstance(output, Mapping) or output.get("kind") not in {"records", "evidence"}:
+        raise ValueError("The requested output is not a record collection.")
+    if type(offset) is not int or offset < 0 or (limit is not None and (type(limit) is not int or limit < 1)):
+        raise ValueError("The record range is invalid.")
+    reference = output.get("result_ref") or {}
+    if reference.get("size_bytes", 0) > ANALYSIS_MATERIALIZATION_BYTES:
+        raise ValueError("This result requires a bounded record reader rather than whole-result materialization.")
+
+    def load_checked(ref, output_name, kind):
+        section = load_section(ref)
+        if (
+            not isinstance(section, Mapping)
+            or section.get("contract_version") != manifest.get("contract_version")
+            or section.get("producer") != manifest.get("identity")
+            or section.get("output_name") != output_name or section.get("kind") != kind
+        ):
+            raise ValueError("The saved record page does not match its result.")
+        return section.get("value")
+
+    if output.get("storage_kind") != "record_pages":
+        rows = load_checked(reference, name, output["kind"])
+        if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+            raise ValueError("The saved record collection is invalid.")
+        if offset > len(rows):
+            raise ValueError("The record offset exceeds the result.")
+        return rows[offset:offset + limit] if limit is not None else rows[offset:], len(rows)
+
+    index = load_checked(reference, name, "record_pages")
+    if (
+        not isinstance(index, Mapping) or type(index.get("record_count")) is not int or index["record_count"] < 0
+        or type(output.get("record_count")) is not int or output["record_count"] != index["record_count"]
+    ):
+        raise ValueError("The saved record index is invalid.")
+    pages = index.get("pages")
+    if not isinstance(pages, list):
+        raise ValueError("The saved record index has no pages.")
+    expected_offset = 0
+    total_bytes = 0
+    for page_index, page in enumerate(pages):
+        if (
+            not isinstance(page, Mapping) or page.get("output_name") != f"{name}:page:{page_index}"
+            or type(page.get("offset")) is not int or page["offset"] != expected_offset
+            or type(page.get("count")) is not int or page["count"] < 1
+            or not isinstance(page.get("result_ref"), Mapping)
+            or type(page["result_ref"].get("size_bytes")) is not int
+            or page["result_ref"]["size_bytes"] <= 0
+        ):
+            raise ValueError("The saved record index contains a gap or invalid page.")
+        expected_offset += page["count"]
+        total_bytes += page["result_ref"]["size_bytes"]
+    if expected_offset != index["record_count"] or offset > expected_offset:
+        raise ValueError("The saved record index count does not match.")
+    if limit is None and total_bytes > ANALYSIS_MATERIALIZATION_BYTES:
+        raise ValueError("The complete analysis requires explicit record batches; it was not truncated.")
+    end = min(expected_offset, offset + limit) if limit is not None else expected_offset
+    records = []
+    for page in pages:
+        start = page["offset"]
+        page_end = start + page["count"]
+        if page_end <= offset or start >= end:
+            continue
+        if page["result_ref"]["size_bytes"] > ANALYSIS_MATERIALIZATION_BYTES:
+            raise ValueError("A saved record is too large to materialize safely.")
+        rows = load_checked(page["result_ref"], page["output_name"], output["kind"])
+        if not isinstance(rows, list) or len(rows) != page["count"] or any(not isinstance(row, Mapping) for row in rows):
+            raise ValueError("The saved record page count or shape is invalid.")
+        records.extend(rows[max(0, offset - start):min(len(rows), end - start)])
+    if len(records) != end - offset:
+        raise ValueError("The requested records could not be reconstructed completely.")
+    return records, expected_offset
+
+
+def iter_result_records(manifest, name, load_section):
+    """Walk a complete collection using bounded, independently verified pages."""
+    offset = 0
+    while True:
+        rows, total = read_result_records(
+            manifest, name, load_section, offset=offset, limit=ANALYSIS_RECORD_PAGE_SIZE,
+        )
+        yield from rows
+        offset += len(rows)
+        if offset >= total:
+            return
+        if not rows:
+            raise ValueError("The saved record collection has an unreadable gap.")
+
+
 def load_workflow_task_input(workflow, run_id, task_id, reference,
-                             *, load_result=load_workflow_task_result):
-    """Read only the producer-selected final output, with immutable consumption identity."""
+                             *, load_result=load_workflow_task_result, reader_user_id=None,
+                             source_resolver=None, output_name="authoritative", allow_partial=False):
+    """Read one named final output with source authorization and an exact receipt."""
+    if not isinstance(output_name, str) or output_name not in {
+        "authoritative", "text", "records", "json", "documents",
+    }:
+        raise ValueError("Only a named final output can be used as workflow task input.")
     manifest = load_result(workflow, run_id, task_id, reference)
-    _require_completed_result(manifest)
+    _require_completed_result(manifest, allow_partial=allow_partial)
     identity = manifest.get("identity") or {}
     if (
         identity.get("workflow_id") != str(workflow.get("id") or "")
@@ -246,11 +658,30 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         or identity.get("task_id") != str(task_id)
     ):
         raise ValueError("The saved result does not match the requested producer.")
-    name = manifest.get("authoritative_output")
-    if name in {"presentation", "diagnostics"} or name not in (manifest.get("outputs") or {}):
+    manifest, access = authorize_workflow_task_result_read(
+        workflow, run_id, task_id, reference, manifest=manifest,
+        reader_user_id=reader_user_id, load_result=load_result, source_resolver=source_resolver,
+    )
+    name = manifest.get("authoritative_output") if output_name == "authoritative" else output_name
+    if name in {"presentation", "diagnostics", "evidence", "validation"} or name not in (manifest.get("outputs") or {}):
         raise ValueError("The saved task has no authoritative output binding.")
     output_ref = manifest["outputs"][name]["result_ref"]
-    output = load_result(workflow, run_id, task_id, output_ref)
+    consumed = {
+        "producer": manifest["identity"], "output_name": name,
+        "result_ref": dict(reference), "output_ref": dict(output_ref),
+    }
+    if access["source_count"]:
+        consumed["analysis_result"] = True
+    if manifest["outputs"][name].get("storage_kind") == "record_pages":
+        records, _ = read_result_records(
+            manifest, name, lambda ref: load_result(workflow, run_id, task_id, ref),
+        )
+        output = {
+            "contract_version": manifest["contract_version"], "producer": manifest["identity"],
+            "output_name": name, "kind": "records", "value": records,
+        }
+    else:
+        output = load_result(workflow, run_id, task_id, output_ref)
     if (
         output.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION
         or output.get("producer") != manifest.get("identity")
@@ -258,15 +689,12 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         or output.get("kind") != manifest["outputs"][name].get("kind")
     ):
         raise ValueError("The saved output does not match its producer's manifest.")
-    consumed = {
-        "producer": manifest["identity"],
-        "output_name": name,
-        "result_ref": dict(reference),
-        "output_ref": dict(output_ref),
-    }
     prompt = json.dumps({
         "consumed_result": consumed,
         "provenance": manifest.get("provenance") or {},
+        "coverage": manifest.get("coverage") or {},
+        "validation": public_analysis_validation(manifest.get("validation")) if access["source_count"] else manifest.get("validation") or {},
+        "source_snapshot_changed": access["source_snapshot_changed"],
         "kind": output["kind"],
         "value": output["value"],
     }, ensure_ascii=False, allow_nan=False)
@@ -275,13 +703,23 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
 
 def workflow_result_summary(envelope, reference):
     """Small, non-secret history projection; full outputs stay in the result store."""
-    return {
+    summary = {
         "contract_version": envelope["contract_version"],
         "result_ref": dict(reference),
         "output_kinds": list(envelope.get("outputs") or {}),
         "authoritative_output": envelope.get("authoritative_output"),
         "outputs": _json_copy(envelope.get("outputs") or {}),
         "output_state": (envelope.get("execution") or {}).get("status"),
-        "validation_status": (envelope.get("validation") or {}).get("status", "not_requested"),
+        "validation_status": public_analysis_validation(envelope.get("validation"))["status"],
         "consumed_inputs": _json_copy(envelope.get("consumed_inputs") or []),
     }
+    if envelope.get("analysis_access") or any(
+        item.get("analysis_result") for item in envelope.get("consumed_inputs") or []
+        if isinstance(item, Mapping)
+    ):
+        summary["analysis_result"] = True
+        summary["producer"] = _json_copy(envelope["identity"])
+        summary["analysis_origin"] = envelope.get("analysis_origin", bool(envelope.get("analysis_access")))
+        summary["record_count"] = envelope.get("record_count")
+        summary["source_count"] = len((envelope.get("analysis_access") or {}).get("sources") or [])
+    return summary
