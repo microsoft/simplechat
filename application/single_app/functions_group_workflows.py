@@ -52,6 +52,9 @@ from functions_personal_workflows import (
 from functions_settings import get_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
 from functions_workflow_result_store import delete_workflow_run_results
+from functions_workflow_bindings import authorize_workflow_reference
+from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
+from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
@@ -377,7 +380,7 @@ def get_group_workflows(group_id):
             parameters=[{'name': '@group_id', 'value': group_id}],
             partition_key=group_id,
         ))
-        cleaned = [_strip_cosmos_metadata(item) for item in items]
+        cleaned = [workflow_definition_for_editor(_strip_cosmos_metadata(item)) for item in items]
         cleaned.sort(key=lambda item: item.get('updated_at') or item.get('created_at') or '', reverse=True)
         return cleaned
     except exceptions.CosmosResourceNotFoundError:
@@ -396,7 +399,7 @@ def get_group_workflow(group_id, workflow_id):
     """Fetch a specific group workflow."""
     try:
         workflow = cosmos_group_workflows_container.read_item(item=workflow_id, partition_key=group_id)
-        return _strip_cosmos_metadata(workflow)
+        return workflow_definition_for_editor(_strip_cosmos_metadata(workflow))
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
@@ -485,6 +488,16 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         ),
         default_document_action=document_action,
     )
+    reference_owner_id = (existing_workflow or {}).get('user_id') or actor_user_id
+    definition_fields = normalize_workflow_definition(
+        workflow_data, existing_workflow, tasks, user_id=reference_owner_id, group_id=group_id,
+    )
+    tasks = definition_fields['tasks']
+    for reference in definition_fields.get('reference_inputs', []):
+        authorize_workflow_reference(
+            {'user_id': reference_owner_id, 'group_id': group_id},
+            reference, actor_user_id=actor_user_id,
+        )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
         'Task prompt',
@@ -637,8 +650,11 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
     else:
         workflow['next_run_at'] = None
 
+    workflow.update(definition_fields)
     normalize_workflow_run_as(workflow, workflow_data, existing_workflow)
-    result = cosmos_group_workflows_container.upsert_item(body=workflow)
+    result = save_workflow_definition_record(
+        cosmos_group_workflows_container, group_id, workflow, existing_workflow,
+    )
     cleaned_result = _strip_cosmos_metadata(result)
     debug_print(f"[GROUP_WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for group {group_id}")
     return cleaned_result
@@ -647,13 +663,9 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 def update_group_workflow_runtime_fields(group_id, workflow_id, updates):
     """Apply runtime fields such as status and last-run metadata."""
     updates = updates if isinstance(updates, dict) else {}
-    workflow = get_group_workflow(group_id, workflow_id)
-    if not workflow:
-        raise ValueError('Workflow not found.')
-
-    workflow.update(updates)
-    workflow['updated_at'] = _utc_now_iso()
-    result = cosmos_group_workflows_container.upsert_item(body=workflow)
+    result = update_workflow_runtime_record(
+        cosmos_group_workflows_container, group_id, workflow_id, updates, _utc_now_iso(),
+    )
     return _strip_cosmos_metadata(result)
 
 

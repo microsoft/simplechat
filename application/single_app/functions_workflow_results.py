@@ -423,14 +423,70 @@ def authorize_workflow_task_result_read(
     return root, {**access, "sources": snapshots}
 
 
+def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result_items=None,
+                                load_result=load_workflow_task_result, source_resolver=None):
+    """Guard history/activity with every stored task result, without a UI item cap."""
+    if result_items is None:
+        # These are already scope-authorized workflow/run reads. Query only task
+        # metadata directly so a failed store read cannot become an empty list.
+        from config import cosmos_group_workflow_run_items_container, cosmos_personal_workflow_run_items_container
+
+        container = (
+            cosmos_group_workflow_run_items_container if workflow.get("group_id")
+            else cosmos_personal_workflow_run_items_container
+        )
+        result_items = container.query_items(
+            query=(
+                "SELECT c.workflow_id, c.run_id, c.task_id, c.workflow_result FROM c "
+                "WHERE c.run_id = @run_id AND c.workflow_id = @workflow_id AND c.item_type = 'task'"
+            ),
+            parameters=[
+                {"name": "@run_id", "value": run_id},
+                {"name": "@workflow_id", "value": workflow["id"]},
+            ],
+            partition_key=run_id,
+        )
+    cache = {}
+
+    def cached_load(bound_workflow, bound_run_id, task_id, reference):
+        key = (bound_run_id, task_id, json.dumps(reference, sort_keys=True))
+        if key not in cache:
+            cache[key] = load_result(bound_workflow, bound_run_id, task_id, reference)
+        return cache[key]
+
+    for item in result_items:
+        if item.get("item_type") not in (None, "task"):
+            continue
+        reference = (item.get("workflow_result") or {}).get("result_ref")
+        if reference is None:
+            continue
+        if item.get("workflow_id") != workflow["id"] or item.get("run_id") != run_id:
+            raise AnalysisResultUnavailable("analysis_lineage_invalid")
+        authorize_workflow_task_result_read(
+            workflow, run_id, item.get("task_id"), reference,
+            reader_user_id=reader_user_id, source_resolver=source_resolver, load_result=cached_load,
+        )
+
+
 def _require_completed_result(envelope, *, allow_partial=False):
     if envelope.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION:
         raise ValueError("This workflow task result version is not supported.")
     state = (envelope.get("execution") or {}).get("status")
     validation = (envelope.get("validation") or {}).get("status")
+    workflow_validation = envelope.get("workflow_validation")
+    workflow_status = None
+    if workflow_validation is not None:
+        if (
+            not isinstance(workflow_validation, Mapping) or workflow_validation.get("version") != 1
+            or workflow_validation.get("eligible") is not True
+        ):
+            raise WorkflowResultNotReadyError("The task's output requirements were not satisfied.")
+        workflow_status = workflow_validation.get("status")
+        if workflow_status not in {"valid", "not_requested", "accepted_partial"}:
+            raise WorkflowResultNotReadyError("The task's output requirements were not satisfied.")
     if type(allow_partial) is not bool:
         raise ValueError("Partial-result eligibility must be an explicit boolean.")
-    partial = validation == "partial" and state in {"succeeded", "incomplete"}
+    partial = (validation == "partial" or workflow_status == "accepted_partial") and state in {"succeeded", "incomplete"}
     if (
         validation in {"pending", "invalid"}
         or (partial and not allow_partial)
@@ -712,6 +768,7 @@ def workflow_result_summary(envelope, reference):
         "output_state": (envelope.get("execution") or {}).get("status"),
         "validation_status": public_analysis_validation(envelope.get("validation"))["status"],
         "consumed_inputs": _json_copy(envelope.get("consumed_inputs") or []),
+        "workflow_validation": _json_copy(envelope.get("workflow_validation") or {}),
     }
     if envelope.get("analysis_access") or any(
         item.get("analysis_result") for item in envelope.get("consumed_inputs") or []

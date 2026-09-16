@@ -93,6 +93,10 @@ from functions_source_review import (
 )
 from functions_workflow_runner import _workflow_task_run_item_id, create_workflow_run_id, run_group_workflow, run_personal_workflow
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError, read_workflow_task_result_page
+from functions_workflow_definitions import WorkflowDefinitionConflict, WorkflowDefinitionError
+from functions_workflow_editor import get_workflow_editor_options
+from functions_analysis_access import AnalysisResultUnavailable
+from functions_workflow_results import authorize_workflow_run_read, authorize_workflow_task_result_read
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -120,6 +124,29 @@ def _normalize_bool(value):
     return bool(value)
 
 
+def _workflow_definition_response(workflow, reader_user_id):
+    """Keep definitions editable without exposing an inaccessible run's cached text."""
+    if not workflow.get('last_run_response_preview') and not workflow.get('last_run_error'):
+        return workflow
+    access = 'available'
+    run_id = workflow.get('last_run_id')
+    if not run_id:
+        access = 'legacy_preview_unbound'
+    else:
+        try:
+            authorize_workflow_run_read(workflow, run_id, reader_user_id=reader_user_id)
+        except AnalysisResultUnavailable:
+            access = 'source_unavailable'
+    if access == 'available':
+        return workflow
+    return {
+        **workflow,
+        'last_run_response_preview': '',
+        'last_run_error': '',
+        'result_access': access,
+    }
+
+
 def _workflow_task_result_page_response(workflow, run_record, task_id, get_item):
     run_id = _normalize_identifier((run_record or {}).get('id'))
     workflow_id = _normalize_identifier((workflow or {}).get('id'))
@@ -137,13 +164,6 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
     if not isinstance(result_ref, dict):
         return jsonify({'error': 'This task has no durable result. Older runs contain previews only.'}), 409
     output_name = _normalize_identifier(request.args.get('output') or 'manifest')
-    if output_name == 'authoritative':
-        output_name = summary.get('authoritative_output')
-    if output_name != 'manifest':
-        output = (summary.get('outputs') or {}).get(output_name)
-        if not isinstance(output, dict) or not isinstance(output.get('result_ref'), dict):
-            return jsonify({'error': 'The requested task output is not available.'}), 404
-        result_ref = output['result_ref']
     try:
         offset = int(request.args.get('offset', '0'))
         limit = int(request.args.get('limit', '65536'))
@@ -152,6 +172,16 @@ def _workflow_task_result_page_response(workflow, run_record, task_id, get_item)
     if offset < 0 or not 1 <= limit <= 65536:
         return jsonify({'error': 'Invalid result page range.'}), 400
     try:
+        manifest, _ = authorize_workflow_task_result_read(
+            workflow, run_id, task_id, result_ref, reader_user_id=get_current_user_id(),
+        )
+        if output_name == 'authoritative':
+            output_name = manifest.get('authoritative_output')
+        if output_name != 'manifest':
+            output = (manifest.get('outputs') or {}).get(output_name)
+            if not isinstance(output, dict) or not isinstance(output.get('result_ref'), dict):
+                return jsonify({'error': 'The requested task output is not available.'}), 404
+            result_ref = output['result_ref']
         page = read_workflow_task_result_page(
             workflow, run_id, task_id, result_ref, offset=offset, limit=limit,
         )
@@ -315,24 +345,23 @@ def _assert_group_workflow_feature_enabled(group_id, settings=None):
 
 
 def _resolve_active_group_for_workflows(user_id, allowed_roles=GROUP_WORKFLOW_MEMBER_ROLES):
-    group_id = require_active_group(user_id, allowed_roles=allowed_roles)
+    group_id = _normalize_identifier(request.args.get('group_id') or request.args.get('groupId'))
+    if group_id:
+        assert_group_role(user_id, group_id, allowed_roles=allowed_roles)
+    else:
+        group_id = require_active_group(user_id, allowed_roles=allowed_roles)
     settings = _assert_group_workflow_feature_enabled(group_id)
     return group_id, settings
 
 
 def _resolve_group_workflow_request_group(user_id, allowed_roles=GROUP_WORKFLOW_MEMBER_ROLES):
-    requested_group_id = _normalize_identifier(request.args.get('group_id') or request.args.get('groupId'))
-    if requested_group_id:
-        assert_group_role(user_id, requested_group_id, allowed_roles=allowed_roles)
-        settings = _assert_group_workflow_feature_enabled(requested_group_id)
-        return requested_group_id, settings
     return _resolve_active_group_for_workflows(user_id, allowed_roles=allowed_roles)
 
 
 def _resolve_active_group_for_workflow_management(user_id):
     settings = get_settings()
     allowed_roles = get_group_workflow_management_roles(settings)
-    group_id = require_active_group(user_id, allowed_roles=allowed_roles)
+    group_id, _ = _resolve_group_workflow_request_group(user_id, allowed_roles=allowed_roles)
     _assert_group_workflow_feature_enabled(group_id, settings=settings)
     return group_id, settings
 
@@ -627,6 +656,8 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
         raise ValueError('The requested run does not belong to this workflow conversation.')
 
     thoughts = []
+    if run_record and workflow:
+        authorize_workflow_run_read(workflow, run_record['id'], reader_user_id=user_id)
     if run_record and conversation_id and _normalize_identifier(run_record.get('assistant_message_id')):
         thoughts = get_thoughts_for_message(
             conversation_id,
@@ -708,6 +739,8 @@ def _resolve_group_workflow_activity_context(user_id, group_id, conversation_id=
     )
 
     thoughts = []
+    if run_record and workflow:
+        authorize_workflow_run_read(workflow, run_record['id'], reader_user_id=user_id)
     if run_record and conversation_id and _normalize_identifier(run_record.get('assistant_message_id')):
         thoughts = get_thoughts_for_message(
             conversation_id,
@@ -749,12 +782,13 @@ def _stream_workflow_activity(user_id, conversation_id='', workflow_id='', run_i
     yield 'retry: 750\n\n'
 
     for _ in range(300):
-        snapshot = _resolve_workflow_activity_context(
-            user_id,
-            conversation_id=conversation_id,
-            workflow_id=workflow_id,
-            run_id=run_id,
-        )
+        try:
+            snapshot = _resolve_workflow_activity_context(
+                user_id, conversation_id=conversation_id, workflow_id=workflow_id, run_id=run_id,
+            )
+        except AnalysisResultUnavailable:
+            yield 'event: error\ndata: {"error":"Workflow source access is no longer available.","code":"source_access_denied"}\n\n'
+            return
         payload = json.dumps(snapshot, default=str, sort_keys=True)
 
         if payload != last_payload:
@@ -781,13 +815,13 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
     yield 'retry: 750\n\n'
 
     for _ in range(300):
-        snapshot = _resolve_group_workflow_activity_context(
-            user_id,
-            group_id,
-            conversation_id=conversation_id,
-            workflow_id=workflow_id,
-            run_id=run_id,
-        )
+        try:
+            snapshot = _resolve_group_workflow_activity_context(
+                user_id, group_id, conversation_id=conversation_id, workflow_id=workflow_id, run_id=run_id,
+            )
+        except AnalysisResultUnavailable:
+            yield 'event: error\ndata: {"error":"Workflow source access is no longer available.","code":"source_access_denied"}\n\n'
+            return
         payload = json.dumps(snapshot, default=str, sort_keys=True)
 
         if payload != last_payload:
@@ -930,7 +964,28 @@ def register_route_backend_workflows(bp):
     @workflow_user_required
     def get_user_workflows():
         user_id = get_current_user_id()
-        return jsonify({'workflows': get_personal_workflows(user_id)})
+        return jsonify({'workflows': [
+            _workflow_definition_response(workflow, user_id)
+            for workflow in get_personal_workflows(user_id)
+        ]})
+
+
+    @bp.route('/api/user/workflows/editor-options', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_editor_options():
+        user_id = get_current_user_id()
+        try:
+            return jsonify(get_workflow_editor_options(user_id, get_settings()))
+        except AzureError as exc:
+            log_event(
+                '[WORKFLOW_ROUTES] Workflow editor choices unavailable',
+                extra={'user_id': user_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+            )
+            return jsonify({'error': 'Workflow editor choices are temporarily unavailable.'}), 503
 
 
     @bp.route('/api/user/workflows/file-sync-sources', methods=['GET'])
@@ -962,15 +1017,21 @@ def register_route_backend_workflows(bp):
     def save_user_workflow():
         user_id = get_current_user_id()
         payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'Workflow settings must be a JSON object.'}), 400
         is_create = not str(payload.get('id') or '').strip()
 
         try:
             payload = _prepare_workflow_url_access_payload(payload, user_id)
             workflow = save_personal_workflow(user_id, payload, actor_user_id=user_id)
+        except WorkflowDefinitionConflict as exc:
+            return jsonify({'error': exc.public_message, 'code': 'workflow_definition_conflict'}), 409
+        except WorkflowDefinitionError as exc:
+            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            return jsonify({'error': 'Workflow settings or sources are not allowed for this account.'}), 403
         except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+            return jsonify({'error': 'Invalid workflow settings. Review the task, runner, trigger, and document inputs.'}), 400
         except Exception as exc:
             log_event(
                 f'[WORKFLOW_ROUTES] Failed to save workflow: {exc}',
@@ -997,7 +1058,7 @@ def register_route_backend_workflows(bp):
                 trigger_type=workflow.get('trigger_type'),
             )
 
-        return jsonify({'success': True, 'workflow': workflow}), 201 if is_create else 200
+        return jsonify({'success': True, 'workflow': _workflow_definition_response(workflow, user_id)}), 201 if is_create else 200
 
 
     @bp.route('/api/user/workflows/<workflow_id>', methods=['DELETE'])
@@ -1036,9 +1097,15 @@ def register_route_backend_workflows(bp):
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
 
+        runs = list_personal_workflow_runs(user_id, workflow_id, limit=50)
+        try:
+            for run in runs:
+                authorize_workflow_run_read(workflow, run['id'], reader_user_id=user_id)
+        except AnalysisResultUnavailable:
+            return jsonify({'error': 'Run history is unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
-            'runs': list_personal_workflow_runs(user_id, workflow_id, limit=50),
+            'runs': runs,
         })
 
 
@@ -1130,6 +1197,10 @@ def register_route_backend_workflows(bp):
         if not run_record or _normalize_identifier(run_record.get('workflow_id')) != _normalize_identifier(workflow_id):
             return jsonify({'error': 'Workflow run not found.'}), 404
 
+        try:
+            authorize_workflow_run_read(workflow, run_id, reader_user_id=user_id)
+        except AnalysisResultUnavailable:
+            return jsonify({'error': 'Task results are unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
@@ -1243,13 +1314,37 @@ def register_route_backend_workflows(bp):
         user_id = get_current_user_id()
         try:
             group_id, _ = _resolve_group_workflow_request_group(user_id)
-            return jsonify({'workflows': get_group_workflows(group_id)})
+            return jsonify({'workflows': [
+                _workflow_definition_response(workflow, user_id)
+                for workflow in get_group_workflows(group_id)
+            ]})
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
         except LookupError as exc:
             return jsonify({'error': str(exc)}), 404
         except PermissionError as exc:
             return jsonify({'error': str(exc)}), 403
+
+
+    @bp.route('/api/group/workflows/editor-options', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_editor_options_route():
+        user_id = get_current_user_id()
+        try:
+            group_id, settings = _resolve_group_workflow_request_group(user_id)
+            return jsonify(get_workflow_editor_options(user_id, settings, group_id=group_id))
+        except (ValueError, LookupError, PermissionError):
+            return jsonify({'error': 'The selected group is not available for workflow editing.'}), 403
+        except AzureError as exc:
+            log_event(
+                '[WORKFLOW_ROUTES] Group workflow editor choices unavailable',
+                extra={'user_id': user_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+            )
+            return jsonify({'error': 'Workflow editor choices are temporarily unavailable.'}), 503
 
 
     @bp.route('/api/group/workflows/file-sync-sources', methods=['GET'])
@@ -1316,6 +1411,8 @@ def register_route_backend_workflows(bp):
     def save_group_workflow_route():
         user_id = get_current_user_id()
         payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({'error': 'Workflow settings must be a JSON object.'}), 400
         is_create = not str(payload.get('id') or '').strip()
 
         try:
@@ -1327,12 +1424,16 @@ def register_route_backend_workflows(bp):
                 actor_user_id=user_id,
                 user_info=_get_current_user_info_with_roles(),
             )
+        except WorkflowDefinitionConflict as exc:
+            return jsonify({'error': exc.public_message, 'code': 'workflow_definition_conflict'}), 409
+        except WorkflowDefinitionError as exc:
+            return jsonify({'error': exc.public_message, 'code': 'invalid_workflow_definition'}), 400
         except ValueError as exc:
-            return jsonify({'error': str(exc)}), 400
+            return jsonify({'error': 'Invalid workflow settings. Review the task, runner, trigger, and document inputs.'}), 400
         except LookupError as exc:
-            return jsonify({'error': str(exc)}), 404
+            return jsonify({'error': 'The workflow or one of its sources is not available.'}), 404
         except PermissionError as exc:
-            return jsonify({'error': str(exc)}), 403
+            return jsonify({'error': 'The selected group or workflow sources are not allowed.'}), 403
         except Exception as exc:
             log_event(
                 f'[WORKFLOW_ROUTES] Failed to save group workflow: {exc}',
@@ -1363,7 +1464,7 @@ def register_route_backend_workflows(bp):
                 group_id=group_id,
             )
 
-        return jsonify({'success': True, 'workflow': workflow}), 201 if is_create else 200
+        return jsonify({'success': True, 'workflow': _workflow_definition_response(workflow, user_id)}), 201 if is_create else 200
 
 
     @bp.route('/api/group/workflows/<workflow_id>', methods=['DELETE'])
@@ -1422,9 +1523,15 @@ def register_route_backend_workflows(bp):
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
 
+        runs = list_group_workflow_runs(group_id, workflow_id, limit=50)
+        try:
+            for run in runs:
+                authorize_workflow_run_read(workflow, run['id'], reader_user_id=user_id)
+        except AnalysisResultUnavailable:
+            return jsonify({'error': 'Run history is unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
-            'runs': list_group_workflow_runs(group_id, workflow_id, limit=50),
+            'runs': runs,
         })
 
 
@@ -1550,6 +1657,10 @@ def register_route_backend_workflows(bp):
         if not run_record or _normalize_identifier(run_record.get('workflow_id')) != _normalize_identifier(workflow_id):
             return jsonify({'error': 'Workflow run not found.'}), 404
 
+        try:
+            authorize_workflow_run_read(workflow, run_id, reader_user_id=user_id)
+        except AnalysisResultUnavailable:
+            return jsonify({'error': 'Task results are unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,

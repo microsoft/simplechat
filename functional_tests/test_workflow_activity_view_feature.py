@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow activity view snapshot aggregation.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.241.179
 
 This test ensures that workflow activity snapshots merge lifecycle events,
