@@ -483,6 +483,22 @@ content-safety:
   reference:
     - title: "Admin configuration reference"
       url: /reference/admin_configuration/
+content-screening:
+  name: "Content screening and document review"
+  area: "Governance and safety"
+  audience: "Admins and workspace reviewers"
+  summary: "Inspects extracted knowledge with deterministic and optional model checks, holding flagged documents for scoped review."
+  why: "Use this to reduce the risk of sensitive values or document-borne instructions entering workspace knowledge. Reviewers can accept a retained warning or publish a clean derivative; queued scans, failed checks, and retained originals have distinct access rules."
+  default_state: "Disabled"
+  admin_tab: security
+  setting_keys:
+    - enable_content_screening
+  guides:
+    - title: "Screen and review workspace documents"
+      url: /guides/review-screened-documents/
+  reference:
+    - title: "Content screening framework"
+      url: /explanation/features/CONTENT_SCREENING_FRAMEWORK/
 notices-and-terms:
   name: "Notices and terms of use"
   area: "Governance and safety"

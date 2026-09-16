@@ -8,6 +8,14 @@ import os
 import time
 import uuid
 
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_document_available,
+    assert_evidence_available,
+    document_provenance,
+    get_available_blob_reference,
+)
+from content_screening.contracts import SCREENING_FIELD, ScreeningError
 
 def log_event(*args, **kwargs):
     """Lazily resolve telemetry logging to avoid module-level import cycles."""
@@ -643,6 +651,12 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
     if not scope_id:
         return _unresolved_manifest_entry(document_id)
 
+    if scope != SOURCE_SCOPE_CHAT:
+        document_item = assert_document_available(
+            document_item, user_id=user_id, group_id=group_id,
+            public_workspace_id=public_workspace_id, purpose="source_manifest",
+        )
+
     file_name = _safe_file_name(
         document_item.get("file_name")
         or document_item.get("filename")
@@ -681,20 +695,30 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
                     else None
                 ),
             )
+            if SCREENING_FIELD in document_item:
+                _, blob_container, blob_path = get_available_blob_reference(
+                    document_item, user_id=user_id, group_id=group_id,
+                    public_workspace_id=public_workspace_id, purpose="source_manifest",
+                )
             if blob_container and blob_path:
                 storage_locator = {
                     "container": str(blob_container),
                     "blob_path": str(blob_path),
                 }
+        except ScreeningError:
+            raise
         except Exception:
             storage_locator = None
-        if storage_locator is None and explicit_blob_container and explicit_blob_path:
+        if (
+            SCREENING_FIELD not in document_item
+            and storage_locator is None and explicit_blob_container and explicit_blob_path
+        ):
             storage_locator = {
                 "container": str(explicit_blob_container),
                 "blob_path": str(explicit_blob_path),
             }
 
-    return {
+    entry = {
         "document_id": document_id,
         "display_name": display_name,
         "file_name": file_name or None,
@@ -722,6 +746,9 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "xsd_dependency_count": document_item.get("xsd_dependency_count"),
         "authorization_status": AUTHORIZATION_STATUS_AUTHORIZED,
     }
+    if scope != SOURCE_SCOPE_CHAT:
+        entry[PROVENANCE_FIELD] = document_provenance(document_item)
+    return entry
 
 
 def _default_document_context_batch_resolver(**resolver_arguments):
@@ -1360,6 +1387,7 @@ def build_narrative_evidence_envelopes(
                 "selection_mode": normalized_selection_mode,
                 "terminal": True,
                 "result_count": result_count,
+                PROVENANCE_FIELD: source.get(PROVENANCE_FIELD),
             },
             error=(
                 None
@@ -1485,6 +1513,7 @@ def execute_tabular_evidence_sources(
     execute=True,
     cancel_requested=None,
     request_correlation_id=None,
+    user_id=None,
 ):
     """Execute the existing tabular runner once per source and require terminal coverage."""
     normalized_selection_mode = normalize_selection_mode(
@@ -1536,7 +1565,9 @@ def execute_tabular_evidence_sources(
             continue
 
         try:
+            assert_evidence_available(source, user_id=user_id)
             raw_result = execute_source(source)
+            assert_evidence_available(source, user_id=user_id)
             raise_if_mixed_source_cancelled(
                 cancel_requested,
                 "tabular",
@@ -1560,9 +1591,10 @@ def execute_tabular_evidence_sources(
                     "selection_mode": normalized_selection_mode,
                     "terminal": True,
                     **dict(result.get("coverage") or {}),
+                    PROVENANCE_FIELD: source.get(PROVENANCE_FIELD),
                 },
             ))
-        except MixedSourceCancellationError:
+        except (MixedSourceCancellationError, ScreeningError):
             raise
         except Exception:
             failed_count += 1
@@ -1902,7 +1934,7 @@ def compare_reauthorized_source_manifests(execution_manifest, fresh_manifest):
             continue
         prior_version = source.get("source_version")
         fresh_version = fresh_source.get("source_version")
-        if prior_version != fresh_version:
+        if prior_version != fresh_version or source.get(PROVENANCE_FIELD) != fresh_source.get(PROVENANCE_FIELD):
             source_version_changed_count += 1
     return {
         "authorization_failure_count": authorization_failure_count,
@@ -1917,6 +1949,7 @@ def build_mixed_source_evidence_handoff(
     mode=None,
     telemetry_settings=None,
     request_correlation_id=None,
+    user_id=None,
 ):
     """Build one bounded synthesis handoff from Phase 1 evidence envelopes."""
     normalized_selection_mode = normalize_selection_mode(
@@ -1924,6 +1957,10 @@ def build_mixed_source_evidence_handoff(
         default=SELECTION_MODE_RELEVANCE,
     )
     manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
+    assert_evidence_available([
+        entry for entry in manifest_entries
+        if entry.get("authorization_status") == AUTHORIZATION_STATUS_AUTHORIZED
+    ], user_id=user_id)
     ledger = build_terminal_coverage_ledger(manifest_entries, evidence_envelopes)
     envelopes = list(ledger["evidence_envelopes"])
     source_coverage = []

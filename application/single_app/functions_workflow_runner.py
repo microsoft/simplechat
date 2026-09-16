@@ -3256,6 +3256,7 @@ def _execute_mixed_source_analyze_workflow(
         mode='analyze',
         telemetry_settings=settings,
         request_correlation_id=request_correlation_id,
+        user_id=user_id,
     )
     debug_print(
         '[MIXED_SOURCE_ANALYZE] Evidence handoff sized | '
@@ -3526,6 +3527,7 @@ def _execute_cross_format_comparison_workflow(
         mode='compare',
         telemetry_settings=settings,
         request_correlation_id=request_correlation_id,
+        user_id=user_id,
     )
     mode_outcome = evaluate_mixed_source_mode_outcome(
         'compare',
@@ -3555,6 +3557,7 @@ def _execute_cross_format_comparison_workflow(
         [source_payload(source) for source in target_sources], invoke_prompt, activity_callback=activity_callback,
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
+        user_id=user_id,
     )
     pairwise_coverage = dict(comparison_result.get('coverage') or {})
     mixed_coverage = _build_mixed_source_analysis_coverage(handoff)
@@ -7070,6 +7073,7 @@ def _prepare_workflow_search_context(
         mode='search',
         telemetry_settings=settings,
         request_correlation_id=request_correlation_id,
+        user_id=user_id,
     )
 
     prepared_action = dict(resolved_action)

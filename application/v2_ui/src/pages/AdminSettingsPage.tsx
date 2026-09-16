@@ -51,6 +51,7 @@ import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
+import { ScreeningWorkspaceControls } from '../components/screening/ScreeningWorkspaceControls';
 import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
@@ -946,7 +947,12 @@ export function AdminSettingsPage() {
             );
         }
 
-        return <div key={key}>{control}</div>;
+        return <div key={key}>
+            {control}
+            {field.key === 'enable_content_screening' ? (
+                <ScreeningWorkspaceControls scope={{ scope_type: 'global', scope_id: 'global' }} />
+            ) : null}
+        </div>;
     };
 
     if (!isAdmin) {

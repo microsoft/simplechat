@@ -13,6 +13,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="screening-user-id" content="{{ session.get('user', {}).get('oid', '') }}" />
   <title>{% block title %}{{ app_settings.app_title }}{% endblock %}</title>
   
   {% if app_settings.custom_favicon_base64 %}
@@ -36,6 +37,7 @@
   <!-- Navigation and Sidebar CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='css/navigation.css') }}" />
   <link rel="stylesheet" href="{{ url_for('static', filename='css/sidebar.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/content-screening.css') }}?v={{ config['VERSION'] }}" />
   <!-- DataTables CSS -->
   <link rel="stylesheet" href="/static/css/jquery.dataTables.min.css" />
 
@@ -779,7 +781,15 @@
   {% if app_settings.enable_user_agreement %}
   <script src="{{ url_for('static', filename='js/user-agreement.js') }}"></script>
   {% endif %}
+  <script src="{{ url_for('static', filename='js/content-screening.js') }}?v={{ config['VERSION'] }}"></script>
+  <script src="{{ url_for('static', filename='js/content-screening-api.js') }}?v={{ config['VERSION'] }}"></script>
+  <script src="{{ url_for('static', filename='js/content-screening-policy.js') }}?v={{ config['VERSION'] }}"></script>
+  <script src="{{ url_for('static', filename='js/content-screening-review.js') }}?v={{ config['VERSION'] }}"></script>
   {% block scripts %}{% endblock %}
+
+  {% if session.get('user') %}
+  {% include "_content_screening_confirmation.html" %}
+  {% endif %}
 
   {% if session.get('user') %}
   <div class="modal fade" id="idleTimeoutWarningModal" tabindex="-1" aria-labelledby="idleTimeoutWarningModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">

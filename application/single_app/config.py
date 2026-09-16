@@ -98,7 +98,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.105"
+VERSION = "0.261.106"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -505,6 +505,7 @@ storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
 storage_account_personal_chat_container_name = "personal-chat"
 storage_account_group_chat_container_name = "group-chat"
+storage_account_content_screening_container_name = "content-screening"
 
 
 def get_enhanced_citations_storage_container_names():
@@ -827,6 +828,12 @@ cosmos_document_access_index_container_name = "document_access_index"
 cosmos_document_access_index_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_document_access_index_container_name,
     partition_key=PartitionKey(path="/scope_key")
+)
+
+cosmos_content_screening_container_name = "content_screening"
+cosmos_content_screening_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_content_screening_container_name,
+    partition_key=PartitionKey(path="/partition_key")
 )
 
 cosmos_key_vault_secret_reminders_container_name = "key_vault_secret_reminders"

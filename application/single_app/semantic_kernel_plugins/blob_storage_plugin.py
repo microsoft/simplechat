@@ -2,6 +2,7 @@
 """Semantic Kernel plugin for container-scoped Azure Blob Storage operations."""
 
 import logging
+from importlib import import_module
 from typing import Any, Dict, List, Optional
 
 from azure.core.exceptions import AzureError, ResourceNotFoundError
@@ -9,6 +10,8 @@ from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
 from semantic_kernel.functions import kernel_function
 
+from content_screening.access import PRIVATE_CONTAINER, assert_blob_available, read_available_document_bytes
+from content_screening.contracts import SCREENING_FIELD, DocumentHeldError, ScreeningError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_azure_endpoint_validation import validate_azure_blob_endpoint
@@ -176,6 +179,8 @@ class BlobStoragePlugin(BasePlugin):
     def _validate_configuration(self):
         if not self.container_name:
             raise ValueError("BlobStoragePlugin requires additionalFields.container_name in the manifest.")
+        if self.container_name.lower() == PRIVATE_CONTAINER:
+            raise DocumentHeldError()
 
         if self.auth_type == "connection_string":
             if not self.connection_string:
@@ -195,6 +200,21 @@ class BlobStoragePlugin(BasePlugin):
             return
 
         raise ValueError(f"Unsupported auth.type for BlobStoragePlugin: {self.auth_type}")
+
+    def _screening_document_for_blob(self, blob_name, *, purpose="native"):
+        if self.container_name.lower() == PRIVATE_CONTAINER:
+            raise DocumentHeldError()
+        if self.container_name not in {"user-documents", "group-documents", "public-documents", "personal-chat"}:
+            return None
+        # Unrelated customer-configured accounts are not SimpleChat knowledge.
+        # Defer configuration loading until a managed container is accessed.
+        config = import_module("config")
+        application_client = config.CLIENTS.get("storage_account_office_docs_client")
+        application_account = getattr(application_client, "account_name", None)
+        selected_account = getattr(self.service_client, "account_name", None)
+        if application_account and selected_account and application_account != selected_account:
+            return None
+        return assert_blob_available(self.container_name, blob_name, purpose=purpose)
 
     def _build_service_client(self) -> BlobServiceClient:
         debug_print(
@@ -287,6 +307,8 @@ class BlobStoragePlugin(BasePlugin):
         has_more = False
 
         try:
+            if self.container_name.lower() == PRIVATE_CONTAINER:
+                raise DocumentHeldError()
             debug_print(
                 f"[BLOB_STORAGE_PLUGIN] Listing blobs container={self.container_name} "
                 f"prefix={effective_prefix or '<none>'} max_results={effective_max_results}"
@@ -296,6 +318,10 @@ class BlobStoragePlugin(BasePlugin):
                 if index >= effective_max_results:
                     has_more = True
                     break
+                try:
+                    self._screening_document_for_blob(blob.name, purpose="enumeration")
+                except (ScreeningError, PermissionError, LookupError):
+                    continue
                 blobs.append(self._build_list_item(blob))
 
             debug_print(
@@ -310,6 +336,8 @@ class BlobStoragePlugin(BasePlugin):
                 "item_count": len(blobs),
                 "has_more": has_more,
             }
+        except ScreeningError as error:
+            return self._error_response(error.public_message, error_type=error.code)
         except ResourceNotFoundError:
             debug_print(f"[BLOB_STORAGE_PLUGIN] Blob container not found during list container={self.container_name}.")
             return self._error_response(
@@ -343,12 +371,17 @@ class BlobStoragePlugin(BasePlugin):
             )
 
         try:
+            document = self._screening_document_for_blob(effective_blob_name)
             debug_print(
                 f"[BLOB_STORAGE_PLUGIN] Reading blob container={self.container_name} "
                 f"blob_name={effective_blob_name}"
             )
             blob_client = self.container_client.get_blob_client(effective_blob_name)
-            data = blob_client.download_blob().readall()
+            if document is not None and SCREENING_FIELD in document:
+                _, data = read_available_document_bytes(document, purpose="native")
+            else:
+                data = blob_client.download_blob().readall()
+            self._screening_document_for_blob(effective_blob_name)
             if len(data) > self.MAX_READ_BYTES:
                 return self._error_response(
                     f"The requested blob exceeds the {self.MAX_READ_BYTES} byte read limit.",
@@ -377,6 +410,8 @@ class BlobStoragePlugin(BasePlugin):
                 "content": content,
                 "content_length": len(content),
             }
+        except ScreeningError as error:
+            return self._error_response(error.public_message, error_type=error.code)
         except ResourceNotFoundError:
             debug_print(
                 f"[BLOB_STORAGE_PLUGIN] Blob not found container={self.container_name} "
@@ -401,6 +436,8 @@ class BlobStoragePlugin(BasePlugin):
     @plugin_function_logger("BlobStoragePlugin")
     @kernel_function(description="Upload supported file content to the configured Azure Blob Storage container.")
     def upload_file_to_container(self, blob_name: str, content: str, overwrite: bool = False) -> Dict[str, Any]:
+        if self.container_name.lower() == PRIVATE_CONTAINER:
+            return self._error_response(DocumentHeldError.public_message, error_type=DocumentHeldError.code)
         try:
             effective_blob_name = self._resolve_blob_name(blob_name)
         except ValueError as exc:

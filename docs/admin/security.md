@@ -143,6 +143,18 @@ remove the reference first.
 
 {% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities tab in Admin Settings." title="Global Identities" %}
 
+## Document content screening {#content-screening-section}
+
+Content screening holds extracted workspace knowledge until its required checks and any human review are complete. Use deterministic PII/pattern/value rules for known data formats and an approved model for contextual criteria such as instructions that try to manipulate source priority.
+
+The feature requires Enhanced Citations and reuses its storage account for private evidence and clean derivatives. Administrators define required baseline rules; workspace managers can add checks without weakening that baseline. It is separate from the Azure AI Content Safety chat-category feature below.
+
+Added in **0.261.106**. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) for policy selection, existing-workspace scans, reviewer roles, and remediation limits.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Enable Content Screening | Prevents workspace documents from becoming usable knowledge before inspection and any required review. Existing holds remain enforced if future scanning is disabled. | Off | `enable_content_screening`; requires Enhanced Citations, working storage, and an active policy |
+
 ## Content Safety {#content-safety}
 
 ### Content Safety {#content-safety-section}

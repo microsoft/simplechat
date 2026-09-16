@@ -23,6 +23,15 @@ from typing import Annotated, Dict, List, Optional, Set
 from urllib.parse import urlsplit, urlunsplit
 from semantic_kernel.functions import kernel_function
 from semantic_kernel_plugins.plugin_invocation_logger import PluginInvocationResult, plugin_function_logger
+from content_screening.access import (
+    PRIVATE_CONTAINER,
+    PROVENANCE_FIELD,
+    assert_blob_available,
+    document_provenance,
+    read_available_document_bytes,
+    resolve_available_blob_location,
+)
+from content_screening.contracts import SCREENING_FIELD, ScreeningConflictError, ScreeningError
 from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from functions_tabular_csv_query import (
@@ -30,8 +39,8 @@ from functions_tabular_csv_query import (
     read_tabular_csv,
     validate_tabular_csv_query_expression,
 )
-from functions_group import find_group_by_id, get_user_role_in_group
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_group import assert_group_role, find_group_by_id, get_user_role_in_group
+from functions_public_workspaces import find_public_workspace_by_id, get_user_visible_public_workspace_ids_from_settings
 from config import (
     CLIENTS,
     TABULAR_EXTENSIONS,
@@ -128,13 +137,15 @@ class TabularProcessingPlugin:
         '_related_document_reference_values',
     )
 
-    def __init__(self):
+    def __init__(self, *, authorized_user_id=None):
         self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
         self._blob_data_cache = {}  # Per-instance cache: (container, blob_name) -> raw bytes
         self._workbook_metadata_cache = {}  # Per-instance cache: (container, blob_name) -> workbook metadata
         self._blob_version_cache = {}  # Per-instance cache: (container, blob_name) -> immutable blob version metadata
         self._default_sheet_overrides = {}  # (container, blob_name) -> default sheet name
         self._resolved_blob_location_overrides = {}  # (source, filename) -> (container, blob_name)
+        self._screening_source_versions = {}
+        self._screening_user_id = authorized_user_id
 
     @classmethod
     def get_discovery_function_names(cls):
@@ -331,11 +342,14 @@ class TabularProcessingPlugin:
         if not normalized_group_id:
             return False
 
-        if authorized_context and normalized_group_id in set(authorized_context.get('active_group_ids') or []):
+        try:
+            assert_group_role(
+                user_id, normalized_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
             return True
-
-        group_doc = find_group_by_id(normalized_group_id)
-        return bool(group_doc and get_user_role_in_group(group_doc, user_id))
+        except (LookupError, PermissionError, ValueError):
+            return False
 
     def _is_authorized_public_workspace_scope(
         self,
@@ -346,6 +360,8 @@ class TabularProcessingPlugin:
         """Return True when the current user may access the requested public workspace scope."""
         normalized_public_workspace_id = str(public_workspace_id or '').strip()
         if not normalized_public_workspace_id:
+            return False
+        if not find_public_workspace_by_id(normalized_public_workspace_id):
             return False
 
         if authorized_context and normalized_public_workspace_id in set(
@@ -360,6 +376,8 @@ class TabularProcessingPlugin:
 
     def _is_authorized_blob_location(self, container_name: str, blob_path: str, authorized_context: dict) -> bool:
         """Ensure remembered blob locations still fall within the caller's authorized request scope."""
+        if str(container_name).lower() == PRIVATE_CONTAINER:
+            return False
         exact_authorized_locations = {
             (str(location[0]), str(location[1]))
             for location in authorized_context.get('authorized_blob_locations') or []
@@ -399,22 +417,69 @@ class TabularProcessingPlugin:
 
         return False
 
+    def _evict_screened_blob_cache(self, container_name, blob_name):
+        cache_key = (container_name, blob_name)
+        for cache_name in ("_blob_data_cache", "_workbook_metadata_cache", "_blob_version_cache"):
+            getattr(self, cache_name).pop(cache_key, None)
+        for key in list(self._df_cache):
+            if key[:2] == cache_key:
+                self._df_cache.pop(key, None)
+        self._screening_source_versions.pop(cache_key, None)
+
+    def _assert_blob_screening_access(self, container_name, blob_name, *, purpose="native"):
+        if has_request_context():
+            context = self._get_authorized_chat_context()
+            if not self._is_authorized_blob_location(container_name, blob_name, context):
+                raise PermissionError("Tabular source is no longer authorized.")
+            user_id = context["user_id"]
+        else:
+            user_id = self._screening_user_id
+            if not user_id:
+                raise PermissionError("Tabular source authorization is required.")
+        cache_key = (container_name, blob_name)
+        try:
+            document = assert_blob_available(
+                container_name, blob_name, user_id=user_id, purpose=purpose,
+            )
+            if document is not None:
+                provenance = document_provenance(document)
+                previous = self._screening_source_versions.get(cache_key)
+                if previous is not None and previous != provenance:
+                    raise ScreeningConflictError()
+                self._screening_source_versions[cache_key] = provenance
+            return document, user_id
+        except Exception:
+            self._evict_screened_blob_cache(container_name, blob_name)
+            raise
+
     def _list_tabular_blobs(self, container_name: str, prefix: str) -> List[str]:
         """List all tabular file blobs under a given prefix."""
+        if str(container_name).lower() == PRIVATE_CONTAINER:
+            raise PermissionError("Reviewer-only storage is not available to ordinary tools.")
         client = self._get_blob_service_client()
         container_client = client.get_container_client(container_name)
         blobs = []
         for blob in container_client.list_blobs(name_starts_with=prefix):
             name_lower = blob['name'].lower()
             if any(name_lower.endswith(ext) for ext in self.SUPPORTED_EXTENSIONS):
+                try:
+                    self._assert_blob_screening_access(container_name, blob["name"], purpose="enumeration")
+                except (ScreeningError, PermissionError, LookupError):
+                    continue
                 blobs.append(blob['name'])
         return blobs
 
     def _download_tabular_blob_bytes(self, container_name: str, blob_name: str) -> bytes:
         """Download a blob once and reuse the raw bytes across sheet-aware operations."""
+        document, user_id = self._assert_blob_screening_access(container_name, blob_name)
         cache_key = (container_name, blob_name)
         if cache_key in self._blob_data_cache:
             return self._blob_data_cache[cache_key]
+
+        if document is not None and SCREENING_FIELD in document:
+            _, data = read_available_document_bytes(document, user_id=user_id, purpose="native")
+            self._blob_data_cache[cache_key] = data
+            return data
 
         client = self._get_blob_service_client()
         blob_client = client.get_blob_client(container=container_name, blob=blob_name)
@@ -428,11 +493,13 @@ class TabularProcessingPlugin:
             match_condition=MatchConditions.IfNotModified,
         )
         data = stream.readall()
+        self._assert_blob_screening_access(container_name, blob_name)
         self._blob_data_cache[cache_key] = data
         return data
 
     def _get_tabular_blob_version(self, container_name: str, blob_name: str, refresh: bool = False) -> dict:
         """Return the exact blob version used by this plugin instance."""
+        document, _user_id = self._assert_blob_screening_access(container_name, blob_name)
         cache_key = (container_name, blob_name)
         if not refresh and cache_key in self._blob_version_cache:
             return dict(self._blob_version_cache[cache_key])
@@ -449,11 +516,17 @@ class TabularProcessingPlugin:
             blob_size = blob_size if blob_size is not None else blob_properties.get('size')
         if not blob_etag:
             raise ValueError('Tabular source version could not be determined')
+        if document is not None and SCREENING_FIELD in document:
+            if str(blob_etag) != str(document[SCREENING_FIELD]["active_blob"]["etag"]):
+                self._evict_screened_blob_cache(container_name, blob_name)
+                raise ScreeningConflictError()
 
         blob_version = {
             'blob_etag': str(blob_etag),
             'blob_size': int(blob_size or 0),
         }
+        if document is not None:
+            blob_version[PROVENANCE_FIELD] = document_provenance(document)
         self._blob_version_cache[cache_key] = blob_version
         return dict(blob_version)
 
@@ -468,6 +541,7 @@ class TabularProcessingPlugin:
 
     def _get_workbook_metadata(self, container_name: str, blob_name: str) -> dict:
         """Return workbook metadata including available sheet names for Excel files."""
+        self._assert_blob_screening_access(container_name, blob_name)
         cache_key = (container_name, blob_name)
         if cache_key in self._workbook_metadata_cache:
             return copy.deepcopy(self._workbook_metadata_cache[cache_key])
@@ -490,6 +564,7 @@ class TabularProcessingPlugin:
                 'default_sheet': sheet_names[0] if sheet_names else None,
             })
 
+        self._assert_blob_screening_access(container_name, blob_name)
         self._workbook_metadata_cache[cache_key] = copy.deepcopy(metadata)
         return copy.deepcopy(metadata)
 
@@ -3093,6 +3168,7 @@ class TabularProcessingPlugin:
         require_explicit_sheet: bool = False,
     ) -> pandas.DataFrame:
         """Download a blob and read it into a pandas DataFrame. Uses per-instance cache."""
+        self._assert_blob_screening_access(container_name, blob_name)
         resolved_sheet_name, workbook_metadata = self._resolve_sheet_selection(
             container_name,
             blob_name,
@@ -3135,6 +3211,7 @@ class TabularProcessingPlugin:
             raise ValueError(f"Unsupported tabular file type: {blob_name}")
 
         df = self._normalize_dataframe_columns(df)
+        self._assert_blob_screening_access(container_name, blob_name)
         self._df_cache[cache_key] = df
         log_event(
             f"[TabularProcessingPlugin] Cached DataFrame for {blob_name}"
@@ -3408,6 +3485,8 @@ class TabularProcessingPlugin:
 
         override = self._get_resolved_blob_location_override(source, filename)
         if override and self._is_authorized_blob_location(override[0], override[1], authorized_context):
+            override = resolve_available_blob_location(*override, user_id=user_id)
+            self._assert_blob_screening_access(*override)
             return override
 
         attempts = []
@@ -3434,8 +3513,12 @@ class TabularProcessingPlugin:
             try:
                 blob_client = client.get_blob_client(container=container, blob=blob_path)
                 if blob_client.exists():
+                    container, blob_path = resolve_available_blob_location(container, blob_path, user_id=user_id)
+                    self._assert_blob_screening_access(container, blob_path)
                     log_event(f"[TABULAR_PROCESSING_PLUGIN] Found blob at {container}/{blob_path}", level=logging.DEBUG)
                     return container, blob_path
+            except (ScreeningError, PermissionError):
+                raise
             except Exception:
                 continue
 
@@ -3488,6 +3571,7 @@ class TabularProcessingPlugin:
         sheet_names: Optional[List[str]] = None,
     ) -> dict:
         """Pin a durable query descriptor to an already-authorized blob location."""
+        document, _user_id = self._assert_blob_screening_access(container_name, blob_path)
         normalized_blob_path = str(blob_path or '').strip()
         source_format = next((
             extension.lstrip('.')
@@ -3530,6 +3614,8 @@ class TabularProcessingPlugin:
             'return_columns': return_columns,
             'expected_row_count': max(0, int(expected_row_count or 0)),
         }
+        if document is not None:
+            descriptor[PROVENANCE_FIELD] = document_provenance(document)
         if source_format != 'csv':
             if not normalized_sheet_names:
                 raise ValueError('Durable workbook replay requires an explicit worksheet scope')
@@ -3737,10 +3823,11 @@ class TabularProcessingPlugin:
         blob_version: Optional[dict] = None,
     ) -> dict:
         """Build exact server-only scope metadata for later worker revalidation."""
+        document, _user_id = self._assert_blob_screening_access(container_name, blob_path)
         resolved_source = self._infer_source_from_container(container_name)
         blob_parts = [part for part in str(blob_path or '').split('/') if part]
         scope_id = blob_parts[0] if resolved_source in {'group', 'public'} and blob_parts else None
-        return {
+        authorization = {
             'source': resolved_source,
             'scope_id': scope_id,
             'container': container_name,
@@ -3749,6 +3836,9 @@ class TabularProcessingPlugin:
                 'blob_etag'
             ),
         }
+        if document is not None:
+            authorization[PROVENANCE_FIELD] = document_provenance(document)
+        return authorization
 
     def _query_csv_data_in_bounded_chunks(
         self,
@@ -3761,6 +3851,7 @@ class TabularProcessingPlugin:
         max_rows,
     ) -> PluginInvocationResult:
         """Execute foreground CSV pagination through the durable replay query engine."""
+        self._assert_blob_screening_access(container_name, blob_path)
         start, limit = self._parse_row_page_arguments(start_row, max_rows)
         replay_stats = {'used_reviewer_style_fallback': False}
         matched_row_count = 0
@@ -3792,6 +3883,7 @@ class TabularProcessingPlugin:
                     page_rows.append(source_row)
                 matched_row_count += 1
 
+        self._assert_blob_screening_access(container_name, blob_path)
         response_payload = {
             'filename': filename,
             'selected_sheet': None,

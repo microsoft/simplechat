@@ -1,8 +1,20 @@
 # route_backend_documents.py
 
+from content_screening.access import (
+    assert_blob_available,
+    assert_document_available,
+    assert_document_chunks_available,
+    assert_evidence_available,
+    get_available_blob_reference,
+    read_available_document_bytes,
+    register_document_api_guards,
+)
+from content_screening.contracts import SCREENING_FIELD, ScreeningError
 from config import *
 from functions_authentication import *
 from functions_documents import *
+from content_screening.service import prepare_document_upload
+from functions_appinsights import log_event
 from functions_settings import *
 from functions_group import get_user_groups
 from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
@@ -28,6 +40,7 @@ from functions_activity_logging import log_document_upload, log_document_metadat
 # cannot be counted on to be the classes rather than the module.
 from datetime import datetime, timedelta, timezone
 import io
+import logging
 import os
 import requests
 from flask import current_app
@@ -613,6 +626,8 @@ def filter_documents_by_place(documents, place, user_id, recent_days=DOCUMENT_RE
 
 
 def register_route_backend_documents(bp):
+    register_document_api_guards(bp)
+
     @bp.route('/api/get_file_content', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -667,6 +682,24 @@ def register_route_backend_documents(bp):
                 add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File not found in conversation")
                 return jsonify({'error': 'File not found in conversation'}), 404
 
+            assert_evidence_available(items, user_id)
+            linked_document = None
+            if items[0].get("workspace_document_id"):
+                linked_document = assert_document_available(
+                    items[0]["workspace_document_id"], user_id=user_id, purpose="chat_file",
+                )
+                if SCREENING_FIELD in linked_document:
+                    linked_document, linked_container, linked_path = get_available_blob_reference(
+                        linked_document, user_id=user_id, purpose="chat_file",
+                    )
+                    items = [{
+                        **items[0],
+                        "filename": linked_document.get("file_name"),
+                        "file_content_source": "blob",
+                        "blob_container": linked_container,
+                        "blob_path": linked_path,
+                    }]
+
             debug_print(f"[GET_FILE_CONTENT] Found {len(items)} items for file_id={file_id}")
             debug_print(f"[GET_FILE_CONTENT] First item structure: {json.dumps(items[0], default=str, indent=2)}")
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File found, processing content: " + str(items))
@@ -691,12 +724,13 @@ def register_route_backend_documents(bp):
                     if not blob_service_client:
                         return jsonify({'error': 'Blob storage client not available'}), 500
 
-                    blob_client = blob_service_client.get_blob_client(
-                        container=blob_container,
-                        blob=blob_path
-                    )
-                    stream = blob_client.download_blob()
-                    blob_data = stream.readall()
+                    if linked_document is not None and SCREENING_FIELD in linked_document:
+                        _, blob_data = read_available_document_bytes(linked_document, user_id=user_id, purpose="chat_file")
+                    else:
+                        assert_blob_available(blob_container, blob_path, user_id=user_id)
+                        blob_client = blob_service_client.get_blob_client(container=blob_container, blob=blob_path)
+                        blob_data = blob_client.download_blob().readall()
+                        assert_blob_available(blob_container, blob_path, user_id=user_id)
 
                     # Convert to CSV using pandas for display
                     file_ext = os.path.splitext(filename)[1].lower()
@@ -860,6 +894,12 @@ def register_route_backend_documents(bp):
 
                 # 3) Now run heavy-lifting in a background thread
                 # --- CHANGE: Pass original_filename ---
+                prepare_document_upload(
+                    document_id=parent_document_id,
+                    user_id=user_id,
+                    temp_file_path=temp_file_path,
+                    original_filename=original_filename,
+                )
                 future = current_app.extensions['executor'].submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
@@ -894,7 +934,13 @@ def register_route_backend_documents(bp):
                     debug_print(f"Activity logging error for document upload: {log_error}")
 
             except Exception as e:
-                upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
+                log_event(
+                    "[CONTENT_SCREENING] Workspace upload preparation or queueing failed.",
+                    extra={"document_id": parent_document_id, "scope": "personal", "exception_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                message = e.public_message if isinstance(e, ScreeningError) else "Unable to prepare or queue this upload."
+                upload_errors.append(f"Upload failed for {original_filename}: {message}")
                 # Clean up temp file if queuing failed after saving
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
@@ -1835,6 +1881,11 @@ def register_route_backend_documents(bp):
             if not accessible_document:
                 return jsonify({"error": "Unauthorized access to citation"}), 403
 
+            fresh_document = assert_document_available(
+                {"document_id": resolved_document_id, "version": chunk.get("version")},
+                user_id=user_id, purpose="citation",
+            )
+            chunk = assert_document_chunks_available([chunk], fresh_document, user_id=user_id)[0]
             return build_citation_response(chunk)
 
         for scope_name, client_key in (
@@ -1848,6 +1899,8 @@ def register_route_backend_documents(bp):
 
             try:
                 citation_response = get_citation_for_scope(search_client, scope_name)
+            except ScreeningError as error:
+                return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
             except ResourceNotFoundError:
                 continue
             except Exception as e:

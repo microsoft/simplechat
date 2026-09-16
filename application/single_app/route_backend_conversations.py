@@ -4,6 +4,8 @@ import logging
 import math
 import re
 
+from content_screening.access import build_available_document_response, public_history_messages
+from content_screening.contracts import ScreeningError
 from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
 from config import *
 from functions_appinsights import log_event
@@ -1080,6 +1082,7 @@ def register_route_backend_conversations(bp):
             debug_print(f"After filtering: {len(all_items)} items remaining")
 
             all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
+            all_items = public_history_messages(all_items, user_id)
 
             messages = hydrate_image_messages(
                 all_items,
@@ -1138,6 +1141,10 @@ def register_route_backend_conversations(bp):
                 conversation_id,
                 image_id,
             )
+            if image_message.get("workspace_document_id"):
+                return build_available_document_response(
+                    image_message["workspace_document_id"], user_id=user_id, purpose="image_preview",
+                )
 
             # An edited image is served from the revision's own blob. `rev` names which version
             # is wanted; it exists because this URL is otherwise identical before and after an
@@ -1170,6 +1177,8 @@ def register_route_backend_conversations(bp):
                 }
             )
 
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
         except CosmosResourceNotFoundError:

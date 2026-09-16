@@ -20,6 +20,7 @@ import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupAgentDelegationPage } from './pages/GroupAgentDelegationPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
+import { ContentReviewPage } from './pages/ContentReviewPage';
 
 function BootScreen() {
     return (
@@ -186,6 +187,7 @@ export function App() {
                 <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/admin" element={<AdminSettingsPage />} />
+                <Route path="/content-review" element={<ContentReviewPage />} />
                 <Route
                     path="/agents"
                     element={
