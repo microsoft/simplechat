@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Fictional inventory records pass through the production document analysis,
@@ -29,6 +29,7 @@ from functions_workflow_results import (
     build_workflow_task_result,
     load_workflow_task_input,
     persist_workflow_task_result,
+    authorize_workflow_task_result_read,
 )
 
 
@@ -89,11 +90,15 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
     def completion(**kwargs):
         provider_requests.append(kwargs)
         prompt = kwargs["messages"][-1]["content"]
-        if "[Previous workflow task output]" in prompt:
+        if prompt.startswith("Write only an unrelated note"):
+            explanation = "An intermediate note with no inventory findings."
+        elif "[Previous workflow task output]" in prompt:
             serialized = prompt.split("[Previous workflow task output]\n", 1)[1].split(
                 "\n\nUse the previous task output", 1,
             )[0]
             consumed = json.loads(serialized)
+            if "inputs" in consumed:
+                consumed = consumed["inputs"][0]["result"]
             assert consumed["kind"] == "records"
             findings = consumed["value"]
             explanation = (
@@ -184,6 +189,7 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
     })
     runner.update({
         "_result_reads": loaded_refs,
+        "_load_result_section": load_section,
         "_raise_if_workflow_run_cancelled": lambda *args, **kwargs: None,
         "_resolve_model_workflow_client": lambda *args, **kwargs: (
             runner["WorkflowModelClient"](client, "gpt-4.1", "aoai"), "gpt-4.1", "aoai",
@@ -192,8 +198,11 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(
             envelope, save_result=save_section, **kwargs,
         ),
-        "load_workflow_task_input": lambda workflow, run_id, task_id, reference: load_workflow_task_input(
-            workflow, run_id, task_id, reference, load_result=load_section,
+        "load_workflow_task_input": lambda workflow, run_id, task_id, reference, **kwargs: load_workflow_task_input(
+            workflow, run_id, task_id, reference, load_result=load_section, **kwargs,
+        ),
+        "authorize_workflow_task_result_read": lambda *args, **kwargs: authorize_workflow_task_result_read(
+            *args, load_result=load_section, **kwargs,
         ),
         "_initialize_document_run_items": lambda *args, **kwargs: None,
         "_build_run_item_activity_callback": lambda *args, **kwargs: None,
@@ -263,7 +272,9 @@ def test_analyze_artifact_content_reaches_next_task(record_count, note_size, blo
     assert consumed["result_ref"] == producer["result_ref"]
     assert consumed["output_name"] == producer["authoritative_output"] == "records"
     assert consumed["output_ref"] == producer["outputs"]["records"]["result_ref"]
-    assert runner["_result_reads"] == [producer["result_ref"], consumed["output_ref"]]
+    assert runner["_result_reads"][:2] == [producer["result_ref"], consumed["output_ref"]]
+    assert runner["_result_reads"].count(consumed["output_ref"]) == 1
+    assert all(reference == producer["result_ref"] for reference in runner["_result_reads"][2:])
     persisted_consumer = items[(
         "run-inventory", runner["_workflow_task_run_item_id"]("run-inventory", "consume"),
     )]

@@ -1,7 +1,7 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 """
 
@@ -27,6 +27,19 @@ from functions_workflow_results import (
     load_workflow_task_input,
     persist_workflow_task_result,
     workflow_result_summary,
+    authorize_workflow_task_result_read,
+)
+from functions_analysis_access import AnalysisResultUnavailable
+from functions_workflow_bindings import (
+    WorkflowInputError,
+    attach_workflow_reference_sources,
+    load_workflow_reference,
+    resolve_workflow_task_inputs,
+)
+from functions_workflow_validation import (
+    validate_workflow_task_output,
+    workflow_output_contract_instruction,
+    workflow_run_outcome,
 )
 
 
@@ -50,6 +63,14 @@ def workflow_result_helpers():
         "WorkflowResultTooLargeError": WorkflowResultTooLargeError,
         "WorkflowContextBudgetError": WorkflowContextBudgetError,
         "WorkflowResultNotReadyError": WorkflowResultNotReadyError,
+        "AnalysisResultUnavailable": AnalysisResultUnavailable,
+        "WorkflowInputError": WorkflowInputError,
+        "attach_workflow_reference_sources": attach_workflow_reference_sources,
+        "load_workflow_reference": load_workflow_reference,
+        "resolve_workflow_task_inputs": resolve_workflow_task_inputs,
+        "validate_workflow_task_output": validate_workflow_task_output,
+        "workflow_output_contract_instruction": workflow_output_contract_instruction,
+        "workflow_run_outcome": workflow_run_outcome,
         "WorkflowModelClient": WorkflowModelClient,
         "invoke_workflow_agent": invoke_workflow_agent,
         "raise_if_workflow_context_blocked": raise_if_workflow_context_blocked,
@@ -58,13 +79,16 @@ def workflow_result_helpers():
         "wrap_workflow_model_client": wrap_workflow_model_client,
         "build_workflow_task_result": build_workflow_task_result,
         "get_workflow_result_text": get_workflow_result_text,
-        "load_workflow_task_input": lambda workflow, run_id, task_id, reference: load_workflow_task_input(
-            workflow, run_id, task_id, reference, load_result=load_result,
+        "load_workflow_task_input": lambda workflow, run_id, task_id, reference, **kwargs: load_workflow_task_input(
+            workflow, run_id, task_id, reference, load_result=load_result, **kwargs,
         ),
         "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(
             envelope, save_result=save_result, **kwargs,
         ),
         "workflow_result_summary": workflow_result_summary,
+        "authorize_workflow_task_result_read": lambda *args, **kwargs: authorize_workflow_task_result_read(
+            *args, load_result=load_result, **kwargs,
+        ),
         "save_workflow_task_result": save_result,
         "load_workflow_task_result": load_result,
         "logging": logging,

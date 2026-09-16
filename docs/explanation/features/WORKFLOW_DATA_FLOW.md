@@ -2,6 +2,8 @@
 
 Implemented in version: **0.261.106**
 
+Updated in version: **0.261.108**
+
 Version tracking: `application/single_app/config.py`.
 
 ## Overview
@@ -109,16 +111,16 @@ Hosted agents can hide their internal prompts/tools. Their audit is labeled `bud
 
 ## Usage and boundaries
 
-Existing ordered workflows use the preceding successful task's declared final output. Named bindings to arbitrary earlier tasks, a native V2 designer, general loops/branches, semantic schema validation, and restart-safe execution are not included in this milestone.
+Legacy ordered workflows use the preceding successful task's declared final output. Version **0.261.108** adds explicit earlier-task bindings, shared references, structural output requirements, and a native V2 List editor; see [Explicit Workflow Data Flow](WORKFLOW_EXPLICIT_DATA_FLOW.md). General loops/branches, pre-action approval gates, and restart-safe execution remain separate milestones.
 
 Run memory here means persisted results and consumption receipts, not an agent-written file that decides whether work is complete. Producer validation remains explicit, including `not_requested` when no validation was supplied.
 
-Assigned agent knowledge is not an automatic full-text binding. Continue to configure document inputs/actions explicitly where required; shared reference-input and Analyze finalization improvements are separate work.
+Assigned agent knowledge is not an automatic full-text binding. Configure document actions or explicit shared references where complete source input is required. Analyze-specific finalization improvements remain separate work.
 
 ## Testing and limitations
 
 The functional suite covers production result generation and serialization, both storage backends, reload-to-synthesis without indexing, conflicting diagnostic notes, exact producer/section identity, requests larger than the former 12,000-character cap, context overflow, and real Semantic Kernel tool-round guards.
 
-The store enforces the existing `max_generated_chat_artifact_size_mb` quota per saved section. Byte-range readers keep transport memory bounded; materializing a full final section still requires memory for that section. Large model-facing record pagination belongs in a higher-level adapter.
+The store and section writer enforce the existing `max_generated_chat_artifact_size_mb` quota for complete saved results. Byte-range readers keep transport memory bounded; materializing a full final section still requires memory for that section. Large model-facing record pagination belongs in a higher-level adapter.
 
 This contract preserves finalized data that the producer actually returned. It does not repair incorrect extraction, infer completeness from a model's prose, or turn a saved preview into missing historical data.

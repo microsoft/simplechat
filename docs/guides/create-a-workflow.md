@@ -25,7 +25,33 @@ Use workflows for repeatable work where sequence matters: weekly document checks
 - Admins may require `require_member_of_workflow_user` before users can create workflows.
 - If tasks use documents, upload them or configure File Sync first.
 
-## Steps
+## Create or edit in V2
+
+Starting in **0.261.108**, open `/v2/workspace/workflows` for personal workflows,
+or select a group under `/v2/groups`. Choose **Create workflow** or edit an
+existing workflow in the native List editor.
+
+Choose a runner and manual or interval trigger, then add tasks in execution
+order. Task details separate document-action evidence from shared reference
+documents and prior-task outputs. For a synthesis task, select a specific
+earlier task under **Previous-task inputs** instead of depending on an
+intermediate note's reply. Reordering never silently retargets that binding.
+
+Use optional output requirements when later work needs a particular JSON
+shape, record identity, count, or complete source coverage. Partial acceptance
+is off by default and remains visibly partial when enabled. These requirements
+validate returned data; they do not prove factual correctness or undo an
+agent's earlier tool actions.
+
+Legacy single-prompt instructions and existing settings are retained when
+opened in V2. Advanced definitions cannot be saved through the classic editor
+because it cannot represent their data-flow fields. A stale edit retains its
+draft instead of overwriting another editor's changes.
+
+See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
+for binding semantics, shared references, and validation outcomes.
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or a **Group Workspace**.
 2. Choose **Workflows** from **Section** or the tab row.

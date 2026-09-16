@@ -1,7 +1,7 @@
 # test_workflow_result_routes.py
 """
 Functional tests for scoped workflow task-result page endpoints.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Production route bodies and the response helper run in a Flask test client.
@@ -26,6 +26,7 @@ sys.path.insert(0, str(RUNNER.parent))
 
 # Import the domain error after establishing the worktree module path.
 from functions_workflow_result_store import WorkflowResultStorageUnavailableError
+from functions_analysis_access import AnalysisResultUnavailable
 
 
 @pytest.fixture
@@ -73,6 +74,11 @@ def result_client():
             "sha256": result_ref["sha256"],
         }
 
+    def authorize_result(workflow, run_id, task_id, reference, **kwargs):
+        if state.get("authorization_error"):
+            raise state["authorization_error"]
+        return item["workflow_result"], {}
+
     namespace = {
         "uuid": uuid,
         "logging": logging,
@@ -90,6 +96,7 @@ def result_client():
         "get_group_workflow_run_item": lambda run_id, item_id: item,
         "_resolve_group_workflow_request_group": authorize_group,
         "read_workflow_task_result_page": read_page,
+        "authorize_workflow_task_result_read": authorize_result,
     }
     names = {
         "_normalize_identifier", "_workflow_task_result_page_response",
@@ -130,6 +137,16 @@ def test_other_user_cannot_read_workflow_result(result_client):
     client, state, workflow, run, item, reads = result_client
     state["actor"] = "another-user"
     assert client.get("/user/workflow-1/run-1/extract").status_code == 404
+    assert reads == []
+
+
+@pytest.mark.parametrize("scope", ["user", "group"])
+def test_revoked_contributor_blocks_the_page_before_any_content_read(result_client, scope):
+    client, state, workflow, run, item, reads = result_client
+    state["authorization_error"] = AnalysisResultUnavailable()
+    response = client.get(f"/{scope}/workflow-1/run-1/extract?output=authoritative")
+    assert response.status_code == 403
+    assert "content" not in response.json
     assert reads == []
 
 
