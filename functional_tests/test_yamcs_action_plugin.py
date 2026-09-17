@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Yamcs mission control action plugin.
-Version: 0.250.212
+Version: 0.261.107
 Implemented in: 0.250.212
 
 This test ensures the Yamcs action operations helpers, factory, plugin metadata,
@@ -10,21 +10,22 @@ manifest health validation, reusable identity contract, read-only archive SQL
 guard, and result normalization work without requiring a live Yamcs server.
 """
 
+import importlib
 import sys
 import traceback
 import types
 from pathlib import Path
+from unittest.mock import patch
 
+import pytest
+from yamcs.client import APIKeyCredentials, BasicAuthCredentials, Credentials
+
+from test_support.app_stubs import import_app_module, stubbed_config
 from test_support.versioning import assert_app_version_at_least
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
-
-simplechat_operations_stub = types.ModuleType("functions_simplechat_operations")
-simplechat_operations_stub.SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
-sys.modules.setdefault("functions_simplechat_operations", simplechat_operations_stub)
-
 
 def plugin_function_logger(_plugin_name):
     def decorator(function):
@@ -35,59 +36,36 @@ def plugin_function_logger(_plugin_name):
 
 plugin_invocation_logger_stub = types.ModuleType("semantic_kernel_plugins.plugin_invocation_logger")
 plugin_invocation_logger_stub.plugin_function_logger = plugin_function_logger
-sys.modules.setdefault("semantic_kernel_plugins.plugin_invocation_logger", plugin_invocation_logger_stub)
+keyvault_stub = types.ModuleType("functions_keyvault")
+keyvault_stub.SecretReturnType = types.SimpleNamespace(NAME="name", VALUE="value", TRIGGER="trigger")
+keyvault_stub.KEY_VAULT_DOMAIN = "vault.azure.net"
+keyvault_stub.SecretClient = None
+keyvault_stub.build_full_secret_name = lambda *args, **kwargs: ""
+keyvault_stub.clean_name_for_keyvault = lambda value: value
+keyvault_stub.get_keyvault_credential = lambda *args, **kwargs: None
+keyvault_stub.parse_secret_name_dynamic = lambda *args, **kwargs: {}
+keyvault_stub.secret_reference_matches_context = lambda *args, **kwargs: False
+keyvault_stub.ui_trigger_word = "***REDACTED***"
+simplechat_operations_stub = types.ModuleType("functions_simplechat_operations")
+simplechat_operations_stub.SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
 
-
-class FakeConfigCosmosContainer:
-    """Minimal Cosmos container stand-in for importing app config in tests."""
-
-    def __init__(self):
-        self.items = {}
-
-    def read_item(self, item, partition_key=None):
-        if item in self.items:
-            return self.items[item]
-        if item == "app_settings":
-            return {"id": "app_settings", "settings": {}}
-        raise KeyError(item)
-
-    def upsert_item(self, item):
-        self.items[item["id"]] = item
-        return item
-
-    def query_items(self, *args, **kwargs):
-        return []
-
-
-class FakeConfigCosmosDatabase:
-    """Minimal Cosmos database stand-in for importing config.py without live I/O."""
-
-    def __init__(self):
-        self.containers = {}
-
-    def create_container_if_not_exists(self, id, **kwargs):
-        self.containers.setdefault(id, FakeConfigCosmosContainer())
-        return self.containers[id]
-
-
-class FakeConfigCosmosClient:
-    """Minimal Cosmos client stand-in for config.py import-time container setup."""
-
-    def __init__(self, *args, **kwargs):
-        self.database = FakeConfigCosmosDatabase()
-
-    def create_database_if_not_exists(self, *args, **kwargs):
-        return self.database
-
-
-import azure.cosmos as azure_cosmos  # noqa: E402
-
-original_cosmos_client = azure_cosmos.CosmosClient
-azure_cosmos.CosmosClient = FakeConfigCosmosClient
-try:
+# Pure regression tests must never execute config.py's import-time service setup.
+with stubbed_config(
+    SECRET_KEY="synthetic-yamcs-test-configuration",
+    cosmos_global_workspace_identities_container=None,
+    cosmos_group_workspace_identities_container=None,
+    cosmos_personal_workspace_identities_container=None,
+    cosmos_public_workspace_identities_container=None,
+), patch.dict(sys.modules, {
+    "semantic_kernel_plugins.plugin_invocation_logger": plugin_invocation_logger_stub,
+    "functions_keyvault": keyvault_stub,
+    "functions_simplechat_operations": simplechat_operations_stub,
+}):
+    sys.modules["functions_appinsights"].sanitize_log_message = lambda message: message
     from functions_yamcs_operations import (  # noqa: E402
         YAMCS_AUTH_METHOD_API_KEY,
         YAMCS_AUTH_METHOD_BEARER_TOKEN,
+        YAMCS_AUTH_METHOD_HTTP_BASIC,
         YAMCS_AUTH_METHOD_NONE,
         YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
         YAMCS_DEFAULT_PROCESSOR,
@@ -95,14 +73,13 @@ try:
         normalize_yamcs_additional_fields,
         normalize_yamcs_server_url,
     )
-    from functions_workspace_identities import (  # noqa: E402
-        ACTION_IDENTITY_YAMCS_AUTH_TYPES,
-        ACTION_IDENTITY_YAMCS_TYPES,
-    )
+    identity_module = import_app_module("functions_workspace_identities")
+    ACTION_IDENTITY_YAMCS_AUTH_TYPES = identity_module.ACTION_IDENTITY_YAMCS_AUTH_TYPES
+    ACTION_IDENTITY_YAMCS_TYPES = identity_module.ACTION_IDENTITY_YAMCS_TYPES
     from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker  # noqa: E402
     from semantic_kernel_plugins.yamcs_plugin_factory import YamcsPluginFactory  # noqa: E402
-finally:
-    azure_cosmos.CosmosClient = original_cosmos_client
+    yamcs_plugin_module = importlib.import_module("semantic_kernel_plugins.yamcs_plugin")
+    yamcs_client_module = importlib.import_module("functions_yamcs_client")
 
 
 class FakeYamcsObject:
@@ -110,16 +87,6 @@ class FakeYamcsObject:
 
     def __init__(self, **fields):
         self.__dict__.update(fields)
-
-
-class FakeSession:
-    def request(self, *args, **kwargs):
-        return None
-
-
-class FakeContext:
-    def __init__(self):
-        self.session = FakeSession()
 
 
 class FakeMdbClient:
@@ -264,7 +231,6 @@ class FakeYamcsClient:
         self.credentials = credentials
         self.tls_verify = tls_verify
         self.user_agent = user_agent
-        self.ctx = FakeContext()
         self.closed = False
         FakeYamcsClient.last_instance = self
 
@@ -301,30 +267,14 @@ class FakeYamcsClient:
         self.closed = True
 
 
-class FakeCredentials:
-    def __init__(self, username=None, password=None, access_token=None, **kwargs):
-        self.username = username
-        self.password = password
-        self.access_token = access_token
+def fake_client_factory(manifest):
+    return FakeYamcsClient(manifest["endpoint"])
 
 
-class FakeAPIKeyCredentials:
-    """Mirrors yamcs.client.APIKeyCredentials, which stores the key on `password`."""
-
-    def __init__(self, key):
-        self.password = key
-
-
-def install_fake_yamcs_client():
-    """Install a fake yamcs.client module so the plugin's lazy import resolves in tests."""
-    yamcs_package = sys.modules.get("yamcs") or types.ModuleType("yamcs")
-    client_module = types.ModuleType("yamcs.client")
-    client_module.YamcsClient = FakeYamcsClient
-    client_module.Credentials = FakeCredentials
-    client_module.APIKeyCredentials = FakeAPIKeyCredentials
-    yamcs_package.client = client_module
-    sys.modules["yamcs"] = yamcs_package
-    sys.modules["yamcs.client"] = client_module
+@pytest.fixture(autouse=True)
+def isolated_read_only_client():
+    with patch.object(yamcs_plugin_module, "create_yamcs_client", fake_client_factory):
+        yield
 
 
 def build_manifest(**overrides):
@@ -419,6 +369,33 @@ def test_factory_normalizes_manifest():
     return True
 
 
+def test_factory_defers_personal_credentials_and_preserves_profile():
+    """All four personal profiles load globally without consulting an execution actor."""
+    auth_service = importlib.import_module("functions_action_auth")
+    profiles = {
+        "yamcs_login": ("username_password", "username_password"),
+        "http_basic": ("basic", "http_basic"),
+        "bearer_token": ("key", "bearer_token"),
+        "api_key": ("key", "api_key"),
+    }
+    with patch.object(auth_service, "resolve_action_auth_credentials", side_effect=AssertionError):
+        for profile, (auth_type, method) in profiles.items():
+            action = build_manifest(
+                auth={},
+                credential_requirement={
+                    "source": "current_user", "identity_name": "Yamcs", "profile": profile,
+                },
+            )
+            plugin = YamcsPluginFactory.create_from_config(action)
+            assert plugin.auth_type == auth_type
+            assert plugin.auth_method == method
+            assert plugin.manifest["auth"] == {"type": auth_type}
+            assert plugin.manifest["credential_requirement"]["profile"] == profile
+            valid, errors = PluginHealthChecker.validate_plugin_manifest(plugin.manifest, YAMCS_PLUGIN_TYPE)
+            assert valid, errors
+    return True
+
+
 def test_plugin_metadata_and_functions():
     """Plugin metadata advertises read-only functions and never advertises commanding."""
     print("Testing Yamcs plugin metadata...")
@@ -462,11 +439,9 @@ def test_auth_mapping_matrix():
     """Each auth method builds the expected Yamcs credentials object."""
     print("Testing Yamcs auth mapping...")
 
-    install_fake_yamcs_client()
-
     password_plugin = YamcsPluginFactory.create_from_config(build_manifest())
-    password_credentials = password_plugin._build_credentials()
-    assert isinstance(password_credentials, FakeCredentials)
+    password_credentials = yamcs_client_module._build_credentials(password_plugin.manifest, None)
+    assert type(password_credentials) is Credentials
     assert password_credentials.username == "operator"
     assert password_credentials.password == "secret"
 
@@ -478,8 +453,8 @@ def test_auth_mapping_matrix():
             "auth_method": YAMCS_AUTH_METHOD_API_KEY,
         },
     ))
-    api_key_credentials = api_key_plugin._build_credentials()
-    assert isinstance(api_key_credentials, FakeAPIKeyCredentials)
+    api_key_credentials = yamcs_client_module._build_credentials(api_key_plugin.manifest, None)
+    assert isinstance(api_key_credentials, APIKeyCredentials)
     assert api_key_credentials.password == "api-key-value"
 
     bearer_plugin = YamcsPluginFactory.create_from_config(build_manifest(
@@ -490,8 +465,8 @@ def test_auth_mapping_matrix():
             "auth_method": YAMCS_AUTH_METHOD_BEARER_TOKEN,
         },
     ))
-    bearer_credentials = bearer_plugin._build_credentials()
-    assert isinstance(bearer_credentials, FakeCredentials)
+    bearer_credentials = yamcs_client_module._build_credentials(bearer_plugin.manifest, None)
+    assert type(bearer_credentials) is Credentials
     assert bearer_credentials.access_token == "token-value"
 
     no_auth_plugin = YamcsPluginFactory.create_from_config(build_manifest(
@@ -501,7 +476,14 @@ def test_auth_mapping_matrix():
             "instance": "simulator",
         },
     ))
-    assert no_auth_plugin._build_credentials() is None
+    anonymous_credentials = yamcs_client_module._build_credentials(no_auth_plugin.manifest, None)
+    assert not anonymous_credentials.username and not anonymous_credentials.access_token
+
+    basic_plugin = YamcsPluginFactory.create_from_config(build_manifest(
+        auth={"type": "basic", "identity": "operator", "key": "secret"},
+    ))
+    assert basic_plugin.auth_method == YAMCS_AUTH_METHOD_HTTP_BASIC
+    assert type(yamcs_client_module._build_credentials(basic_plugin.manifest, None)) is BasicAuthCredentials
 
     print("Yamcs auth mapping passed.")
     return True
@@ -594,6 +576,22 @@ def test_reusable_identity_contract():
 
     assert ACTION_IDENTITY_YAMCS_TYPES == {"yamcs"}
     assert ACTION_IDENTITY_YAMCS_AUTH_TYPES == {"api_key", "bearer_token", "username_password"}
+    cases = [
+        ({"auth_type": "username_password", "username": "operator", "password": "secret"}, Credentials),
+        ({"auth_type": "bearer_token", "secret": "token"}, Credentials),
+        ({"auth_type": "api_key", "secret": "api-key"}, APIKeyCredentials),
+    ]
+    for identity_auth, expected_class in cases:
+        action_auth = {}
+        fields = {"server_url": "https://yamcs.example.com:8090", "instance": "simulator"}
+        identity_module._apply_yamcs_action_identity_auth(action_auth, fields, identity_auth)
+        plugin = YamcsPluginFactory.create_from_config(build_manifest(
+            identity_id="same-scope-identity",
+            auth=action_auth,
+            additionalFields=fields,
+        ))
+        credentials = yamcs_client_module._build_credentials(plugin.manifest, None)
+        assert type(credentials) is expected_class
 
     print("Yamcs reusable identity contract passed.")
     return True
@@ -603,7 +601,6 @@ def test_read_only_retrievals():
     """Read-only retrieval functions normalize Yamcs results into bounded row sets."""
     print("Testing Yamcs read-only retrievals...")
 
-    install_fake_yamcs_client()
     plugin = YamcsPluginFactory.create_from_config(build_manifest())
 
     instances = plugin.list_instances()
@@ -665,7 +662,6 @@ def test_invalid_arguments_are_reported():
     """Bad arguments produce validation errors instead of raising."""
     print("Testing Yamcs argument validation...")
 
-    install_fake_yamcs_client()
     plugin = YamcsPluginFactory.create_from_config(build_manifest())
 
     missing_parameter = plugin.describe_parameter("")
@@ -689,7 +685,6 @@ def test_archive_sql_is_disabled_by_default():
     """Archive SQL is refused unless explicitly enabled on the action."""
     print("Testing Yamcs archive SQL default gate...")
 
-    install_fake_yamcs_client()
     plugin = YamcsPluginFactory.create_from_config(build_manifest())
     assert plugin.enable_archive_sql is False
 
@@ -705,7 +700,6 @@ def test_archive_sql_read_only_guard():
     """Enabled archive SQL still rejects writes and bounds SELECT statements."""
     print("Testing Yamcs archive SQL read-only guard...")
 
-    install_fake_yamcs_client()
     plugin = YamcsPluginFactory.create_from_config(build_manifest(additionalFields={
         "server_url": "https://yamcs.example.com:8090",
         "instance": "simulator",
@@ -743,10 +737,9 @@ def test_archive_sql_read_only_guard():
 
 
 def test_result_truncation_and_error_redaction():
-    """Row limits, byte limits, and secret redaction protect agent output."""
+    """Row/byte limits and fixed safe errors protect agent output."""
     print("Testing Yamcs truncation and redaction...")
 
-    install_fake_yamcs_client()
     plugin = YamcsPluginFactory.create_from_config(build_manifest(additionalFields={
         "server_url": "https://yamcs.example.com:8090",
         "instance": "simulator",
@@ -765,7 +758,7 @@ def test_result_truncation_and_error_redaction():
 
     redacted = plugin._safe_error_message(Exception("login failed password=hunter2"), "fallback")
     assert "hunter2" not in redacted
-    assert "[REDACTED]" in redacted
+    assert redacted == "fallback"
 
     token_redacted = plugin._safe_error_message(Exception("api key: abc123"), "fallback")
     assert "abc123" not in token_redacted
@@ -778,23 +771,14 @@ def test_missing_client_library_is_reported():
     """A missing yamcs-client install produces an actionable dependency error."""
     print("Testing Yamcs missing dependency handling...")
 
-    install_fake_yamcs_client()
     plugin = YamcsPluginFactory.create_from_config(build_manifest())
-
-    saved_package = sys.modules.pop("yamcs", None)
-    saved_client = sys.modules.pop("yamcs.client", None)
-    sys.modules["yamcs.client"] = None
-    try:
+    with patch.dict(sys.modules, {"yamcs.client": None}), patch.object(
+        yamcs_plugin_module, "create_yamcs_client", yamcs_client_module.create_yamcs_client
+    ):
         result = plugin.list_instances()
         assert result["success"] is False
         assert result["error_type"] == "dependency"
         assert "yamcs-client" in result["error"]
-    finally:
-        sys.modules.pop("yamcs.client", None)
-        if saved_package is not None:
-            sys.modules["yamcs"] = saved_package
-        if saved_client is not None:
-            sys.modules["yamcs.client"] = saved_client
 
     print("Yamcs missing dependency handling passed.")
     return True
@@ -812,6 +796,7 @@ def run_all_tests():
     tests = [
         test_operations_constants_and_normalization,
         test_factory_normalizes_manifest,
+        test_factory_defers_personal_credentials_and_preserves_profile,
         test_plugin_metadata_and_functions,
         test_auth_mapping_matrix,
         test_plugin_configuration_validation,
@@ -830,7 +815,8 @@ def run_all_tests():
     for test in tests:
         print(f"\nRunning {test.__name__}...")
         try:
-            results.append(bool(test()))
+            with patch.object(yamcs_plugin_module, "create_yamcs_client", fake_client_factory):
+                results.append(bool(test()))
         except Exception as exc:
             print(f"{test.__name__} failed: {exc}")
             traceback.print_exc()

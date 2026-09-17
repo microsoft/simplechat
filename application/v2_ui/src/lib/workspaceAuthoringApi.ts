@@ -78,6 +78,7 @@ export function saveActionConfiguration(
     original: AuthoringResource<ActionConfiguration> | null,
 ): Promise<AuthoringResource<ActionConfiguration>> {
     if (original?.read_only) throw new Error('Provided actions are read-only.');
+    if (draft.credential_requirement) throw new Error('Per-user credentials can only be authored through global Yamcs administration.');
     const write = buildEditorWrite(draft, original);
     if (!original) delete write.updates.id;
     return editorResource(original

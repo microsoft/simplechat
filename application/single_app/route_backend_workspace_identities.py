@@ -2,6 +2,7 @@
 
 from flask import jsonify, request
 
+from functions_action_auth import ActionAuthConflict, ActionAuthStorageError
 from functions_authentication import admin_required, get_current_user_id, login_required, user_required
 from functions_file_sync import list_file_sync_sources
 from functions_group import assert_group_role, find_group_by_id, require_active_group
@@ -39,13 +40,17 @@ def register_route_backend_workspace_identities(bp):
         return user_id
 
     def _map_exception(error):
+        if isinstance(error, ActionAuthConflict):
+            return _error("The identity changed. Reload it before saving.", 409)
+        if isinstance(error, ActionAuthStorageError):
+            return _error("Credential storage is unavailable. Please try again.", 503)
         if isinstance(error, PermissionError):
-            return _error(str(error), 403)
+            return _error("You are not permitted to access this workspace identity.", 403)
         if isinstance(error, LookupError):
-            return _error(str(error), 404)
+            return _error("Workspace identity not found.", 404)
         if isinstance(error, ValueError):
-            return _error(str(error), 400)
-        return _error(str(error), 500)
+            return _error("The identity is invalid or is still referenced by a File Sync source or action.", 400)
+        return _error("Unable to update the workspace identity.", 500)
 
     def _require_personal_context():
         return _current_user_id()

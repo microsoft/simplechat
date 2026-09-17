@@ -1,10 +1,14 @@
 # functions_workspace_identities.py
 
 import logging
+import re
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from config import (
@@ -14,10 +18,16 @@ from config import (
     cosmos_public_workspace_identities_container,
 )
 from functions_appinsights import log_event
+from functions_action_auth import ActionAuthConflict, ActionAuthStorageError
 from functions_keyvault import (
+    KEY_VAULT_DOMAIN,
+    SecretClient,
     SecretReturnType,
-    retrieve_secret_from_key_vault_by_full_name,
-    store_secret_in_key_vault,
+    build_full_secret_name,
+    clean_name_for_keyvault,
+    get_keyvault_credential,
+    parse_secret_name_dynamic,
+    secret_reference_matches_context,
     ui_trigger_word,
 )
 from functions_settings import get_settings
@@ -174,19 +184,85 @@ def _get_usage_auth_types(usage_contexts: List[str]) -> Set[str]:
     return auth_types or set(WORKSPACE_IDENTITY_AUTH_TYPES)
 
 
-def _store_identity_secret(scope_type: str, scope_id: str, identity_id: str, field_name: str, secret_value: str) -> str:
+def _identity_secret_client():
     settings = get_settings()
     if not _as_bool(settings.get("enable_key_vault_secret_storage")) or not str(settings.get("key_vault_name") or "").strip():
-        return secret_value
+        raise ActionAuthStorageError()
+    try:
+        return SecretClient(
+            vault_url=f"https://{settings['key_vault_name']}{KEY_VAULT_DOMAIN}",
+            credential=get_keyvault_credential(settings=settings),
+        )
+    except Exception:
+        raise ActionAuthStorageError() from None
 
-    secret_name = f"workspace-identity-{identity_id}-{field_name}"
-    return store_secret_in_key_vault(
-        secret_name=secret_name,
-        secret_value=secret_value,
-        scope_value=scope_id,
-        source="identity",
-        scope=_keyvault_scope(scope_type),
-    )
+
+def _close_identity_secret_client(client):
+    close = getattr(client, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            log_event("[WORKSPACE_IDENTITY] Unable to close the credential storage client.", level=logging.WARNING)
+
+
+def _identity_secret_reference_matches(reference, scope_type, scope_id, identity_id, field_name):
+    if not isinstance(reference, str) or not secret_reference_matches_context(
+        reference, scope_value=scope_id, scope=_keyvault_scope(scope_type), allowed_sources={"identity"},
+    ):
+        return False
+    parsed = parse_secret_name_dynamic(reference)
+    secret_name = parsed["secret_name"]
+    legacy_name = clean_name_for_keyvault(f"workspace-identity-{identity_id}-{field_name}")
+    compact_id = str(identity_id).replace("-", "")
+    return secret_name == legacy_name or re.fullmatch(
+        rf"wi-{re.escape(compact_id)}-[a-f0-9]{{32}}-{field_name[0]}", secret_name,
+    ) is not None
+
+
+def _store_identity_secret(scope_type: str, scope_id: str, identity_id: str, field_name: str, secret_value: str) -> str:
+    settings = get_settings()
+    if not _as_bool(settings.get("enable_key_vault_secret_storage")):
+        return secret_value
+    # Immutable names prevent a losing Cosmos conditional write from replacing
+    # the secret referenced by the winner (or by a previously working identity).
+    compact_id = identity_id.replace("-", "")
+    secret_name = f"wi-{compact_id}-{uuid.uuid4().hex}-{field_name[0]}"
+    client = None
+    full_name = None
+    try:
+        full_name = build_full_secret_name(secret_name, scope_id, "identity", _keyvault_scope(scope_type))
+        client = _identity_secret_client()
+        client.set_secret(full_name, secret_value)
+        return full_name
+    except Exception:
+        if client is not None and full_name:
+            try:
+                client.begin_delete_secret(full_name)
+            except Exception:
+                log_event("[WORKSPACE_IDENTITY] Unable to remove an uncommitted credential secret.", level=logging.WARNING)
+        raise ActionAuthStorageError() from None
+    finally:
+        _close_identity_secret_client(client)
+
+
+def _delete_identity_auth_secrets(scope_type, scope_id, identity_id, auth, keep_auth=None):
+    keep_auth = keep_auth or {}
+    for field_name in ("password", "secret"):
+        field = f"{field_name}_secret_name"
+        reference = (auth or {}).get(field)
+        if not reference or reference == keep_auth.get(field):
+            continue
+        if not _identity_secret_reference_matches(reference, scope_type, scope_id, identity_id, field_name):
+            raise PermissionError("The identity credential reference is invalid.")
+        client = None
+        try:
+            client = _identity_secret_client()
+            client.begin_delete_secret(reference)
+        except Exception:
+            raise ActionAuthStorageError() from None
+        finally:
+            _close_identity_secret_client(client)
 
 
 def _prepare_auth_payload(
@@ -331,6 +407,52 @@ def list_workspace_identities(scope_type: str, scope_id: str) -> List[Dict[str, 
     )
 
 
+def list_workspace_identity_metadata(scope_type: str, scope_id: str, *, identity_id=None) -> List[Dict[str, Any]]:
+    """Project ownership, revisions and compatibility without reading credential values."""
+    scope_type = _validate_scope(scope_type)
+    scope_field = _scope_field(scope_type)
+    query = (
+        f"SELECT c.id, c.name, c.type, c.scope_type, c.{scope_field}, c.provider, "
+        "c.usage_contexts, c.supported_source_types, c.updated_at, c._etag, "
+        "c.auth.auth_type AS auth_type, "
+        "(IS_STRING(c.auth.username) AND c.auth.username != '') AS has_username, "
+        "((IS_STRING(c.auth.password) AND c.auth.password != '') OR "
+        "(IS_STRING(c.auth.password_secret_name) AND c.auth.password_secret_name != '')) AS has_password, "
+        "((IS_STRING(c.auth.secret) AND c.auth.secret != '') OR "
+        "(IS_STRING(c.auth.secret_secret_name) AND c.auth.secret_secret_name != '')) AS has_secret "
+        f"FROM c WHERE c.{scope_field} = @scope_id"
+    )
+    parameters = [{"name": "@scope_id", "value": scope_id}]
+    if identity_id is not None:
+        query += " AND c.id = @identity_id"
+        parameters.append({"name": "@identity_id", "value": identity_id})
+    results = _get_identities_container(scope_type).query_items(
+        query=query, parameters=parameters, partition_key=scope_id,
+    )
+    metadata = []
+    for item in results:
+        if item.get("scope_type") != scope_type or item.get(scope_field) != scope_id:
+            continue
+        # Whitelist again so even an overbroad test/storage projection cannot
+        # accidentally introduce a secret into authentication request metadata.
+        record = {
+            key: item[key] for key in (
+                "id", "name", "type", "scope_type", scope_field, "provider", "usage_contexts",
+                "supported_source_types", "updated_at", "_etag", "has_username", "has_password", "has_secret",
+            ) if key in item
+        }
+        record["auth"] = {"auth_type": item.get("auth_type")}
+        metadata.append(record)
+    return metadata
+
+
+def get_workspace_identity_metadata(scope_type: str, scope_id: str, identity_id: str) -> Dict[str, Any]:
+    matches = list_workspace_identity_metadata(scope_type, scope_id, identity_id=identity_id)
+    if len(matches) != 1 or matches[0].get("id") != identity_id:
+        raise LookupError("Workspace identity not found")
+    return matches[0]
+
+
 def get_workspace_identity(scope_type: str, scope_id: str, identity_id: str) -> Dict[str, Any]:
     scope_type = _validate_scope(scope_type)
     identity_id = _normalize_text(identity_id, 255)
@@ -367,9 +489,11 @@ def sanitize_workspace_identity(identity: Dict[str, Any]) -> Dict[str, Any]:
     return sanitized_identity
 
 
-def create_workspace_identity(scope_type: str, scope_id: str, payload: Dict[str, Any], created_by: str) -> Dict[str, Any]:
+def create_workspace_identity(
+    scope_type: str, scope_id: str, payload: Dict[str, Any], created_by: str, *, identity_id=None,
+) -> Dict[str, Any]:
     scope_type = _validate_scope(scope_type)
-    identity_id = str(uuid.uuid4())
+    identity_id = str(uuid.UUID(identity_id)) if identity_id else str(uuid.uuid4())
     normalized_payload = _normalize_identity_payload(scope_type, scope_id, payload or {}, identity_id)
     scope_field = _scope_field(scope_type)
     now_iso = _now_iso()
@@ -385,33 +509,95 @@ def create_workspace_identity(scope_type: str, scope_id: str, payload: Dict[str,
         "updated_at": now_iso,
         **normalized_payload,
     }
-    _get_identities_container(scope_type).create_item(body=identity)
-    return identity
+    try:
+        stored = _get_identities_container(scope_type).create_item(body=identity)
+    except Exception:
+        _delete_identity_auth_secrets(scope_type, scope_id, identity_id, identity.get("auth"))
+        raise
+    return stored if isinstance(stored, dict) else identity
 
 
-def update_workspace_identity(scope_type: str, scope_id: str, identity_id: str, payload: Dict[str, Any], updated_by: str) -> Dict[str, Any]:
+def update_workspace_identity(
+    scope_type: str, scope_id: str, identity_id: str, payload: Dict[str, Any], updated_by: str,
+    *, expected_etag=None,
+) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    etag = identity.get("_etag")
+    if expected_etag is not None and (not etag or etag != expected_etag):
+        raise ActionAuthConflict("The identity changed. Check the selected action again.", code="action_auth_stale")
+    previous_auth = deepcopy(identity.get("auth") or {})
     normalized_payload = _normalize_identity_payload(scope_type, scope_id, payload or {}, identity_id, existing_identity=identity)
     identity.update(normalized_payload)
     identity["updated_by"] = updated_by
     identity["updated_at"] = _now_iso()
-    _get_identities_container(scope_type).upsert_item(identity)
-    return identity
+    try:
+        if etag:
+            stored = _get_identities_container(scope_type).replace_item(
+                item=identity_id, body=identity, etag=etag, match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            stored = _get_identities_container(scope_type).upsert_item(identity)
+    except Exception as error:
+        _delete_identity_auth_secrets(
+            scope_type, scope_id, identity_id, identity.get("auth"), keep_auth=previous_auth,
+        )
+        if isinstance(error, CosmosHttpResponseError) and error.status_code in (409, 412):
+            raise ActionAuthConflict("The identity changed. Check the selected action again.", code="action_auth_stale") from None
+        raise
+    if scope_type == WORKSPACE_IDENTITY_SCOPE_PERSONAL and etag:
+        # Defer the metadata service import to avoid identity/action import cycles.
+        from functions_action_auth_state import revoke_action_identity_bindings
+
+        revoke_action_identity_bindings(scope_id, identity_id, identity_revision=etag)
+    _delete_identity_auth_secrets(
+        scope_type, scope_id, identity_id, previous_auth, keep_auth=identity.get("auth"),
+    )
+    return stored if isinstance(stored, dict) else identity
 
 
-def delete_workspace_identity(scope_type: str, scope_id: str, identity_id: str, deleted_by: str) -> Dict[str, Any]:
+def delete_workspace_identity(
+    scope_type: str, scope_id: str, identity_id: str, deleted_by: str, *, revoke_bindings=True,
+) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
-    _get_identities_container(scope_type).delete_item(item=identity["id"], partition_key=scope_id)
+    options = {}
+    if identity.get("_etag"):
+        options = {"etag": identity["_etag"], "match_condition": MatchConditions.IfNotModified}
+    _get_identities_container(scope_type).delete_item(item=identity["id"], partition_key=scope_id, **options)
+    try:
+        if scope_type == WORKSPACE_IDENTITY_SCOPE_PERSONAL and revoke_bindings:
+            # Direct same-scope reference guards remain in the identity routes.
+            from functions_action_auth_state import revoke_action_identity_bindings
+
+            revoke_action_identity_bindings(scope_id, identity_id)
+    finally:
+        _delete_identity_auth_secrets(scope_type, scope_id, identity_id, identity.get("auth"))
     return {"identity_id": identity_id, "deleted_by": deleted_by}
 
 
-def get_workspace_identity_auth(scope_type: str, scope_id: str, identity_id: str) -> Dict[str, Any]:
+def get_workspace_identity_auth(
+    scope_type: str, scope_id: str, identity_id: str, *, expected_etag=None,
+) -> Dict[str, Any]:
     identity = get_workspace_identity(scope_type, scope_id, identity_id)
+    if expected_etag is not None and identity.get("_etag") != expected_etag:
+        raise ActionAuthConflict("The identity changed. Check the selected action again.", code="action_auth_stale")
     auth = dict(identity.get("auth") or {})
-    if auth.get("password_secret_name"):
-        auth["password"] = retrieve_secret_from_key_vault_by_full_name(auth["password_secret_name"])
-    if auth.get("secret_secret_name"):
-        auth["secret"] = retrieve_secret_from_key_vault_by_full_name(auth["secret_secret_name"])
+    for field_name in ("password", "secret"):
+        reference = auth.get(f"{field_name}_secret_name")
+        if not reference:
+            continue
+        if not _identity_secret_reference_matches(reference, scope_type, scope_id, identity_id, field_name):
+            raise PermissionError("The identity credential reference is invalid.")
+        client = None
+        try:
+            client = _identity_secret_client()
+            value = client.get_secret(reference).value
+            if not isinstance(value, str) or not value or value == reference:
+                raise ActionAuthStorageError()
+            auth[field_name] = value
+        except Exception:
+            raise ActionAuthStorageError() from None
+        finally:
+            _close_identity_secret_client(client)
     return auth
 
 

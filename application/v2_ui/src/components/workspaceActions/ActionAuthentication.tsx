@@ -4,11 +4,13 @@ import { useId } from 'react';
 import { ActionField, ActionSecretInput, ACTION_INPUT_CLASS } from './ActionFields';
 import {
     actionAuthMethod, actionAuthModes, actionFieldError, actionText, actionValueAt,
-    changeActionAuth, changeActionField, selectActionIdentity,
+    canAuthorPersonalActionCredentials, changeActionAuth, changeActionCredentialProfile,
+    changeActionCredentialSource, changeActionField, selectActionIdentity,
 } from '../../lib/workspaceActionLogic';
 import { nativeActionDefinition, sqlConnectionMethod } from '../../lib/workspaceActionRegistry';
 import type { ActionTypeDefinition } from '../../lib/workspaceAuthoring';
 import type { ActionConnectorProps } from '../../lib/workspaceActionTypes';
+import { ACTION_AUTH_PROFILES, isActionAuthProfile } from '../../lib/actionAuth';
 
 export function ActionAuthentication(props: ActionConnectorProps & { definition: ActionTypeDefinition }) {
     const { draft, onChange, readOnly, definition } = props;
@@ -22,6 +24,53 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
     const identity = identities.find((candidate) => candidate.id === draft.identity_id);
     const identityMissing = Boolean(draft.identity_id && !identity);
     const sql = ['sql_query', 'sql_schema'].includes(draft.type);
+    const scope = props.authoringScope ?? 'personal';
+    const perUserAllowed = canAuthorPersonalActionCredentials(draft, scope);
+    const requirement = draft.credential_requirement;
+    const sourceSelector = perUserAllowed ? (
+        <ActionField id={`${id}-source`} label="Credential source" error={actionFieldError(props.errors, '/credential_requirement')}>
+            <select id={`${id}-source`} className={ACTION_INPUT_CLASS} disabled={readOnly}
+                value={requirement ? 'current_user' : 'configured'}
+                onChange={(event) => onChange((current) => changeActionCredentialSource(
+                    current, event.target.value === 'current_user' ? 'current_user' : 'configured', scope,
+                ))}>
+                <option value="configured">Configured action credentials or global identity</option>
+                <option value="current_user">Each user's personal identity</option>
+            </select>
+        </ActionField>
+    ) : null;
+
+    if (requirement) return (
+        <div className="space-y-4">
+            {sourceSelector ?? <p className="text-sm font-medium text-text-1">Credential source: Each user’s personal identity</p>}
+            <p className="text-sm text-text-2">The person submitting each turn connects their private identity. No user’s username, secret, or identity ID is stored in this global action.</p>
+            <ActionField id={`${id}-profile`} label="Authentication profile" error={actionFieldError(props.errors, '/credential_requirement/profile')}>
+                <select id={`${id}-profile`} className={ACTION_INPUT_CLASS} value={requirement.profile}
+                    disabled={readOnly || !perUserAllowed} onChange={(event) => {
+                        if (isActionAuthProfile(event.target.value)) {
+                            const profile = event.target.value;
+                            onChange((current) => changeActionCredentialProfile(current, profile, scope));
+                        }
+                    }}>
+                    {Object.entries(ACTION_AUTH_PROFILES).map(([value, profile]) => <option key={value} value={value}>{profile.label}</option>)}
+                </select>
+            </ActionField>
+            <ActionField id={`${id}-identity-name`} label="Personal identity name" required
+                error={actionFieldError(props.errors, '/credential_requirement/identity_name')}
+                help="Default: Yamcs. Renaming this label preserves existing bindings; it does not rename anyone’s saved identity.">
+                <input id={`${id}-identity-name`} className={ACTION_INPUT_CLASS} value={requirement.identity_name}
+                    disabled={readOnly || !perUserAllowed} required maxLength={120}
+                    onChange={(event) => {
+                        const identityName = event.target.value;
+                        onChange((current) => ({
+                            ...current, credential_requirement: current.credential_requirement
+                                ? { ...current.credential_requirement, identity_name: identityName } : undefined,
+                        }));
+                    }} />
+            </ActionField>
+            <p className="text-xs text-text-3">Yamcs login exchanges a username/password for a Yamcs token. Gateway HTTP Basic sends Basic authentication instead. They are different protocols, even though both use username/password identities. HTTPS and certificate verification are required.</p>
+        </div>
+    );
 
     const textField = (path: string, label: string, help?: string, required = false) => props.original?.secret_paths.includes(path)
         ? secretField(path, label, help) : (
@@ -58,10 +107,11 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
 
     return (
         <div className="space-y-5">
+            {sourceSelector}
             {identityTypes.length || draft.identity_id ? (
                 <div className="space-y-2">
                     <ActionField id={`${id}-identity`} label="Reusable identity"
-                        help="Use an existing identity from My Workspace, or enter credentials for this action. Credentials are resolved on the server."
+                        help={`Use an existing identity from ${scope === 'global' ? 'the global workspace' : 'My Workspace'}, or enter credentials for this action. Credentials are resolved on the server.`}
                         error={actionFieldError(props.errors, '/identity_id')}>
                         <select id={`${id}-identity`} className={ACTION_INPUT_CLASS} value={draft.identity_id || ''}
                             disabled={readOnly || props.identitiesLoading}

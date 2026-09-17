@@ -267,6 +267,7 @@ export const NATIVE_ACTION_TYPES: Record<string, ActionNativeDefinition> = {
         help: 'Read Tableau content using a personal access token or username/password. The token name is required with a PAT.',
     },
     yamcs: {
+        personalCredentialProfiles: ['yamcs_login', 'http_basic', 'bearer_token', 'api_key'],
         fields: [
             endpoint('Yamcs server URL'),
             field('instance', 'Yamcs instance', { required: true }),

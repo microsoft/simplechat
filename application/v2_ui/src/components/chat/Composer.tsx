@@ -54,8 +54,13 @@ import {
     composerDraftUnfilledVariables,
     composerDraftUserPromptValues,
     createComposerDraft,
+    type ComposerDraft,
 } from '../../lib/composerDraft';
+import { sameEditorValue } from '../../lib/workspaceAuthoring';
 import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
+import { ActionCredentialCard } from './ActionCredentialCard';
+import { actionAuthController } from '../../lib/actionAuthController';
+import { useActionAuthInteraction } from '../../lib/useActionAuth';
 import {
     CONTEXT_HANDOFF_PARAMS,
     readContextHandoff,
@@ -142,6 +147,11 @@ function ToolToggle({
 
 export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
     const { streaming, sendMessage, stopStreaming, activeConversationId } = useChatStore();
+    const authInteraction = useActionAuthInteraction();
+    const authenticationPending = authInteraction?.surface === 'chat';
+    const [submissionPending, setSubmissionPending] = useState(false);
+    const submissionPendingRef = useRef(false);
+    const mountedRef = useRef(true);
     // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
     // suggested when saving what is written as a prompt.
     const messages = useChatStore((state) => state.messages);
@@ -213,6 +223,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     const uploading = composerDraftHasPendingUploads(draft);
     const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
     const uploadConversationRef = useRef<string | null>(null);
+    const adoptingConversationRef = useRef<string | null>(null);
     const setText: React.Dispatch<React.SetStateAction<string>> = (update) => setDraft((current) => {
         const value = typeof update === 'function' ? update(current.text) : update;
         return { ...current, text: value, contextItems: reconcileContextItems(value, current.contextItems) };
@@ -247,6 +258,32 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         urlAccess: false,
         agentSelection: initialAgentSelection,
     });
+    const draftRef = useRef(draft);
+    const optionsRef = useRef(options);
+    draftRef.current = draft;
+    optionsRef.current = options;
+    const pendingDraft = useRef<{ draft: typeof draft; options: typeof options } | null>(null);
+    const samePendingDraft = (left: ComposerDraft, right: ComposerDraft) => sameEditorValue(
+        { ...left, promptAiValues: left.promptAiValues ?? {}, promptInstance: left.promptInstance ?? 0 },
+        { ...right, promptAiValues: right.promptAiValues ?? {}, promptInstance: right.promptInstance ?? 0 },
+    );
+    useEffect(() => {
+        const pending = pendingDraft.current;
+        if (pending && (!samePendingDraft(pending.draft, draft) || !sameEditorValue(pending.options, options))) {
+            actionAuthController.cancel('chat');
+        }
+    }, [draft, options]);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            pendingDraft.current = null;
+            actionAuthController.cancel('chat');
+        };
+    }, []);
+    useEffect(() => {
+        actionAuthController.cancel('chat');
+    }, [bootstrap?.user?.id]);
 
     /**
      * Orchestration mode.
@@ -469,6 +506,10 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         // claim made in the conversation being left.
         typingRef.current = false;
         uploadConversationRef.current = null;
+        const adoptingOwnConversation = activeConversationId !== null && adoptingConversationRef.current === activeConversationId;
+        adoptingConversationRef.current = null;
+        if (adoptingOwnConversation) return;
+        actionAuthController.cancel('chat');
         setDraft((current) => current.uploads.length ? { ...current, uploads: [] } : current);
     }, [activeConversationId]);
 
@@ -732,7 +773,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         ]);
 
     const submit = (allowUnfilled = false) => {
-        if (streaming || !canPost || uploadsBlocked) {
+        if (streaming || authenticationPending || submissionPendingRef.current || !canPost || uploadsBlocked) {
             return;
         }
         if (imageSelectionBlocked) {
@@ -806,28 +847,45 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     };
 
     const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
-        // Remembered only once the message is actually on its way, so a prompt that was
-        // filled in and then abandoned leaves nothing behind.
-        if (attachedPrompt && outgoing.promptInfo) {
-            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
-        }
+        if (submissionPendingRef.current) return;
         if (!activeConversationId && uploadConversationRef.current) {
+            adoptingConversationRef.current = uploadConversationRef.current;
             useChatStore.setState({
                 activeConversationId: uploadConversationRef.current,
                 activeConversationKind: 'personal',
             });
         }
-        // `options` is read before the clear below replaces it, so the request carries the
-        // references this message was written with.
+        const expectedDraft = draft;
+        const expectedOptions = options;
+        const isCurrent = () => mountedRef.current && samePendingDraft(draftRef.current, expectedDraft) && sameEditorValue(optionsRef.current, expectedOptions);
+        pendingDraft.current = { draft, options };
+        submissionPendingRef.current = true;
+        setSubmissionPending(true);
+        // The controller receives no draft. The original text, attachments, and selections
+        // stay here until the authenticated send is accepted, or are left untouched on cancel.
         void sendMessage(outgoing.message, {
             ...options,
             contextItems,
             promptInfo: outgoing.promptInfo,
+        }, {
+            isCurrent,
+            onConversationPrepared: (conversationId) => {
+                if (isCurrent()) adoptingConversationRef.current = conversationId;
+            },
+            onAccepted: () => {
+                if (!isCurrent()) return;
+                if (attachedPrompt && outgoing.promptInfo) {
+                    rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(expectedDraft));
+                }
+                pendingDraft.current = null;
+                clearDraft();
+                stopTyping();
+            },
+        }).finally(() => {
+            submissionPendingRef.current = false;
+            pendingDraft.current = null;
+            if (mountedRef.current) setSubmissionPending(false);
         });
-        clearDraft();
-        // Sent, so the indicator other people can see must stop now rather than when the
-        // idle timer happens to fire.
-        stopTyping();
     };
 
     /**
@@ -900,6 +958,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         }
         const conversationId = activeConversationId ?? uploadConversationRef.current;
         if (!activeConversationId && conversationId) {
+            adoptingConversationRef.current = conversationId;
             useChatStore.setState({ activeConversationId: conversationId, activeConversationKind: 'personal' });
         }
         void startOrchestrationPlan({
@@ -1141,6 +1200,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                 />
             )}
             <div className={clsx('mx-auto w-full', chatWidthClass(chatWidth))}>
+                <ActionCredentialCard />
                 {/* Above the input, matching the classic interface: the warning belongs
                     next to the message it is about, not below the send button. */}
                 <WebSearchNotice active={options.webSearch} />
@@ -1277,7 +1337,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                         promptContext={promptContext()}
                         actionsRef={editorActionsRef}
                         showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
-                        submitDisabled={streaming || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
+                        submitDisabled={streaming || authenticationPending || submissionPending || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
                         promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
                         onSendWithUnfilled={() => submit(true)}
                         knowledgeAgent={buildSelectionFields({
@@ -1600,7 +1660,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                                 <button
                                     type="button"
                                     onClick={() => submit()}
-                                    disabled={(!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
+                                    disabled={authenticationPending || submissionPending || (!text.trim() && !attachedPrompt) || !canPost || uploadsBlocked || imageSelectionBlocked || (orchestrating && approvalBlocked)}
                                     aria-describedby={imageSelectionBlocked ? imageSelectionNoticeId : undefined}
                                     aria-label={
                                         shared && !streaming

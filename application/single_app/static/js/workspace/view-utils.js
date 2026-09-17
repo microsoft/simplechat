@@ -1,6 +1,7 @@
 // view-utils.js
 // Shared utilities for list/grid view toggle, name humanization, and view modal
 // Used by personal and group agents/actions workspace modules
+import { actionAuthProfiles } from '../chat/chat-action-auth.js';
 
 /**
  * Convert a technical name to a human-readable display name.
@@ -193,7 +194,32 @@ export function switchViewContainers(mode, listContainer, gridContainer) {
  * @param {object} [callbacks] - Optional action callbacks { onChat, onEdit, onDelete }
  */
 export function openViewModal(item, type, callbacks = {}) {
-    const modalEl = document.getElementById("item-view-modal");
+    let modalEl = document.getElementById("item-view-modal");
+    if (!modalEl && type === 'action') {
+        modalEl = document.createElement('div');
+        modalEl.id = 'item-view-modal';
+        modalEl.className = 'modal fade';
+        modalEl.tabIndex = -1;
+        modalEl.setAttribute('aria-labelledby', 'item-view-modal-label');
+        const dialog = document.createElement('div');
+        dialog.className = 'modal-dialog modal-lg';
+        const content = document.createElement('div');
+        content.className = 'modal-content';
+        const header = document.createElement('div');
+        header.className = 'modal-header';
+        const title = document.createElement('h5');
+        title.id = 'item-view-modal-label';
+        title.className = 'modal-title';
+        header.appendChild(title);
+        const body = document.createElement('div');
+        body.className = 'modal-body';
+        const footer = document.createElement('div');
+        footer.className = 'modal-footer';
+        content.append(header, body, footer);
+        dialog.appendChild(content);
+        modalEl.appendChild(dialog);
+        document.body.appendChild(modalEl);
+    }
     if (!modalEl) return;
 
     const dialogEl = modalEl.querySelector(".modal-dialog");
@@ -220,6 +246,24 @@ export function openViewModal(item, type, callbacks = {}) {
     } else {
         titleEl.textContent = "Action Details";
         bodyEl.innerHTML = buildActionViewHtml(item);
+        if (item.type === 'yamcs' && item.credential_requirement?.source === 'current_user') {
+            const requirement = item.credential_requirement;
+            const section = document.createElement('section');
+            section.className = 'alert alert-info';
+            const heading = document.createElement('h6');
+            heading.textContent = "Each user's personal identity";
+            const identity = document.createElement('p');
+            identity.className = 'mb-1';
+            identity.textContent = `Required identity name: ${requirement.identity_name || 'Yamcs'}`;
+            const profile = document.createElement('p');
+            profile.className = 'mb-1';
+            profile.textContent = `Authentication: ${actionAuthProfiles[requirement.profile]?.label || 'Unsupported profile'}`;
+            const explanation = document.createElement('p');
+            explanation.className = 'mb-0';
+            explanation.textContent = 'This global action uses the submitting person’s private identity, including in shared conversations. No individual account is selected in the action.';
+            section.append(heading, identity, profile, explanation);
+            bodyEl.appendChild(section);
+        }
     }
 
     // Build footer buttons dynamically

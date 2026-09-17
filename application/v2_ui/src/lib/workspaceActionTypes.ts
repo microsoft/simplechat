@@ -2,6 +2,9 @@
 
 import type { Dispatch, SetStateAction } from 'react';
 import type { ActionConfiguration, AuthoringResource } from './workspaceAuthoring';
+import type { ActionAuthProfile } from './actionAuth';
+
+export type ActionAuthoringScope = 'personal' | 'group' | 'global';
 
 export interface ActionIdentity {
     id: string;
@@ -13,6 +16,7 @@ export interface ActionIdentity {
 }
 
 export interface ActionConnectorProps {
+    authoringScope?: ActionAuthoringScope;
     draft: ActionConfiguration;
     original: AuthoringResource<ActionConfiguration> | null;
     onChange: Dispatch<SetStateAction<ActionConfiguration>>;
@@ -47,6 +51,7 @@ export interface ActionCapability {
 }
 
 export interface ActionNativeDefinition {
+    personalCredentialProfiles?: readonly ActionAuthProfile[];
     fields: ActionFieldDescriptor[];
     defaults?: Partial<ActionConfiguration>;
     help?: string;

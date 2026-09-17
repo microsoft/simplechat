@@ -18,6 +18,7 @@ from agent_execution_context import (
     agent_execution,
 )
 from functions_action_catalog import resolve_action_manifest
+from functions_action_auth import ActionAuthStorageError, ActionCredentialsRequired
 from functions_appinsights import log_event
 from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
@@ -221,6 +222,10 @@ async def invoke_action(action_ref, task, context, *, settings, user_id, cancel_
                     calls += 1
                     await next(invocation)
                 except AgentExecutionCancelled:
+                    raise
+                except (ActionCredentialsRequired, ActionAuthStorageError) as exc:
+                    failure = exc
+                    frame.budget.require_authentication(exc)
                     raise
                 except Exception as exc:
                     # Contain arbitrary plugin exceptions before SK puts them in model context.

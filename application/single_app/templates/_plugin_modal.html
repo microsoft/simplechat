@@ -565,12 +565,39 @@
               <div class="config-section-label">
                 <i class="bi bi-shield-lock me-2"></i>Authentication
               </div>
+              <div class="mb-3 d-none" id="yamcs-credential-source-group">
+                  <label for="yamcs-credential-source" class="form-label">Credential source</label>
+                  <select class="form-select" id="yamcs-credential-source">
+                      <option value="inline">Action-specific credentials</option>
+                      <option value="workspace_identity">Global workspace identity</option>
+                      <option value="current_user">Each user's personal identity</option>
+                  </select>
+                  <div class="form-text">Personal credentials belong to the person submitting the request, never the action or conversation owner.</div>
+              </div>
+              <div id="yamcs-current-user-requirement" class="d-none">
+                  <div class="row g-3 mb-3">
+                      <div class="col-md-6">
+                          <label for="yamcs-identity-name" class="form-label">Required identity name</label>
+                          <input type="text" class="form-control" id="yamcs-identity-name" value="Yamcs" maxlength="120" />
+                      </div>
+                      <div class="col-md-6">
+                          <label for="yamcs-auth-profile" class="form-label">Personal identity authentication</label>
+                          <select class="form-select" id="yamcs-auth-profile">
+                              <option value="yamcs_login">Yamcs username/password login</option>
+                              <option value="http_basic">Gateway HTTP Basic (not Yamcs login)</option>
+                              <option value="bearer_token">Bearer token</option>
+                              <option value="api_key">API key (x-api-key)</option>
+                          </select>
+                      </div>
+                  </div>
+                  <p class="small text-muted">Choose a default label and protocol, not a user's actual identity. Each person connects privately before running an agent. HTTPS and certificate verification are required.</p>
+              </div>
               <div class="mb-3 d-none" id="yamcs-action-identity-group">
                 <label for="yamcs-identity-select" class="form-label">Reusable Identity</label>
                 <select class="form-select" id="yamcs-identity-select"></select>
                 <div class="form-text" id="yamcs-identity-status"></div>
               </div>
-              <div class="mb-3">
+              <div class="mb-3" id="yamcs-legacy-auth-method-group">
                 <label for="yamcs-auth-method" class="form-label">Authentication Method</label>
                 <select class="form-select" id="yamcs-auth-method">
                   <option value="username_password">Username and Password</option>
@@ -2628,6 +2655,9 @@
       </div>
     </div>
     </form>
+    <!-- Private identity inputs must not be children of the global action form. -->
+    <div id="yamcs-private-auth-root" class="modal-content mt-3 d-none"
+         {% if settings is defined and settings.enable_user_workspace and settings.enable_semantic_kernel %}data-identity-setup-url="/workspace?tab=identities"{% endif %}></div>
   </div>
 </div>
 

@@ -28,6 +28,24 @@ from semantic_kernel_plugins.rocksdb_plugin import (
 from functions_settings import get_settings, is_tabular_processing_enabled, update_settings
 from functions_authentication import *
 from functions_appinsights import log_event
+from functions_action_auth import (
+    ActionAuthStorageError,
+    ActionCredentialsRequired,
+    get_action_credential_requirement,
+    invalidate_action_auth_credentials,
+    normalize_action_credential_requirement,
+    resolve_action_auth_credentials,
+    validate_action_credential_requirement,
+)
+from functions_action_auth_execution import action_auth_error_response
+from functions_action_catalog import resolve_action_manifest
+from functions_yamcs_client import (
+    YamcsAuthenticationError,
+    YamcsConnectionError,
+    YamcsPermissionError,
+    create_yamcs_client,
+    validate_yamcs_credentials,
+)
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import os
@@ -334,6 +352,8 @@ def _apply_plugin_runtime_defaults(plugin_payload):
             plugin_payload['endpoint'] = AGENT_DEFAULT_ENDPOINT
         plugin_payload.setdefault('auth', {'type': 'user'})
 
+    normalized = normalize_action_credential_requirement(plugin_payload)
+    plugin_payload.update(normalized)
     return plugin_payload
 
 def discover_plugin_types():
@@ -724,6 +744,7 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
 
 def _validate_action_identity_for_scope(plugin_manifest, scope_type, scope_id):
     """Validate a plugin manifest's workspace identity reference for the target action scope."""
+    validate_action_credential_requirement(plugin_manifest, scope_type=scope_type)
     validate_action_identity_reference(plugin_manifest, scope_type, scope_id)
 
 
@@ -3033,13 +3054,53 @@ def test_yamcs_connection():
     if not isinstance(data, dict):
         return jsonify({'success': False, 'error': 'Yamcs test configuration must be an object.'}), 400
     user_id = get_current_user_id()
+    existing_plugin = None
+    try:
+        if data.get('action_ref'):
+            existing_plugin = resolve_action_manifest(user_id, data['action_ref'])
+        elif data.get('existing_plugin'):
+            existing_plugin = _load_existing_plugin_for_test(data['existing_plugin'], user_id)
+        if existing_plugin and get_action_credential_requirement(existing_plugin):
+            if existing_plugin.get('type') != YAMCS_PLUGIN_TYPE:
+                raise ValueError("Select a saved Yamcs action.")
+            if data.get('action_auth_request_id') is not None:
+                raise ValueError("Connection tests do not accept execution receipts.")
+            submitted_auth = data.get('auth') if isinstance(data.get('auth'), dict) else {}
+            if any(data.get(key) for key in ('auth_key', 'password', 'secret', 'token', 'username')) or any(
+                submitted_auth.get(key) for key in ('key', 'identity', 'password', 'secret', 'token')
+            ):
+                raise ValueError("Use the private credential form to update this identity.")
+            identity_auth = resolve_action_auth_credentials(existing_plugin)
+            validate_yamcs_credentials(existing_plugin, identity_auth)
+            return jsonify({
+                'success': True,
+                'message': 'Successfully connected to Yamcs using your personal identity.',
+            })
+        if data.get('action_ref') or data.get('credential_requirement'):
+            return jsonify({'success': False, 'error': 'Save an enabled global Yamcs action before testing its personal identity.'}), 400
+    except ActionCredentialsRequired as exc:
+        return action_auth_error_response(exc)
+    except ActionAuthStorageError as exc:
+        return action_auth_error_response(exc)
+    except YamcsAuthenticationError:
+        if existing_plugin is not None:
+            invalidate_action_auth_credentials(existing_plugin)
+        return jsonify({'success': False, 'error': 'Yamcs rejected your credential. Update your personal identity and check again.', 'error_code': 'action_auth_rejected'}), 403
+    except (YamcsPermissionError, PermissionError):
+        return jsonify({'success': False, 'error': 'Your account is not permitted to use this Yamcs action or resource.'}), 403
+    except LookupError:
+        return jsonify({'success': False, 'error': 'The selected Yamcs action or identity is unavailable.'}), 404
+    except YamcsConnectionError:
+        return jsonify({'success': False, 'error': 'Unable to connect to Yamcs. Check the configured destination and network access.'}), 400
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid Yamcs action or identity configuration.'}), 400
+    except ImportError:
+        return jsonify({'success': False, 'error': 'The Yamcs client dependency is unavailable.'}), 400
     editor_call = _is_personal_editor_test_request(data) and (
         'auth' in data or 'additionalFields' in data or bool(data.get('identity_id'))
     )
-    existing_plugin = None
     if editor_call:
         try:
-            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
             if data.get('clear_secret_paths'):
                 existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
             data = _prepare_editor_yamcs_test_data(data, existing_plugin, user_id)
@@ -3057,7 +3118,10 @@ def test_yamcs_connection():
     tls_verify = data.get('tls_verify', True)
     if isinstance(tls_verify, str):
         tls_verify = tls_verify.strip().lower() in {'1', 'true', 'yes', 'on'}
-    timeout = min(max(int(data.get('timeout', 10) or 10), 1), 30)
+    try:
+        timeout = min(max(int(data.get('timeout', 10) or 10), 1), 30)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'Yamcs timeout must be an integer.'}), 400
 
     if not server_url:
         return jsonify({'success': False, 'error': 'Yamcs server URL is required.'}), 400
@@ -3065,18 +3129,18 @@ def test_yamcs_connection():
         return jsonify({'success': False, 'error': 'Yamcs instance is required.'}), 400
     if auth_method not in {
         YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
+        'http_basic',
         YAMCS_AUTH_METHOD_API_KEY,
         YAMCS_AUTH_METHOD_BEARER_TOKEN,
         YAMCS_AUTH_METHOD_NONE,
     }:
         return jsonify({
             'success': False,
-            'error': "Yamcs auth_method must be 'username_password', 'api_key', 'bearer_token', or 'none'."
+            'error': "Yamcs auth_method must be 'username_password', 'http_basic', 'api_key', 'bearer_token', or 'none'."
         }), 400
 
     if not editor_call:
         try:
-            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
             if data.get('clear_secret_paths'):
                 existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
         except PermissionError as exc:
@@ -3115,10 +3179,10 @@ def test_yamcs_connection():
             return jsonify({'success': False, 'error': str(exc)}), 400
 
         if not auth_key:
-            credential_label = 'password' if auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD else 'credential'
+            credential_label = 'password' if auth_method in {YAMCS_AUTH_METHOD_USERNAME_PASSWORD, 'http_basic'} else 'credential'
             return jsonify({'success': False, 'error': f'A Yamcs {credential_label} is required for this authentication method.'}), 400
 
-    if auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD:
+    if auth_method in {YAMCS_AUTH_METHOD_USERNAME_PASSWORD, 'http_basic'}:
         if not username:
             username = existing_auth.get('identity', '')
         if not username:
@@ -3126,38 +3190,20 @@ def test_yamcs_connection():
 
     client = None
     try:
-        try:
-            from yamcs.client import APIKeyCredentials, Credentials, YamcsClient
-        except ImportError:
-            return jsonify({
-                'success': False,
-                'error': 'Yamcs client library is not installed on the server. Install yamcs-client to use Yamcs actions.'
-            }), 400
-
-        if auth_method == YAMCS_AUTH_METHOD_NONE:
-            credentials = None
-        elif auth_method == YAMCS_AUTH_METHOD_API_KEY:
-            credentials = APIKeyCredentials(auth_key)
-        elif auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
-            credentials = Credentials(access_token=auth_key)
-        else:
-            credentials = Credentials(username=username, password=auth_key)
-
-        client = YamcsClient(
-            server_url,
-            credentials=credentials,
-            tls_verify=tls_verify,
-            user_agent='SimpleChat',
+        native_auth_type = (
+            'NoAuth' if auth_method == YAMCS_AUTH_METHOD_NONE else
+            'basic' if auth_method == 'http_basic' else
+            'username_password' if auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD else 'key'
         )
-        session = getattr(getattr(client, 'ctx', None), 'session', None)
-        if session is not None:
-            original_request = session.request
-
-            def request_with_timeout(*args, **kwargs):
-                kwargs.setdefault('timeout', timeout)
-                return original_request(*args, **kwargs)
-
-            session.request = request_with_timeout
+        client = create_yamcs_client({
+            'type': YAMCS_PLUGIN_TYPE,
+            'endpoint': server_url,
+            'auth': {'type': native_auth_type, 'identity': username, 'key': auth_key},
+            'additionalFields': {
+                'server_url': server_url, 'instance': instance, 'auth_method': auth_method,
+                'tls_verify': tls_verify, 'timeout': timeout,
+            },
+        })
 
         server_info = client.get_server_info()
         instance_names = [str(getattr(item, 'name', '')) for item in client.list_instances()]
@@ -3195,11 +3241,16 @@ def test_yamcs_connection():
                 f"Instance '{instance}' is available ({len(instance_names)} instance(s) total)."
             ).strip()
         })
+    except ImportError:
+        return jsonify({'success': False, 'error': 'The Yamcs client dependency is unavailable.'}), 400
     except Exception as exc:
         status_code = getattr(getattr(exc, 'response', None), 'status_code', None)
         raw_message = str(exc)
-        if status_code in (401, 403) or 'unauthorized' in raw_message.lower() or 'forbidden' in raw_message.lower():
+        if isinstance(exc, YamcsAuthenticationError) or status_code == 401 or 'unauthorized' in raw_message.lower():
             error_msg = 'Yamcs authentication failed. Verify the selected authentication method and credentials.'
+            status = 403
+        elif isinstance(exc, YamcsPermissionError) or status_code == 403 or 'forbidden' in raw_message.lower():
+            error_msg = 'Your Yamcs account is not permitted to read the configured resource.'
             status = 403
         elif status_code == 404:
             error_msg = 'The Yamcs server responded, but the requested resource was not found. Verify the server URL.'
@@ -3209,13 +3260,14 @@ def test_yamcs_connection():
             status = 400
 
         log_event(
-            f'[PLUGINS] Yamcs connection test failed: {exc}',
+            '[PLUGINS] Yamcs connection test failed.',
             extra={
                 'user_id': user_id,
                 'server_url': server_url,
                 'instance': instance,
                 'auth_method': auth_method,
                 'status_code': status_code,
+                'error_type': type(exc).__name__,
             },
             level=logging.WARNING,
             exceptionTraceback=True,

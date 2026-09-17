@@ -46,6 +46,7 @@ import { EntryListEditor } from '../components/admin/EntryListEditor';
 import { ExternalLinksEditor } from '../components/admin/ExternalLinksEditor';
 import { FrontDoorRedirectPreview } from '../components/admin/FrontDoorRedirectPreview';
 import { GlobalIdentitiesList } from '../components/admin/GlobalIdentitiesList';
+import { AdminYamcsActions } from '../components/admin/AdminYamcsActions';
 import { GroupAssignmentField } from '../components/admin/GroupAssignmentField';
 import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
@@ -215,6 +216,8 @@ export function AdminSettingsPage() {
     const [query, setQuery] = useState('');
     const [activeGroup, setActiveGroup] = useState<string | null>(null);
     const [delegationDirty, setDelegationDirty] = useState(false);
+    const [yamcsDirty, setYamcsDirty] = useState(false);
+    const resourceDirty = delegationDirty || yamcsDirty;
 
     const [draft, setDraft] = useState<Json>({});
     const [saving, setSaving] = useState(false);
@@ -976,6 +979,8 @@ export function AdminSettingsPage() {
     const showDelegationManager = !loading && Boolean(data) && !error &&
         (activeGroup === 'agents-actions' ||
             (activeGroup === null && /call agent|delegation/i.test(query)));
+    const showYamcsManager = !loading && Boolean(data) && !error &&
+        (activeGroup === 'agents-actions' || (activeGroup === null && /yamcs|personal identity|action authentication/i.test(query)));
 
     return (
         <>
@@ -992,7 +997,7 @@ export function AdminSettingsPage() {
                 <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-edge p-3 lg:block">
                     <button
                         type="button"
-                        disabled={delegationDirty}
+                        disabled={resourceDirty}
                         onClick={() => setActiveGroup(null)}
                         className={clsx(
                             'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
@@ -1007,7 +1012,7 @@ export function AdminSettingsPage() {
                         <button
                             key={group.id}
                             type="button"
-                            disabled={delegationDirty}
+                            disabled={resourceDirty}
                             onClick={() => setActiveGroup(group.id)}
                             className={clsx(
                                 'w-full rounded-lg px-3 py-2 text-left text-sm transition-colors',
@@ -1025,7 +1030,7 @@ export function AdminSettingsPage() {
                     <div className="shrink-0 border-b border-edge p-4">
                         <div className="mx-auto mb-3 max-w-2xl lg:hidden">
                             <label htmlFor="admin-settings-category" className="mb-1 block text-xs text-text-2">Settings category</label>
-                            <select id="admin-settings-category" value={activeGroup ?? ''} disabled={delegationDirty}
+                            <select id="admin-settings-category" value={activeGroup ?? ''} disabled={resourceDirty}
                                 onChange={(event) => setActiveGroup(event.target.value || null)}
                                 className="w-full rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1">
                                 <option value="">All settings</option>
@@ -1046,7 +1051,7 @@ export function AdminSettingsPage() {
                                 onChange={(event) => setQuery(event.target.value)}
                                 placeholder="Search every setting…  (press / to focus)"
                                 aria-label="Search settings"
-                                disabled={delegationDirty}
+                                disabled={resourceDirty}
                                 className={clsx(
                                     'w-full rounded-xl border border-edge bg-surface-1 py-2.5 pr-3 pl-9',
                                     'text-sm text-text-1 placeholder:text-text-3',
@@ -1086,7 +1091,9 @@ export function AdminSettingsPage() {
                                 </GlassPanel>
                             ) : null}
 
-                            {!loading && !showDelegationManager && visibleSections.length === 0 && (
+                            {showYamcsManager ? <AdminYamcsActions onDirtyChange={setYamcsDirty} /> : null}
+
+                            {!loading && !showDelegationManager && !showYamcsManager && visibleSections.length === 0 && (
                                 <p className="py-12 text-center text-sm text-text-3">
                                     No settings match “{query}”.
                                 </p>

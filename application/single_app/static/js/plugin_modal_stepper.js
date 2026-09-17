@@ -2,6 +2,7 @@
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon } from "./workspace/view-utils.js";
+import { ActionAuthController, actionAuthProfiles, getGlobalActionAuthReference, isActionCredentialsRequired } from "./chat/chat-action-auth.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact)
 const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table'];
@@ -473,11 +474,13 @@ export class PluginModalStepper {
   setActionScope(scopeConfig = {}) {
     const scope = scopeConfig.scope || 'personal';
     const apiBase = scopeConfig.apiBase || '/api/workspace-identities/personal';
-    if (this.actionIdentityScope.scope === scope && this.actionIdentityScope.apiBase === apiBase) {
+    const allowCurrentUser = scope === 'global' && scopeConfig.allowCurrentUser === true;
+    if (this.actionIdentityScope.scope === scope && this.actionIdentityScope.apiBase === apiBase
+        && this.actionIdentityScope.allowCurrentUser === allowCurrentUser) {
       return;
     }
 
-    this.actionIdentityScope = { scope, apiBase };
+    this.actionIdentityScope = { scope, apiBase, allowCurrentUser };
     this.actionIdentities = [];
     this.actionIdentitiesLoaded = false;
     this.mcpServerPreconfigurations = MCP_FALLBACK_SERVER_PRECONFIGURATIONS;
@@ -580,6 +583,7 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('logAnalytics', 'log-analytics-identity-select', 'log-analytics-action-identity-group', 'log-analytics-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
+    this.toggleYamcsAuthFields();
   }
 
   populateActionIdentitySelector(kind, selectId, groupId, statusId) {
@@ -754,6 +758,9 @@ export class PluginModalStepper {
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
     document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
+    document.getElementById('yamcs-credential-source')?.addEventListener('change', () => this.handleYamcsCredentialSourceChange());
+    document.getElementById('yamcs-auth-profile')?.addEventListener('change', () => this.toggleYamcsAuthFields());
+    document.getElementById('plugin-modal')?.addEventListener('hide.bs.modal', () => this.yamcsActionAuthController?.cancel());
     const logAnalyticsCloud = document.getElementById('log-analytics-cloud');
     if (logAnalyticsCloud) {
       logAnalyticsCloud.addEventListener('change', () => this.handleLogAnalyticsCloudChange());
@@ -2858,6 +2865,9 @@ export class PluginModalStepper {
   }
 
   formatYamcsAuthMethod(authMethod) {
+    if (authMethod === 'basic' || authMethod === 'http_basic') {
+        return 'Gateway HTTP Basic (not Yamcs login)';
+    }
     if (authMethod === YAMCS_AUTH_METHOD_API_KEY) {
       return 'API Key';
     }
@@ -2867,11 +2877,69 @@ export class PluginModalStepper {
     if (authMethod === YAMCS_AUTH_METHOD_NONE) {
       return 'No Authentication';
     }
-    return 'Username and Password';
+    return 'Yamcs username/password login';
   }
 
+    canConfigureYamcsCurrentUser() {
+        return this.isYamcsType() && this.actionIdentityScope?.scope === 'global'
+            && this.actionIdentityScope.allowCurrentUser === true;
+    }
+
+    usesYamcsCurrentUser() {
+        return this.canConfigureYamcsCurrentUser()
+            && document.getElementById('yamcs-credential-source')?.value === 'current_user';
+    }
+
+    getYamcsCredentialRequirement() {
+        if (!this.usesYamcsCurrentUser()) {
+            return null;
+        }
+        const identityName = document.getElementById('yamcs-identity-name')?.value.trim() || '';
+        const profile = document.getElementById('yamcs-auth-profile')?.value;
+        if (!identityName || identityName.length > 120 || /[\u0000-\u001f\u007f]/.test(identityName) || !actionAuthProfiles[profile]) {
+            throw new Error('Choose a supported personal authentication profile and an identity name (1–120 characters, without control characters).');
+        }
+        const requirement = { source: 'current_user', identity_name: identityName, profile };
+        if (this.isEditMode && this.originalPlugin?.credential_requirement?.id) {
+            requirement.id = this.originalPlugin.credential_requirement.id;
+        }
+        return requirement;
+    }
+
+    handleYamcsCredentialSourceChange() {
+        this.yamcsActionAuthController?.cancel();
+        if (this.usesYamcsCurrentUser()) {
+            ['yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token',
+                'yamcs-identity-select'].forEach(id => {
+                const input = document.getElementById(id);
+                if (input) input.value = '';
+            });
+        } else if (document.getElementById('yamcs-credential-source')?.value === 'inline') {
+            this.setSelectedActionIdentity('yamcs', '');
+        }
+        this.toggleYamcsAuthFields();
+    }
+
   toggleYamcsAuthFields() {
-    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const canConfigure = this.canConfigureYamcsCurrentUser();
+    const currentUser = this.usesYamcsCurrentUser();
+    const source = document.getElementById('yamcs-credential-source')?.value;
+    const workspaceIdentity = !canConfigure || source === 'workspace_identity';
+    const selectedIdentity = workspaceIdentity ? this.getSelectedActionIdentity('yamcs') : null;
+    document.getElementById('yamcs-credential-source-group')?.classList.toggle('d-none', !canConfigure);
+    document.getElementById('yamcs-current-user-requirement')?.classList.toggle('d-none', !currentUser);
+    document.getElementById('yamcs-legacy-auth-method-group')?.classList.toggle('d-none', currentUser);
+    document.getElementById('yamcs-action-identity-group')?.classList.toggle('d-none',
+        currentUser || !workspaceIdentity || (!canConfigure && !this.getActionIdentitiesForKind('yamcs').length));
+    const testButton = document.getElementById('yamcs-test-connection-btn');
+    if (testButton && !testButton.disabled) {
+        testButton.textContent = currentUser ? 'Test as me' : 'Test Yamcs Connection';
+    }
+    const tlsVerify = document.getElementById('yamcs-tls-verify');
+    if (tlsVerify) {
+        tlsVerify.disabled = currentUser;
+        if (currentUser) tlsVerify.checked = true;
+    }
     const authMethodSelect = document.getElementById('yamcs-auth-method');
     const usernamePasswordGroup = document.getElementById('yamcs-username-password-group');
     const apiKeyGroup = document.getElementById('yamcs-api-key-group');
@@ -2890,7 +2958,7 @@ export class PluginModalStepper {
       }
     });
 
-    if (selectedIdentity) {
+    if (selectedIdentity || currentUser) {
       return;
     }
 
@@ -2916,6 +2984,18 @@ export class PluginModalStepper {
     document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
     document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
     document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
+    ['yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
+    const requirement = plugin.credential_requirement;
+    document.getElementById('yamcs-credential-source').value = requirement ? 'current_user' : plugin.identity_id ? 'workspace_identity' : 'inline';
+    document.getElementById('yamcs-identity-name').value = requirement?.identity_name || 'Yamcs';
+    document.getElementById('yamcs-auth-profile').value = requirement?.profile || 'yamcs_login';
+    if (requirement) {
+        this.setSelectedActionIdentity('yamcs', '');
+        this.toggleYamcsAuthFields();
+        return;
+    }
 
     let authMethod = additionalFields.auth_method || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
     if (auth.type === 'NoAuth') {
@@ -2940,11 +3020,13 @@ export class PluginModalStepper {
 
   getYamcsConfiguration() {
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
-    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
-    const authMethod = selectedIdentity
+    const requirement = this.getYamcsCredentialRequirement();
+    const selectedIdentity = requirement ? null : this.getSelectedActionIdentity('yamcs');
+    const authMethod = requirement ? actionAuthProfiles[requirement.profile].method : selectedIdentity
       ? this.getYamcsIdentityAuthMethod(selectedIdentity)
       : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
     const additionalFields = {
+      ...(this.originalPlugin?.additionalFields || this.originalPlugin?.additional_fields || {}),
       server_url: serverUrl,
       instance: document.getElementById('yamcs-instance')?.value.trim() || '',
       processor: document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR,
@@ -2958,7 +3040,18 @@ export class PluginModalStepper {
     const auth = {};
     let identityId = '';
 
-    if (selectedIdentity) {
+    if (requirement) {
+        let target;
+        try { target = new URL(serverUrl); } catch { throw new Error('A valid HTTPS Yamcs destination is required.'); }
+        if (target.protocol !== 'https:' || target.username || target.password || target.search || target.hash || !additionalFields.tls_verify) {
+            throw new Error('Personal identities require HTTPS, certificate verification, and a destination without user information, query, or fragment.');
+        }
+        auth.type = actionAuthProfiles[requirement.profile].nativeType;
+        ['identity_auth_type', 'identity_id', 'username', 'password', 'secret', 'auth_key', 'api_key',
+            'bearer_token', 'access_token', 'token', 'key', 'identity', 'key_vault_reference',
+            'credentials', 'headers', 'auth_headers', 'custom_headers', 'password_secret_name',
+            'secret_secret_name', 'connection_string'].forEach(key => delete additionalFields[key]);
+    } else if (selectedIdentity) {
       identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
       auth.type = 'identity';
       auth.identity = identityId;
@@ -2981,7 +3074,8 @@ export class PluginModalStepper {
       endpoint: serverUrl,
       auth,
       additionalFields,
-      identityId
+      identityId,
+      credentialRequirement: requirement,
     };
   }
 
@@ -4550,6 +4644,20 @@ export class PluginModalStepper {
           const bearerToken = document.getElementById('yamcs-bearer-token').value.trim();
           const maxRows = parseInt(document.getElementById('yamcs-max-rows').value, 10);
           const timeout = parseInt(document.getElementById('yamcs-timeout').value, 10);
+          const currentUser = this.usesYamcsCurrentUser();
+          if (currentUser) {
+              try {
+                  this.getYamcsConfiguration();
+              } catch (error) {
+                  this.showError(error.message);
+                  return false;
+              }
+          } else if (this.canConfigureYamcsCurrentUser()
+              && document.getElementById('yamcs-credential-source').value === 'workspace_identity'
+              && !selectedIdentity) {
+              this.showError('Select a global workspace identity, or choose a different credential source.');
+              return false;
+          }
 
           if (!serverUrl || !/^https?:\/\//i.test(serverUrl)) {
             this.showError('Yamcs server URL must be an http or https URL.');
@@ -4559,19 +4667,19 @@ export class PluginModalStepper {
             this.showError('Yamcs instance is required.');
             return false;
           }
-          if (![YAMCS_AUTH_METHOD_USERNAME_PASSWORD, YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN, YAMCS_AUTH_METHOD_NONE].includes(authMethod)) {
+          if (!currentUser && ![YAMCS_AUTH_METHOD_USERNAME_PASSWORD, YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN, YAMCS_AUTH_METHOD_NONE].includes(authMethod)) {
             this.showError('Select a supported Yamcs authentication method.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
+          if (!currentUser && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
             this.showError('Yamcs username and password are required for username/password authentication.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
+          if (!currentUser && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
             this.showError('Yamcs API key is required for API key authentication.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
+          if (!currentUser && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
             this.showError('Yamcs bearer token is required for bearer token authentication.');
             return false;
           }
@@ -5472,11 +5580,77 @@ export class PluginModalStepper {
     }
   }
 
+    async testYamcsAsCurrentUser(button, result, status) {
+        if (button.disabled) return;
+        const original = this.originalPlugin;
+        const actionRef = this.isEditMode ? getGlobalActionAuthReference(original) : null;
+        const savedRequirement = original?.credential_requirement;
+        const configuration = this.getYamcsConfiguration();
+        const savedFields = original?.additionalFields || original?.additional_fields || {};
+        result.classList.remove('d-none');
+        status.className = 'alert alert-info mb-0 py-2 px-3 small';
+        const sameRequirement = savedRequirement
+            && savedRequirement.id === configuration.credentialRequirement?.id
+            && savedRequirement.profile === configuration.credentialRequirement?.profile
+            && savedRequirement.identity_name === configuration.credentialRequirement?.identity_name;
+        if (!actionRef || !sameRequirement
+            || configuration.endpoint !== (original?.endpoint || savedFields.server_url)
+            || configuration.additionalFields.instance !== savedFields.instance) {
+            status.textContent = 'Save this global action first, then reopen it and choose Test as me. Your private identity is never saved in the global action.';
+            return;
+        }
+        button.disabled = true;
+        status.textContent = 'Checking your personal identity for the saved global action…';
+        this.yamcsActionAuthController ||= new ActionAuthController({
+            root: document.getElementById('yamcs-private-auth-root'),
+        });
+        const snapshot = JSON.stringify(configuration);
+        const isCurrent = () => {
+            try {
+                return original === this.originalPlugin && snapshot === JSON.stringify(this.getYamcsConfiguration());
+            } catch {
+                return false;
+            }
+        };
+        try {
+            const connectionReady = await this.yamcsActionAuthController.authorize({ action_ref: actionRef }, { isCurrent });
+            if (connectionReady === null || !isCurrent()) {
+                status.textContent = 'Private connection cancelled. No test was run.';
+                return;
+            }
+            const response = await fetch('/api/plugins/test-yamcs-connection', {
+                method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action_ref: actionRef }),
+            });
+            const data = await response.json();
+            if (isActionCredentialsRequired(data)) {
+                void this.yamcsActionAuthController.repair(data, { payload: { action_ref: actionRef }, isCurrent });
+                status.textContent = 'Your identity needs attention. Connect privately, then explicitly choose Test as me again.';
+                return;
+            }
+            status.className = `alert alert-${response.ok && data.success ? 'success' : 'danger'} mb-0 py-2 px-3 small`;
+            status.textContent = response.ok && data.success
+                ? 'Connected to Yamcs using your personal identity. Global credentials were not changed.'
+                : response.status === 403
+                    ? 'Yamcs rejected authentication or denied access. Check your personal identity and service permissions, then test again.'
+                    : 'The saved action could not be tested. Check service availability and your private identity.';
+        } catch {
+            status.className = 'alert alert-danger mb-0 py-2 px-3 small';
+            status.textContent = 'The private connection test could not be completed. Try again.';
+        } finally {
+            button.disabled = false;
+        }
+    }
+
   async testYamcsConnection() {
     const btn = document.getElementById('yamcs-test-connection-btn');
     const resultDiv = document.getElementById('yamcs-test-connection-result');
     const alertDiv = document.getElementById('yamcs-test-connection-alert');
     if (!btn || !resultDiv || !alertDiv) return;
+    if (this.usesYamcsCurrentUser()) {
+        return this.testYamcsAsCurrentUser(btn, resultDiv, alertDiv);
+    }
 
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     const instance = document.getElementById('yamcs-instance')?.value?.trim() || '';
@@ -6797,6 +6971,7 @@ export class PluginModalStepper {
     let endpoint = '';
     let additionalFields = {};
     let identityId = '';
+    let credentialRequirement = null;
 
     if (isOpenApiVisible) {
       // Collect OpenAPI-specific data
@@ -7023,6 +7198,7 @@ export class PluginModalStepper {
       auth = yamcsConfig.auth;
       additionalFields = yamcsConfig.additionalFields;
       identityId = yamcsConfig.identityId;
+      credentialRequirement = yamcsConfig.credentialRequirement;
     } else if (isMcpVisible) {
       const mcpConfig = this.getMcpConfiguration();
       endpoint = mcpConfig.endpoint;
@@ -7120,6 +7296,9 @@ export class PluginModalStepper {
 
     if (identityId) {
       formData.identity_id = identityId;
+    }
+    if (credentialRequirement) {
+        formData.credential_requirement = credentialRequirement;
     }
 
     return formData;
@@ -7400,6 +7579,10 @@ export class PluginModalStepper {
       }
       return this.formatTableauAuthMethod(document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
     } else if (this.isYamcsType()) {
+      if (this.usesYamcsCurrentUser()) {
+          const requirement = this.getYamcsCredentialRequirement();
+          return `Each user's personal identity: ${requirement.identity_name} — ${actionAuthProfiles[requirement.profile].label}`;
+      }
       if (this.getSelectedActionIdentity('yamcs')) {
         return 'Reusable Identity';
       }
@@ -7728,6 +7911,11 @@ export class PluginModalStepper {
     document.getElementById('summary-yamcs-auth-method').textContent = selectedIdentity
       ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
       : this.formatYamcsAuthMethod(authMethod);
+    if (this.usesYamcsCurrentUser()) {
+        const requirement = this.getYamcsCredentialRequirement();
+        document.getElementById('summary-yamcs-auth-method').textContent =
+            `Each user's personal identity: ${requirement.identity_name} — ${actionAuthProfiles[requirement.profile].label}`;
+    }
     document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
     document.getElementById('summary-yamcs-max-rows').textContent = document.getElementById('yamcs-max-rows')?.value.trim() || '500';
     document.getElementById('summary-yamcs-timeout').textContent = `${document.getElementById('yamcs-timeout')?.value || '30'} seconds`;
@@ -8100,6 +8288,10 @@ export class PluginModalStepper {
         } else if (!selectedIdentity && yamcsAuthMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
           currentAuthKey = document.getElementById('yamcs-bearer-token')?.value || '';
         }
+        if (this.usesYamcsCurrentUser()) {
+            currentAuthType = actionAuthProfiles[this.getYamcsCredentialRequirement().profile].nativeType;
+            currentAuthKey = '';
+        }
       } else if (isMcpType) {
         const selectedIdentity = this.getSelectedActionIdentity('mcp');
         currentAuthType = selectedIdentity ? 'identity' : (document.getElementById('mcp-auth-method')?.value || 'none');
@@ -8203,6 +8395,16 @@ export class PluginModalStepper {
       }
 
       // Compare authentication key (mask for security)
+      if (isYamcsType) {
+          const before = this.originalPlugin.credential_requirement || null;
+          const after = this.getYamcsCredentialRequirement();
+          const describe = requirement => requirement
+              ? `Each user's personal identity: ${requirement.identity_name} — ${actionAuthProfiles[requirement.profile]?.label || 'Unsupported profile'}`
+              : 'Action-specific credentials or workspace identity';
+          if (describe(before) !== describe(after)) {
+              changes.credentialRequirement = { before: describe(before), after: describe(after) };
+          }
+      }
       const originalAuthKey = (this.originalPlugin.auth && this.originalPlugin.auth.key) || '';
       if (currentAuthKey !== originalAuthKey) {
         changes.authKey = {
@@ -8374,6 +8576,7 @@ export class PluginModalStepper {
       description: 'Description',
       endpoint: 'Endpoint/Connection',
       authType: 'Authentication Type',
+      credentialRequirement: 'Personal Identity Requirement',
       apiKey: 'API Key',
       username: 'Username',
       password: 'Password',
@@ -8526,6 +8729,21 @@ export class PluginModalStepper {
     if (tableauUseServerVersion) {
       tableauUseServerVersion.checked = true;
     }
+
+    // A new draft must not inherit another action's identity requirement or inline values.
+    safeSetValue('yamcs-credential-source', 'inline');
+    safeSetValue('yamcs-identity-name', 'Yamcs');
+    safeSetValue('yamcs-auth-profile', 'yamcs_login');
+    safeSetValue('yamcs-server-url');
+    safeSetValue('yamcs-instance');
+    safeSetValue('yamcs-processor', YAMCS_DEFAULT_PROCESSOR);
+    safeSetValue('yamcs-auth-method', YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
+    ['yamcs-identity-select', 'yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token'].forEach(id => safeSetValue(id));
+    safeSetValue('yamcs-max-rows', '500');
+    safeSetValue('yamcs-timeout', '30');
+    document.getElementById('yamcs-tls-verify').checked = true;
+    document.getElementById('yamcs-enable-archive-sql').checked = false;
+    this.toggleYamcsAuthFields();
 
     // Step 3 fields - SQL Plugin
     safeSetValue('sql-connection-method', 'connection_string');

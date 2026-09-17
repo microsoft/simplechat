@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from functions_appinsights import log_event
+from functions_action_auth import validate_action_credential_requirement
 from functions_azure_endpoint_validation import (
     validate_azure_blob_endpoint,
     validate_azure_cosmos_endpoint,
@@ -136,6 +137,11 @@ class PluginHealthChecker:
         if not isinstance(manifest, dict):
             errors.append("Manifest must be a dictionary")
             return False, errors
+
+        try:
+            validate_action_credential_requirement(manifest)
+        except ValueError as exc:
+            return False, [str(exc)]
         
         # Required fields
         required_fields = ['name', 'type']
@@ -348,19 +354,20 @@ class PluginHealthChecker:
             if not additional_fields.get('instance'):
                 errors.append("Yamcs plugin requires additionalFields.instance")
             if auth_type not in YAMCS_SUPPORTED_AUTH_TYPES:
-                errors.append("Yamcs plugin supports auth.type values 'NoAuth', 'key', 'identity', or 'username_password'")
+                errors.append("Yamcs plugin supports auth.type values 'NoAuth', 'key', 'identity', 'basic', or 'username_password'")
             if raw_auth_method and raw_auth_method not in YAMCS_SUPPORTED_AUTH_METHODS:
-                errors.append("Yamcs plugin supports additionalFields.auth_method values 'username_password', 'api_key', 'bearer_token', or 'none'")
-            if auth_type == 'identity' and not auth.get('identity') and not identity_id:
-                errors.append("Yamcs reusable identity auth requires auth.identity or identity_id")
-            elif auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD:
-                if auth_type == 'username_password' and (not auth.get('identity') or not auth.get('key')):
-                    errors.append("Yamcs username/password auth requires auth.identity and auth.key")
-            elif auth_method in {YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN}:
-                if auth_type == 'key' and not auth.get('key'):
-                    errors.append("Yamcs API key and bearer token auth require auth.key")
-            elif auth_method == YAMCS_AUTH_METHOD_NONE and auth_type not in {'NoAuth', 'identity'}:
-                errors.append("Yamcs unauthenticated access requires auth.type='NoAuth'")
+                errors.append("Yamcs plugin supports additionalFields.auth_method values 'username_password', 'http_basic', 'api_key', 'bearer_token', or 'none'")
+            if not manifest.get('credential_requirement'):
+                if auth_type == 'identity' and not auth.get('identity') and not identity_id:
+                    errors.append("Yamcs reusable identity auth requires auth.identity or identity_id")
+                elif auth_method in {YAMCS_AUTH_METHOD_USERNAME_PASSWORD, 'http_basic'}:
+                    if auth_type in {'username_password', 'basic'} and (not auth.get('identity') or not auth.get('key')):
+                        errors.append("Yamcs username/password auth requires auth.identity and auth.key")
+                elif auth_method in {YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN}:
+                    if auth_type == 'key' and not auth.get('key'):
+                        errors.append("Yamcs API key and bearer token auth require auth.key")
+                elif auth_method == YAMCS_AUTH_METHOD_NONE and auth_type not in {'NoAuth', 'identity'}:
+                    errors.append("Yamcs unauthenticated access requires auth.type='NoAuth'")
 
             yamcs_range_fields = {
                 'max_rows': (YAMCS_MIN_MAX_ROWS, YAMCS_MAX_MAX_ROWS),

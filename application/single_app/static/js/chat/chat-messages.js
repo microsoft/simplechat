@@ -24,6 +24,7 @@ import {
 import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
+import { cancelActionAuthRequest, prepareActionAuthExecution } from "./chat-action-auth.js";
 import {
     getCurrentReasoningEffort,
     isReasoningEffortEnabled,
@@ -77,6 +78,12 @@ const conversationForkButtonSpinner = document.getElementById('fork-conversation
 let pendingConversationFork = null;
 let conversationForkRequestPending = false;
 let largeTabularRunConfirmationPending = false;
+let actionAuthSendPending = false;
+let actionAuthSendSequence = 0;
+window.addEventListener('chat:conversation-context-changed', () => {
+    actionAuthSendSequence += 1;
+    actionAuthSendPending = false;
+});
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -6760,29 +6767,7 @@ export async function sendMessage(turnOptions = {}) {
     return;
   }
 
-  if (!currentConversationId) {
-    createNewConversation(() => {
-      actuallySendMessage(combinedMessage, turnOptions);
-    }, { preserveSelections: true, initialMessage: combinedMessage });
-  } else {
-    actuallySendMessage(combinedMessage, turnOptions);
-  }
-
-  userInput.value = "";
-  userInput.style.height = "";
-  if (promptSelect) {
-    promptSelect.selectedIndex = 0;
-  }
-  // Update send button visibility after clearing input
-  updateSendButtonVisibility();
-  // Keep focus on input
-  userInput.focus();
-
-  // After sending, ensure the chat view scrolls so the
-  // user can see their newly submitted message.
-  if (typeof window.scrollChatToBottom === 'function') {
-    window.scrollChatToBottom();
-  }
+  return actuallySendMessage(combinedMessage, turnOptions);
 }
 
 function getCurrentModelSelection() {
@@ -7442,7 +7427,9 @@ function buildVoiceResponseCompletionHandler(responseModality) {
   };
 }
 
-export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
+export async function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
+  if (actionAuthSendPending) return false;
+  const sendSequence = ++actionAuthSendSequence;
   const inputModality = turnOptions.inputModality === "voice" ? "voice" : "text";
   const responseModality = inputModality === "voice" && turnOptions.responseModality === "voice"
     ? "voice"
@@ -7452,6 +7439,81 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
     currentConversationId
     && window.chatCollaboration?.isCollaborationConversation?.(currentConversationId)
   );
+  const draftText = userInput?.value || '';
+  const promptIndex = promptSelect?.selectedIndex || 0;
+  let submittedConversationId = currentConversationId;
+  let draftCleared = false;
+  const releasePendingSend = () => {
+      if (sendSequence === actionAuthSendSequence) actionAuthSendPending = false;
+  };
+  const clearAcceptedDraft = () => {
+      releasePendingSend();
+      if (draftCleared || currentConversationId !== submittedConversationId || sendSequence !== actionAuthSendSequence) return;
+      draftCleared = true;
+      if (userInput && userInput.value === draftText) {
+          userInput.value = '';
+          userInput.style.height = '';
+      }
+      if (promptSelect?.selectedIndex === promptIndex) {
+          promptSelect.selectedIndex = 0;
+      }
+      updateSendButtonVisibility();
+  };
+  const authorizeDraft = async (payload, buildCurrentContext) => {
+      const snapshot = JSON.stringify(buildCurrentContext());
+      actionAuthSendPending = true;
+      try {
+          const approved = await prepareActionAuthExecution(payload, {
+              isCurrent: () => sendSequence === actionAuthSendSequence && userInput?.value === draftText
+                  && snapshot === JSON.stringify(buildCurrentContext()),
+          });
+          if (!approved) {
+              releasePendingSend();
+              return false;
+          }
+          if (!currentConversationId) {
+              const draftRequestId = payload.action_auth_request_id;
+              const created = await createNewConversation(() => {}, {
+                  preserveSelections: true, initialMessage: finalMessageToSend,
+              });
+              if (!created?.conversation_id || sendSequence !== actionAuthSendSequence) {
+                  releasePendingSend();
+                  return false;
+              }
+              payload.conversation_id = created.conversation_id;
+              submittedConversationId = created.conversation_id;
+              if (draftRequestId) {
+                  // Pending requests are bound to an exact conversation. Recheck the new ID
+                  // after creation rather than replaying a receipt for a null conversation.
+                  void cancelActionAuthRequest(draftRequestId);
+                  const createdSnapshot = JSON.stringify(buildCurrentContext());
+                  if (!await prepareActionAuthExecution(payload, {
+                      isCurrent: () => sendSequence === actionAuthSendSequence && userInput?.value === draftText
+                          && createdSnapshot === JSON.stringify(buildCurrentContext()),
+                  })) {
+                      releasePendingSend();
+                      return false;
+                  }
+              }
+          }
+          return true;
+      } catch {
+          releasePendingSend();
+          showToast('The private identity check could not be completed. Your draft has not been sent.', 'warning');
+          return false;
+      }
+  };
+  const streamOptions = {
+      actionAuthPrepared: true,
+      onAccepted: clearAcceptedDraft,
+      onActionAuthRequired: releasePendingSend,
+      onError: releasePendingSend,
+      onFinally: releasePendingSend,
+      onDone: data => {
+          clearAcceptedDraft();
+          onVoiceResponseDone?.(data);
+      },
+  };
 
   if (isCollaborativeConversation) {
     const tempUserMessageId = `temp_user_${Date.now()}`;
@@ -7467,12 +7529,14 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
       showToast('Add a message after the selected @agent or @model tag.', 'warning');
       return;
     }
+    if (!await authorizeDraft(
+        collaborativeMessageData,
+        () => buildCollaborativeSendContext(finalMessageToSend, currentConversationId),
+    )) return false;
 
     const pendingCollaborativeContext = window.chatCollaboration?.getPendingMessageContext?.({ invocationTarget }) || null;
     appendMessage("You", displayMessageText, null, tempUserMessageId, false, [], [], [], null, null, pendingCollaborativeContext, true);
-    userInput.value = "";
-    userInput.style.height = "";
-    updateSendButtonVisibility();
+    if (!collaborativeMessageData.action_auth_request_id) clearAcceptedDraft();
 
     const collaborativeSendOperation = shouldUseCollaborativeAiWorkflow(collaborativeMessageData, explicitInvocationTarget)
       ? window.chatCollaboration.sendCollaborativeAiMessage?.(
@@ -7480,18 +7544,19 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
         tempUserMessageId,
         collaborativeMessageData,
         pendingCollaborativeContext,
-        { onDone: onVoiceResponseDone },
+        streamOptions,
       )
       : window.chatCollaboration.sendCollaborativeMessage(displayMessageText, tempUserMessageId);
 
     Promise.resolve(collaborativeSendOperation).catch(error => {
+      releasePendingSend();
       const tempMessage = document.querySelector(`[data-message-id="${tempUserMessageId}"]`);
       if (tempMessage) {
         tempMessage.remove();
       }
       showToast(error.message || 'Failed to send shared message.', 'danger');
     });
-    return;
+    return true;
   }
 
   // Generate a temporary message ID for the user message
@@ -7540,25 +7605,26 @@ export function actuallySendMessage(finalMessageToSend, turnOptions = {}) {
     );
     return;
   }
+  if (!await authorizeDraft(
+      messageData,
+      () => buildChatRequestPayload(finalMessageToSend, currentConversationId),
+  )) return false;
 
   // Append user message first with temporary ID
   appendMessage("You", finalMessageToSend, null, tempUserMessageId);
-  userInput.value = "";
-  userInput.style.height = "";
-  // Update send button visibility after clearing input
-  updateSendButtonVisibility();
+  if (!messageData.action_auth_request_id) clearAcceptedDraft();
   sendMessageWithStreaming(
     messageData,
     tempUserMessageId,
     currentConversationId,
     {
+      ...streamOptions,
       endpoint: useDocumentAction ? '/api/chat/document-action/stream' : '/api/chat/stream',
       fallbackAgentInfo: messageData.agent_info || null,
-      onDone: onVoiceResponseDone,
     }
   );
 
-  return;
+  return true;
 }
 
 function attachCodeBlockCopyButtons(parentElement) {

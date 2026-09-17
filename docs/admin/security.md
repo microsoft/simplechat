@@ -125,6 +125,13 @@ SimpleChat does not send the reminder emails. It raises them in-app and emits an
 
 ## Global Identities {#workspace-identities}
 
+Global identities are distinct from **Per-User Action Authentication**, introduced
+in **0.261.107**. A global Yamcs action can require an identity in each submitting
+user's personal workspace instead of using a shared global credential. The
+requirement does not let administrators select another user's credential for
+runtime use, and it follows the existing Key Vault/Cosmos identity storage policy.
+See [personal action authentication]({{ '/guides/personal-action-authentication/' | relative_url }}).
+
 ### Global Identities {#workspace-identities-section}
 
 A global identity is a credential for a system SimpleChat connects out to -- a SharePoint

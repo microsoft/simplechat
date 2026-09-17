@@ -337,6 +337,9 @@
                 </button>
             </div>
 
+            <div id="chat-action-auth-root" class="px-3 pt-3 overflow-auto d-none"
+                 {% if settings.enable_user_workspace and settings.enable_semantic_kernel %}data-identity-setup-url="/workspace?tab=identities"{% endif %}></div>
+
             <div class="p-3 border-top flex-shrink-0">
 
                                 <div class="chat-toolbar mb-2">

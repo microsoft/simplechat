@@ -16,6 +16,7 @@ from functions_blob_storage_operations import BLOB_STORAGE_PLUGIN_TYPE, derive_b
 from functions_chart_operations import CHART_DEFAULT_ENDPOINT
 from functions_databricks_operations import DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE, DATABRICKS_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_DEFAULT_ENDPOINT, SNOWFLAKE_PLUGIN_TYPE
+from functions_action_auth import validate_action_credential_requirement
 
 SCHEMA_DIR = os.path.join(os.path.dirname(__file__), 'static', 'json', 'schemas')
 PLUGIN_ENDPOINT_DEFAULTS = {
@@ -163,6 +164,10 @@ def validate_plugin(plugin):
     schema = load_schema('plugin.schema.json')
     plugin_copy = apply_plugin_validation_defaults(plugin)
     plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
+    try:
+        validate_action_credential_requirement(plugin_copy)
+    except ValueError as exc:
+        return str(exc)
     
     # First run schema validation
     if schema.get("$ref") and schema.get("definitions"):

@@ -1,6 +1,7 @@
 // admin_plugins.js (updated to use new multi-step modal)
 import { showToast } from "../chat/chat-toast.js"
 import { renderPluginsTable as sharedRenderPluginsTable, validatePluginManifest as sharedValidatePluginManifest, getErrorMessageFromResponse } from "../plugin_common.js";
+import { openViewModal } from "../workspace/view-utils.js";
 
 let adminPlugins = [];
 
@@ -27,6 +28,10 @@ async function loadPlugins() {
             plugins: adminPlugins,
             tbodySelector: '#admin-plugins-table-body',
             onEdit: name => editPlugin(name),
+            onView: name => {
+                const plugin = adminPlugins.find(item => item.name === name);
+                if (plugin) openViewModal({ ...plugin, is_global: true }, 'action', { onEdit: () => openPluginModal(plugin) });
+            },
             onDelete: name => deletePlugin(name),
             onToggleEnabled: name => togglePluginEnabled(name),
             onGovern: name => governPlugin(name, adminPlugins),
@@ -45,7 +50,8 @@ function openPluginModal(plugin = null) {
     if (window.pluginModalStepper) {
         window.pluginModalStepper.setActionScope({
             scope: 'global',
-            apiBase: '/api/admin/workspace-identities/global'
+            apiBase: '/api/admin/workspace-identities/global',
+            allowCurrentUser: true,
         });
         const modal = window.pluginModalStepper.showModal(plugin);
         
@@ -70,7 +76,7 @@ function makePluginCopyName(name, plugins = []) {
     return `${baseName}_${suffix}`;
 }
 
-function duplicatePlugin(name, plugins = []) {
+async function duplicatePlugin(name, plugins = []) {
     const plugin = (plugins || []).find(p => p.name === name);
     if (!plugin) {
         showToast(`Action "${name}" not found`, 'danger');
@@ -79,9 +85,15 @@ function duplicatePlugin(name, plugins = []) {
 
     const duplicate = JSON.parse(JSON.stringify(plugin));
     delete duplicate.id;
+    if (duplicate.credential_requirement) {
+        delete duplicate.credential_requirement.id;
+    }
     duplicate.name = makePluginCopyName(plugin.name, plugins);
     duplicate.display_name = `${plugin.display_name || plugin.name || 'Action'} Copy`;
-    const modal = window.pluginModalStepper?.showModal(duplicate);
+    window.pluginModalStepper?.setActionScope({
+        scope: 'global', apiBase: '/api/admin/workspace-identities/global', allowCurrentUser: true,
+    });
+    const modal = await window.pluginModalStepper?.showModal(duplicate);
     if (window.pluginModalStepper) {
         window.pluginModalStepper.isEditMode = false;
         window.pluginModalStepper.originalPlugin = null;
@@ -119,6 +131,9 @@ function setupSaveHandler(plugin, modal) {
 
         boundSaveBtn.addEventListener('click', async (event) => {
             event.preventDefault();
+            if (boundSaveBtn.disabled) return;
+            boundSaveBtn.disabled = true;
+            window.pluginModalStepper.yamcsActionAuthController?.cancel();
             const errorDiv = document.getElementById('plugin-modal-error');
             if (errorDiv) {
                 errorDiv.classList.add('d-none');
@@ -162,12 +177,14 @@ function setupSaveHandler(plugin, modal) {
                     bootstrap.Modal.getInstance(document.getElementById('plugin-modal')).hide();
                 }
                 
-                loadPlugins();
+                await loadPlugins();
                 showToast(plugin ? 'Action updated successfully' : 'Action created successfully', 'success');
                 
             } catch (error) {
                 console.error('Error saving action:', error);
                 window.pluginModalStepper.showError(error.message);
+            } finally {
+                boundSaveBtn.disabled = false;
             }
         });
     }

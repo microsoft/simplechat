@@ -1,5 +1,11 @@
 # route_backend_chats.py
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget
+from functions_action_auth import ActionAuthStorageError, ActionCredentialsRequired
+from functions_action_auth_execution import (
+    action_auth_control_payload,
+    action_auth_error_response,
+    enforce_action_auth_request,
+)
 from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
 from semantic_kernel import Kernel
 from semantic_kernel.agents.runtime import InProcessRuntime
@@ -14051,6 +14057,7 @@ def register_route_backend_chats(bp):
     def build_background_stream_response(event_generator_factory, stream_session=None):
         """Run SSE generation in background execution so it survives disconnects."""
         stream_bridge = BackgroundStreamBridge(stream_session=stream_session)
+        verified_action_auth_request = getattr(g, 'action_auth_verified_request', None)
 
         def publish_background_event(event_text):
             if event_text is None:
@@ -14063,6 +14070,7 @@ def register_route_backend_chats(bp):
 
         @copy_current_request_context
         def stream_worker():
+            g.action_auth_verified_request = verified_action_auth_request
             try:
                 generator_signature = inspect.signature(event_generator_factory)
                 if 'publish_background_event' in generator_signature.parameters:
@@ -14797,6 +14805,11 @@ def register_route_backend_chats(bp):
         user_id = get_current_user_id()
         if not user_id:
             return {'error': 'User not authenticated'}, 401
+
+        auth_block = enforce_action_auth_request(user_id, data)
+        if auth_block is not None:
+            response, status_code = auth_block
+            return response.get_json(), status_code
 
         user_message = str(data.get('message') or '').strip()
         if not user_message:
@@ -15620,6 +15633,9 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json() or {}
+        auth_block = enforce_action_auth_request(user_id, data)
+        if auth_block is not None:
+            return auth_block
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
@@ -15708,6 +15724,9 @@ def register_route_backend_chats(bp):
             return jsonify({'error': 'User not authenticated'}), 401
 
         data = request.get_json() or {}
+        auth_block = enforce_action_auth_request(user_id, data)
+        if auth_block is not None:
+            return auth_block
         conversation_id = getattr(g, 'conversation_id', None) or data.get('conversation_id')
         if conversation_id is not None:
             conversation_id = str(conversation_id).strip() or None
@@ -16015,6 +16034,10 @@ def register_route_backend_chats(bp):
                 return jsonify({
                     'error': 'User not authenticated'
                 }), 401
+
+            auth_block = enforce_action_auth_request(user_id, data)
+            if auth_block is not None:
+                return auth_block
 
             # Extract agent_info early to guide GPT initialization decisions
             request_agent_info = data.get('agent_info')
@@ -18884,6 +18907,8 @@ def register_route_backend_chats(bp):
                         result = step['func']()
                         return step['on_success'](result)
                     except Exception as e:
+                        if isinstance(e, (FoundryAgentUserAuthenticationRequired, ActionCredentialsRequired, ActionAuthStorageError)):
+                            raise
                         log_event(
                             f"[FALLBACK_FAILURE] Fallback step {step['name']} failed: {e}",
                             extra={
@@ -18893,8 +18918,6 @@ def register_route_backend_chats(bp):
                         )
                         if 'on_error' in step and step['on_error']:
                             step['on_error'](e)
-                        if isinstance(e, FoundryAgentUserAuthenticationRequired):
-                            raise
                         if delegation_budget.attempts:
                             # A failed parent might already have delegated a
                             # write. Do not replay its task through fallback.
@@ -20062,6 +20085,10 @@ def register_route_backend_chats(bp):
                 'thoughts_enabled': thought_tracker.enabled
             })), 200
 
+        except ActionCredentialsRequired as auth_error:
+            return action_auth_error_response(auth_error, execution_started=True)
+        except ActionAuthStorageError as auth_error:
+            return action_auth_error_response(auth_error, execution_started=True)
         except FoundryAgentUserAuthenticationRequired as auth_error:
             return jsonify(_agent_authentication_required_payload(auth_error)), 403
         except Exception as e:
@@ -20110,6 +20137,10 @@ def register_route_backend_chats(bp):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Invalid request payload'}), 400
+
+        auth_block = enforce_action_auth_request(user_id, data)
+        if auth_block is not None:
+            return auth_block
 
         retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')
         retry_thread_id = data.get('retry_thread_id')
@@ -23460,7 +23491,15 @@ def register_route_backend_chats(bp):
                             debug_print(f"❌ Agent streaming error: {stream_error}")
                             traceback.print_exc()
                             error_payload = {'error': 'Agent streaming failed. Please try again.'}
-                            if isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
+                            if isinstance(stream_error, ActionCredentialsRequired):
+                                error_payload = action_auth_control_payload(stream_error, execution_started=True)
+                            elif isinstance(stream_error, ActionAuthStorageError):
+                                error_payload = {
+                                    'error': 'Credential storage is unavailable. Please try again.',
+                                    'error_code': 'action_auth_storage_unavailable',
+                                    'execution_started': True,
+                                }
+                            elif isinstance(stream_error, FoundryAgentUserAuthenticationRequired):
                                 error_payload = _agent_authentication_required_payload(stream_error)
                             yield f"data: {json.dumps(error_payload)}\n\n"
                             return

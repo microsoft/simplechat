@@ -2,6 +2,24 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.107)**
+
+#### New Features
+
+*   **Per-User Action Authentication**
+    *   Administrators can publish a global Yamcs action that requires each submitting user's private personal identity instead of sharing one credential.
+    *   Supports Yamcs username/password login, gateway HTTP Basic, bearer tokens, and `x-api-key` credentials. Identity labels default to Yamcs and can be customized; credential reuse requires compatible, approved destinations.
+    *   Missing credentials are collected before execution in a private form, not in conversation history or model context. Retries and delegated calls keep the submitting user's identity; credential repair does not automatically replay completed work.
+    *   Shared chats share posted prompts and results, not credentials. Existing shared history remains visible. Existing Key Vault/Cosmos storage policy and Microsoft Graph authentication remain unchanged.
+    *   (Ref: `functions_action_auth.py`, `functions_action_auth_state.py`, `functions_yamcs_client.py`, [Per-User Action Authentication](features/PER_USER_ACTION_AUTHENTICATION.md))
+
+#### User Interface Enhancements
+
+*   **Private Connection Setup In Classic And V2**
+    *   Both chat interfaces preserve the unsent draft while users connect an identity, with destination confirmation, shared-results guidance, and a manual Workspace Identities setup path.
+    *   V2 adds native global Yamcs setup and supported personal action-identity editing. Test as me uses the administrator's own personal binding without publishing credentials into the action.
+    *   (Ref: `chat-action-auth.js`, `ActionCredentialCard.tsx`, `AdminYamcsActions.tsx`, [Connect Your Own Action Account](../guides/personal-action-authentication.md))
+
 ### **(v0.261.105)**
 
 #### New Features

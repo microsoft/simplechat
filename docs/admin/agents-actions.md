@@ -5,7 +5,7 @@ description: "Agents & Actions controls the Semantic Kernel runtime, agent marke
 section: "Administration"
 audience: admin
 admin_tab: agents-actions
-version: "0.261.093"
+version: "0.261.107"
 redirect_from:
   - /admin/agents/
 ---
@@ -151,6 +151,26 @@ than here.
 | Require Admin Approval | Holds submissions in the approvals queue instead of publishing them straight into the gallery. | On | `agent_templates_require_approval` |
 
 ## Actions {#actions}
+
+### Per-user action authentication
+
+From **0.261.107**, a global Yamcs action can require **Each user's personal
+identity** instead of using one shared credential. Choose the auth profile and
+identity name in global action setup; classic and the native v2 Yamcs editor
+support this configuration.
+
+The default identity label is **Yamcs**. Supported profiles are native Yamcs login,
+gateway HTTP Basic, bearer token, and API key (`x-api-key`). Save the action before
+testing it with your own personal identity. Testing does not publish your
+credential into the global action.
+
+Users supply the credential through personal Identities or a private chat form
+before the agent runs. They do not need permission to author personal actions.
+Existing action governance and global/workspace visibility still apply.
+
+Every request uses its submitting participant, not the conversation owner or agent
+creator. Shared conversations share the resulting data, while the credential form
+stays private. See [Connect your own action account]({{ '/guides/personal-action-authentication/' | relative_url }}).
 
 ### Calling another agent
 

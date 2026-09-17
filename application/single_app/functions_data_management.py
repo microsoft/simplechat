@@ -442,6 +442,7 @@ DATA_MANAGEMENT_MIGRATION_COSMOS_CONTAINERS = {
         {"name": "user_settings", "container_attr": "cosmos_user_settings_container", "container_name_attr": "cosmos_user_settings_container_name", "partition_key_path": "/id", "id_field": "id"},
         {"name": "personal_documents", "container_attr": "cosmos_user_documents_container", "container_name_attr": "cosmos_user_documents_container_name", "partition_key_path": "/id", "filter_field": "user_id", "documents": True},
         {"name": "personal_workspace_identities", "container_attr": "cosmos_personal_workspace_identities_container", "container_name_attr": "cosmos_personal_workspace_identities_container_name", "partition_key_path": "/user_id", "filter_field": "user_id"},
+        {"name": "personal_action_auth", "container_attr": "cosmos_personal_action_auth_container", "container_name_attr": "cosmos_personal_action_auth_container_name", "partition_key_path": "/user_id", "filter_field": "user_id", "record_type_filter": "binding"},
         {"name": "personal_agents", "container_attr": "cosmos_personal_agents_container", "container_name_attr": "cosmos_personal_agents_container_name", "partition_key_path": "/user_id", "filter_field": "user_id"},
         {"name": "personal_actions", "container_attr": "cosmos_personal_actions_container", "container_name_attr": "cosmos_personal_actions_container_name", "partition_key_path": "/user_id", "filter_field": "user_id"},
         {"name": "personal_prompts", "container_attr": "cosmos_user_prompts_container", "container_name_attr": "cosmos_user_prompts_container_name", "partition_key_path": "/id", "filter_field": "user_id"},
@@ -486,6 +487,7 @@ DATA_MANAGEMENT_COSMOS_ARTIFACTS = [
     {"name": "group_prompts", "container_attr": "cosmos_group_prompts_container", "container_name_attr": "cosmos_group_prompts_container_name", "partition_key_path": "/group_id", "category": "prompts"},
     {"name": "public_prompts", "container_attr": "cosmos_public_prompts_container", "container_name_attr": "cosmos_public_prompts_container_name", "partition_key_path": "/public_workspace_id", "category": "prompts"},
     {"name": "personal_workspace_identities", "container_attr": "cosmos_personal_workspace_identities_container", "container_name_attr": "cosmos_personal_workspace_identities_container_name", "partition_key_path": "/user_id", "category": "identities"},
+    {"name": "personal_action_auth", "container_attr": "cosmos_personal_action_auth_container", "container_name_attr": "cosmos_personal_action_auth_container_name", "partition_key_path": "/user_id", "category": "identities", "record_type_filter": "binding"},
     {"name": "group_workspace_identities", "container_attr": "cosmos_group_workspace_identities_container", "container_name_attr": "cosmos_group_workspace_identities_container_name", "partition_key_path": "/group_id", "category": "identities"},
     {"name": "public_workspace_identities", "container_attr": "cosmos_public_workspace_identities_container", "container_name_attr": "cosmos_public_workspace_identities_container_name", "partition_key_path": "/public_workspace_id", "category": "identities"},
     {"name": "global_workspace_identities", "container_attr": "cosmos_global_workspace_identities_container", "container_name_attr": "cosmos_global_workspace_identities_container_name", "partition_key_path": "/id", "category": "identities"},
@@ -525,6 +527,7 @@ DATA_MANAGEMENT_COSMOS_EDITOR_CONTAINER_DEFINITIONS = [
     ("group_file_sync_sources", "cosmos_group_file_sync_sources_container", "cosmos_group_file_sync_sources_container_name", "/group_id", "file_sync"),
     ("public_file_sync_sources", "cosmos_public_file_sync_sources_container", "cosmos_public_file_sync_sources_container_name", "/public_workspace_id", "file_sync"),
     ("personal_workspace_identities", "cosmos_personal_workspace_identities_container", "cosmos_personal_workspace_identities_container_name", "/user_id", "identities"),
+    ("personal_action_auth", "cosmos_personal_action_auth_container", "cosmos_personal_action_auth_container_name", "/user_id", "identities"),
     ("group_workspace_identities", "cosmos_group_workspace_identities_container", "cosmos_group_workspace_identities_container_name", "/group_id", "identities"),
     ("public_workspace_identities", "cosmos_public_workspace_identities_container", "cosmos_public_workspace_identities_container_name", "/public_workspace_id", "identities"),
     ("global_workspace_identities", "cosmos_global_workspace_identities_container", "cosmos_global_workspace_identities_container_name", "/global_id", "identities"),
@@ -3173,6 +3176,9 @@ def _iter_selected_cosmos_records(
             parameters = [{"name": "@source_cutoff_epoch", "value": source_cutoff_epoch}]
             if source_start_epoch is not None:
                 parameters.insert(0, {"name": "@source_start_epoch", "value": source_start_epoch})
+        if container_definition.get("record_type_filter"):
+            conditions.append("c.record_type = @record_type")
+            parameters.append({"name": "@record_type", "value": container_definition["record_type_filter"]})
         if conditions:
             query = f"SELECT * FROM c WHERE {' AND '.join(conditions)}"
         for item in source_container.query_items(
@@ -3180,6 +3186,8 @@ def _iter_selected_cosmos_records(
             parameters=parameters,
             enable_cross_partition_query=True,
         ):
+            if container_definition.get("record_type_filter") and item.get("record_type") != container_definition["record_type_filter"]:
+                continue
             yield prepare_item(item)
         return
     if mode != "selected":
@@ -3215,6 +3223,9 @@ def _iter_selected_cosmos_records(
     for selected_id in ids:
         query = f"SELECT * FROM c WHERE {filter_clause}"
         parameters = [{"name": "@selected_id", "value": selected_id}]
+        if container_definition.get("record_type_filter"):
+            query += " AND c.record_type = @record_type"
+            parameters.append({"name": "@record_type", "value": container_definition["record_type_filter"]})
         if source_start_epoch is not None:
             query += " AND c._ts >= @source_start_epoch"
             parameters.append({"name": "@source_start_epoch", "value": source_start_epoch})
@@ -3226,6 +3237,8 @@ def _iter_selected_cosmos_records(
             parameters=parameters,
             enable_cross_partition_query=True,
         ):
+            if container_definition.get("record_type_filter") and item.get("record_type") != container_definition["record_type_filter"]:
+                continue
             if seen_identities is not None:
                 item_identity = _get_cosmos_document_identity(
                     item,
@@ -5680,11 +5693,15 @@ def _copy_source_blobs_to_target(settings, migration_plan, job, migration_state,
 def _iter_target_cosmos_records(target_container, container_definition, selection):
     """Enumerate the exact destination scope used by the migration plan."""
     mode = selection.get("mode")
+    record_type = container_definition.get("record_type_filter")
     if mode == "all":
-        yield from target_container.query_items(
-            query="SELECT * FROM c",
+        for item in target_container.query_items(
+            query="SELECT * FROM c WHERE c.record_type = @record_type" if record_type else "SELECT * FROM c",
+            parameters=[{"name": "@record_type", "value": record_type}] if record_type else [],
             enable_cross_partition_query=True,
-        )
+        ):
+            if not record_type or item.get("record_type") == record_type:
+                yield item
         return
     if mode != "selected":
         return
@@ -5702,10 +5719,14 @@ def _iter_target_cosmos_records(target_container, container_definition, selectio
     seen_identities = set() if len(filter_fields) > 1 else None
     for selected_id in selection.get("ids") or []:
         for item in target_container.query_items(
-            query=f"SELECT * FROM c WHERE {filter_clause}",
-            parameters=[{"name": "@selected_id", "value": selected_id}],
+            query=f"SELECT * FROM c WHERE {filter_clause}" + (" AND c.record_type = @record_type" if record_type else ""),
+            parameters=[{"name": "@selected_id", "value": selected_id}] + (
+                [{"name": "@record_type", "value": record_type}] if record_type else []
+            ),
             enable_cross_partition_query=True,
         ):
+            if record_type and item.get("record_type") != record_type:
+                continue
             if seen_identities is not None:
                 item_identity = _get_cosmos_document_identity(
                     item,
@@ -13423,18 +13444,24 @@ def _get_partial_since_epoch(settings, job):
     return int(since_datetime.timestamp())
 
 
-def _iter_cosmos_container_items(container, since_epoch=None):
+def _iter_cosmos_container_items(container, since_epoch=None, record_type=None):
     if since_epoch:
         query = "SELECT * FROM c WHERE c._ts >= @since_epoch"
         parameters = [{"name": "@since_epoch", "value": since_epoch}]
     else:
         query = "SELECT * FROM c"
         parameters = []
+    if record_type:
+        query += " AND" if since_epoch else " WHERE"
+        query += " c.record_type = @record_type"
+        parameters.append({"name": "@record_type", "value": record_type})
     for item in container.query_items(
         query=query,
         parameters=parameters,
         enable_cross_partition_query=True,
     ):
+        if record_type and item.get("record_type") != record_type:
+            continue
         yield _strip_cosmos_system_fields(item)
 
 
@@ -13456,7 +13483,7 @@ def _export_cosmos_artifacts(container_client, base_prefix, settings, job, ferne
         upload = _write_jsonl_artifact(
             container_client,
             blob_name,
-            _iter_cosmos_container_items(container, since_epoch=since_epoch),
+            _iter_cosmos_container_items(container, since_epoch=since_epoch, record_type=artifact.get("record_type_filter")),
             fernet=fernet,
         )
         upload.update({
@@ -14946,8 +14973,13 @@ def _iter_backup_cosmos_source_items(
     retry_count = _get_backup_retry_count({}, backup_plan)
     # Keep the ordered source query compatible with existing default indexes.
     # The immutable cutoff is still applied per streamed item below.
-    query = "SELECT * FROM c ORDER BY c.id"
+    record_type = artifact.get("record_type_filter")
+    query = "SELECT * FROM c"
     parameters = []
+    if record_type:
+        query += " WHERE c.record_type = @record_type"
+        parameters.append({"name": "@record_type", "value": record_type})
+    query += " ORDER BY c.id"
 
     def report_telemetry(values):
         if callable(telemetry_callback):
@@ -14960,6 +14992,8 @@ def _iter_backup_cosmos_source_items(
 
     def normalize_item(raw_item):
         if not isinstance(raw_item, dict):
+            return None
+        if record_type and raw_item.get("record_type") != record_type:
             return None
         source_timestamp = _safe_int(raw_item.get("_ts"), default=0, minimum=0)
         if source_cutoff_epoch and source_timestamp > source_cutoff_epoch:
@@ -17582,6 +17616,9 @@ def _execute_restore_cosmos_resources(job, state, settings, restore_plan, contai
             ):
                 _assert_restore_job_lease(job)
                 result["processed_count"] += 1
+                if artifact.get("name") == "personal_action_auth" and (record or {}).get("record_type") != "binding":
+                    result["skipped_count"] += 1
+                    continue
                 result["bytes"] += len(json.dumps(record, default=_json_default).encode("utf-8"))
                 document_id = _safe_text((record or {}).get("id"))
                 partition_key = _get_document_path_value(record, artifact["partition_key_path"])

@@ -20,6 +20,7 @@ import { WorkspacePage } from './pages/workspace/WorkspacePage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 import { GroupAgentDelegationPage } from './pages/GroupAgentDelegationPage';
 import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
+import { actionAuthController } from './lib/actionAuthController';
 
 function BootScreen() {
     return (
@@ -74,6 +75,16 @@ export function App() {
         (state) => (state.settings.fontSizePreference as string) || 'm',
     );
     const location = useLocation();
+
+    useEffect(() => {
+        actionAuthController.cancel();
+    }, [location.pathname, data?.user?.id, authExpired]);
+
+    useEffect(() => {
+        const leave = () => actionAuthController.cancel();
+        window.addEventListener('pagehide', leave);
+        return () => { window.removeEventListener('pagehide', leave); leave(); };
+    }, []);
 
     useEffect(() => {
         clearWorkspaceEditorDrafts();

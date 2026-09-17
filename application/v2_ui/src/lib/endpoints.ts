@@ -250,12 +250,13 @@ export interface AttemptChatRequest {
 
 export const retryMessage = (
     messageId: string,
-    options: { model?: string; reasoning_effort?: string; agent_info?: unknown } = {},
+    options: { model?: string; reasoning_effort?: string; agent_info?: unknown; action_auth_request_id?: string } = {},
 ) => api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/retry`, options);
 
-export const editMessage = (messageId: string, content: string) =>
+export const editMessage = (messageId: string, content: string, actionAuthRequestId?: string) =>
     api.post<AttemptChatRequest>(`/api/message/${encodeURIComponent(messageId)}/edit`, {
         content,
+        ...(actionAuthRequestId ? { action_auth_request_id: actionAuthRequestId } : {}),
     });
 
 export const switchAttempt = (messageId: string, direction: 'prev' | 'next') =>

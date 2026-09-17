@@ -22,6 +22,7 @@
 // re-plans. What is persisted is the minimum needed to recognise a run that is already running.
 
 import { create } from 'zustand';
+import { actionAuthController } from '../lib/actionAuthController';
 import { normalizeReasoningAdjustments } from '../lib/reasoning';
 import { isOrchestrationRunPending, normalizeOrchestrationAttempt, normalizeOrchestrationFailure } from '../lib/orchestration';
 import { createElicitationDraft, type ElicitationDraft } from '../lib/elicitationAnswers';
@@ -349,6 +350,10 @@ interface OrchestrationState {
      * card, and so a fresh submit simply overwrites the one turn a conversation shows inline.
      */
     activeTurns: Record<string, string>;
+    /** Local approval pause only. No request DTO, continuation, or credential is persisted. */
+    actionAuthPausedRuns: Record<string, true>;
+    pauseActionAuthRun: (runId: string) => void;
+    resumeActionAuthRun: (runId: string) => void;
     /** Presence immediately pauses automatic approval, even before the hold POST completes. */
     planEditors: Record<string, PlanEditorSession>;
     editorTarget: PlanEditorTarget | null;
@@ -504,6 +509,15 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
     pinnedRunId: null,
     visibleConversationId: null,
     activeTurns: {},
+    actionAuthPausedRuns: {},
+    pauseActionAuthRun: (runId) => set((state) => ({
+        actionAuthPausedRuns: { ...state.actionAuthPausedRuns, [runId]: true },
+    })),
+    resumeActionAuthRun: (runId) => set((state) => {
+        const actionAuthPausedRuns = { ...state.actionAuthPausedRuns };
+        delete actionAuthPausedRuns[runId];
+        return { actionAuthPausedRuns };
+    }),
     planEditors: {},
     editorTarget: null,
 
@@ -608,6 +622,9 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         }
 
         const key = scopeKey(conversationId, turnId);
+        const previousPlan = get().plans[key];
+        if (previousPlan && (previousPlan.plan_id !== plan.plan_id || previousPlan.revision !== plan.revision ||
+            previousPlan.edit_version !== plan.edit_version)) actionAuthController.cancelForRun(previousPlan.run_id);
         set((state) => {
             const previous = state.plans[key];
             // A new plan identity (a re-plan) invalidates the edits and runtime, which reference
@@ -647,6 +664,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
     clearPlan: (conversationId, turnId) => {
         const key = scopeKey(conversationId, turnId);
+        actionAuthController.cancelForRun(get().plans[key]?.run_id);
         set((state) => {
             const plans = { ...state.plans };
             const planEditors = { ...state.planEditors };
@@ -755,6 +773,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
     disableStep: (conversationId, turnId, step) => {
         const key = scopeKey(conversationId, turnId);
+        actionAuthController.cancelForRun(get().plans[key]?.run_id);
         set((state) => {
             const current = state.edits[key] ?? emptyPlanEdits();
             const next = narrowDisableStep(current, step);
@@ -767,6 +786,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
     enableStep: (conversationId, turnId, stepId) => {
         const key = scopeKey(conversationId, turnId);
+        actionAuthController.cancelForRun(get().plans[key]?.run_id);
         set((state) => {
             const current = state.edits[key] ?? emptyPlanEdits();
             const next = narrowEnableStep(current, stepId);
@@ -779,6 +799,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
     removeDocument: (conversationId, turnId, step, documentId) => {
         const key = scopeKey(conversationId, turnId);
+        actionAuthController.cancelForRun(get().plans[key]?.run_id);
         set((state) => {
             const current = state.edits[key] ?? emptyPlanEdits();
             const next = narrowRemoveDocument(current, step, documentId);
@@ -791,6 +812,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
     restoreDocument: (conversationId, turnId, stepId, documentId) => {
         const key = scopeKey(conversationId, turnId);
+        actionAuthController.cancelForRun(get().plans[key]?.run_id);
         set((state) => {
             const current = state.edits[key] ?? emptyPlanEdits();
             const next = narrowRestoreDocument(current, stepId, documentId);
@@ -803,6 +825,7 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
 
     resetEdits: (conversationId, turnId) => {
         const key = scopeKey(conversationId, turnId);
+        actionAuthController.cancelForRun(get().plans[key]?.run_id);
         set((state) => {
             const current = state.edits[key];
             if (!current || (current.disabled_step_ids.length === 0 &&
@@ -1112,6 +1135,8 @@ export const useOrchestrationStore = create<OrchestrationState>((set, get) => ({
         if (get().activeTurns[conversationId] === turnId) {
             return;
         }
+        const previousTurn = get().activeTurns[conversationId];
+        actionAuthController.cancelForRun(previousTurn ? get().plans[scopeKey(conversationId, previousTurn)]?.run_id : undefined);
         set((state) => {
             const previous = state.activeTurns[conversationId];
             const elicitations = { ...state.elicitations };
@@ -1254,7 +1279,8 @@ export function selectHasPlanHold(
     turnId: string,
 ): boolean {
     return Boolean(selectPlanEditor(state, conversationId, turnId)
-        || selectPlan(state, conversationId, turnId)?.edit_version);
+        || selectPlan(state, conversationId, turnId)?.edit_version
+        || state.actionAuthPausedRuns[selectPlan(state, conversationId, turnId)?.run_id ?? '']);
 }
 
 export function selectCanEditPlan(

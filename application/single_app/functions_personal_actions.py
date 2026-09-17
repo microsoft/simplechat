@@ -24,6 +24,7 @@ import logging
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_user_cache_version
 from functions_agent_delegation import validate_agent_action_for_scope
+from functions_action_auth import validate_action_credential_requirement
 
 
 def get_governed_personal_actions(user_id, return_type=SecretReturnType.TRIGGER):
@@ -181,6 +182,7 @@ def save_personal_action(user_id, action_data, enforce_governance=True):
         action_data['user_id'] = user_id
         action_data['last_updated'] = now
 
+        validate_action_credential_requirement(action_data, scope_type="personal")
         validate_action_identity_reference(
             action_data,
             WORKSPACE_IDENTITY_SCOPE_PERSONAL,

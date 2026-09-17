@@ -1385,22 +1385,29 @@ async function sendCollaborativeAiMessage(messageText, tempMessageId = null, mes
     const invocationTarget = pendingContext?.metadata?.ai_invocation_target || null;
     const requestBody = {
         ...messageData,
+        conversation_id: conversationId,
+        conversation_kind: 'collaboration',
         content: messageText,
         reply_to_message_id: activeReplyContext?.message_id || null,
         mentioned_participants: mentionedParticipants,
         invocation_target: invocationTarget,
     };
 
-    sendMessageWithStreaming(
+    const started = await sendMessageWithStreaming(
         requestBody,
         tempMessageId,
         conversationId,
         {
+            actionAuthPrepared: streamOptions.actionAuthPrepared === true,
             endpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream`,
             cancelEndpoint: `/api/collaboration/conversations/${encodeURIComponent(conversationId)}/stream/cancel`,
             allowRecovery: false,
             onDone: streamOptions.onDone || null,
+            onAccepted: streamOptions.onAccepted || null,
+            onActionAuthRequired: streamOptions.onActionAuthRequired || null,
+            onFinally: streamOptions.onFinally || null,
             onError: (errorMessage, errorData = null) => {
+                streamOptions.onError?.(errorMessage, errorData);
                 if (errorData?.user_message_id && tempMessageId) {
                     updateUserMessageId(tempMessageId, errorData.user_message_id);
                 }
@@ -1417,9 +1424,11 @@ async function sendCollaborativeAiMessage(messageText, tempMessageId = null, mes
         },
     );
 
-    setTypingState(false, { force: true });
-    clearReplyTarget();
-    return { started: true };
+    if (started) {
+        setTypingState(false, { force: true });
+        clearReplyTarget();
+    }
+    return { started };
 }
 
 function setTypingState(isTyping, options = {}) {

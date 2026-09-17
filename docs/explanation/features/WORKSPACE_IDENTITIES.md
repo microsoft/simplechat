@@ -1,5 +1,7 @@
 # Workspace Identities
 
+Current documentation version: **0.261.107**
+
 Implemented in version: **0.241.095**
 Initial foundation: **0.241.091**
 Action binding implemented in: **0.241.095**
@@ -48,6 +50,25 @@ Supported identity auth types in the catalog include username/password, anonymou
 Users manage identities from the **Identities** tab in personal, group, and public workspace pages. SimpleChat admins manage global identities from the **Global Identities** tab in Admin Settings. Add, view, and edit flows open in a Bootstrap modal with grouped cards for identity details, used-for checkbox selection, and authentication. File Sync source setup uses the **Identity and Authentication** card to choose a reusable workspace identity or source-local credentials for workspace-owned connectors. OneDrive uses an admin-managed global File Sync identity and does not ask personal users to manage tenant app credentials.
 
 Action setup now uses the same identity catalog. Personal actions can use personal identities, group actions can use identities from the active group, and global actions can use global identities. Public workspace identities are not exposed to actions. Action manifests store only `identity_id` and `auth.type = "identity"`; runtime code resolves secrets through `functions_workspace_identities.py` so credentials are not copied into action records.
+
+## Per-user authentication for global actions
+
+Implemented in version: **0.261.107**, recorded in
+`application/single_app/config.py`.
+
+Global Yamcs actions can now declare a requirement for **each user's personal
+identity** instead of referencing a shared global identity. The action stores only
+the required name/profile and a stable requirement ID. The submitting user owns
+the binding and credential, including in shared chats and delegated calls.
+
+Existing `identity_id` bindings keep their same-workspace behavior. The new mode
+does not make personal identities available to other users or move their secrets
+into global actions. A different destination requires approval; a matching name
+alone is not authorization. Identity storage continues to follow the existing Key
+Vault/Cosmos policy.
+
+See [Per-User Action Authentication](PER_USER_ACTION_AUTHENTICATION.md) and the
+[setup guide](../../guides/personal-action-authentication.md).
 
 ## Testing and Validation
 

@@ -662,6 +662,7 @@ def save_editor_record(kind, user_id, record, existing, settings):
         record = delegation.validate_agent_action_for_scope(
             record, user_id=user_id, scope_type="personal", scope_id=user_id, settings=settings,
         )
+        import_module("functions_action_auth").validate_action_credential_requirement(record, scope_type="personal")
         import_module("functions_workspace_identities").validate_action_identity_reference(record, "personal", user_id)
     result = {key: deepcopy(value) for key, value in record.items() if not key.startswith("_") and key not in _MANAGED_FIELDS}
     now = datetime.now(timezone.utc).isoformat()

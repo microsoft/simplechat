@@ -28,6 +28,7 @@ import threading
 import uuid
 from copy import deepcopy
 from agent_execution_context import capture_execution_identity
+from functions_action_auth_execution import enforce_action_auth_request
 from datetime import datetime, timezone
 
 from azure.cosmos import exceptions
@@ -2014,6 +2015,12 @@ def register_route_backend_orchestration(bp):
         # Legacy records are hydrated once. The finalization callback must validate this
         # exact snapshot rather than silently loading a different history and discarding it.
         record = {**record, 'conversation_context': snapshot}
+
+        auth_block = enforce_action_auth_request(user_id, {
+            **data, 'run_id': run_id, 'conversation_id': conversation_id,
+        })
+        if auth_block is not None:
+            return auth_block
 
         seeds = record.get('seeds') if isinstance(record.get('seeds'), dict) else {}
         try:

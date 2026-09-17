@@ -1,5 +1,7 @@
 # Yamcs Action
 
+Current documentation version: **0.261.107**
+
 Implemented in version: **0.250.212**
 
 Related config.py version update: `application/single_app/config.py` is **0.250.212** for this implementation.
@@ -83,7 +85,7 @@ Every retrieval is bounded before it reaches an agent:
 - `server_url`: Yamcs server base URL including port. TLS is derived from the scheme.
 - `instance`: default Yamcs instance, for example `simulator`.
 - `processor`: processor used for live parameter reads; defaults to `realtime`.
-- `auth_method`: `username_password`, `api_key`, `bearer_token`, or `none`.
+- `auth_method`: `username_password`, `http_basic`, `api_key`, `bearer_token`, or `none`.
 - `tls_verify`: verify the server TLS certificate; defaults to `true`.
 - `read_only`: always `true`; stored for parity with other connector actions.
 - `enable_archive_sql`: allow guarded read-only archive SQL; defaults to `false`.
@@ -103,6 +105,30 @@ Every retrieval is bounded before it reaches an agent:
 
 Reusable identities are accepted when their auth type is `api_key`, `bearer_token`, or `username_password`.
 
+### Per-user authentication on global actions
+
+Implemented in version: **0.261.107**, recorded in
+`application/single_app/config.py`.
+
+A global Yamcs action can require **each user's personal identity**. The default
+identity label is **Yamcs**, editable by the administrator. Users can prepare it in
+personal Workspace Identities or use a private credential card before chat starts
+the agent. The form and submitted values are not conversation messages.
+
+Choose native Yamcs login, gateway HTTP Basic, bearer token, or API key. HTTP Basic
+uses the pinned SDK's `BasicAuthCredentials` rather than Yamcs token exchange.
+The API-key profile uses `x-api-key`. One credential authenticates to one HTTPS
+destination; separate gateway and upstream credentials are not combined.
+
+Requests use the participant who submits the turn, including retries and
+delegation, never the conversation owner or agent creator. A shared chat shares
+the returned data, not the credential. Existing shared history remains visible.
+
+The server resolves credentials into a fresh client per invocation, rather than
+changing shared plugin state. Connection testing uses the same client construction,
+including protection of the initial login request. See
+[Per-User Action Authentication](PER_USER_ACTION_AUTHENTICATION.md).
+
 ## Usage Instructions
 
 Create a new action from a personal, group, or admin action surface and choose **Yamcs**. Enter the Yamcs server URL and the instance name, and optionally change the processor from the `realtime` default.
@@ -117,11 +143,13 @@ After saving the action, assign it to agents that need Yamcs telemetry or archiv
 
 ## Testing and Validation
 
-- Functional coverage: `functional_tests/test_yamcs_action_plugin.py` (14 tests)
+- Functional coverage: `functional_tests/test_yamcs_action_plugin.py`
+- Native authentication and repair coverage: `functional_tests/test_yamcs_user_auth_runtime.py` and `functional_tests/test_yamcs_user_auth_rejection.py`
 - Route policy coverage: `functional_tests/route_tests/` — the new endpoint is covered by the existing authenticated-route prefix rules
 - JavaScript syntax checks: `plugin_modal_stepper.js` and `workspace/view-utils.js`
 - Python compile checks cover the Yamcs helper, plugin, factory, loaders, health checker, routes, identity, Key Vault, and governance updates
 - The credential mapping, client constructor behavior, and protobuf coexistence were verified against a real `yamcs-client==2.1.0` install
+- Connection validation reads the configured instance directly, independently of result-display limits. Transport regressions cover proxy/private-CA configuration and prevent ambient account credentials from replacing the selected identity.
 
 ## Known Limitations
 

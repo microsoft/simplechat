@@ -95,6 +95,7 @@ from route_backend_public_documents import *
 from route_backend_public_prompts import *
 from route_backend_file_sync import register_route_backend_file_sync
 from route_backend_workspace_identities import register_route_backend_workspace_identities
+from route_backend_action_auth import register_route_backend_action_auth
 from route_backend_user_agreement import register_route_backend_user_agreement
 from route_backend_conversation_export import register_route_backend_conversation_export
 from route_backend_thoughts import register_route_backend_thoughts
@@ -1466,6 +1467,7 @@ register_route_blueprint('backend_file_sync', register_route_backend_file_sync, 
 
 # ------------------- API Workspace Identity Routes ------
 register_route_blueprint('backend_workspace_identities', register_route_backend_workspace_identities, login_required_blueprint)
+register_route_blueprint('backend_action_auth', register_route_backend_action_auth, user_required_blueprint)
 
 # ------------------- API User Agreement Routes ----------
 register_route_blueprint('backend_user_agreement', register_route_backend_user_agreement, user_required_blueprint)

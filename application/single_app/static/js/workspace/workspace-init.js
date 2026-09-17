@@ -45,6 +45,14 @@ function clearWorkspaceAgentNavigationParams() {
 
 function handleWorkspaceAgentNavigation() {
     const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'identities') {
+        const identitiesTabButton = document.getElementById('identities-tab-btn');
+        if (identitiesTabButton) {
+            bootstrap.Tab.getOrCreateInstance(identitiesTabButton).show();
+            clearWorkspaceAgentNavigationParams();
+            return true;
+        }
+    }
     if (params.get('tab') !== 'agents') {
         return false;
     }

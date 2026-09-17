@@ -29,6 +29,7 @@ from functions_agent_delegation import (
     agent_authentication_url, agent_reference, resolve_delegation_agent, resolve_delegation_call,
 )
 from functions_appinsights import log_event
+from functions_action_auth import ActionAuthStorageError, ActionCredentialsRequired
 
 
 MAX_DELEGATION_DEPTH = 3
@@ -356,6 +357,14 @@ async def call_agent(action_id, task, context=""):
         )
     except (asyncio.CancelledError, AgentExecutionCancelled):
         error = "Agent execution was cancelled. Already submitted remote effects may continue."
+        raise
+    except ActionCredentialsRequired as exc:
+        error = "The submitting user must connect a personal action identity."
+        parent.budget.require_authentication(exc)
+        raise
+    except ActionAuthStorageError as exc:
+        error = "Credential storage is unavailable."
+        parent.budget.require_authentication(exc)
         raise
     except AgentDelegationError as exc:
         error = str(exc)

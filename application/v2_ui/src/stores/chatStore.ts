@@ -106,6 +106,11 @@ import { ApiError } from '../lib/apiClient';
 import { normalizeOrchestrationAttempt } from '../lib/orchestration';
 import { openOrchestrationRecovery } from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
+import {
+    actionAuthAgentFromMetadata, cancelActionAuthRequest, isActionCredentialsRequired,
+    normalizeActionCredentialsControl, type ActionAuthPreflight,
+} from '../lib/actionAuth';
+import { actionAuthController } from '../lib/actionAuthController';
 import { useBootstrapStore } from './bootstrapStore';
 import { useCollaborationStore, participantName } from './collaborationStore';
 import type { MaskAction, MaskSelection } from '../lib/masking';
@@ -130,6 +135,14 @@ const FEED_PAGE_SIZE = 30;
 
 /** Identifier for the optimistic assistant message shown while a stream is running. */
 const STREAMING_MESSAGE_ID = '__streaming__';
+let preparingChatSend = false;
+let preparingAttempt = false;
+
+export interface ChatSubmissionLifecycle {
+    isCurrent: () => boolean;
+    onAccepted: () => void;
+    onConversationPrepared?: (conversationId: string) => void;
+}
 
 /** Which mode the right-hand drawer is showing, or null when it is closed. */
 export type DrawerMode = 'contents' | 'documents' | 'plan' | null;
@@ -351,7 +364,7 @@ interface ChatState {
     /** Hide every selected conversation, dropping them out of the feed. */
     bulkHideSelectedConversations: () => Promise<void>;
 
-    sendMessage: (text: string, options: ComposerOptions) => Promise<void>;
+    sendMessage: (text: string, options: ComposerOptions, lifecycle?: ChatSubmissionLifecycle) => Promise<void>;
     stopStreaming: () => void;
 
     /**
@@ -820,7 +833,9 @@ function buildStreamHandlers(
      * the event stream.
      */
     pendingUserMessageId?: string | null,
+    actionAuthInput?: ActionAuthPreflight,
 ): ChatStreamHandlers {
+    const initiatingActor = useBootstrapStore.getState().data?.user?.id;
     const completionMetadata = (event: ChatStreamEvent) =>
         reasoningMetadataForEvent(event, getState().streamingReasoningAdjustments);
     return {
@@ -953,6 +968,23 @@ function buildStreamHandlers(
             if (!isCurrent()) {
                 return;
             }
+            const actionAuthControl = normalizeActionCredentialsControl(event);
+            if (actionAuthControl) {
+                set((state) => ({
+                    messages: actionAuthControl.execution_started === false
+                        ? state.messages.filter((entry) => entry.id !== pendingUserMessageId)
+                        : state.messages,
+                    streaming: false, streamingContent: '', streamingReasoningAdjustments: [], reconnectPhase: null,
+                    streamError: null, streamAuthUrl: null,
+                }));
+                if (actionAuthInput) actionAuthController.repair(actionAuthControl, actionAuthInput, {
+                    surface: 'chat',
+                    isCurrent: () => getState().activeConversationId === conversationId &&
+                        !useBootstrapStore.getState().authExpired &&
+                        useBootstrapStore.getState().data?.user?.id === initiatingActor,
+                });
+                return;
+            }
             set({
                 streaming: false,
                 streamingContent: '',
@@ -1048,6 +1080,11 @@ async function runChatStream(
             set,
             getState,
             options.pendingUserMessageId,
+            {
+                agent_info: requestBody.agent_info,
+                conversation_id: conversationId,
+                conversation_kind: options.kind === 'collaborative' ? 'collaboration' : 'personal',
+            },
         ),
         controller.signal,
         options.stream,
@@ -1602,6 +1639,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     selectConversation: async (conversationId, options = {}) => {
+        actionAuthController.cancel('chat');
         // Any stream still running belongs to the thread being left, so its reader is
         // dropped: left attached, its handlers would append the finished response into the
         // newly selected conversation's message list.
@@ -1790,6 +1828,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     startNewConversation: () => {
+        actionAuthController.cancel('chat');
         // Detach first: the running stream belongs to the previous thread and must not
         // deliver its response into the empty new one. Detached rather than cancelled, so
         // starting a new chat leaves the previous answer to finish and be saved rather than
@@ -2178,9 +2217,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
     },
 
-    sendMessage: async (text, options) => {
+    sendMessage: async (text, options, lifecycle) => {
         const trimmed = text.trim();
-        if (!trimmed || get().streaming) {
+        if (!trimmed || get().streaming || preparingChatSend || preparingAttempt) {
             return;
         }
 
@@ -2189,43 +2228,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const collaborative = Boolean(
             conversationId && isCollaborativeConversation(get(), conversationId),
         );
-
-        // A conversation is created up front so the streaming endpoint has a stable id to
-        // attach to and so a cancel request has something to address. Only ever a personal
-        // one: a shared conversation always already exists, because sharing is done to a
-        // conversation rather than at the moment of writing into one.
-        if (!conversationId) {
-            try {
-                const created = await createConversation(trimmed);
-                conversationId = created.conversation_id;
-                // The reader can open a conversation during that round trip, and if they do
-                // their click wins. The message is still sent and its answer still generated
-                // and saved — it appears in the rail and is there when they come back — but
-                // the interface stays where they put it instead of snapping back to a chat
-                // they have already left. Claiming `activeConversationId` unconditionally
-                // also let the thread they had just opened render its messages under this
-                // new one, because the list is keyed on whatever is active.
-                if (get().activeConversationId === null) {
-                    set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
-                    // Mirrored like every other write to this field. Today the conversation just
-                    // created can only be personal — this branch is reached only when nothing was
-                    // open, which forces `collaborative` false above — so nothing would currently
-                    // notice. Leaving it out would make the collaboration store's guard depend on
-                    // that reasoning continuing to hold, and a shared conversation reachable here
-                    // later would silently strand its composer at "checking access".
-                    useCollaborationStore.getState().setActiveConversation(conversationId);
-                }
-            } catch (error) {
-                set({
-                    streamAuthUrl: null,
-                    streamError:
-                        error instanceof Error
-                            ? error.message
-                            : 'Could not start a new conversation.',
-                });
-                return;
-            }
-        }
 
         const bootstrap = useBootstrapStore.getState().data;
         const loadedCollaboration = useCollaborationStore.getState().conversation;
@@ -2271,6 +2273,62 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const taggedModelSelection =
             invocationTarget?.target_type === 'model' ? invocationTarget.selection_key : undefined;
 
+        const selection = buildSelectionFields({
+            agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+            agentSelection: taggedModelSelection ? undefined : (taggedAgentSelection ?? options.agentSelection),
+            modelDeployment: taggedModelSelection ?? options.modelDeployment,
+            reasoningEffort: options.reasoningEffort,
+        });
+        const willStream = !collaborative || invocationTarget !== null;
+        const visibleConversationId = conversationId;
+        const initiatingActor = bootstrap?.user?.id;
+        const currentActorAndDraft = () => !get().streaming &&
+            !useBootstrapStore.getState().authExpired &&
+            useBootstrapStore.getState().data?.user?.id === initiatingActor && (lifecycle?.isCurrent() ?? true);
+        const stillCurrent = () => get().activeConversationId === visibleConversationId && currentActorAndDraft();
+        let actionAuthRequestId: string | null = null;
+        preparingChatSend = true;
+        try {
+            if (willStream) {
+                const receipt = await actionAuthController.request({
+                    agent_info: selection.agent_info,
+                    conversation_id: visibleConversationId,
+                    conversation_kind: collaborative ? 'collaboration' : 'personal',
+                }, { surface: 'chat', isCurrent: stillCurrent });
+                if (!receipt || !stillCurrent()) return;
+                actionAuthRequestId = receipt.requestId;
+            }
+            if (!stillCurrent()) return;
+            // Only after private preflight: creation, persistence, and optimistic messages
+            // must not publish a draft while its credential form is still open.
+            if (!conversationId) {
+                const created = await createConversation(trimmed);
+                if (!stillCurrent()) return;
+                conversationId = created.conversation_id;
+                lifecycle?.onConversationPrepared?.(conversationId);
+                set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+                useCollaborationStore.getState().setActiveConversation(conversationId);
+                if (actionAuthRequestId) {
+                    // A null-conversation receipt must not authorize a different snapshot.
+                    // Reuse the approved identity, but bind a fresh receipt to the actual
+                    // visible conversation before publishing any part of the user's turn.
+                    void cancelActionAuthRequest(actionAuthRequestId).catch(() => {});
+                    const boundCurrent = () => get().activeConversationId === conversationId && currentActorAndDraft();
+                    const boundReceipt = await actionAuthController.request({
+                        agent_info: selection.agent_info, conversation_id: conversationId, conversation_kind: 'personal',
+                    }, { surface: 'chat', isCurrent: boundCurrent });
+                    if (!boundReceipt || !boundCurrent()) return;
+                    actionAuthRequestId = boundReceipt.requestId;
+                }
+            }
+        } catch {
+            if (stillCurrent()) set({ streamError: 'Could not prepare this request. Your draft has not been sent.', streamAuthUrl: null });
+            return;
+        } finally {
+            preparingChatSend = false;
+        }
+
         const pendingUserMessageId = `pending-user-${Date.now()}`;
         const optimisticUserMessage: ChatMessage = {
             id: pendingUserMessageId,
@@ -2292,8 +2350,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         // A shared message that is not addressed to the AI produces no stream, so the
         // interface must not sit in the streaming state waiting for one that never starts.
-        const willStream = !collaborative || invocationTarget !== null;
-
         // Only ever false when the reader opened another conversation while this one was
         // being created. `messages`, `streaming` and the rest describe whatever is on
         // screen, so writing them then would show this question and its answer inside a
@@ -2332,6 +2388,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
                     mentioned_participants: mentionedParticipants,
                     ...(options.promptInfo ? { prompt_info: options.promptInfo } : {}),
                 });
+                if (get().activeConversationId === conversationId) lifecycle?.onAccepted();
                 useCollaborationStore.getState().setReplyTo(null);
                 if (result.conversation) {
                     useCollaborationStore.getState().setConversation(result.conversation);
@@ -2372,6 +2429,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         });
 
         const requestBody: ChatStreamRequest = {
+            ...(actionAuthRequestId ? { action_auth_request_id: actionAuthRequestId } : {}),
             message: trimmed,
             conversation_id: conversationId,
             // Deliberately always 'user'. The server derives scope_id/scope_type from this
@@ -2417,23 +2475,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // Model identity, agent and reasoning level are mutually exclusive halves of the same
         // decision, resolved in one place. An agent answers with its own deployment, and a
         // model identity sent alongside `agent_info` reads to the server as an override of it.
-        Object.assign(
-            requestBody,
-            buildSelectionFields({
-                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
-                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
-                // An explicit `@agent` or `@model` tag chooses for this message alone and
-                // overrides the pickers, which is the point of tagging one. A tagged *model*
-                // additionally clears the agent selection: the exclusivity rule above lets an
-                // agent win, so leaving a picked agent in place would silently discard the
-                // model the reader just named.
-                agentSelection: taggedModelSelection
-                    ? undefined
-                    : (taggedAgentSelection ?? options.agentSelection),
-                modelDeployment: taggedModelSelection ?? options.modelDeployment,
-                reasoningEffort: options.reasoningEffort,
-            }),
-        );
+        Object.assign(requestBody, selection);
 
         if (collaborative) {
             // The collaboration stream reads the text as `content` and records who was
@@ -2453,15 +2495,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
             isNewConversation,
             kind: collaborative ? 'collaborative' : 'personal',
             pendingUserMessageId,
-            stream: collaborative
-                ? {
+            stream: {
+                onAccepted: () => {
+                    if (get().activeConversationId === conversationId) lifecycle?.onAccepted();
+                },
+                ...(collaborative ? {
                       url: streamCollaborationUrl(conversationId),
                       // No reattach endpoint exists for a shared conversation, so a dropped
                       // transport must be reported rather than retried against a route that
                       // does not know this conversation id.
                       allowRecovery: false,
-                  }
-                : undefined,
+                  } : {}),
+            },
         });
     },
 
@@ -2868,7 +2913,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     },
 
     retryMessage: async (messageId, options) => {
-        if (get().streaming) {
+        if (get().streaming || preparingAttempt || preparingChatSend) {
             return;
         }
         const message = get().messages.find((candidate) => candidate.id === messageId);
@@ -2885,15 +2930,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
             });
             return;
         }
-        set({
-            streaming: true,
-            streamingContent: '',
-            thoughts: [],
-            streamingReasoningAdjustments: [],
-            streamError: null,
-            streamAuthUrl: null,
-            reconnectPhase: null,
-        });
+        const conversationId = get().activeConversationId;
+        if (!conversationId) return;
+        const actor = useBootstrapStore.getState().data?.user?.id;
+        const isCurrent = () => get().activeConversationId === conversationId && !useBootstrapStore.getState().authExpired &&
+            useBootstrapStore.getState().data?.user?.id === actor;
+        let input: ActionAuthPreflight = {
+            conversation_id: conversationId,
+            conversation_kind: get().activeConversationKind === 'collaborative' ? 'collaboration' : 'personal',
+        };
+        preparingAttempt = true;
         try {
             const bootstrap = useBootstrapStore.getState().data;
             // Same exclusive rule as a fresh send, so a retry cannot reintroduce the
@@ -2907,60 +2953,108 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 modelDeployment: options?.modelDeployment,
                 reasoningEffort: options?.reasoningEffort,
             });
+            const threadId = message ? messageThreadId(message) : null;
+            const originalUser = [...get().messages].reverse().find((entry) => entry.role === 'user' &&
+                threadId && messageThreadId(entry) === threadId);
+            const agentInfo = selection.agent_info ?? actionAuthAgentFromMetadata(message?.metadata) ??
+                actionAuthAgentFromMetadata(originalUser?.metadata);
+            input = { ...input, agent_info: agentInfo };
+            const receipt = await actionAuthController.request(input, { surface: 'chat', isCurrent: () => isCurrent() && !get().streaming });
+            if (!receipt || !isCurrent()) return;
+            set({
+                streaming: true, streamingContent: '', thoughts: [], streamingReasoningAdjustments: [],
+                streamError: null, streamAuthUrl: null, reconnectPhase: null,
+            });
+            preparingAttempt = false;
             const result = await retryMessageApi(messageId, {
                 model: selection.model_deployment,
                 reasoning_effort: selection.reasoning_effort,
-                agent_info: selection.agent_info,
+                agent_info: agentInfo,
+                ...(receipt.requestId ? { action_auth_request_id: receipt.requestId } : {}),
             });
+            if (!isCurrent()) return;
             if (!result?.chat_request) {
                 throw new Error('The server did not return a retry request.');
             }
             // The retry endpoint only creates the next attempt; this second call is what
             // actually generates the response.
+            const request = { ...result.chat_request };
+            delete request.action_auth_request_id;
+            if (receipt.requestId) request.action_auth_request_id = receipt.requestId;
             await runChatStream(
-                result.chat_request,
+                request,
                 result.chat_request.conversation_id,
                 { reloadOnDone: true },
             );
         } catch (error) {
+            if (!isCurrent()) return;
+            if (isActionCredentialsRequired(error)) {
+                set({ streaming: false, streamError: null, streamAuthUrl: null });
+                actionAuthController.repair(error, input, { surface: 'chat', isCurrent });
+                return;
+            }
             set({
                 streaming: false,
                 streamError: error instanceof Error ? error.message : 'Retry failed.',
                 streamAuthUrl: null,
             });
+        } finally {
+            preparingAttempt = false;
         }
     },
 
     editMessage: async (messageId, content) => {
         const trimmed = content.trim();
-        if (!trimmed || get().streaming) {
+        if (!trimmed || get().streaming || preparingAttempt || preparingChatSend) {
             return;
         }
-        set({
-            streaming: true,
-            streamingContent: '',
-            thoughts: [],
-            streamingReasoningAdjustments: [],
-            streamError: null,
-            streamAuthUrl: null,
-            reconnectPhase: null,
-        });
+        const conversationId = get().activeConversationId;
+        if (!conversationId) return;
+        const actor = useBootstrapStore.getState().data?.user?.id;
+        const isCurrent = () => get().activeConversationId === conversationId && !useBootstrapStore.getState().authExpired &&
+            useBootstrapStore.getState().data?.user?.id === actor;
+        const message = get().messages.find((entry) => entry.id === messageId);
+        const input: ActionAuthPreflight = {
+            agent_info: actionAuthAgentFromMetadata(message?.metadata),
+            conversation_id: conversationId,
+            conversation_kind: get().activeConversationKind === 'collaborative' ? 'collaboration' : 'personal',
+        };
+        preparingAttempt = true;
         try {
-            const result = await editMessageApi(messageId, trimmed);
+            const receipt = await actionAuthController.request(input, { surface: 'chat', isCurrent: () => isCurrent() && !get().streaming });
+            if (!receipt || !isCurrent()) return;
+            set({
+                streaming: true, streamingContent: '', thoughts: [], streamingReasoningAdjustments: [],
+                streamError: null, streamAuthUrl: null, reconnectPhase: null,
+            });
+            preparingAttempt = false;
+            const result = await editMessageApi(messageId, trimmed, receipt.requestId ?? undefined);
+            if (!isCurrent()) return;
             if (!result?.chat_request) {
                 throw new Error('The server did not return an edit request.');
             }
+            const request = { ...result.chat_request };
+            delete request.action_auth_request_id;
+            if (receipt.requestId) request.action_auth_request_id = receipt.requestId;
             await runChatStream(
-                result.chat_request,
+                request,
                 result.chat_request.conversation_id,
                 { reloadOnDone: true },
             );
         } catch (error) {
+            if (!isCurrent()) return;
+            if (isActionCredentialsRequired(error)) {
+                set({ streaming: false, streamError: null, streamAuthUrl: null });
+                actionAuthController.repair(error, input, { surface: 'chat', isCurrent });
+                return;
+            }
             set({
                 streaming: false,
                 streamError: error instanceof Error ? error.message : 'Edit failed.',
                 streamAuthUrl: null,
             });
+        } finally {
+            preparingAttempt = false;
         }
     },
 

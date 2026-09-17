@@ -10,6 +10,7 @@ Last inventoried: 2026-08-10
 
 ## Current tag inventory
 
+- `[ACTION_AUTH]`
 - `[ACTIVITY_LOGGING]`
 - `[ADMIN_FEEDBACK]`
 - `[ADMIN_RELEASE_NOTIFICATIONS]`

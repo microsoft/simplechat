@@ -18,14 +18,14 @@
     },
     "auth_method": {
       "type": "string",
-      "enum": ["username_password", "api_key", "bearer_token", "none"],
+      "enum": ["username_password", "http_basic", "api_key", "bearer_token", "none"],
       "default": "username_password",
-      "description": "Authentication method used by the Yamcs client."
+      "description": "Native Yamcs password login, gateway HTTP Basic, bearer token, x-api-key, or anonymous access. A personal credential requirement determines this method from its profile."
     },
     "tls_verify": {
       "type": "boolean",
       "default": true,
-      "description": "Verify the Yamcs server TLS certificate. Disable only for internal ground segments using self-signed certificates."
+      "description": "Verify the Yamcs server TLS certificate. Personal credential requirements always require HTTPS and verification. Legacy local-development actions may disable verification."
     },
     "read_only": {
       "type": "boolean",

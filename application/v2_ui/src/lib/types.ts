@@ -906,6 +906,8 @@ export interface ChatStreamEvent {
     content?: string;
     done?: boolean;
     error?: string;
+    error_code?: string;
+    execution_started?: boolean;
     auth_required?: boolean;
     /** Same-origin handoff that reauthorizes the target and starts Foundry consent. */
     auth_url?: string;
@@ -928,6 +930,7 @@ export interface ChatStreamEvent {
 
 /** Request body for POST /api/chat/stream. Field names verified against the Flask route. */
 export interface ChatStreamRequest {
+    action_auth_request_id?: string;
     message: string;
     conversation_id?: string | null;
     chat_type?: string;

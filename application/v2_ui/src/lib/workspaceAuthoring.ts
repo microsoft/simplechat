@@ -2,6 +2,7 @@
 // Editor contracts are separate from persisted manifests and their secret values.
 
 import type { WorkspaceAction, WorkspaceAgent, WorkspaceModelEndpoint } from './types';
+import type { ActionCredentialRequirement } from './actionAuth';
 
 export const EDITOR_SECRET_MASK = '***REDACTED***';
 export type WorkspaceAgentType = 'local' | 'aifoundry' | 'new_foundry' | 'foundry_workflow';
@@ -45,6 +46,7 @@ export interface ActionConfiguration extends WorkspaceAction {
         [key: string]: unknown;
     };
     identity_id?: string;
+    credential_requirement?: ActionCredentialRequirement;
     additionalFields: Record<string, unknown>;
     metadata: Record<string, unknown>;
     is_enabled?: boolean;

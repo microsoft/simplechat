@@ -26,6 +26,7 @@ import { readSsePost } from './sse';
 import type { ComposerReference } from './composerDraft';
 import type { ChatStreamEvent, Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
+import { normalizeActionCredentialsControl, type ActionCredentialsControl } from './actionAuth';
 
 // `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
 // part of this contract's surface. Re-exported here (rather than making consumers reach into
@@ -479,6 +480,7 @@ export type PlanRevisionRequest = PlanRevisionAction & {
 };
 
 export interface OrchestrationRequestError {
+    actionAuth?: ActionCredentialsControl;
     status?: number;
     code?: string;
     current_run_id?: string;
@@ -532,6 +534,7 @@ export interface OrchestrationPlanRequest extends OrchestrationSeeds {
  * so the browser never assembles the plan that executes.
  */
 export interface OrchestrationRunRequest {
+    action_auth_request_id?: string;
     run_id: string;
     plan_id?: string;
     conversation_id?: string | null;
@@ -616,6 +619,7 @@ export interface PlanStreamResult {
 }
 
 export interface RunStreamHandlers {
+    onActionCredentialsRequired?: (event: ActionCredentialsControl) => void;
     /** A step changed status (`type: "orchestration_step"`). */
     onStep?: (event: RunStreamEvent) => void;
     /**
@@ -648,6 +652,7 @@ export interface RunStreamHandlers {
 }
 
 export interface RunStreamResult {
+    credentialsRequired?: boolean;
     accumulated: string;
     completed: boolean;
     cancelled: boolean;
@@ -846,9 +851,12 @@ export function orchestrationErrorInfo(
 ): OrchestrationRequestError {
     const data = payload && typeof payload === 'object'
         ? payload as Record<string, unknown> : {};
+    const actionAuth = normalizeActionCredentialsControl(payload);
     return {
         status,
-        code: typeof data.code === 'string' ? data.code : undefined,
+        code: actionAuth ? 'action_credentials_required' :
+            typeof data.code === 'string' ? data.code : undefined,
+        ...(actionAuth ? { actionAuth } : {}),
         current_run_id: typeof data.current_run_id === 'string' ? data.current_run_id : undefined,
     };
 }
@@ -985,6 +993,12 @@ async function readPlanStream(
     }
 
     const onEvent = (event: PlanStreamEvent): boolean => {
+        const actionAuth = normalizeActionCredentialsControl(event);
+        if (actionAuth) {
+            result.errored = true;
+            handlers.onError?.('Connect your personal action identity before continuing.', { code: actionAuth.error_code, actionAuth });
+            return true;
+        }
         if (typeof event.error === 'string' && event.error) {
             result.errored = true;
             handlers.onError?.(
@@ -1097,6 +1111,12 @@ export async function runOrchestration(
         body,
         signal,
         (message, error) => {
+            if (error?.actionAuth) {
+                result.errored = true;
+                result.credentialsRequired = true;
+                handlers.onActionCredentialsRequired?.(error.actionAuth);
+                return;
+            }
             if (error?.status === 409
                 && (error.code === 'plan_changed' || error.code === 'edit_in_progress')) {
                 result.errored = true;
@@ -1131,6 +1151,13 @@ export async function runOrchestration(
     }
 
     const onEvent = (event: RunStreamEvent): boolean => {
+        const actionAuth = normalizeActionCredentialsControl(event);
+        if (actionAuth) {
+            result.errored = true;
+            result.credentialsRequired = true;
+            handlers.onActionCredentialsRequired?.(actionAuth);
+            return true;
+        }
         if (typeof event.error === 'string' && event.error && !event.done) {
             result.errored = true;
             handlers.onError?.(event.error, event);

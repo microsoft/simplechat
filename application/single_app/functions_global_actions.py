@@ -20,6 +20,7 @@ from functions_workspace_identities import (
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_agent_delegation import validate_agent_action_for_scope
+from functions_action_auth import normalize_action_credential_requirement, validate_action_credential_requirement
 
 def get_global_actions(return_type=SecretReturnType.TRIGGER, include_disabled=False):
     """
@@ -131,6 +132,10 @@ def save_global_action(action_data, user_id=None):
         except Exception:
             pass
 
+        action_data = normalize_action_credential_requirement(
+            action_data, existing_action, assign_id=True,
+        )
+        validate_action_credential_requirement(action_data, scope_type="global")
         if existing_action:
             action_data['created_by'] = existing_action.get('created_by') or user_id
             action_data['created_at'] = existing_action.get('created_at') or now

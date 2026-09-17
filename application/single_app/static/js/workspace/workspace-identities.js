@@ -1,4 +1,7 @@
 // workspace-identities.js
+import { createIdentityCredentialField, wipeIdentityCredentialFields } from './identity-credential-fields.js';
+
+window.addEventListener('pagehide', () => wipeIdentityCredentialFields(document));
 
 function initializeWorkspaceIdentityRoot(root) {
     if (!root || root.dataset.workspaceIdentityInitialized === 'true') {
@@ -353,6 +356,7 @@ function initializeWorkspaceIdentityRoot(root) {
     };
 
     const hideModal = (modalElement) => {
+        wipeIdentityCredentialFields(modalElement);
         if (window.bootstrap?.Modal) {
             window.bootstrap.Modal.getOrCreateInstance(modalElement).hide();
             return;
@@ -478,17 +482,21 @@ function initializeWorkspaceIdentityRoot(root) {
                 selectedAuthType,
                 'The credential method this identity stores.',
             );
-            const usernameField = buildTextField(`${modalId}-username`, 'Username', credentials.username || '');
+            const usernameField = createIdentityCredentialField({
+                id: `${modalId}-username`, name: 'username', label: 'Username',
+                type: 'text', value: credentials.username || '',
+            });
             const domainField = buildTextField(`${modalId}-domain`, 'Domain (optional)', credentials.domain || '', {
                 placeholder: 'Leave blank when no domain is required',
                 help: 'Use a domain only for accounts that require one.',
                 assistiveText: 'Leave this blank when the account signs in without a domain.',
             });
             const clientIdField = buildTextField(`${modalId}-client-id`, 'Client ID', credentials.identity || '', { placeholder: 'Application or service principal client ID' });
-            const secretField = buildTextField(`${modalId}-secret`, 'Secret', '', {
-                type: 'password',
-                placeholder: credentials.secret_stored || credentials.password_stored ? 'Stored value unchanged' : '',
+            const secretField = createIdentityCredentialField({
+                id: `${modalId}-secret`, name: 'secret', label: 'Secret',
+                stored: credentials.secret_stored || credentials.password_stored,
             });
+            modal.addEventListener('hide.bs.modal', () => wipeIdentityCredentialFields(modal));
             const modalStatus = createElement('div', { className: 'alert alert-info py-2 mb-3 d-none', attributes: { role: 'alert' } });
 
             const setModalStatus = (message, type = 'info') => {
@@ -597,6 +605,9 @@ function initializeWorkspaceIdentityRoot(root) {
 
             const saveButton = createButton('btn btn-success', mode === 'edit' ? 'Save Identity' : 'Add Identity', 'bi bi-check2');
             saveButton.addEventListener('click', async () => {
+                if (saveButton.disabled) {
+                    return;
+                }
                 const capabilityPayload = getCapabilityPayloadValues(selectedCapabilities);
                 const credentialsPayload = {
                     auth_type: selectedAuthType,
@@ -619,6 +630,7 @@ function initializeWorkspaceIdentityRoot(root) {
                     supported_source_types: capabilityPayload.sourceTypes,
                     credentials: credentialsPayload,
                 };
+                wipeIdentityCredentialFields(modal);
 
                 try {
                     saveButton.disabled = true;
@@ -633,6 +645,7 @@ function initializeWorkspaceIdentityRoot(root) {
                 } catch (error) {
                     setModalStatus(error.message, 'danger');
                 } finally {
+                    Object.keys(credentialsPayload).forEach(key => { credentialsPayload[key] = ''; });
                     saveButton.disabled = false;
                 }
             });

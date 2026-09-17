@@ -5,11 +5,12 @@ import threading
 import time
 
 import app_settings_cache
-from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
+from flask import Response, current_app, g, jsonify, redirect, request, session, stream_with_context
 
 from config import *
 from collaboration_models import COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
 from functions_appinsights import log_event
+from functions_action_auth_execution import enforce_action_auth_request
 from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -413,6 +414,7 @@ def _build_collaboration_stream_request_payload(data, source_conversation_id, me
         'model_provider': data.get('model_provider'),
         'prompt_info': data.get('prompt_info'),
         'agent_info': data.get('agent_info'),
+        'action_auth_request_id': data.get('action_auth_request_id'),
         'reasoning_effort': data.get('reasoning_effort'),
     }
 
@@ -2361,6 +2363,14 @@ def register_route_backend_collaboration(bp):
 
             conversation_doc = get_collaboration_conversation(conversation_id)
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+            auth_block = enforce_action_auth_request(current_user['user_id'], {
+                **data,
+                'conversation_id': conversation_id,
+                'conversation_kind': COLLABORATION_KIND,
+            })
+            if auth_block is not None:
+                return auth_block
+            verified_action_auth_request = getattr(g, 'action_auth_verified_request', None)
             source_conversation_doc, conversation_doc = ensure_collaboration_source_conversation(
                 conversation_doc,
                 current_user,
@@ -2463,6 +2473,7 @@ def register_route_backend_collaboration(bp):
                     with current_app.test_request_context('/api/chat/stream', method='POST', json=stream_request_payload):
                         session.clear()
                         session.update(session_snapshot)
+                        g.action_auth_verified_request = verified_action_auth_request
                         internal_response = current_app.make_response(internal_stream_view())
 
                         if int(internal_response.status_code or 500) >= 400:
@@ -2470,6 +2481,9 @@ def register_route_backend_collaboration(bp):
                                 error_payload = internal_response.get_json(silent=True) or {}
                             except Exception:
                                 error_payload = {}
+                            if error_payload.get('error_code') == 'action_credentials_required':
+                                yield f'data: {json.dumps({**error_payload, "conversation_id": conversation_id, "conversation_kind": COLLABORATION_KIND})}\n\n'
+                                return
                             yield collaboration_stream_error(
                                 error_payload.get('error') or error_payload.get('message') or 'Failed to start collaboration AI workflow',
                             )
@@ -2495,6 +2509,11 @@ def register_route_backend_collaboration(bp):
                                 stream_payload = json.loads(json_text)
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
+
+                            if stream_payload.get('error_code') == 'action_credentials_required':
+                                stream_payload['conversation_id'] = conversation_id
+                                stream_payload['conversation_kind'] = COLLABORATION_KIND
+                                return f'data: {json.dumps(stream_payload)}\n\n'
 
                             if (
                                 stream_payload.get('error')

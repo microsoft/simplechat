@@ -10,6 +10,7 @@
 
 import { apiUrl, API_BASE } from './apiClient';
 import type { ChatStreamEvent, ChatStreamRequest } from './types';
+import { isActionCredentialsRequired, normalizeActionCredentialsControl } from './actionAuth';
 
 const CREDENTIALS_MODE: RequestCredentials = API_BASE ? 'include' : 'same-origin';
 
@@ -253,6 +254,11 @@ async function consumeStreamResponse(
 ): Promise<void> {
     /** Returns true when the frame was terminal and reading should stop. */
     const handleEvent = (event: ChatStreamEvent): boolean => {
+        if (isActionCredentialsRequired(event)) {
+            result.errored = true;
+            reportError('Connect your personal action identity to continue.', event);
+            return true;
+        }
         if (event.error || event.auth_required === true) {
             result.errored = true;
             reportError(event.error || 'Foundry sign-in or consent is required.', event);
@@ -422,6 +428,8 @@ export async function reattachChatStream(
  * so recovery must be switched off rather than allowed to fail.
  */
 export interface ChatStreamOptions {
+    /** The server confirms message persistence or generation, not merely an HTTP handshake. */
+    onAccepted?: () => void;
     /** Endpoint to POST to. Defaults to the personal chat stream. */
     url?: string;
     /** Whether a dropped transport may be reattached to. Defaults to true. */
@@ -454,8 +462,30 @@ export async function streamChat(
 
     // A new conversation has no id until the server assigns one, and recovery needs it.
     let conversationId = body.conversation_id ?? undefined;
+    let accepted = false;
+    const confirmAccepted = () => {
+        if (accepted || signal?.aborted) return;
+        accepted = true;
+        options.onAccepted?.();
+    };
     const trackingHandlers: ChatStreamHandlers = {
         ...handlers,
+        onUserMessagePersisted: (event) => {
+            confirmAccepted();
+            handlers.onUserMessagePersisted?.(event);
+        },
+        onContent: (delta, accumulated) => {
+            confirmAccepted();
+            handlers.onContent?.(delta, accumulated);
+        },
+        onDone: (event, accumulated) => {
+            confirmAccepted();
+            handlers.onDone?.(event, accumulated);
+        },
+        onCancelled: (event, accumulated) => {
+            if (event.message_persisted !== false) confirmAccepted();
+            handlers.onCancelled?.(event, accumulated);
+        },
         onConversationMetadata: (event) => {
             if (typeof event.conversation_id === 'string' && event.conversation_id) {
                 conversationId = event.conversation_id;
@@ -466,6 +496,7 @@ export async function streamChat(
 
     let pendingError: DeferredStreamError | null = null;
     const captureError = (message: string, event?: ChatStreamEvent) => {
+        if (normalizeActionCredentialsControl(event)?.execution_started === true) confirmAccepted();
         pendingError = { message, event };
     };
 
@@ -519,7 +550,8 @@ export async function streamChat(
         await consumeStreamResponse(response, trackingHandlers, result, signal, captureError);
     }
 
-    const requiresAuth = (pendingError as DeferredStreamError | null)?.event?.auth_required === true;
+    const requiresAuth = (pendingError as DeferredStreamError | null)?.event?.auth_required === true ||
+        isActionCredentialsRequired((pendingError as DeferredStreamError | null)?.event);
     if (pendingError && !requiresAuth && !signal?.aborted && conversationId && options.allowRecovery !== false) {
         // The answer is generated on the server and outlives the HTTP connection, so a
         // dropped transport is recoverable. attachToLiveStream reports its own failures.

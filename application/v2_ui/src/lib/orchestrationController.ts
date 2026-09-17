@@ -51,6 +51,8 @@ import { applyPlanEdits, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable,
 import type { Json } from './types';
 import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
 import { useChatStore } from '../stores/chatStore';
+import { useBootstrapStore } from '../stores/bootstrapStore';
+import { actionAuthController } from './actionAuthController';
 import {
     selectEdits,
     selectCanEditPlan,
@@ -346,6 +348,7 @@ async function dispatchPlan(
     let produced = false;
     let errored = false;
     let failure = '';
+    const planningActor = useBootstrapStore.getState().data?.user?.id;
     let reasoningAdjustments: ReasoningResolution[] = [];
     const isCurrentRequest = () =>
         !controller.signal.aborted && activeControllers.get(currentConversationId) === controller;
@@ -408,12 +411,25 @@ async function dispatchPlan(
                     .setElicitation(currentConversationId, currentTurnId, elicitation);
                 produced = true;
             },
-            onError: (message) => {
+            onError: (message, error) => {
                 if (!isCurrentRequest()) {
                     return;
                 }
                 errored = true;
-                failure = message;
+                failure = error?.actionAuth ? 'Connect your personal action identity before retrying this request.' : message;
+                if (error?.actionAuth) {
+                    useChatStore.getState().settleOrchestrationTurn(currentConversationId, { status: 'planned' });
+                    actionAuthController.repair(error.actionAuth, {
+                        agent_info: context.seeds.agent_info,
+                        conversation_id: currentConversationId,
+                        conversation_kind: useChatStore.getState().activeConversationKind === 'collaborative' ? 'collaboration' : 'personal',
+                    }, {
+                        surface: 'chat',
+                        isCurrent: () => useChatStore.getState().activeConversationId === currentConversationId &&
+                            !useBootstrapStore.getState().authExpired && useBootstrapStore.getState().data?.user?.id === planningActor,
+                    });
+                    return;
+                }
                 useChatStore
                     .getState()
                     .settleOrchestrationTurn(currentConversationId, {
@@ -432,9 +448,8 @@ async function dispatchPlan(
 
     if (produced && !errored) {
         // Auto mode is pre-approved on arrival, so its run starts here rather than waiting for a
-        // click or a countdown — and it starts INSTEAD OF settling `planned`, so the thinking
-        // state flows straight into the run's streaming without a flicker to idle between them.
-        // Manual and timed settle `planned` and wait for the card.
+        // click or a countdown. Planning is settled first because a private credential
+        // preflight can pause the executable run. Manual and timed wait for their card.
         const settledPlan = selectPlan(
             useOrchestrationStore.getState(),
             currentConversationId,
@@ -447,6 +462,7 @@ async function dispatchPlan(
             isPlanApproved(settledPlan) &&
             isPlanRunnable(settledPlan);
         if (autoRun) {
+            useChatStore.getState().settleOrchestrationTurn(currentConversationId, { status: 'planned' });
             void approveAndRunPlan({
                 conversationId: currentConversationId, turnId: currentTurnId, automatic: true,
             });
@@ -631,9 +647,34 @@ async function executeSavedPlan(
     edits?: PlanEdits,
 ): Promise<void> {
     const store = useOrchestrationStore.getState();
-
     const runId = plan.run_id;
     const planId = plan.plan_id;
+    const actor = useBootstrapStore.getState().data?.user?.id;
+    const originalEdits = JSON.stringify(selectEdits(store, conversationId, turnId));
+    const isCurrent = () => {
+        const current = useOrchestrationStore.getState();
+        const currentPlan = selectPlan(current, conversationId, turnId);
+        return !useChatStore.getState().streaming && useChatStore.getState().activeConversationId === conversationId &&
+            !useBootstrapStore.getState().authExpired &&
+            useBootstrapStore.getState().data?.user?.id === actor &&
+            (!current.activeTurns[conversationId] || current.activeTurns[conversationId] === turnId) &&
+            currentPlan?.run_id === runId && currentPlan.plan_id === planId &&
+            currentPlan.revision === plan.revision && currentPlan.edit_version === plan.edit_version &&
+            JSON.stringify(selectEdits(current, conversationId, turnId)) === originalEdits &&
+            !selectPlanRunBlocked(current, conversationId, turnId) &&
+            !Object.values(current.inFlight).some((run) => run.conversationId === conversationId);
+    };
+    if (!isCurrent()) return;
+    const authInput = {
+        run_id: runId, conversation_id: conversationId,
+        conversation_kind: useChatStore.getState().activeConversationKind === 'collaborative' ? 'collaboration' as const : 'personal' as const,
+    };
+    // Pause automatic approval before awaiting a private form. Cancellation requires a
+    // deliberate new approval; nothing from this interaction goes into persisted run state.
+    store.pauseActionAuthRun(runId);
+    const receipt = await actionAuthController.request(authInput, { surface: 'chat', isCurrent });
+    if (!receipt || !isCurrent()) return;
+    store.resumeActionAuthRun(runId);
     const began = store.beginRun({
         conversationId,
         turnId,
@@ -659,6 +700,7 @@ async function executeSavedPlan(
     activeRunIds.set(conversationId, runId);
 
     const runBody: OrchestrationRunRequest = {
+        ...(receipt.requestId ? { action_auth_request_id: receipt.requestId } : {}),
         run_id: runId,
         plan_id: planId,
         conversation_id: conversationId,
@@ -672,6 +714,19 @@ async function executeSavedPlan(
     const result = await runOrchestration(
         runBody,
         {
+            onActionCredentialsRequired: (event) => {
+                settled = true;
+                const current = useOrchestrationStore.getState();
+                current.releaseRunAttempt(runId);
+                current.pauseActionAuthRun(runId);
+                useChatStore.getState().settleOrchestrationTurn(conversationId, { status: 'planned' });
+                actionAuthController.repair(event, authInput, {
+                    surface: 'chat',
+                    isCurrent: () => useChatStore.getState().activeConversationId === conversationId &&
+                        !useBootstrapStore.getState().authExpired &&
+                        useBootstrapStore.getState().data?.user?.id === actor,
+                });
+            },
             onStep: (event) => {
                 const current = useOrchestrationStore.getState();
                 current.applyStepEvent(conversationId, turnId, event);
@@ -755,6 +810,7 @@ async function executeSavedPlan(
         activeControllers.delete(conversationId);
         activeRunIds.delete(conversationId);
     }
+    if (result.credentialsRequired) return;
     if (result.conflict) {
         await refreshOrchestrationPlanEditor(
             { conversationId, turnId }, result.conflict.current_run_id ?? runId, conflictMessage,
@@ -1019,6 +1075,10 @@ export async function runPreparedOrchestrationRetry(conversationId: string, runI
 }
 
 export async function cancelOrchestration(conversationId: string, runId?: string): Promise<void> {
+    actionAuthController.cancelForRun(runId || selectPlan(
+        useOrchestrationStore.getState(), conversationId,
+        useOrchestrationStore.getState().activeTurns[conversationId] ?? '',
+    )?.run_id);
     if (!runId && activeControllers.has(conversationId) && !activeRunIds.has(conversationId)) {
         activeControllers.get(conversationId)?.abort();
         return;

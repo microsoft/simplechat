@@ -79,7 +79,7 @@ function translateActionSecrets(
 export function buildActionConnectionPayload(
     draft: ActionConfiguration, original: AuthoringResource<ActionConfiguration> | null,
 ): Record<string, unknown> {
-    if (draft.type === 'agent' || original?.read_only || draft.is_global || draft.is_group) {
+    if (draft.type === 'agent' || original?.read_only || draft.is_global || draft.is_group || draft.credential_requirement) {
         throw new Error('This action cannot be connection-tested from My Workspace.');
     }
     if (original && !actionText(original.record.id).trim()) {
@@ -192,6 +192,7 @@ export function testWorkspaceAction(
 export function validateWorkspaceAction(
     draft: ActionConfiguration, original: AuthoringResource<ActionConfiguration> | null, signal?: AbortSignal,
 ): Promise<unknown> {
+    if (draft.credential_requirement) return Promise.reject(new Error('Per-user Yamcs configuration is managed by the global action administrator.'));
     const manifest = translateActionSecrets(draft, original);
     return api.post('/api/plugins/validate', manifest, signal);
 }

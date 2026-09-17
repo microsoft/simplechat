@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.105"
+version: "0.261.107"
 ---
 
 ## How to use this reference
@@ -45,6 +45,22 @@ arrived during streaming. After granting access, send the message again.
 | `confirm-scope-lock-toggle-btn` | Confirms a scope-lock change from the scope-lock modal. | Use it when you intentionally want to lock or unlock the conversation scope after reviewing the warning. | Always available |
 
 ## Chat tools and composer
+
+### Private action credential requests
+
+From **0.261.107**, **Connect Yamcs** collects a required personal identity before
+an agent starts. The card is app-authored and private to the submitting user;
+its inputs never become normal messages or plan-clarification answers.
+
+**Save and continue** stores or binds your identity and then sends the pending
+request once. **Cancel** stops that continuation. The manual setup alternative
+points to personal Workspace Identities. A later authentication failure does not
+automatically replay tools that already ran.
+
+In shared chats, the notice distinguishes the private form from the prompt and
+returned data, which participants can read. New calls use the submitter's account;
+old shared history is not filtered by each person's service permissions.
+See [Connect your own action account]({{ '/guides/personal-action-authentication/' | relative_url }}).
 
 {% include media.html src="reference/chat-controls-composer-tools.png" alt="Message composer with quick tools, upload controls, URL review, web search, and send button visible." title="Chat tools and composer" capture="Capture the message composer with quick tools, upload controls, URL review, web search, and send button visible." %}
 

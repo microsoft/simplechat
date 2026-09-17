@@ -5,6 +5,7 @@ import { showToast } from './chat-toast.js';
 import { showLoadingIndicatorInChatbox, hideLoadingIndicatorInChatbox } from './chat-loading-indicator.js';
 import { getEffectiveScopes, isScopeLocked } from './chat-documents.js';
 import { sendMessageWithStreaming } from './chat-streaming.js';
+import { handleActionAuthRequired, prepareActionAuthExecution } from './chat-action-auth.js';
 
 function getKnownGroupName(groupId) {
     return (window.userGroups || []).find(group => String(group?.id || '') === String(groupId || ''))?.name || null;
@@ -223,9 +224,9 @@ export async function handleRetryButtonClick(messageDiv, messageId, messageType)
 /**
  * Execute message retry - called when user confirms retry in modal
  */
-window.executeMessageRetry = function() {
+window.executeMessageRetry = async function() {
     const pendingRetry = window.pendingMessageRetry;
-    if (!pendingRetry) {
+    if (!pendingRetry || pendingRetry.actionAuthPending) {
         console.error('❌ No pending retry found');
         return;
     }
@@ -286,9 +287,31 @@ window.executeMessageRetry = function() {
             modalInstance.hide();
         }
     }
+
+    const conversationId = window.chatConversations?.getCurrentConversationId?.() || window.currentConversationId;
+    const selectedAgentValue = document.getElementById('retry-agent-select')?.value;
+    const isCurrent = () => window.pendingMessageRetry === pendingRetry
+        && window.currentConversationId === conversationId
+        && Boolean(retryModeAgent?.checked) === Boolean(isAgentMode)
+        && document.getElementById('retry-agent-select')?.value === selectedAgentValue;
+    pendingRetry.actionAuthPending = true;
+    try {
+        if (!await prepareActionAuthExecution(requestBody, { conversationId, isCurrent })) {
+            pendingRetry.actionAuthPending = false;
+            return;
+        }
+    } catch {
+        pendingRetry.actionAuthPending = false;
+        showToast('The private identity check could not be completed. Retry has not started.', 'warning');
+        return;
+    }
     
     // Wait a bit for modal to close, then show loading indicator
     setTimeout(() => {
+        if (!isCurrent()) {
+            pendingRetry.actionAuthPending = false;
+            return;
+        }
         console.log('⏰ Modal closed, showing AI typing indicator...');
         
         // Show "AI is typing..." indicator
@@ -303,18 +326,26 @@ window.executeMessageRetry = function() {
         },
         body: JSON.stringify(requestBody)
     })
-    .then(response => {
-        if (!response.ok) {
-            return response.json().then(data => {
-                throw new Error(data.error || 'Retry failed');
-            });
+    .then(async response => {
+        const data = await response.json();
+        if (handleActionAuthRequired(data, {
+            payload: requestBody, conversationId,
+            isCurrent: () => window.currentConversationId === conversationId,
+        })) {
+            hideLoadingIndicatorInChatbox();
+            return null;
         }
-        return response.json();
+        if (!response.ok) throw new Error(data.error || 'Retry failed');
+        return data;
     })
     .then(data => {
+        if (!data) return null;
         console.log('✅ Retry API response:', data);
         
         if (data.success && data.chat_request) {
+            if (requestBody.action_auth_request_id) {
+                data.chat_request.action_auth_request_id = requestBody.action_auth_request_id;
+            }
             console.log('🔄 Retry initiated, calling chat API with:');
             console.log('   retry_user_message_id:', data.chat_request.retry_user_message_id);
             console.log('   retry_thread_id:', data.chat_request.retry_thread_id);
@@ -335,6 +366,7 @@ window.executeMessageRetry = function() {
                 null,
                 data.chat_request.conversation_id,
                 {
+                    actionAuthPrepared: Boolean(requestBody.agent_info),
                     onDone: () => {
                         const conversationId = window.chatConversations?.getCurrentConversationId() || data.chat_request.conversation_id;
                         if (conversationId) {
@@ -370,7 +402,7 @@ window.executeMessageRetry = function() {
     })
     .finally(() => {
         // Clean up pending retry
-        window.pendingMessageRetry = null;
+        if (window.pendingMessageRetry === pendingRetry) window.pendingMessageRetry = null;
     });
     
     }, 300); // End of setTimeout - wait 300ms for modal to close

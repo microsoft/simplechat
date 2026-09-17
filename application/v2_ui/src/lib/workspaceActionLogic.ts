@@ -5,7 +5,8 @@ import {
     type ActionConfiguration, type ActionTypeDefinition, type AuthoringResource, type EditorSchema,
 } from './workspaceAuthoring';
 import { nativeActionDefinition, sqlConnectionMethod, usesDirectBlobConnectionString } from './workspaceActionRegistry';
-import type { ActionIdentity } from './workspaceActionTypes';
+import type { ActionAuthoringScope, ActionIdentity } from './workspaceActionTypes';
+import { ACTION_AUTH_PROFILES, isActionAuthProfile, safeActionAuthDestination, type ActionAuthProfile } from './actionAuth';
 
 export const ACTION_AUTHORING_UNAVAILABLE =
     'Creating and editing actions is not enabled for your account. You can still view available actions and delete your own where permitted.';
@@ -332,6 +333,7 @@ export function changeActionType(draft: ActionConfiguration, definition: ActionT
         ...draft,
         ...configuration,
         type: definition.type,
+        credential_requirement: undefined,
         endpoint: actionText(configuration.endpoint),
         auth: isRecord(configuration.auth) ? configuration.auth as ActionConfiguration['auth'] : { type: 'NoAuth' },
         identity_id: actionText(configuration.identity_id),
@@ -406,7 +408,7 @@ export function actionAuthModes(type: string, allowed: string[]): ActionAuthMode
         ],
         snowflake: [mode('password', 'Password', 'username_password'), mode('key_pair', 'PEM key pair', 'key'), mode('oauth', 'OAuth token', 'key')],
         tableau: [mode('personal_access_token', 'Personal access token', 'key'), mode('username_password', 'Username and password')],
-        yamcs: [mode('username_password', 'Username and password'), mode('api_key', 'API key', 'key'), mode('bearer_token', 'Bearer token', 'key'), mode('none', 'No authentication', 'NoAuth')],
+        yamcs: [mode('username_password', 'Yamcs username and password'), mode('http_basic', 'Gateway HTTP Basic', 'basic'), mode('api_key', 'API key', 'key'), mode('bearer_token', 'Bearer token', 'key'), mode('none', 'No authentication', 'NoAuth')],
         rocksdb: [mode('none', 'No authentication', 'NoAuth'), mode('bearer', 'Bearer token', 'key'), mode('api_key', 'API key header', 'key')],
     };
     const nativeType = type === 'databricks_table' ? 'databricks' : type;
@@ -416,6 +418,9 @@ export function actionAuthModes(type: string, allowed: string[]): ActionAuthMode
 }
 
 export function actionAuthMethod(draft: ActionConfiguration): string {
+    if (draft.type === 'yamcs' && draft.credential_requirement && isActionAuthProfile(draft.credential_requirement.profile)) {
+        return ACTION_AUTH_PROFILES[draft.credential_requirement.profile].authMethod;
+    }
     if (draft.type === 'sql_query' || draft.type === 'sql_schema') {
         return actionText(draft.additionalFields.auth_type) ||
             (draft.auth.type === 'servicePrincipal' ? 'service_principal' : draft.auth.type === 'identity' ? 'managed_identity' : 'username_password');
@@ -425,7 +430,7 @@ export function actionAuthMethod(draft: ActionConfiguration): string {
         if (draft.additionalFields.auth_method) return actionText(draft.additionalFields.auth_method);
         if (draft.type === 'snowflake') return draft.auth.type === 'username_password' ? 'password' : 'key_pair';
         if (draft.type === 'tableau') return draft.auth.type === 'username_password' ? 'username_password' : 'personal_access_token';
-        if (draft.type === 'yamcs') return draft.auth.type === 'NoAuth' ? 'none' : draft.auth.type === 'key' ? 'api_key' : 'username_password';
+        if (draft.type === 'yamcs') return draft.auth.type === 'NoAuth' ? 'none' : draft.auth.type === 'basic' ? 'http_basic' : draft.auth.type === 'key' ? 'api_key' : 'username_password';
         return draft.auth.type === 'servicePrincipal' ? 'service_principal' : draft.auth.type === 'identity' ? 'managed_identity' : 'pat';
     }
     return draft.auth.type;
@@ -442,7 +447,7 @@ export function changeActionAuth(draft: ActionConfiguration, choice: ActionAuthM
         auth.identity = sql && choice.value !== 'managed_identity' ? '' : 'managed_identity';
     }
     return {
-        ...draft, auth, additionalFields,
+        ...draft, credential_requirement: undefined, auth, additionalFields,
         ...(sql && choice.value === 'connection_string_only' ? { _sqlConnectionMethod: 'connection_string' } : {}),
     };
 }
@@ -452,7 +457,7 @@ export function selectActionIdentity(draft: ActionConfiguration, identity: Actio
     if (!identity) {
         delete additionalFields.identity_auth_type;
         delete additionalFields.identity_uses_connection_string;
-        return { ...draft, identity_id: '', auth: { ...draft.auth, identity: '', type: 'NoAuth' }, additionalFields };
+        return { ...draft, credential_requirement: undefined, identity_id: '', auth: { ...draft.auth, identity: '', type: 'NoAuth' }, additionalFields };
     }
     const allowed = nativeActionDefinition(draft.type).identityTypes;
     if (allowed && !allowed.includes(identity.auth_type)) throw new Error('This identity is not compatible with the action type.');
@@ -469,7 +474,83 @@ export function selectActionIdentity(draft: ActionConfiguration, identity: Actio
     } else if (draft.type === 'yamcs') {
         additionalFields.auth_method = identity.auth_type;
     }
-    return { ...draft, identity_id: identity.id, auth: { ...draft.auth, type: 'identity', identity: identity.id }, additionalFields };
+    return { ...draft, credential_requirement: undefined, identity_id: identity.id, auth: { ...draft.auth, type: 'identity', identity: identity.id }, additionalFields };
+}
+
+const YAMCS_INLINE_CREDENTIAL_FIELDS = [
+    'identity_id', 'identity_auth_type', 'identity_uses_connection_string', 'username', 'password',
+    'auth_key', 'api_key', 'secret', 'token', 'access_token', 'bearer_token', 'key',
+];
+
+export function canAuthorPersonalActionCredentials(draft: ActionConfiguration, scope: ActionAuthoringScope = 'personal'): boolean {
+    return scope === 'global' && draft.type === 'yamcs';
+}
+
+export function changeActionCredentialSource(
+    draft: ActionConfiguration, source: 'configured' | 'current_user', scope: ActionAuthoringScope,
+): ActionConfiguration {
+    if (!canAuthorPersonalActionCredentials(draft, scope)) {
+        throw new Error('Per-user credentials can only be configured for global Yamcs actions.');
+    }
+    const additionalFields = { ...draft.additionalFields };
+    for (const field of YAMCS_INLINE_CREDENTIAL_FIELDS) delete additionalFields[field];
+    const next: ActionConfiguration = { ...draft, auth: { type: 'username_password' }, additionalFields };
+    delete next.identity_id;
+    delete next.credential_requirement;
+    additionalFields.auth_method = 'username_password';
+    if (source === 'current_user') {
+        next.credential_requirement = { source: 'current_user', identity_name: 'Yamcs', profile: 'yamcs_login' };
+        additionalFields.tls_verify = true;
+        additionalFields.read_only = true;
+    }
+    return next;
+}
+
+export function changeActionCredentialProfile(
+    draft: ActionConfiguration, profile: ActionAuthProfile, scope: ActionAuthoringScope,
+): ActionConfiguration {
+    if (!canAuthorPersonalActionCredentials(draft, scope) || !draft.credential_requirement || !isActionAuthProfile(profile)) {
+        throw new Error('Choose a supported global Yamcs credential source first.');
+    }
+    const next = changeActionCredentialSource(draft, 'current_user', scope);
+    return {
+        ...next,
+        credential_requirement: { ...draft.credential_requirement, profile },
+        auth: { type: ACTION_AUTH_PROFILES[profile].nativeAuthType },
+        additionalFields: { ...next.additionalFields, auth_method: ACTION_AUTH_PROFILES[profile].authMethod },
+    };
+}
+
+export function validateActionCredentialRequirement(
+    draft: ActionConfiguration, scope: ActionAuthoringScope,
+): Record<string, string> {
+    const requirement = draft.credential_requirement;
+    if (!requirement) return {};
+    const errors: Record<string, string> = {};
+    if (!canAuthorPersonalActionCredentials(draft, scope)) {
+        errors['/credential_requirement'] = 'Only global Yamcs actions can require each user’s personal identity.';
+    }
+    if (requirement.source !== 'current_user' || !isActionAuthProfile(requirement.profile)) {
+        errors['/credential_requirement/profile'] = 'Choose a supported Yamcs authentication profile.';
+    }
+    if (!actionText(requirement.identity_name).trim() || requirement.identity_name.length > 120) {
+        errors['/credential_requirement/identity_name'] = 'Enter an identity name of 1–120 characters.';
+    }
+    if (Object.keys(requirement).some((key) => !['id', 'source', 'identity_name', 'profile'].includes(key)) ||
+        draft.identity_id || Object.keys(draft.auth).some((key) => key !== 'type') ||
+        YAMCS_INLINE_CREDENTIAL_FIELDS.some((key) => Object.hasOwn(draft.additionalFields, key))) {
+        errors['/credential_requirement'] = 'A per-user action cannot contain inline credentials or a workspace identity reference.';
+    }
+    if (isActionAuthProfile(requirement.profile) &&
+        (draft.auth.type !== ACTION_AUTH_PROFILES[requirement.profile].nativeAuthType ||
+            draft.additionalFields.auth_method !== ACTION_AUTH_PROFILES[requirement.profile].authMethod)) {
+        errors['/auth/type'] = 'The authentication protocol must match the selected personal identity profile.';
+    }
+    if (!safeActionAuthDestination(draft.endpoint)) {
+        errors['/endpoint'] = 'Personal credentials require an HTTPS destination without a username, password, query, or fragment.';
+    }
+    if (draft.additionalFields.tls_verify !== true) errors['/additionalFields/tls_verify'] = 'Personal credentials require TLS certificate verification.';
+    return errors;
 }
 
 export function deriveBlobEndpoint(connectionString: string): string {
@@ -499,8 +580,9 @@ export function actionForSave(draft: ActionConfiguration): ActionConfiguration {
 
 export function validateActionDraft(
     draft: ActionConfiguration, definition?: ActionTypeDefinition, original?: AuthoringResource<ActionConfiguration> | null,
+    scope: ActionAuthoringScope = 'personal',
 ): Record<string, string> {
-    const errors: Record<string, string> = {};
+    const errors: Record<string, string> = validateActionCredentialRequirement(draft, scope);
     if (!actionText(draft.displayName ?? draft.name).trim()) errors['/displayName'] = 'Action name is required.';
     if (!/^[A-Za-z0-9_-]+$/.test(actionText(draft.name))) errors['/name'] = 'Machine name must contain only letters, numbers, underscores, or dashes.';
     if (!definition) errors['/type'] = 'Choose an action type available in this workspace.';
@@ -536,7 +618,7 @@ export function validateActionDraft(
         if (!isRecord(target) || !actionText(target.id) || !actionText(target.scope_id) || !['personal', 'group', 'global'].includes(actionText(target.scope_type))) {
             errors['/additionalFields/target_agent'] = 'Select an authorized target agent.';
         }
-    } else if (!['openapi', 'mcp'].includes(draft.type) && !native.internal && !draft.identity_id) {
+    } else if (!['openapi', 'mcp'].includes(draft.type) && !native.internal && !draft.identity_id && !draft.credential_requirement) {
         const sql = ['sql_query', 'sql_schema'].includes(draft.type);
         const method = actionAuthMethod(draft);
         if (sql && method === 'connection_string_only' && sqlConnectionMethod(draft) !== 'connection_string') {

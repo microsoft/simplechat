@@ -11,23 +11,34 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from semantic_kernel.functions import kernel_function
 
+from functions_action_auth import ActionAuthStorageError, ActionCredentialsRequired
+from functions_action_catalog import _action_ref
 from functions_appinsights import log_event
-from functions_debug import debug_print
+from functions_yamcs_client import (
+    YamcsAuthenticationError,
+    YamcsConnectionError,
+    YamcsPermissionError,
+    create_yamcs_client,
+    validate_yamcs_user_destination,
+)
 from functions_yamcs_operations import (
     YAMCS_ALLOWED_READ_STATEMENTS,
     YAMCS_AUTH_METHOD_API_KEY,
     YAMCS_AUTH_METHOD_BEARER_TOKEN,
-    YAMCS_AUTH_METHOD_NONE,
+    YAMCS_AUTH_METHOD_HTTP_BASIC,
     YAMCS_AUTH_METHOD_USERNAME_PASSWORD,
     YAMCS_DEFAULT_PROCESSOR,
     YAMCS_PLUGIN_TYPE,
     YAMCS_SUPPORTED_AUTH_METHODS,
     YAMCS_SUPPORTED_AUTH_TYPES,
-    normalize_yamcs_additional_fields,
-    normalize_yamcs_server_url,
+    normalize_yamcs_manifest,
 )
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+
+
+class _YamcsTimeError(ValueError):
+    """An invalid tool-supplied time, not an SDK error containing provider data."""
 
 
 class YamcsPlugin(BasePlugin):
@@ -44,25 +55,13 @@ class YamcsPlugin(BasePlugin):
         r"\b(ALTER|CREATE|DELETE|DROP|INSERT|LOAD|MERGE|SET|TRUNCATE|UPDATE|UPSERT)\b",
         re.IGNORECASE,
     )
-    _SECRET_REDACTION_PATTERN = re.compile(
-        r"(?i)(password|api\s*key|access\s*token|token|secret)\s*[=:]\s*[^\s,;]+"
-    )
-
     def __init__(self, manifest: Optional[Dict[str, Any]] = None):
-        super().__init__(manifest)
-        self.manifest = manifest or {}
+        super().__init__(normalize_yamcs_manifest(manifest))
         self._metadata = self.manifest.get("metadata", {}) or {}
         self._auth = self.manifest.get("auth", {}) if isinstance(self.manifest.get("auth"), dict) else {}
         self.auth_type = str(self._auth.get("type") or "username_password").strip()
-        self._additional_fields = normalize_yamcs_additional_fields(
-            self.manifest.get("additionalFields", {}),
-            auth_type=self.auth_type,
-        )
-        self.server_url = (
-            normalize_yamcs_server_url(self.manifest.get("endpoint"))
-            or self._additional_fields.get("server_url")
-            or ""
-        )
+        self._additional_fields = self.manifest["additionalFields"]
+        self.server_url = self.manifest.get("endpoint") or self._additional_fields["server_url"]
         self.instance = self._additional_fields.get("instance") or ""
         self.processor = self._additional_fields.get("processor") or YAMCS_DEFAULT_PROCESSOR
         self.auth_method = self._additional_fields.get("auth_method") or YAMCS_AUTH_METHOD_USERNAME_PASSWORD
@@ -228,17 +227,20 @@ class YamcsPlugin(BasePlugin):
             raise ValueError("Yamcs action requires additionalFields.instance.")
         if self.auth_type not in YAMCS_SUPPORTED_AUTH_TYPES:
             raise ValueError(
-                "Yamcs action supports auth.type values 'NoAuth', 'key', 'identity', or 'username_password'."
+                "Yamcs action supports auth.type values 'NoAuth', 'key', 'identity', 'basic', or 'username_password'."
             )
         if self.auth_method not in YAMCS_SUPPORTED_AUTH_METHODS:
             raise ValueError(
-                "Yamcs action supports auth methods username_password, api_key, bearer_token, or none."
+                "Yamcs action supports auth methods username_password, http_basic, api_key, bearer_token, or none."
             )
+        if "credential_requirement" in self.manifest:
+            validate_yamcs_user_destination(self.manifest)
+            return
         if self.auth_type == "identity":
             if not (self._auth.get("identity") or self.manifest.get("identity_id")):
                 raise ValueError("Yamcs reusable identity auth requires auth.identity or identity_id.")
             return
-        if self.auth_method == YAMCS_AUTH_METHOD_USERNAME_PASSWORD:
+        if self.auth_method in {YAMCS_AUTH_METHOD_USERNAME_PASSWORD, YAMCS_AUTH_METHOD_HTTP_BASIC}:
             if not self._auth.get("identity"):
                 raise ValueError("Yamcs username/password auth requires a username in auth.identity.")
             if not self._auth.get("key"):
@@ -247,59 +249,12 @@ class YamcsPlugin(BasePlugin):
             if not self._auth.get("key"):
                 raise ValueError("Yamcs API key and bearer token auth require auth.key.")
 
-    def _build_credentials(self):
-        """Build a Yamcs credentials object for the configured auth method."""
-        if self.auth_method == YAMCS_AUTH_METHOD_NONE:
-            return None
-
-        try:
-            from yamcs.client import APIKeyCredentials, Credentials
-        except ImportError as exc:
-            raise ImportError(
-                "Yamcs client library is not installed. Install yamcs-client to use Yamcs actions."
-            ) from exc
-
-        auth_key = str(self._auth.get("key") or "")
-        if self.auth_method == YAMCS_AUTH_METHOD_API_KEY:
-            return APIKeyCredentials(auth_key)
-        if self.auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
-            return Credentials(access_token=auth_key)
-        return Credentials(username=str(self._auth.get("identity") or ""), password=auth_key)
-
     def _connect(self):
-        try:
-            from yamcs.client import YamcsClient
-        except ImportError as exc:
-            raise ImportError(
-                "Yamcs client library is not installed. Install yamcs-client to use Yamcs actions."
-            ) from exc
-
-        debug_print(
-            f"[YAMCS_PLUGIN] Opening Yamcs connection server_url={self.server_url} "
-            f"instance={self.instance} processor={self.processor} auth_method={self.auth_method} "
-            f"tls_verify={self.tls_verify} timeout={self.timeout}"
+        log_event(
+            "[YAMCS_PLUGIN] Opening a read-only Yamcs connection.",
+            debug_only=True,
         )
-        client = YamcsClient(
-            self.server_url,
-            credentials=self._build_credentials(),
-            tls_verify=self.tls_verify,
-            user_agent="SimpleChat",
-        )
-        # The Yamcs client wraps a requests.Session; apply the configured timeout to it so a
-        # slow or unreachable ground segment cannot hang an agent turn indefinitely.
-        session = getattr(getattr(client, "ctx", None), "session", None)
-        if session is not None:
-            session.request = self._with_timeout(session.request)
-        return client
-
-    def _with_timeout(self, request_callable: Callable) -> Callable:
-        configured_timeout = self.timeout
-
-        def request_with_timeout(*args, **kwargs):
-            kwargs.setdefault("timeout", configured_timeout)
-            return request_callable(*args, **kwargs)
-
-        return request_with_timeout
+        return create_yamcs_client(self.manifest)
 
     def _resolve_instance(self, instance: str = "") -> str:
         return str(instance or self.instance or "").strip()
@@ -317,8 +272,8 @@ class YamcsPlugin(BasePlugin):
             normalized = raw_value[:-1] + "+00:00" if raw_value.endswith("Z") else raw_value
             try:
                 parsed = datetime.fromisoformat(normalized)
-            except ValueError as exc:
-                raise ValueError(f"{field_name} must be an ISO-8601 timestamp.") from exc
+            except ValueError:
+                raise _YamcsTimeError() from None
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
@@ -386,9 +341,7 @@ class YamcsPlugin(BasePlugin):
         return payload
 
     def _safe_error_message(self, exc: Exception, fallback: str) -> str:
-        raw_message = str(getattr(exc, "message", None) or exc or fallback)
-        sanitized = self._SECRET_REDACTION_PATTERN.sub(r"\1=[REDACTED]", raw_message)
-        return sanitized[:500] or fallback
+        return fallback
 
     def _error_response(self, message: str, error_type: str = "validation", **extra: Any) -> Dict[str, Any]:
         payload = {
@@ -405,38 +358,69 @@ class YamcsPlugin(BasePlugin):
         try:
             client = self._connect()
             result = operation(client)
-            debug_print(
-                f"[YAMCS_PLUGIN] {operation_name} succeeded instance={self.instance} "
-                f"row_count={result.get('row_count')} truncated={result.get('truncated')}"
+            log_event(
+                "[YAMCS_PLUGIN] Read-only Yamcs request succeeded.",
+                extra={"operation": operation_name, "row_count": result.get("row_count")},
+                debug_only=True,
             )
             return result
-        except ValueError as exc:
-            return self._error_response(str(exc), error_type="validation")
-        except ImportError as exc:
-            return self._error_response(str(exc), error_type="dependency")
+        except (ActionCredentialsRequired, ActionAuthStorageError):
+            raise
+        except YamcsAuthenticationError:
+            if "credential_requirement" in self.manifest:
+                # The core owns binding invalidation and the private repair response.
+                from functions_action_auth import (
+                    ActionAuthConflict,
+                    invalidate_action_auth_credentials,
+                    resolve_action_auth_credentials,
+                )
+
+                try:
+                    invalidate_action_auth_credentials(self.manifest)
+                except ActionAuthConflict:
+                    pass
+                try:
+                    replacement_credentials = resolve_action_auth_credentials(self.manifest)
+                except ActionCredentialsRequired as error:
+                    raise error from None
+                except ActionAuthConflict:
+                    pass
+                else:
+                    # A concurrent repair cannot authorize replay of the failed operation.
+                    if isinstance(replacement_credentials, dict):
+                        replacement_credentials.clear()
+                    replacement_credentials = None
+                try:
+                    action_ref = _action_ref("global", "global", self.manifest.get("id"))
+                except (TypeError, ValueError):
+                    action_ref = None
+                raise ActionCredentialsRequired(action_ref=action_ref) from None
+            return self._error_response("Yamcs rejected the supplied credentials.", error_type="authentication")
+        except (YamcsPermissionError, PermissionError):
+            return self._error_response(
+                "Your account does not have access to this Yamcs resource.", error_type="permission"
+            )
+        except YamcsConnectionError:
+            return self._error_response(
+                "Unable to connect to the configured Yamcs service.", error_type="connection"
+            )
+        except _YamcsTimeError:
+            return self._error_response("Yamcs time values must be ISO-8601 timestamps.", error_type="validation")
+        except ValueError:
+            return self._error_response("Invalid Yamcs request or configuration.", error_type="validation")
+        except ImportError:
+            return self._error_response("Install yamcs-client to use Yamcs actions.", error_type="dependency")
         except Exception as exc:
-            message = self._safe_error_message(exc, f"Yamcs {operation_name} failed.")
-            debug_print(
-                f"[YAMCS_PLUGIN] {operation_name} failed server_url={self.server_url} "
-                f"instance={self.instance} exception_type={type(exc).__name__} message={message}"
-            )
             log_event(
-                f"[YAMCS_PLUGIN] Yamcs {operation_name} failed: {exc}",
-                extra={
-                    "server_url": self.server_url,
-                    "instance": self.instance,
-                    "operation": operation_name,
-                    "plugin_name": self.manifest.get("name"),
-                },
+                "[YAMCS_PLUGIN] Read-only Yamcs request failed.",
+                extra={"operation": operation_name, "exception_type": type(exc).__name__},
                 level=logging.ERROR,
-                exceptionTraceback=True,
             )
-            return self._error_response(message, error_type="yamcs", operation=operation_name)
+            return self._error_response("The Yamcs request failed.", error_type="yamcs", operation=operation_name)
         finally:
             if client is not None:
                 try:
                     client.close()
-                    debug_print("[YAMCS_PLUGIN] Yamcs connection closed.")
                 except Exception:
                     pass
 

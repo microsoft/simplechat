@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from functions_debug import debug_print
+from functions_action_auth import ActionAuthStorageError, ActionCredentialsRequired
 
 
 REDACTED_INVOCATION_VALUE = "***REDACTED***"
@@ -852,6 +853,10 @@ def plugin_function_logger(plugin_name: str):
             )
 
         def _log_failure(function_name: str, error: Exception, duration_ms: float):
+            if isinstance(error, (ActionCredentialsRequired, ActionAuthStorageError)):
+                frame = current_agent_execution()
+                if frame is not None:
+                    frame.budget.require_authentication(error)
             log_event(
                 f"[PLUGIN_FUNCTION_LOGGER] Function failed with error",
                 extra={

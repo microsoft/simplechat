@@ -97,7 +97,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.106"
+VERSION = "0.261.107"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 SESSION_COOKIE_SAMESITE = os.getenv('SESSION_COOKIE_SAMESITE', 'Lax')
@@ -836,6 +836,13 @@ cosmos_personal_workspace_identities_container_name = "personal_workspace_identi
 cosmos_personal_workspace_identities_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_personal_workspace_identities_container_name,
     partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_personal_action_auth_container_name = "personal_action_auth"
+cosmos_personal_action_auth_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_personal_action_auth_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
 )
 
 cosmos_group_workspace_identities_container_name = "group_workspace_identities"

@@ -56,6 +56,25 @@
           "type": "string",
           "description": "Workspace identity reference used by this action. Credentials are resolved server-side within the action scope."
         },
+        "credential_requirement": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "description": "Server-owned stable requirement identifier."
+            },
+            "source": { "const": "current_user" },
+            "identity_name": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "profile": {
+              "enum": ["yamcs_login", "http_basic", "bearer_token", "api_key"]
+            }
+          },
+          "required": ["source", "identity_name", "profile"],
+          "description": "Non-secret requirement for the submitting user's private personal identity."
+        },
         "endpoint": {
           "type": "string"
         },
@@ -80,17 +99,7 @@
             }
           },
           "additionalProperties": false,
-          "allOf": [
-            { "if": { "properties": { "type": { "const": "NoAuth" } } }, "then": { "required": ["type"] } },
-            { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["type", "key"] } },
-            { "if": { "properties": { "type": { "const": "identity" } } }, "then": { "required": ["type", "identity"] } },
-            { "if": { "properties": { "type": { "const": "user" } } }, "then": { "required": ["type"] } },
-            { "if": { "properties": { "type": { "const": "servicePrincipal" } } }, "then": { "required": ["type", "tenantId", "identity", "key"] } },
-            { "if": { "properties": { "type": { "const": "connection_string" } } }, "then": { "required": ["type", "key"] } },
-            { "if": { "properties": { "type": { "const": "basic" } } }, "then": { "required": ["type", "key", "identity"] } },
-            { "if": { "properties": { "type": { "const": "username_password" } } }, "then": { "required": ["type", "key", "identity"] } },
-            { "required": ["type"] }
-          ]
+          "required": ["type"]
         },
         "metadata": {
           "type": "object",
@@ -103,6 +112,38 @@
           "additionalProperties": true
         }
       },
+      "allOf": [
+        {
+          "if": { "required": ["credential_requirement"] },
+          "then": {
+            "properties": {
+              "type": { "const": "yamcs" },
+              "auth": {
+                "properties": {
+                  "key": { "const": "" },
+                  "identity": { "const": "" },
+                  "tenantId": { "const": "" }
+                }
+              },
+              "identity_id": { "const": "" }
+            }
+          },
+          "else": {
+            "properties": {
+              "auth": {
+                "allOf": [
+                  { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["key"] } },
+                  { "if": { "properties": { "type": { "const": "identity" } } }, "then": { "required": ["identity"] } },
+                  { "if": { "properties": { "type": { "const": "servicePrincipal" } } }, "then": { "required": ["tenantId", "identity", "key"] } },
+                  { "if": { "properties": { "type": { "const": "connection_string" } } }, "then": { "required": ["key"] } },
+                  { "if": { "properties": { "type": { "const": "basic" } } }, "then": { "required": ["key", "identity"] } },
+                  { "if": { "properties": { "type": { "const": "username_password" } } }, "then": { "required": ["key", "identity"] } }
+                ]
+              }
+            }
+          }
+        }
+      ],
       "required": ["name", "type", "description", "endpoint", "auth", "metadata", "additionalFields"],
       "title": "Plugin"
     }

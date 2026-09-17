@@ -20,6 +20,7 @@ import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
+import { handleActionAuthRequired, isActionCredentialsRequired, prepareActionAuthExecution } from './chat-action-auth.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -641,6 +642,8 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         onDone = null,
         onError = null,
         onFinally = null,
+        onAccepted = null,
+        onActionAuthRequired = null,
         allowRecovery = true,
         recoveryConversationId = null,
         cancelEndpoint = null,
@@ -707,6 +710,40 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         }
     }
 
+    function handlePrivateActionAuthControl(value) {
+        if (!isActionCredentialsRequired(value)) return false;
+        const data = value?.streamErrorData || value;
+        streamError = true;
+        stopThoughtPolling();
+        clearStreamingThoughtSession(tempAiMessageId);
+        removeStreamingStopButton(tempAiMessageId);
+        clearCurrentStreamController(abortController);
+        if (data.message_persisted === true && data.user_message_id) {
+            persistedUserMessageId = String(data.user_message_id);
+            finalizePendingUserMessageMetadata();
+            onAccepted?.(data);
+        }
+        enablePersistedUserMessageActions();
+        if (accumulatedContent) {
+            updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            getStreamingMessageElement(tempAiMessageId)?.querySelector('.streaming-cursor')?.remove();
+        } else {
+            getStreamingMessageElement(tempAiMessageId)?.remove();
+        }
+        if (!persistedUserMessageId && tempUserMessageId) {
+            getStreamingMessageElement(tempUserMessageId)?.remove();
+        }
+        // This control state is private: no assistant banner, telemetry payload, OAuth redirect, or replay.
+        handleActionAuthRequired(data, {
+            payload: options.actionAuthPayload || {},
+            conversationId: recoveryConversationId,
+            isCurrent: () => !recoveryConversationId || window.currentConversationId === recoveryConversationId,
+        });
+        onActionAuthRequired?.(data);
+        onFinally?.();
+        return true;
+    }
+
     requestFactory(abortController.signal).then(response => {
         if (!response.ok) {
             if (response.status === 404) {
@@ -736,6 +773,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+            if (handlePrivateActionAuthControl(data)) return true;
             if (Array.isArray(data.reasoning_adjustments) || Array.isArray(data.metadata?.reasoning_adjustments)) {
                 reasoningAdjustments = getMessageReasoningAdjustments(data, reasoningAdjustments);
                 renderMessageReasoningAdjustments(getStreamingMessageElement(tempAiMessageId), reasoningAdjustments);
@@ -826,6 +864,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 );
                 if (acknowledgedUserMessageId) {
                     persistedUserMessageId = acknowledgedUserMessageId;
+                    onAccepted?.(data);
                 }
                 updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
                 return false;
@@ -1066,6 +1105,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         readStream();
         
     }).catch(async error => {
+        if (handlePrivateActionAuthControl(error)) return;
         if (abortController.signal.aborted) {
             markInterruptedUserMessageMetadata();
             void reportClientStreamEvent('stream_aborted', {
@@ -1130,8 +1170,15 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     return true; // Indicates streaming was initiated
 }
 
-export function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
+export async function sendMessageWithStreaming(messageData, tempUserMessageId, currentConversationId, options = {}) {
     const { endpoint = '/api/chat/stream' } = options;
+    if (!options.actionAuthPrepared && !await prepareActionAuthExecution(messageData, {
+        conversationId: currentConversationId,
+        isCurrent: () => !currentConversationId || window.currentConversationId === currentConversationId,
+    })) {
+        options.onFinally?.();
+        return false;
+    }
     void requestDesktopNotificationPermissionIfNeeded();
     const tempAiMessageId = createStreamingPlaceholder();
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
@@ -1151,6 +1198,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
         {
             ...options,
             recoveryConversationId,
+            actionAuthPayload: messageData,
         },
     );
 }

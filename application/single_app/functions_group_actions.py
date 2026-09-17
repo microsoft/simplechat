@@ -25,6 +25,7 @@ from functions_workspace_identities import (
 from functions_governance import ensure_action_type_access, filter_actions_by_action_type_access
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_agent_delegation import validate_agent_action_for_scope
+from functions_action_auth import validate_action_credential_requirement
 
 
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -153,6 +154,7 @@ def save_group_action(group_id: str, action_data: Dict[str, Any], user_id: Optio
 
     payload.pop("user_id", None)
 
+    validate_action_credential_requirement(payload, scope_type="group")
     validate_action_identity_reference(
         payload,
         WORKSPACE_IDENTITY_SCOPE_GROUP,
