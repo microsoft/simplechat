@@ -1,8 +1,8 @@
 # ai_connections_admin.py
 """
 Closed API fixtures for shared AI Connections admin browser tests.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.107
+Implemented in: 0.261.105
 
 Reuse the built-SPA and local/Azure browser fixtures. All requests are intercepted;
 no Azure inference, authentication, or settings services are called.
@@ -17,16 +17,18 @@ from v2_admin_settings import AdminSettingsFixture, ORIGIN, SPA_INDEX, STATIC_RO
 from test_support.app_stubs import import_app_module
 from test_support.nav import ADMIN_NAV
 
+CONNECTIONS = import_app_module("functions_ai_connections")
 
 def support(supported=True, api="chat", source="catalog"):
     return {"supported": supported, "available": supported, "source": source, "api": api, "reason": ""}
 
 
-def connection(identifier, name, models):
+def connection(identifier, name, models, provider="aoai"):
     return {
-        "id": identifier, "name": name, "provider": "aoai", "enabled": True,
+        "id": identifier, "name": name, "provider": provider, "enabled": True,
+        **({"api_type": "openai"} if provider == "custom" else {}),
         "connection": {
-            "endpoint": f"https://{identifier}.example.test",
+            "endpoint": "https://api.openai.com/v1" if provider == "custom" else f"https://{identifier}.openai.azure.com",
             "openai_api_version": "2024-05-01-preview",
             "operation_settings": {"image_generation": {"api_version": "2025-04-01-preview"}},
         },
@@ -67,7 +69,7 @@ class AIConnectionsFixture(AdminSettingsFixture):
         self.settings.update({"enable_multi_model_endpoints": True, "enable_image_generation": True})
         self.payload.update({"admin_nav": [group], "field_schema": self.schema, "settings": self.settings})
         dual = {
-            "id": "same:model", "deploymentName": "same-deployment", "modelName": "gpt-5.6",
+            "id": "same:model", "deploymentName": "same-deployment", "modelName": "gpt-5.6-sol",
             "displayName": "Dual model", "enabled": True,
             "capability_status": {
                 "chat": support(), "image_generation": support(api="responses"),
@@ -81,14 +83,15 @@ class AIConnectionsFixture(AdminSettingsFixture):
             "capability_status": {"chat": support(False), "image_generation": support(api="images")},
         }
         self.endpoints = [
-            connection("team", "Team Azure", [dual]),
-            connection("studio", "Imported Studio", [imported]),
+            connection("team", "Team OpenAI", [dual], provider="custom"),
+            connection("studio", "Imported Studio", [imported], provider="custom"),
             connection("images", "Image Resource", [image]),
         ]
         self.selections = {
-            "chat": reference("team", "same:model", "aoai"),
-            "image_generation": reference("studio", "same:model", "aoai"),
+            "chat": reference("team", "same:model", "custom"),
+            "image_generation": reference("studio", "same:model", "custom"),
         }
+        self.refresh_capabilities()
         self.migration = {"status": "complete", "message": "Existing image configuration is now managed through AI Connections.", "imported_connections": 1}
         self.selection_writes = []
         self.connection_writes = []
@@ -99,6 +102,13 @@ class AIConnectionsFixture(AdminSettingsFixture):
         self.reject_image_test = False
         self.expected_http_errors = 0
         self.capability_reads = []
+
+    def refresh_capabilities(self):
+        for endpoint in self.endpoints:
+            for model in endpoint["models"]:
+                model["capability_status"] = CONNECTIONS.describe_model_capabilities(
+                    model, endpoint["provider"], endpoint=endpoint,
+                )
 
     def capability_response(self, capability):
         choices = []
@@ -113,7 +123,8 @@ class AIConnectionsFixture(AdminSettingsFixture):
                 choices.append({
                     **reference(endpoint["id"], model["id"], endpoint["provider"]),
                     "connection_name": endpoint["name"], "label": model["displayName"],
-                    "deployment_name": model["deploymentName"], "capability": status,
+                    "deployment_name": model["modelName"] if endpoint["provider"] == "custom" else model["deploymentName"],
+                    "capability": status,
                 })
         selected = self.selections[capability]
         valid = any(item["endpoint_id"] == selected["endpoint_id"] and item["model_id"] == selected["model_id"] for item in choices)
@@ -158,22 +169,9 @@ class AIConnectionsFixture(AdminSettingsFixture):
             saved = request.post_data_json
             self.connection_writes.append(copy.deepcopy(saved))
             saved["id"] = "manual-connection"
-            for model in saved["models"]:
-                catalog_entry = {
-                    "gpt-image-1": {"chat": False, "image_generation": True},
-                }.get(model.get("modelName"), {})
-                model["capability_status"] = {
-                    "chat": support(
-                        model.get("supportsChat", catalog_entry.get("chat", True)),
-                        source="declared" if "supportsChat" in model else "catalog",
-                    ),
-                    "image_generation": support(
-                        model.get("supportsImageGeneration", catalog_entry.get("image_generation", False)),
-                        api="images", source="declared" if "supportsImageGeneration" in model else "catalog",
-                    ),
-                }
             saved["has_api_key"] = bool(saved.get("auth", {}).pop("api_key", ""))
             self.endpoints.append(saved)
+            self.refresh_capabilities()
             route.fulfill(json={"endpoint": saved})
         elif path.startswith("/api/v2/admin/model-endpoints/") and request.method == "PATCH":
             endpoint = next(item for item in self.endpoints if item["id"] == path.rsplit("/", 1)[-1])
@@ -185,6 +183,7 @@ class AIConnectionsFixture(AdminSettingsFixture):
                 route.fulfill(status=400, json={"error": "The connection could not be saved."})
             else:
                 endpoint.update(changes)
+                self.refresh_capabilities()
                 route.fulfill(json={"endpoint": endpoint})
         elif path == "/api/v2/admin/settings/test-connection" and request.method == "POST":
             self.image_tests.append(request.post_data_json)

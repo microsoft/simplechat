@@ -184,6 +184,7 @@ from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
     build_semantic_kernel_chat_service_for_model,
@@ -6254,6 +6255,7 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     candidates = []
     group_id = str(group_id or '').strip()
     if group_id and settings.get('allow_group_custom_endpoints', False):
+        assert_group_role(user_id, group_id, allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'))
         group_endpoints, _ = normalize_model_endpoints(get_group_model_endpoints(group_id) or [])
         for endpoint in group_endpoints:
             item = dict(endpoint)
@@ -6297,7 +6299,11 @@ def _build_multi_endpoint_client(user_id, endpoint_id, model_id, settings, group
     auth = resolved_endpoint.get('auth', {}) if isinstance(resolved_endpoint, dict) else {}
     provider = str(resolved_endpoint.get('provider') or endpoint_cfg.get('provider') or 'aoai').strip().lower()
     deployment_name = resolve_model_endpoint_request_model(resolved_endpoint, model_cfg)
-    api_version = connection.get('api_version') or connection.get('openai_api_version') or ''
+    if not deployment_name:
+        raise ValueError('The selected workflow model is missing its request identifier.')
+    api_version = connection.get('api_version') or connection.get('openai_api_version')
+    if provider != 'custom':
+        api_version = api_version or settings.get('azure_openai_gpt_api_version')
     endpoint = connection.get('endpoint')
     api_type = get_model_endpoint_api_type(resolved_endpoint)
     anthropic_version = connection.get('anthropic_version') or ''

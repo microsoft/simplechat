@@ -1,8 +1,8 @@
 # test_ai_connection_defaults_api.py
 """
 Functional tests for capability-specific model-default API behavior.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.107
+Implemented in: 0.261.105
 
 Mount the actual route functions with isolated storage and authentication seams;
 exercise HTTP payloads without importing the application's Azure clients.
@@ -131,7 +131,7 @@ class CapabilityDefaultApiTests(unittest.TestCase):
         self.assertEqual([], self.writes)
 
     def test_same_deployment_name_resolves_to_the_selected_connection(self):
-        response = self.put("image_generation", "two", "image", provider="forged-provider")
+        response = self.put("image_generation", "two", "image")
         self.assertEqual(200, response.status_code)
         self.assertEqual(
             {"endpoint_id": "two", "model_id": "image", "provider": "aoai"},
@@ -139,6 +139,11 @@ class CapabilityDefaultApiTests(unittest.TestCase):
         )
         self.assertEqual("one", self.settings["default_model_selection"]["endpoint_id"])
         self.assertNotIn("model_endpoints", self.writes[0])
+
+    def test_forged_image_provider_is_rejected_without_writes(self):
+        response = self.put("image_generation", "two", "image", provider="custom")
+        self.assertEqual(400, response.status_code)
+        self.assertEqual([], self.writes)
 
     def test_image_default_is_independent_from_irreversible_chat_mode(self):
         self.settings["enable_multi_model_endpoints"] = False
@@ -150,12 +155,37 @@ class CapabilityDefaultApiTests(unittest.TestCase):
         self.assertEqual(400, chat.status_code)
 
     def test_one_dual_capable_record_can_serve_both_defaults(self):
-        model = self.settings["model_endpoints"][0]["models"][0]
+        connection = self.settings["model_endpoints"][0]
+        connection.update(provider="custom", api_type="openai")
+        connection["connection"]["endpoint"] = "https://api.openai.com/v1"
+        self.settings["default_model_selection"]["provider"] = "custom"
+        model = connection["models"][0]
         model["supportsImageGeneration"] = True
         model["enabled_capabilities"] = ["chat", "image_generation"]
-        self.assertEqual(200, self.put("image_generation", model_id="text").status_code)
+        self.assertEqual(200, self.put("image_generation", model_id="text", provider="custom").status_code)
         self.assertEqual(self.settings["default_model_selection"], self.settings[connections.IMAGE_SELECTION_KEY])
         self.assertEqual(2, len(self.settings["model_endpoints"][0]["models"]))
+
+    def test_azure_chat_model_cannot_be_published_as_an_image_default(self):
+        model = self.settings["model_endpoints"][0]["models"][0]
+        model.update(supportsImageGeneration=True, image_generation_api="responses")
+        model["enabled_capabilities"] = ["chat", "image_generation"]
+        self.assertEqual(400, self.put("image_generation", model_id="text").status_code)
+        self.assertEqual([], self.writes)
+        choices = self.client.get(f"{BASE}/image_generation").get_json()["choices"]
+        self.assertEqual({"image"}, {choice["model_id"] for choice in choices})
+
+    def test_image_choices_project_endpoint_cloud_without_exposing_the_url(self):
+        self.settings["model_endpoints"][0]["connection"]["endpoint"] = "https://images.openai.azure.com"
+        self.settings["model_endpoints"][1]["connection"]["endpoint"] = "https://images.openai.azure.us"
+        response = self.client.get(f"{BASE}/image_generation")
+        self.assertEqual(200, response.status_code)
+        choices = {choice["endpoint_id"]: choice["capability"] for choice in response.get_json()["choices"]}
+        self.assertEqual("commercial", choices["one"]["cloud"])
+        self.assertEqual("government", choices["two"]["cloud"])
+        self.assertEqual("unknown", choices["two"]["availability"])
+        self.assertTrue(choices["two"]["masking"])
+        self.assertNotIn("images.openai.azure", response.get_data(as_text=True))
 
     def test_feature_can_be_configured_without_forcing_it_on(self):
         self.settings["enable_image_generation"] = False

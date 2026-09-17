@@ -11,6 +11,7 @@ Only stdlib imports are used here on purpose. This module sits below the setting
 logging, and route layers, so pulling those in would risk import cycles.
 """
 
+import copy
 import json
 import os
 import re
@@ -124,15 +125,29 @@ def load_model_capability_catalog(force_refresh=False):
         capabilities = dict(capabilities)
         if isinstance(record.get("reasoningPolicy"), Mapping):
             capabilities["reasoningPolicy"] = record["reasoningPolicy"]
+        for field_name in ("imageProfiles", "imageLifecycle"):
+            if isinstance(record.get(field_name), Mapping):
+                capabilities[field_name] = copy.deepcopy(record[field_name])
+        if record.get("provider"):
+            capabilities["publisher"] = record["provider"]
         for identifier in _iter_catalog_record_identifiers(record):
-            catalog[identifier] = dict(capabilities)
+            catalog[identifier] = copy.deepcopy(capabilities)
     return catalog
 
 
+def get_image_operation_profile(profile_id):
+    """Return an isolated provider operation profile from the same cached catalog."""
+    profiles = _load_model_capability_catalog_document().get("imageOperationProfiles") or {}
+    profile = profiles.get(profile_id) if isinstance(profiles, Mapping) else None
+    return copy.deepcopy(profile) if isinstance(profile, Mapping) else None
+
+
 def get_model_capability_catalog_records():
-    """Return every model record defined by the catalog."""
+    """Return isolated copies of every model record defined by the catalog."""
     catalog = _load_model_capability_catalog_document()
-    return [record for record in catalog.get("models") or [] if isinstance(record, dict)]
+    return copy.deepcopy([
+        record for record in catalog.get("models") or [] if isinstance(record, dict)
+    ])
 
 
 def _get_record_field(record, field_name):
@@ -252,11 +267,13 @@ def get_model_catalog_capabilities(model):
     Vision retains its legacy deployment-name heuristic separately. Image tool
     support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
     """
-    if isinstance(model, Mapping):
-        underlying = model.get("modelName")
-    else:
-        underlying = getattr(model, "modelName", None)
-    identifiers = [underlying] if str(underlying or "").strip() else _iter_model_identifiers(model)
+    underlying = ""
+    for field_name in ("modelName", "behavior_name"):
+        value = _get_record_field(model, field_name)
+        if isinstance(value, str) and value.strip():
+            underlying = value
+            break
+    identifiers = [underlying] if underlying else _iter_model_identifiers(model)
     catalog = load_model_capability_catalog()
     for identifier in identifiers:
         normalized = _normalize_model_identifier(identifier)
@@ -271,7 +288,7 @@ def get_model_catalog_capabilities(model):
             normalized = snapshot.group(1)
         capabilities = catalog[normalized]
         if any(isinstance(value, bool) for value in capabilities.values()):
-            return dict(capabilities)
+            return copy.deepcopy(capabilities)
     return None
 
 

@@ -58,6 +58,14 @@ ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
     "web_search_agent.other_settings.azure_ai_foundry.client_secret",
 )
 
+# Retain the native editor's API contract; these read-only storage credentials
+# are also masked for server-rendered forms, which do not submit them.
+ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS = (
+    "office_docs_key",
+    "video_files_key",
+    "audio_files_key",
+)
+
 
 def is_admin_settings_redacted_secret(value):
     """Return True when a submitted value is the mask rather than a real secret."""
@@ -117,4 +125,20 @@ def redact_admin_settings_secrets_for_form(settings):
             set_nested_setting_value(
                 redacted_settings, field_path, ADMIN_SETTINGS_SECRET_REDACTED_VALUE
             )
+    return redacted_settings
+
+
+def get_admin_settings_api_secret_fields():
+    """Return the ordered, unique secret fields withheld by full-settings APIs."""
+    return tuple(dict.fromkeys(
+        ADMIN_SETTINGS_FORM_SECRET_FIELDS + ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
+    ))
+
+
+def redact_admin_settings_secrets_for_api(settings):
+    """Mask both form credentials and credentials included only in API settings."""
+    redacted_settings = redact_admin_settings_secrets_for_form(settings)
+    for field_name in ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS:
+        if redacted_settings.get(field_name):
+            redacted_settings[field_name] = ADMIN_SETTINGS_SECRET_REDACTED_VALUE
     return redacted_settings

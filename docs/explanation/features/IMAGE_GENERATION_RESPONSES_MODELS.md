@@ -1,39 +1,43 @@
-# Image Generation Through Responses-Capable Chat Models (v0.261.102)
+# Provider-aware Image Generation and Editing (v0.261.107)
 
 ## Overview
 
-SimpleChat can generate images through either a dedicated Images operation or the hosted
-`image_generation` tool of a supported GPT deployment. Both use the administrator's
+SimpleChat generates images through dedicated GPT Image, MAI Image, and Foundry FLUX
+operations, or the hosted `image_generation` tool of a verified direct OpenAI GPT model.
+All use the administrator's
 single image-model selection in [Shared AI Connections](AI_CONNECTIONS_FRAMEWORK.md).
 Images can share a connection with chat or use a separate image-only resource.
 
-Implemented in version: **0.261.102** for shared bindings and the corrected Azure v1
-Responses contract. The initial Responses integration was introduced in **0.261.088**.
+Implemented in version: **0.261.107** for provider-qualified operations and editing.
+Shared bindings were introduced in **0.261.105**, and the original Responses
+integration in **0.261.088**.
 Application versioning is recorded in `application/single_app/config.py`.
 
-Associated issue: [#1436 — Unify AI connections and fix GPT image generation](https://github.com/microsoft/simplechat/issues/1436).
+Related foundation: [#1436 — Shared AI connections](https://github.com/microsoft/simplechat/issues/1436).
 
-**Dependencies:** the existing OpenAI SDK Responses surface, a supported deployed image
-operation, and the required provider authentication and permissions. The hosted tool's
-availability, region, entitlement, and backing image configuration are deployment-specific.
-An existing GPT deployment alone is not a guarantee of image generation.
+**Dependencies:** the existing pinned OpenAI SDK, the Custom endpoint foundation for
+direct OpenAI, an implemented image API, and the configured provider credentials and
+permissions. Model capability and cloud availability do not prove live service access.
 
 ## Architecture
 
-### One binding, two operation contracts
+### One binding, provider-specific operation contracts
 
 | Route | Endpoint | Models |
 | --- | --- | --- |
-| `images` | Images generation; Images edits only where supported | Currently available, compatible dedicated image deployments such as the `gpt-image-*` series |
-| `responses` | Azure `/openai/v1/responses` with the hosted `image_generation` tool | GPT deployments whose image-tool support is established for the configured provider |
+| `images` | Direct OpenAI or Azure Images generation and supported edits | Compatible dedicated GPT Image models |
+| `responses` | Direct OpenAI `/v1/responses` with `image_generation` | Verified GPT image-tool models through Custom connections |
+| `mai` | Foundry `/mai/v1/images/generations` and multipart `/images/edits` | Documented MAI Image 2.5/2.6 variants |
+| `flux` | Per-model native Foundry BFL API, or the documented Images-compatible Kontext API | FLUX.2-pro, FLUX.2-flex, FLUX-1.1-pro, and FLUX.1-Kontext-pro |
 
 The global `image_generation_model_selection` reference supplies an endpoint ID,
 model ID, and provider. Resolution uses the saved connection and model, not a copied
 image endpoint/key or the user's current text-chat model.
 
-Technical support comes from model capability metadata and the implemented provider
-adapter. `supportsImageGeneration` can explicitly describe support, and
-`image_generation_api` can retain a compatible `images` or `responses` route. A
+Technical support comes from provider-qualified catalog metadata and the implemented
+adapter. Unknown Custom models can declare a compatible `image_generation_api` and
+`supportsImageGeneration`; source editing and masking are separate declarations.
+Known provider/adapter restrictions take precedence. A
 publication list, `enabled_capabilities`, independently controls whether users may
 use that supported operation.
 
@@ -49,18 +53,24 @@ Image-tool catalog matching accepts exact IDs, declared aliases, and valid dated
 snapshots, not arbitrary `gpt-4o-*` suffix variants inheriting support from a prefix.
 The legacy vision heuristic is separate and does not grant image-generation support.
 
-### Azure v1 Responses, not a dated preview workaround
+### Direct OpenAI Responses, not an Azure chat-model image choice
 
-The hosted image tool uses Azure's v1 Responses contract. The earlier
-`2025-04-01-preview` workaround did not provide the required image-tool schema and
-must not be used as evidence of compatibility.
+The hosted tool is reached through an OpenAI API **Custom** connection, normally
+`https://api.openai.com/v1`. It uses the provider model name, not an Azure deployment
+path or configuration UUID.
 
-The selected GPT deployment is the request's top-level `model`. The request supplies
+The selected GPT model is the request's top-level `model`. The request supplies
 an `image_generation` tool and forces that tool choice, rather than accepting prose
 about an image as the requested output. Size, quality, and background are supplied
 only when requested, leaving unspecified provider defaults alone.
 
-The v1 Responses request does not send a dated `api-version` query parameter.
+Direct OpenAI requests do not send an Azure `api-version` query or
+`x-ms-oai-image-generation-deployment` header.
+
+Microsoft does document an Azure Responses image tool backed by a separate GPT Image
+deployment. SimpleChat deliberately offers dedicated image models only on Azure/Foundry,
+instead of integrating that conditional Azure orchestration path. This is an
+application policy, not a claim that the Azure tool does not exist.
 
 ### Image API versions
 
@@ -71,7 +81,9 @@ Images and Responses have separate version contracts:
 | Shared Images model with no image-specific version, including a missing operation profile | `2025-04-01-preview` for Images generations and edits |
 | Shared Images model with an explicit `connection.operation_settings.image_generation.api_version` | The stored version, including an older imported version |
 | Unmigrated legacy Images route without a configured image API version | `2024-12-01-preview` |
-| Supported Responses image-tool route | `v1`, without a dated query parameter |
+| Direct OpenAI Images or Responses | OpenAI `/v1`, without an Azure version query |
+| MAI Image | `/mai/v1`, without an Azure OpenAI version query |
+| Foundry FLUX | `api-version=preview`; native per-model paths or the documented v1 Images-compatible Kontext paths |
 
 New shared Images defaults do not inherit the connection's chat `api_version` or
 `openai_api_version`, or legacy root image settings. Image operation settings likewise
@@ -79,7 +91,7 @@ do not replace the chat API version. The new Images default is not a reason to
 rewrite imported profile versions, nor does it make the dated Responses preview
 support the hosted image tool.
 
-### API Management and image-backend prerequisites
+### Custom endpoints and API Management
 
 Shared connections retain gateway paths, authentication, and published-operation
 constraints. An imported legacy APIM image route retains its Images behavior rather
@@ -87,19 +99,14 @@ than guessing a new Responses route from a deployment name. A Responses-capable 
 configuration still requires the gateway to publish the matching operation; SimpleChat
 must not bypass it or redirect to another resource.
 
-Azure documentation is not uniform about default backing-image routing. Some examples
-use a type-only tool, while others require an image-deployment binding. Any required
-binding must be verified from existing provider configuration or deployment metadata.
-The optional tool `model` must not be assumed to be an Azure deployment name.
+Direct OpenAI reuses the Custom connection's URL, authentication, and guarded
+transport. A generic OpenAI-compatible gateway does not inherit direct OpenAI
+image-tool capability merely by sharing its wire protocol. Unknown models/backends
+require compatible explicit metadata.
 
-For an explicitly stored binding, the image operation profile's `image_deployment`
-is sent in `x-ms-oai-image-generation-deployment`. With that metadata absent, the
-adapter leaves backend routing to the provider. It does not choose another
-deployment from the shared registry.
-
-There is no second backend picker, no arbitrary search for another image model, and
-no resource provisioning. A missing image capability or binding is a configuration
-limitation to report, not something a GPT name can overcome.
+There is no second backend picker, automatic model substitution, Azure image-backend
+header, or resource provisioning. A missing image capability is reported, not worked
+around by trying another provider or bypassing its gateway.
 
 ### Response shape
 
@@ -119,6 +126,8 @@ also insufficient: the image message and its deployment metadata must be persist
 | `application/single_app/functions_ai_connections.py` | Shared capability validation, safe catalogs, references, and server-only bindings |
 | `application/single_app/functions_ai_connection_migration.py` | Automatic legacy image import and failure retention |
 | `application/single_app/functions_image_api_route.py` | Image operation selection, tool specification, and Responses output handling |
+| `application/single_app/functions_image_capabilities.py` | Provider/cloud-qualified generation, editing, masks, options, and availability |
+| `application/single_app/functions_image_adapters.py` | Distinct OpenAI, MAI, and FLUX request payloads |
 | `application/single_app/functions_image_generation.py` | Registered `build_image_connection_client`, shared requests, and generated-image message construction |
 | `application/single_app/functions_image_edit.py` | Shared regeneration and existing masked-edit restrictions |
 | `application/single_app/route_backend_chats.py` | Chat image request handling |
@@ -166,11 +175,19 @@ For the administrator workflow, see [Configure AI connections](../../guides/conf
 
 ## Editing and regeneration
 
-Responses-backed image generation offers whole-image regeneration in SimpleChat.
-Masked editing continues through the existing direct Images edit path when the
-selected model and API support it. This release does not add reference-image input
-or multi-turn Responses editing, and image-input/vision support must not be confused
-with either editing or generation.
+The editor distinguishes a source-image edit from prompt-only regeneration.
+Compatible direct OpenAI Responses/Images and Azure GPT Image operations can accept
+an uploaded mask. MAI and eligible FLUX operations can edit a reference image without
+claiming a mask interface. FLUX-1.1-pro offers generation/regeneration only.
+
+Direct Responses editing sends the current source image and, when selected, its PNG
+mask through `input_image_mask`. A mask guides the model rather than enforcing
+pixel-exact preservation. It is never silently discarded to produce a replacement.
+
+Rendering controls come from the selected operation profile. Native MAI and FLUX.2
+reference edits do not expose dimension overrides here; regeneration supplies the
+documented generation dimensions. Unknown availability is explained separately from
+the model's editing capabilities.
 
 ## Testing and validation
 
@@ -178,7 +195,8 @@ with either editing or generation.
 | --- | --- |
 | Route classification, tool options, and response handling | `functional_tests/test_image_generation_responses_route.py` |
 | Client-only factory contract, image-only requests, scoped secrets, invalid defaults, safe errors, proposal/storage metadata, and editing/regeneration | `functional_tests/test_ai_connection_image_runtime.py` |
-| SDK URLs, independent Images version defaults, preserved imported versions, APIM authentication/identity/backend headers, payloads, multipart edits, response parsing, and provider-error mapping | `functional_tests/test_image_generation_sdk_http.py` |
+| SDK URLs, independent Images versions, APIM authentication/identity headers, multipart edits, response parsing, and provider-error mapping | `functional_tests/test_image_generation_sdk_http.py` |
+| Provider/cloud qualification, catalog schema, options, and exact provider wire payloads | `functional_tests/test_image_provider_capabilities.py`, `functional_tests/test_image_provider_sdk_http.py` |
 | Shared default HTTP contracts and legacy import | `functional_tests/test_ai_connection_defaults_api.py`, `functional_tests/test_ai_connection_image_migration.py` |
 
 The SDK HTTP tests use the application-pinned OpenAI **1.109.1** client with
@@ -194,8 +212,8 @@ answer is not live image-generation evidence.
 
 ## Known limitations
 
-- Image generation is not supported by every GPT model or every resource exposing
-  Responses. Required backend deployments/defaults and service permissions still apply.
+- Image generation is not inferred for every GPT model or OpenAI-compatible resource.
+  Azure/Foundry GPT orchestration is excluded by the standalone-only application policy.
 - [Azure retired DALL-E 3 on March 4, 2026](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/dall-e);
   existing Azure deployments are non-functional. Legacy identifiers can remain in
   stored settings and compatibility handling, but that does not restore service
@@ -206,14 +224,21 @@ answer is not live image-generation evidence.
   contract. The application does not discover a bypass route.
 - Content safety, rate limits, and transient failures remain possible even for a
   correctly configured model; they do not change its capabilities or default.
+- MAI models are preview offerings, and optional Bing web grounding is not enabled.
+  Foundry FLUX documentation requires operators to configure content safety during
+  inference rather than assume deployment-time filtering.
+- App hosting does not establish endpoint residency. Government image availability
+  absent from the reviewed provider table remains unknown, not globally prohibited.
 - An image test is an inference request and can incur charges. Responses orchestration
   and image generation can have different cost and latency characteristics.
 - Embedding, speech, transcription, and computer-use configuration are unchanged.
 
 ## References
 
-- [GPT image-generation fix](../fixes/GPT_CHAT_MODEL_IMAGE_GENERATION_FIX.md)
+- [Provider capability fix](../fixes/IMAGE_PROVIDER_CAPABILITIES_FIX.md)
+- [Direct OpenAI image generation](https://developers.openai.com/api/docs/guides/image-generation)
+- [Foundry MAI Image](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-mai-image)
+- [Foundry FLUX](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-flux)
 - [Azure OpenAI Responses API](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses)
 - [Azure Responses REST reference](https://github.com/MicrosoftDocs/azure-docs-rest-apis/blob/live/docs-ref-conceptual/microsoft-foundry/azureopenai/responses.md)
-- [Azure direct-endpoint image-tool header guidance](https://github.com/MicrosoftDocs/azure-ai-docs/blob/main/articles/foundry/how-to/develop/langchain-models.md#L364-L384)
 - [Azure v1 schema](https://github.com/Azure/azure-rest-api-specs/blob/main/specification/ai/data-plane/OpenAI.v1/azure-v1-v1-generated.json)

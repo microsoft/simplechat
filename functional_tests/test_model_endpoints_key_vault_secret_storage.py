@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_model_endpoints_key_vault_secret_storage.py
+#!/usr/bin/env python3
 """
 Functional test for MultiGPT endpoint Key Vault secret storage.
-Version: 0.241.179
+Version: 0.261.107
 Implemented in: 0.241.179
 
 This test ensures MultiGPT endpoint secrets are stored in Key Vault,
@@ -219,10 +219,52 @@ def test_model_endpoint_frontend_contract_files():
     print("✅ Model endpoint UI/backend stored-secret contract passed.")
 
 
+def test_custom_endpoint_key_vault_secret_schemes():
+    """Custom bearer/OAuth secrets retain scoped staging, hydration, and cleanup."""
+    module, original_modules = load_functions_keyvault_module()
+    try:
+        for auth_type, field in (("bearer", "bearer_token"), ("oauth2_client_credentials", "client_secret")):
+            FakeSecretClient.reset()
+            endpoint = {"id": "custom-connection", "provider": "custom", "auth": {"type": auth_type, field: "fixture-secret"}}
+            saved = module.keyvault_model_endpoint_save_helper(endpoint, endpoint["id"], scope="global")
+            reference = saved["auth"][field]
+            assert FakeSecretClient.stored_secrets[reference] == "fixture-secret"
+            resolved = module.keyvault_model_endpoint_get_helper(
+                saved, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+            )
+            assert resolved["auth"][field] == "fixture-secret"
+            unchanged = module.keyvault_model_endpoint_save_helper(
+                {**endpoint, "auth": {"type": auth_type, field: ""}},
+                endpoint["id"], scope="global", existing_endpoint=saved,
+            )
+            assert unchanged["auth"][field] == reference
+            try:
+                module.keyvault_model_endpoint_save_helper(
+                    {"auth": {"type": auth_type, field: reference}}, "different-connection", scope="global",
+                )
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("A Custom credential reference crossed endpoint scope.")
+            staged = module.keyvault_model_endpoint_save_helper(
+                {**endpoint, "auth": {"type": auth_type, field: "rotated-fixture-secret"}},
+                endpoint["id"], scope="global", existing_endpoint=saved, stage_new_secrets=True,
+            )
+            assert staged["auth"][field] != reference
+            assert FakeSecretClient.stored_secrets[reference] == "fixture-secret"
+            module.keyvault_model_endpoint_cleanup_helper(saved, staged, endpoint["id"], scope="global")
+            assert reference not in FakeSecretClient.stored_secrets
+            module.keyvault_model_endpoint_delete_helper(staged, endpoint["id"], scope="global")
+            assert not FakeSecretClient.stored_secrets
+    finally:
+        restore_modules(original_modules)
+
+
 def run_tests():
     tests = [
         test_model_endpoint_key_vault_helper_lifecycle,
         test_model_endpoint_frontend_contract_files,
+        test_custom_endpoint_key_vault_secret_schemes,
     ]
     results = []
 
