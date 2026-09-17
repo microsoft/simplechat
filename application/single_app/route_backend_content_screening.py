@@ -383,7 +383,7 @@ def register_route_backend_content_screening(bp):
     @login_required
     @user_required
     def content_screening_save_policy(scope_type, scope_id):
-        from content_screening.policies import compose_policy, default_policy, normalize_policy, policy_is_active
+        from content_screening.policies import compose_policy, default_policy, normalize_policy
 
         scope_id = normalize_identifier(scope_id, "scope_id")
         _authorize_policy(scope_type, scope_id)
@@ -392,10 +392,7 @@ def register_route_backend_content_screening(bp):
             raise ScreeningValidationError()
         repository = _repository()
         policy = normalize_policy(value["policy"], scope_type=scope_type)
-        if scope_type == "global":
-            if (get_settings() or {}).get("enable_content_screening") is True and not policy_is_active(compose_policy(policy)):
-                raise ScreeningConfigurationError()
-        else:
+        if scope_type != "global":
             baseline = repository.get_policy("global", "global")
             compose_policy(baseline["policy"] if baseline else default_policy(), policy)
         repository.save_policy(scope_type, scope_id, policy, _actor_id(), etag=value["etag"])

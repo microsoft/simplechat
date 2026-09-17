@@ -4,7 +4,7 @@ title: "Screen and review workspace documents"
 description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
 section: "Guides"
 audience: user
-version: "0.261.108"
+version: "0.261.114"
 ---
 
 ## What this does
@@ -21,7 +21,11 @@ An administrator must configure Enhanced Citations and its storage account befor
 
 Open **Admin Settings > Security > Content Screening**. This is a separate tab from Content Safety in both the classic and V2 interfaces. You can prepare the policy before configuring Enhanced Citations; an unmet storage prerequisite does not hide the editor.
 
-Add or edit the rules, enable **Baseline policy enabled**, then select **Save screening policy**. That save is separate from the application's enrollment switch. After Enhanced Citations is configured, enable new scans; V2 calls this **Screen workspace content before publication** and persists it with **Save changes**. You do not need to enable Azure AI Content Safety.
+After Enhanced Citations is configured, enable Content Screening. V2 calls this **Screen workspace content before publication** and persists it with **Save changes**; the classic new-scan switch saves immediately. If no baseline exists, activation creates an enabled empty policy. An existing policy is preserved, including its enabled or disabled state. You do not need to enable Azure AI Content Safety.
+
+You can leave the policy empty and save it without adding rules or choosing a model. New uploads follow normal processing until their effective baseline/workspace policy contains checks. They are not labeled as having passed screening. Existing held documents still require review; clearing every rule is not a way to release them.
+
+When ready, add individual rules, a starter pack, or an optional AI check, leave **Baseline policy enabled** on, and select **Save screening policy**. Policy saves remain separate from application settings saves. The saved checks apply to subsequent uploads; scan existing knowledge explicitly when it also needs inspection.
 
 Choose baseline checks that reflect the information your organization actually needs to control. A policy that treats every email address as unacceptable can create a large review queue for otherwise ordinary public documents. Use representative allowed examples and known matches when testing the rules.
 
@@ -48,6 +52,8 @@ Workspace managers can add local rules and instructions without disabling the re
 Read **Configured screening checks** before saving. It shows enabled deterministic and AI checks in the draft, including inherited requirements for a workspace. If the administrator baseline is disabled, local additions are inactive too. The summary is not the separate enrollment switch and does not change an existing document hold.
 
 **Policy-editor alignment implemented in version: 0.261.108**, tracked in `application\single_app\config.py`.
+
+**Enabled-empty policy configuration implemented in version: 0.261.114**, tracked in `application\single_app\config.py`. An empty enabled baseline allows enabled workspace additions to supply checks. **No active checks configured** means new uploads use normal processing when that draft is saved and no workspace checks apply. Sample testing needs an enabled rule or AI check; an empty draft is still saveable.
 
 ## Inspect existing knowledge
 
@@ -92,7 +98,8 @@ Review original files as potentially untrusted content. Do not follow links or i
 | Symptom | Meaning and response |
 | --- | --- |
 | The model did not return a valid result | The scan is incomplete or failed. Retry after correcting the model/configuration; do not treat it as a clean scan. |
-| Enabling screening is rejected | Save an enabled baseline containing a rule or model check, and configure Enhanced Citations storage. The error beside the screening switch identifies a missing prerequisite. |
+| Enabling screening is rejected | Check Enhanced Citations storage and any configured scanner models. A policy with no checks is valid; a failed storage or settings write is not reported as saved. |
+| Screening is enabled but new uploads are not screened | The saved effective policy has no enabled checks. Add a rule, starter pack, or AI check, then save the policy. Workspace additions can supply checks under an enabled empty baseline. |
 | Admin Settings reports that the write failed | The change was not saved. Keep the draft or reload the current settings before retrying; do not assume the displayed draft is persisted. |
 | A retry looks clean but the document is still held | A previous finding still needs a human decision. |
 | The document has a warning after approval | It was approved with flags; the warning is intentional. |

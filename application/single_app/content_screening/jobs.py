@@ -20,9 +20,11 @@ from content_screening.contracts import (
     HELD_STATES,
     SCREENING_FIELD,
     SCOPE_TYPES,
+    ScreeningChecksRequiredError,
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
+    ScreeningPolicyRequiredError,
     ScreeningValidationError,
     Subject,
     content_fingerprint,
@@ -35,6 +37,7 @@ from content_screening.contracts import (
 )
 from content_screening.repository import MAX_DOCUMENT_SELECTION, get_repository
 from content_screening.permissions import ScreeningPermissionError, assert_scope_access
+from content_screening.policies import compose_policy, policy_is_active
 
 
 LEASE_SECONDS = 300
@@ -162,9 +165,13 @@ def _configuration_snapshot(selection, repository):
         raise ScreeningConfigurationError("Enable content screening before creating a scan job.")
     service.validate_screening_configuration(settings, repository=repository, check_storage=True)
     baseline = repository.get_policy("global", "global")
+    if baseline is None:
+        raise ScreeningPolicyRequiredError()
     workspace = None
     if not selection.get("all_workspaces"):
         workspace = repository.get_policy(selection["scope_type"], selection["scope_id"])
+        if not policy_is_active(compose_policy(baseline["policy"], workspace["policy"] if workspace else None)):
+            raise ScreeningChecksRequiredError()
     return {
         "baseline": baseline.get("policy_fingerprint") or hash_payload(baseline["policy"]) if baseline else None,
         "workspace": workspace.get("policy_fingerprint") or hash_payload(workspace["policy"]) if workspace else None,
@@ -1128,6 +1135,8 @@ def _process_item(repository, job, item, owner, processor, *, completion_only=Fa
         elif isinstance(exc, (PermissionError, LookupError)):
             status, code = "incomplete" if item.get("started") else "skipped", "screening_permission_revoked"
         elif isinstance(exc, ScreeningConflictError):
+            status = "incomplete" if item.get("started") else "skipped"
+        elif code == "screening_policy_empty":
             status = "incomplete" if item.get("started") else "skipped"
         elif code == "screening_table_source_missing":
             status = "incomplete"

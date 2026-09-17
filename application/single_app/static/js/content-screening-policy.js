@@ -54,6 +54,20 @@
         return left?.endpoint_id === right?.endpoint_id && left?.model_id === right?.model_id;
     }
 
+    function isPolicyInitialization(previous, next) {
+        if (previous.enabled || !next.enabled || previous.rules.length || next.rules.length
+            || previous.ai.enabled || next.ai.enabled) return false;
+        const configuration = policy => JSON.stringify([
+            policy.schema_version,
+            Object.entries(policy.ai).filter(([key]) => key !== "model_selection").sort(([left], [right]) => left.localeCompare(right)),
+            policy.ai.model_selection?.endpoint_id || "",
+            policy.ai.model_selection?.model_id || "",
+            policy.allowed_models || [],
+            Object.entries(policy.limits).sort(([left], [right]) => left.localeCompare(right))
+        ]);
+        return configuration(previous) === configuration(next);
+    }
+
     class PolicyEditor {
         constructor(root, scope) {
             this.root = root;
@@ -61,6 +75,7 @@
             this.sequence = 0;
             this.stale = false;
             this.dirty = false;
+            this.busy = false;
             this.message = element("div", "alert d-none");
             this.message.setAttribute("role", "alert");
             this.panel = element("div");
@@ -70,6 +85,10 @@
         async load(scope = this.scope) {
             const sequence = ++this.sequence;
             this.scope = scope;
+            if (scope.scopeType === "global") {
+                const capability = document.getElementById("enable_content_screening");
+                if (capability) capability.disabled = true;
+            }
             this.panel.replaceChildren(element("p", "text-body-secondary", "Loading policy and prerequisites…"));
             clearMessage(this.message);
             try {
@@ -103,7 +122,9 @@
             (baseline?.rules || []).filter(rule => rule.enabled).forEach(rule => {
                 rules.appendChild(element("li", "", `${rule.name} · ${rule.severity} · ${rule.category}`));
             });
-            if (!rules.childElementCount) rules.appendChild(element("li", "", "Administrator-required checks are retained by the server. Their private rule values are not exposed here."));
+            if (!rules.childElementCount) rules.appendChild(element("li", "", baseline?.rule_count === 0
+                ? "No administrator deterministic checks are configured. Workspace additions can supply checks while the baseline is enabled."
+                : "Administrator-required checks are retained by the server. Their private rule values are not exposed here."));
             region.appendChild(rules);
             if (Number.isInteger(baseline?.rule_count)) {
                 region.appendChild(element("p", "small mb-2", `${baseline.rule_count} mandatory deterministic rule${baseline.rule_count === 1 ? "" : "s"}.`));
@@ -150,6 +171,7 @@
             if (!global) this.renderBaseline(this.data.baseline);
             this.panel.append(
                 element("h3", "h5", global ? "Mandatory screening policy" : "Workspace additions"),
+                ...(global ? [element("p", "small text-body-secondary", "Enabling Content Screening creates an enabled empty baseline if none exists. You can save it empty and add checks later.")] : []),
                 element("p", "small text-body-secondary", "Policies are saved separately from application settings. Pattern checks are indicators, not a guarantee that all PII or instruction manipulation will be detected.")
             );
             const summary = element("div", "alert alert-secondary");
@@ -186,9 +208,12 @@
             (policy.rules || []).forEach(rule => this.addRule(rule));
             const addButtons = element("div", "d-flex flex-wrap gap-2 mb-3");
             addButtons.append(
-                button("Add literal rule", "btn btn-outline-secondary", () => this.addRule({ type: "literal" })),
-                button("Add regex rule", "btn btn-outline-secondary", () => this.addRule({ type: "regex" })),
-                button("Add PII rule", "btn btn-outline-secondary", () => this.addRule({ type: "pii" }))
+                ...["literal", "regex", "pii"].map(type => button(
+                    `Add ${type === "pii" ? "PII" : type} rule`, "btn btn-outline-secondary", () => {
+                        this.addRule({ type });
+                        this.dirty = true;
+                    }
+                ))
             );
             controls.appendChild(addButtons);
             this.renderModels(controls, policy, global);
@@ -216,6 +241,7 @@
             controls.addEventListener("change", () => { this.dirty = true; this.updateSummary(); });
             this.renderSample(controls);
             this.updateSummary();
+            this.setBusy(this.busy);
             if (!canEdit) showMessage(this.message, "This policy is read-only. The server has not granted policy editing for this workspace.", "info");
         }
 
@@ -248,6 +274,13 @@
             const requiredAi = global ? 0 : inherited.ai_check_count;
             const rules = requiredRules + (this.enabledInput.checked ? this.ruleEditors.filter(rule => rule.enabled.checked).length : 0);
             const ai = requiredAi + (this.enabledInput.checked && this.aiEnabled?.checked ? 1 : 0);
+            if (!rules && !ai) {
+                this.summaryLabel.textContent = "No active checks configured";
+                this.summaryDetail.textContent = global
+                    ? "This policy can stay enabled and empty. New uploads use normal processing unless their workspace adds checks. Existing holds are unchanged."
+                    : "New uploads use normal processing until checks are added. Existing holds are unchanged.";
+                return;
+            }
             this.summaryLabel.textContent = `${rules} deterministic check${rules === 1 ? "" : "s"} | ${ai ? `${ai} AI check${ai === 1 ? "" : "s"}` : "AI screening off"}`;
             this.summaryDetail.textContent = requiredAi
                 ? `Includes ${requiredAi} required administrator AI check${requiredAi === 1 ? "" : "s"}. Disabling workspace AI additions does not disable required checks.`
@@ -450,52 +483,95 @@
             if (this.scope.scopeType === "global" && capability) capability.disabled = true;
         }
 
-        async configure(capability) {
-            const enabled = capability.checked;
-            if (enabled && !this.data.policy.enabled) {
-                capability.checked = false;
-                showMessage(this.message, "Save an enabled mandatory policy with at least one active check before enabling new scans.", "warning");
-                return;
+        setBusy(busy) {
+            this.busy = busy;
+            const canEdit = hasAction(this.data.allowed_actions, "edit_policy");
+            this.controls.disabled = busy || this.stale || !canEdit;
+            this.saveButton.disabled = busy || this.stale || !canEdit;
+            this.reloadButton.disabled = busy;
+            this.testButton.disabled = busy || this.stale || !hasAction(this.data.allowed_actions, "test_policy");
+            const capability = document.getElementById("enable_content_screening");
+            if (this.scope.scopeType === "global" && capability) {
+                capability.disabled = busy || this.stale || !canEdit
+                    || (!this.data.prerequisites?.ready && !capability.checked);
             }
-            capability.disabled = true;
+        }
+
+        async configure(capability) {
+            if (this.busy || this.stale) return;
+            const enabled = capability.checked;
+            let configurationSaved = false;
+            this.setBusy(true);
             clearMessage(this.message);
             try {
-                await screening.api.configure(enabled);
-                await this.load();
+                const configuration = await screening.api.configure(enabled);
+                configurationSaved = true;
+                capability.checked = configuration.enabled === true;
+                const next = await screening.api.getPolicy(this.scope);
+                const initialized = this.data.etag === null && isPolicyInitialization(this.data.policy, next.policy);
+                if (this.dirty) {
+                    if (next.etag !== this.data.etag && !initialized) throw new screening.ScreeningError(409);
+                    if (initialized && this.enabledInput.checked === this.data.policy.enabled) {
+                        this.enabledInput.checked = next.policy.enabled;
+                    }
+                    this.data = next;
+                    this.updateSummary();
+                } else {
+                    this.data = next;
+                    this.render();
+                }
+                capability.checked = next.configuration.enabled === true;
+                this.root.dispatchEvent(new CustomEvent("screening:policy-loaded", {
+                    bubbles: true, detail: { scope: this.scope, data: next }
+                }));
                 showMessage(this.message, enabled
-                    ? "New Content Screening is enabled. Required checks run before enrolled knowledge is published."
+                    ? "Content Screening is enabled. Empty policies do not screen new uploads. Save policy edits separately to apply checks; existing holds are unchanged."
                     : "New scans are disabled. Existing holds, review evidence, and approved-with-flags warnings remain in effect.", "success");
             } catch (error) {
-                capability.checked = !enabled;
-                this.freezeOnConflict(error);
-                showMessage(this.message, [400, 409, 503].includes(error.status)
-                    ? "Content Screening could not be changed. Verify the mandatory policy, Enhanced Citations, and its private storage. Existing holds are unchanged."
-                    : errorMessage(error));
+                if (configurationSaved) {
+                    this.stale = true;
+                    showMessage(this.message, "Screening settings were saved, but the saved policy changed or could not be refreshed. Your policy draft is retained. Reload the saved policy before saving or testing again.", "warning");
+                } else {
+                    capability.checked = !enabled;
+                    this.freezeOnConflict(error);
+                    showMessage(this.message, [400, 409, 503].includes(error.status)
+                        ? "Content Screening could not be changed. Verify Enhanced Citations, its private storage, and any configured scanner models. Existing holds are unchanged."
+                        : errorMessage(error));
+                }
             } finally {
-                capability.disabled = this.stale || (!this.data.prerequisites?.ready && !capability.checked);
+                this.setBusy(false);
             }
         }
 
         async save() {
-            if (this.stale || !hasAction(this.data.allowed_actions, "edit_policy")) return;
-            this.saveButton.disabled = true;
+            if (this.busy || this.stale || !hasAction(this.data.allowed_actions, "edit_policy")) return;
+            this.setBusy(true);
             clearMessage(this.message);
             try {
                 const policy = this.readPolicy();
-                await screening.api.savePolicy(this.scope, policy, this.data);
-                await this.load();
+                const saved = await screening.api.savePolicy(this.scope, policy, this.data);
+                this.data = { ...this.data, ...saved, baseline: saved.inherited_summary };
+                this.dirty = false;
+                this.render();
+                this.root.dispatchEvent(new CustomEvent("screening:policy-loaded", {
+                    bubbles: true, detail: { scope: this.scope, data: this.data }
+                }));
                 showMessage(this.message, "Screening policy saved. Existing holds still require explicit review.", "success");
             } catch (error) {
                 this.freezeOnConflict(error);
                 showMessage(this.message, errorMessage(error));
             } finally {
-                this.saveButton.disabled = this.stale || !hasAction(this.data.allowed_actions, "edit_policy");
+                this.setBusy(false);
             }
         }
 
         async test() {
-            if (this.stale || !hasAction(this.data.allowed_actions, "test_policy") || !this.sampleText.value.trim()) return;
-            this.testButton.disabled = true;
+            if (this.busy || this.stale || !hasAction(this.data.allowed_actions, "test_policy") || !this.sampleText.value.trim()) return;
+            if (!this.ruleEditors.some(rule => rule.enabled.checked) && !this.aiEnabled.checked) {
+                showMessage(this.message, "Add an enabled rule or AI check before testing. An empty policy can still be saved.", "warning");
+                return;
+            }
+            this.setBusy(true);
             clearMessage(this.message);
             this.sampleResult.replaceChildren(element("p", "text-body-secondary", "Testing required checks…"));
             try {
@@ -514,7 +590,7 @@
                 this.freezeOnConflict(error);
                 showMessage(this.message, errorMessage(error));
             } finally {
-                this.testButton.disabled = this.stale || !hasAction(this.data.allowed_actions, "test_policy");
+                this.setBusy(false);
             }
         }
     }

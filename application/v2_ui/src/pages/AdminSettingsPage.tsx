@@ -221,6 +221,7 @@ export function AdminSettingsPage() {
 
     const [draft, setDraft] = useState<Json>({});
     const [saving, setSaving] = useState(false);
+    const [screeningConfigurationVersion, setScreeningConfigurationVersion] = useState(0);
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [fieldWarnings, setFieldWarnings] = useState<Record<string, string>>({});
     const [pendingAck, setPendingAck] = useState<AdminField | null>(null);
@@ -551,6 +552,9 @@ export function AdminSettingsPage() {
             );
             setFieldWarnings(response.warnings ?? {});
             setDraft({});
+            if (response.updated_keys.includes('enable_content_screening')) {
+                setScreeningConfigurationVersion((version) => version + 1);
+            }
             void refreshBootstrap();
 
             // Enabling connections carries the classic chat endpoint into the connection
@@ -742,7 +746,8 @@ export function AdminSettingsPage() {
                                 onClick={() => goToSection('enhanced-citations-section')}>
                                 Configure Enhanced Citations
                             </GlassButton>
-                            <ScreeningPolicyEditor scope={{ scope_type: 'global', scope_id: 'global' }} />
+                            <ScreeningPolicyEditor scope={{ scope_type: 'global', scope_id: 'global' }}
+                                configurationVersion={screeningConfigurationVersion} disabled={saving} />
                             <ScreeningWorkspaceControls scope={{ scope_type: 'global', scope_id: 'global' }} />
                         </div>
                     );

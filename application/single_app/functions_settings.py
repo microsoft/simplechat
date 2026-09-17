@@ -2135,6 +2135,7 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
             validate_screening_configuration(
                 merged, repository=repository, check_storage=activating or storage_changed,
                 proposed_settings=True,
+                allow_missing_policy=new_settings.get('enable_content_screening') is True,
             )
         except ScreeningError:
             raise
@@ -2173,6 +2174,12 @@ def update_settings(new_settings):
                 with embedding_settings_write_guard(
                     original, settings_item, force_check=EMBEDDING_SELECTION_KEY in new_settings,
                 ):
+                    if new_settings.get('enable_content_screening') is True:
+                        # First activation is create-only; a concurrent policy must be revalidated.
+                        from content_screening.service import initialize_screening_policy, validate_screening_configuration
+
+                        initialize_screening_policy()
+                        validate_screening_configuration(settings_item, proposed_settings=True)
                     persisted = cosmos_settings_container.replace_item(
                         item="app_settings", body=settings_item, etag=original["_etag"],
                         match_condition=MatchConditions.IfNotModified,

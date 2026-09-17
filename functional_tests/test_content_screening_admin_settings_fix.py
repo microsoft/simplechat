@@ -1,8 +1,9 @@
 # test_content_screening_admin_settings_fix.py
 """
 Functional regressions for discoverable and persistent screening administration.
-Version: 0.261.113
+Version: 0.261.114
 Implemented in: 0.261.107
+Enabled-empty policies implemented in: 0.261.114
 
 Executes the actual V2 settings handler with isolated storage boundaries. Failed
 writes cannot report success, and Content Safety is not a screening prerequisite.
@@ -135,7 +136,7 @@ def test_policy_rejection_is_visible_at_the_screening_switch():
     payload, status = invoke(namespace, {"enable_content_screening": True})
     assert status == 400
     assert payload["error_code"] == "screening_policy_required"
-    assert "enabled policy" in payload["field_errors"]["enable_content_screening"]
+    assert "saved content screening policy" in payload["field_errors"]["enable_content_screening"]
     namespace["update_settings"].assert_not_called()
 
 

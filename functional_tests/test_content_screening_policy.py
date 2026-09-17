@@ -1,8 +1,9 @@
 # test_content_screening_policy.py
 """
 Functional tests for mandatory content-screening policy composition.
-Version: 0.261.106
+Version: 0.261.114
 Implemented in: 0.261.106
+Enabled-empty policies implemented in: 0.261.114
 
 Validate explicit opt-in, strict configuration bounds, approved model selection,
 stable policy fingerprints, and non-sensitive baseline summaries for issue #1476.
@@ -67,14 +68,26 @@ class ContentScreeningPolicyTests(unittest.TestCase):
         first["limits"]["max_units"] = 1
         self.assertEqual(default_policy()["limits"], DEFAULT_LIMITS)
         first["enabled"] = True
-        with self.assertRaises(ScreeningValidationError):
-            normalize_policy(first)
+        self.assertTrue(normalize_policy(first)["enabled"])
+        self.assertFalse(policy_is_active(first))
+        self.assertEqual(normalize_effective_policy(compose_policy(first)), compose_policy(first))
 
-    def test_disabling_all_checks_cannot_enable_an_empty_gate(self):
+    def test_disabling_all_checks_retains_an_enabled_policy_without_active_screening(self):
         policy = enabled_policy()
         policy["rules"][0]["enabled"] = False
-        with self.assertRaises(ScreeningValidationError):
-            normalize_policy(policy)
+        self.assertTrue(normalize_policy(policy)["enabled"])
+        self.assertFalse(policy_is_active(policy))
+        self.assertFalse(policy_is_active(compose_policy(policy)))
+
+    def test_empty_enabled_baseline_can_inherit_workspace_only_checks(self):
+        baseline = {**default_policy(), "enabled": True}
+        workspace = enabled_policy()
+        effective = compose_policy(baseline, workspace)
+        self.assertEqual(normalize_effective_policy(effective), effective)
+        self.assertTrue(policy_is_active(effective))
+        self.assertEqual([rule["origin"] for rule in effective["rules"]], ["workspace"])
+        baseline["enabled"] = False
+        self.assertFalse(policy_is_active(compose_policy(baseline, workspace)))
 
     def test_malformed_objects_never_become_disabled_defaults(self):
         for value in (None, False, "", [], {"rules": None}, {"ai": None}, {"limits": None}, {"unknown": True}):

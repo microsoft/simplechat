@@ -106,6 +106,20 @@ export function addScreeningStarterPack(policy: ScreeningPolicy, rules: Screenin
     };
 }
 
+export function isScreeningPolicyInitialization(previous: ScreeningPolicy, next: ScreeningPolicy): boolean {
+    if (previous.enabled || !next.enabled || previous.rules.length || next.rules.length
+        || previous.ai.enabled || next.ai.enabled) return false;
+    const configuration = (policy: ScreeningPolicy) => JSON.stringify([
+        policy.schema_version,
+        Object.entries(policy.ai).filter(([key]) => key !== 'model_selection').sort(([left], [right]) => left.localeCompare(right)),
+        policy.ai.model_selection?.endpoint_id ?? '',
+        policy.ai.model_selection?.model_id ?? '',
+        policy.allowed_models ?? [],
+        Object.entries(policy.limits).sort(([left], [right]) => left.localeCompare(right)),
+    ]);
+    return configuration(previous) === configuration(next);
+}
+
 export function screeningPolicySummary(
     policy: ScreeningPolicy, baseline: boolean, inherited?: ScreeningBaselineSummary | null,
 ): { label: string; detail: string } {
@@ -122,6 +136,14 @@ export function screeningPolicySummary(
     const requiredAi = baseline ? 0 : inherited?.ai_check_count ?? 0;
     const rules = requiredRules + (policy.enabled ? policy.rules.filter((rule) => rule.enabled).length : 0);
     const ai = requiredAi + (policy.enabled && policy.ai.enabled ? 1 : 0);
+    if (!rules && !ai) {
+        return {
+            label: 'No active checks configured',
+            detail: baseline
+                ? 'This policy can stay enabled and empty. New uploads use normal processing unless their workspace adds checks. Existing holds are unchanged.'
+                : 'New uploads use normal processing until checks are added. Existing holds are unchanged.',
+        };
+    }
     return {
         label: `${rules} deterministic check${rules === 1 ? '' : 's'} | ${ai ? `${ai} AI check${ai === 1 ? '' : 's'}` : 'AI screening off'}`,
         detail: requiredAi
@@ -224,9 +246,6 @@ export function screeningModelCatalog(models: DefaultModelChoice[]): AdminModelC
 
 export function validateScreeningPolicy(policy: ScreeningPolicy, models: DefaultModelChoice[]): string[] {
     const errors: string[] = [];
-    if (policy.enabled && !policy.rules.some((rule) => rule.enabled) && !policy.ai.enabled) {
-        errors.push('Add at least one enabled rule or model check before enabling the policy.');
-    }
     const ids = new Set<string>();
     for (const rule of policy.rules) {
         if (!rule.id || ids.has(rule.id)) {

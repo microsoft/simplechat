@@ -5015,9 +5015,9 @@ ADMIN_SETTINGS_FIELDS = {
             "label": "Screen workspace content before publication",
             "help": (
                 "Hold extracted workspace knowledge until required checks complete. "
-                "Findings require an authorized workspace review. Configure an active "
-                "screening policy before enabling; disabling future scans never releases "
-                "existing holds."
+                "Enabling creates an enabled empty baseline if none exists. With no "
+                "applicable checks, new uploads use normal processing. Add checks later; "
+                "emptying a policy or disabling future scans never releases existing holds."
             ),
             "default": False,
             "requires": {
@@ -5033,7 +5033,7 @@ ADMIN_SETTINGS_FIELDS = {
             "type": "component",
             "component": "content-screening-policy",
             "label": "Screening policies and scans",
-            "help": "Edit required PII, regex, value, and model checks; policies are saved separately from Admin Settings.",
+            "help": "Save an empty policy or configure PII, regex, value, and model checks; policies are saved separately from Admin Settings.",
         },
     ],
     "content-safety-section": [
