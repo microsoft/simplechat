@@ -2,7 +2,7 @@
 """
 Functional contracts for balanced orchestration research selection and its opt-in evaluator.
 
-Version: 0.261.104
+Version: 0.261.115
 Implemented in: 0.261.099
 
 Runs actual planner, capability projection, request gates and plan normalization with
@@ -25,6 +25,8 @@ import uuid
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+
+import httpx
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -71,9 +73,13 @@ def model_plan(capability=None, rationale="Additional discovery and checked deta
 
 
 def unsupported_json_error():
-    return OfflineBadRequestError(
-        "SYNTHETIC_PRIVATE_PROVIDER_DETAIL",
-        body={"param": "response_format", "code": "unsupported_parameter"},
+    body = {"param": "response_format", "code": "unsupported_parameter"}
+    error_type = getattr(sys.modules.get("openai"), "BadRequestError", OfflineBadRequestError)
+    if error_type is OfflineBadRequestError:
+        return error_type("SYNTHETIC_PRIVATE_PROVIDER_DETAIL", body=body)
+    return error_type(
+        "SYNTHETIC_PRIVATE_PROVIDER_DETAIL", body=body,
+        response=httpx.Response(400, request=httpx.Request("POST", "https://provider.test/completions")),
     )
 
 

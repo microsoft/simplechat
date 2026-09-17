@@ -22,7 +22,7 @@ and occasionally return two objects. That is normal rather than exceptional, so 
 tries several strategies before giving up. A failed model call or invalid plan is an
 error, not evidence that the task can be answered without gathering information.
 
-Version: 0.261.104
+Version: 0.261.115
 """
 
 import json
@@ -768,10 +768,15 @@ def plan_request(
     ]
     actions = context.get('actions') or []
 
-    def _failure(reason):
+    def _failure(reason, error=None, *, stage=None):
         log_event(
             '[ORCHESTRATION_PLANNER] The request could not be planned.',
-            level=logging.WARNING, extra={'reason': reason},
+            level=logging.WARNING, extra={
+                'reason': reason, 'stage': stage,
+                'conversation_id': conversation_id, 'turn_id': turn_id, 'revision': revision,
+                'error_type': type(error).__name__ if error is not None else None,
+                'response_failure': error.reason if isinstance(error, PlannerResponseError) else None,
+            },
         )
         raise PlannerError(
             'The requested change could not be planned. Your previous plan is unchanged.'
@@ -805,8 +810,8 @@ def plan_request(
             client, deployment = planner_model.as_planner_client(), planner_model.deployment
         else:
             client, deployment = resolve_planner_client(settings)
-    except (PlannerError, APIError, AzureError, ValueError):
-        return _failure('model_configuration_failed')
+    except (PlannerError, APIError, AzureError, ValueError) as exc:
+        return _failure('model_configuration_failed', exc, stage='model_binding')
 
     try:
         reply, usage = _call_planner(
@@ -815,8 +820,8 @@ def plan_request(
             ),
             require_complete_response=True,
         )
-    except (PlannerError, APIError, AzureError):
-        return _failure('model_request_failed')
+    except (PlannerError, APIError, AzureError) as exc:
+        return _failure('model_request_failed', exc, stage='model_request')
 
     parsed = extract_planner_json(reply)
     if not parsed:
@@ -927,9 +932,12 @@ def plan_request(
             agent_names=agent_names,
             actions=actions,
         )
+    except PlanValidationError as exc:
+        return _failure('invalid_plan_or_missing_requirement', exc, stage='plan_normalization')
+    try:
         validate_plan_requirements(plan, seeds, allow_changes=edit_context is not None)
-    except PlanValidationError:
-        return _failure('invalid_plan_or_missing_requirement')
+    except PlanValidationError as exc:
+        return _failure('invalid_plan_or_missing_requirement', exc, stage='selected_requirements')
 
     if plan.get('validation', {}).get('errors'):
         return _failure('invalid_plan_work')

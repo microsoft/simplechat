@@ -1,7 +1,7 @@
 # test_v2_orchestration_elicitation.py
 """
 UI test for the V2 chat orchestration elicitation card: paged schema form and the MCP answer shape.
-Version: 0.261.096
+Version: 0.261.115
 Implemented in: 0.261.085
 Rich answers implemented in: 0.261.096
 
@@ -111,6 +111,7 @@ async (spec) => {
                           plan_id: 'accepted-plan',
                           run_id: 'accepted-run',
                           turn_id: parsed.turn_id,
+                          conversation_id: parsed.conversation_id,
                           revision: 1,
                           intent: { summary: 'Use the supplied answer', complexity: 'simple' },
                           steps: [{ step_id: 'respond', capability_id: 'respond', title: 'Answer', arguments: {} }],

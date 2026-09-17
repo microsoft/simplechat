@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_editor.py
 """
 Focused real-component browser tests for conversational orchestration plan editing.
-Version: 0.261.102
+Version: 0.261.115
 Implemented in: 0.261.102
 
 Only HTTP boundaries are mocked. The real store, shared SSE reader, controller,
@@ -26,7 +26,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "ui_tests" / "fixtures"
@@ -383,11 +383,10 @@ def editor_assets():
 
 
 @pytest.fixture(scope="module")
-def editor_browser(connect_options):
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.connect(**connect_options) if connect_options else playwright.chromium.launch()
-        yield browser
-        browser.close()
+def editor_browser(playwright, connect_options):
+    browser = playwright.chromium.connect(**connect_options) if connect_options else playwright.chromium.launch()
+    yield browser
+    browser.close()
 
 
 @pytest.fixture

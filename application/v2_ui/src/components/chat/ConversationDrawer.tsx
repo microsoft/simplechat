@@ -261,13 +261,13 @@ export function ConversationDrawer() {
     return (
         <aside
             aria-label="Conversation details"
-            className="glass glass-edge flex w-[22rem] shrink-0 flex-col rounded-none border-t-0 border-r-0 border-b-0"
+            className="glass glass-edge absolute inset-y-0 right-0 z-30 flex w-[22rem] max-w-full shrink-0 flex-col rounded-none border-t-0 border-r-0 border-b-0 xl:static xl:z-auto"
         >
-            <div className="flex h-14 shrink-0 items-center gap-2 border-b border-edge px-3">
+            <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-edge px-3 py-2">
                 <div
                     role="tablist"
                     aria-label="Drawer mode"
-                    className="flex gap-1 rounded-xl bg-surface-sunken p-1"
+                    className="flex min-w-0 flex-wrap gap-1 rounded-xl bg-surface-sunken p-1"
                 >
                     {tabs.map((tab) => (
                         <button
