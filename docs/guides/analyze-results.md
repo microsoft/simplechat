@@ -4,7 +4,7 @@ title: "Read and discuss saved Analyze results"
 description: "Read the answer first, browse saved findings and evidence, and ask follow-up questions without requesting another source pass."
 section: "Guides"
 audience: user
-version: "0.261.109"
+version: "0.261.113"
 ---
 
 ## What this does
@@ -33,6 +33,11 @@ Use the existing source-selection and Analyze flow:
   Analyze, use the existing plan-review and approval controls; the saved-result
   view appears with its answer. **Documents** is not a separate Analyze button.
 
+Since **0.261.113**, pinning documents does not also require a Search step. Ask
+for Analyze in the message and review the proposed operation. All selected
+documents must still be accounted for; an explicit Search selection remains a
+requirement rather than being silently replaced by Analyze.
+
 Source access, supported documents, and your deployment's existing Analyze limits
 still apply. See [Chat controls]({{ '/reference/chat-controls/#saved-analyze-results-both-interfaces' | relative_url }})
 and [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}).
@@ -59,6 +64,15 @@ Neither count proves that every possible issue was discovered.
 download actions, such as **Download CSV**, when an output is available. Downloads
 are optional supporting outputs, not a prerequisite for reading or discussing the
 findings.
+
+Downloads check current artifact and source access before returning the file.
+If a download fails, the conversation remains open and the download button becomes
+available again. Refresh the conversation before retrying a stale or unavailable
+file. A preview opening successfully does not establish that a download will work.
+
+In React V2 on a narrow screen, **Expand navigation** opens the rail over the chat
+instead of narrowing the report. Collapse it, press Escape, or select the shaded
+backdrop to return to the report. Wide tables scroll inside their own container.
 
 ## Inspect evidence and limitations
 
@@ -143,7 +157,7 @@ An unavailable or stale notice is not an empty successful analysis:
 
 ## Validation scope
 
-The controls and saved-result reads have local functional and browser-fixture
-coverage for both interfaces. A live authenticated target was unavailable for this
-change, so deployment-specific integration and elapsed-time improvements have not
-been verified.
+Local functional and browser-fixture coverage is separate from live acceptance.
+Use a matching backend and V2 build, a new conversation, and currently authorized
+sources when evaluating a deployment. Reopening an old conversation does not
+re-analyze its documents or retrofit new saved-result metadata.

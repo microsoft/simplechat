@@ -7,7 +7,7 @@
 
 import { api, apiUrl, uploadFile, ApiError, API_BASE, CREDENTIALS_MODE } from './apiClient';
 import { buildDocumentListParams } from './documentExplorer';
-import { artifactDownloadPath } from './generatedArtifacts';
+import { artifactDownloadPath, artifactFileName } from './generatedArtifacts';
 import { ANALYSIS_PAGE_SIZE, analysisResultContext, validateAnalysisPage } from './savedAnalysis';
 import type { EnhancedCitationMetadata } from './enhancedCitations';
 import type { ExportVisualAsset } from './exportVisuals';
@@ -1025,13 +1025,15 @@ export function conversationExportExtension(
  *
  * The server already names the file, including its timestamp, so honouring the header keeps
  * a V2 export indistinguishable from a classic one. Both a quoted and a bare filename are
- * accepted because the header is not written by us.
+ * accepted because the header is not written by us. Prefer the UTF-8 name over its
+ * ASCII fallback when the server supplies both.
  */
 export function filenameFromContentDisposition(header: string | null): string | null {
     if (!header) {
         return null;
     }
-    const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(header);
+    const match = /filename\*=(?:UTF-8'')?"?([^";]+)"?/i.exec(header)
+        ?? /filename="?([^";]+)"?/i.exec(header);
     const filename = match?.[1]?.trim();
     if (!filename) {
         return null;
@@ -1193,6 +1195,26 @@ export function generatedArtifactDownloadUrl(
 ): string {
     const path = artifactDownloadPath(artifact, fallbackConversationId);
     return path ? apiUrl(path) : '';
+}
+
+/** Fetch before saving so a failed or expired download never navigates away from chat. */
+export async function downloadGeneratedArtifact(
+    artifact: GeneratedArtifact,
+    fallbackConversationId = '',
+): Promise<void> {
+    const url = generatedArtifactDownloadUrl(artifact, fallbackConversationId);
+    if (!url) {
+        throw new Error('Generated export is missing download metadata.');
+    }
+    const response = await fetch(url, { credentials: CREDENTIALS_MODE, cache: 'no-store' });
+    const disposition = response.headers.get('Content-Disposition');
+    if (!response.ok || response.redirected || !/^\s*attachment(?:;|$)/i.test(disposition ?? '')) {
+        throw new ApiError('The artifact could not be downloaded. Refresh the conversation and try again.', response.status, null);
+    }
+    saveBlob(
+        await response.blob(),
+        filenameFromContentDisposition(disposition) || artifactFileName(artifact),
+    );
 }
 
 export interface GeneratedOutputRunResponse {
