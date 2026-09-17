@@ -1,7 +1,7 @@
 # test_workflow_named_result_inputs.py
 """
 Functional tests for source-authorized named workflow result inputs.
-Version: 0.261.109
+Version: 0.261.110
 Implemented in: 0.261.107
 
 Final representations retain exact receipts. Partial data requires an explicit
@@ -160,6 +160,30 @@ def test_malformed_explicit_access_policy_does_not_disappear():
         build_workflow_task_result(
             {"reply": "A reference-derived answer.", "analysis_access": {}},
             workflow=WORKFLOW, run_id=RUN_ID, task=TASK,
+        )
+
+
+@pytest.mark.parametrize("top_level_access", [None, {
+    "version": "analysis-source-access-v1",
+    "sources": [{"document_id": "reference", "scope": "group", "scope_id": "group-1",
+                 "source_version": "1", "source_revision": "etag-1"}],
+}])
+def test_empty_nested_access_policy_cannot_fall_back_to_another_policy(top_level_access):
+    with pytest.raises(AnalysisResultUnavailable):
+        build_workflow_task_result({
+            "reply": "A reference-derived answer.",
+            "analysis_access": top_level_access,
+            "analysis_result": {"analysis_reply": "Final data.", "analysis_access": {}},
+        }, workflow=WORKFLOW, run_id=RUN_ID, task=TASK)
+
+
+@pytest.mark.parametrize("allow_partial", ["true", "false", 1, None])
+def test_partial_opt_in_requires_an_explicit_boolean(allow_partial):
+    store = SerializedSections()
+    _, reference = saved(store, validation="partial")
+    with pytest.raises(ValueError, match="boolean"):
+        load_workflow_task_input(
+            WORKFLOW, RUN_ID, TASK["id"], reference, allow_partial=allow_partial, load_result=store.load,
         )
 
 

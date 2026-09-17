@@ -301,7 +301,7 @@ def _build_task_result(result, identity, contract_version):
             },
         },
     }
-    access = analysis.get("analysis_access") or result.get("analysis_access")
+    access = analysis["analysis_access"] if "analysis_access" in analysis else result.get("analysis_access")
     if access is None and analysis.get("analysis_result_version") == "analyze-final-v1":
         sources = (
             analysis.get("analysis_sources") or analysis.get("mixed_source_manifest") or analysis.get("source_manifest")
@@ -323,7 +323,7 @@ def _build_task_result(result, identity, contract_version):
             raise AnalysisResultUnavailable("analysis_source_manifest_missing")
         envelope["analysis_access"] = {"version": ANALYSIS_SOURCE_ACCESS_VERSION, "sources": sources}
         envelope["analysis_origin"] = (
-            (analysis.get("analysis_result_version") or result.get("analysis_result_version")) == "analyze-final-v1"
+            analysis.get("analysis_result_version") == "analyze-final-v1"
             and (result.get("analysis_consumption") or {}).get("mode") != "format_only"
         )
     if result.get("analysis_consumption"):
@@ -428,19 +428,18 @@ def _require_completed_result(envelope, *, allow_partial=False):
         raise ValueError("This workflow task result version is not supported.")
     state = (envelope.get("execution") or {}).get("status")
     validation = (envelope.get("validation") or {}).get("status")
-    if state == "succeeded" and validation not in {"invalid", "pending", "partial"}:
-        return
+    if type(allow_partial) is not bool:
+        raise ValueError("Partial-result eligibility must be an explicit boolean.")
+    partial = validation == "partial" and state in {"succeeded", "incomplete"}
     if (
-        allow_partial and validation == "partial"
-        and state in {"succeeded", "incomplete"}
+        validation in {"pending", "invalid"}
+        or (partial and not allow_partial)
+        or (state != "succeeded" and not (partial and allow_partial))
     ):
-        require_readable_analysis_result(envelope)
-        return
-    raise WorkflowResultNotReadyError(
-        "The previous task has no completed authoritative output. Its result and diagnostics "
-        "are retained; accepted partial findings require an explicit reporting opt-in, and "
-        "invalid or pending results cannot replace the required input."
-    )
+        raise WorkflowResultNotReadyError(
+            "The previous task has no completed authoritative output. Its result and diagnostics "
+            "are retained; a preview or unfinished output cannot replace the required input."
+        )
 
 
 def require_readable_analysis_result(manifest):
@@ -644,8 +643,8 @@ def iter_result_records(manifest, name, load_section):
 
 def load_workflow_task_input(workflow, run_id, task_id, reference,
                              *, load_result=load_workflow_task_result, reader_user_id=None,
-                             source_resolver=None, bounded=False, output_name="authoritative",
-                             allow_partial=False):
+                             source_resolver=None, output_name="authoritative",
+                             allow_partial=False, bounded=False):
     """Read one exact final representation and its immutable consumption receipt.
 
     The default selects the producer's authoritative output. Explicit names
