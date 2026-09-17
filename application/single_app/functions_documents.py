@@ -11,6 +11,7 @@ from azure.core.exceptions import ResourceExistsError
 from config import *
 from functions_appinsights import log_event
 from functions_ai_connections import require_model_capability
+from functions_embedding_compatibility import active_embedding_profile, prepare_embedding_search_documents
 from functions_model_capabilities import is_vision_capable_model
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_GROUP,
@@ -67,7 +68,22 @@ def _execute_document_search_write(search_client, operation_name, *args, **kwarg
         "read_timeout": 30,
         "retry_total": 0,
     })
-    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container):
+    documents = kwargs.get("documents")
+    if documents is None and args:
+        documents = args[0]
+    vector_write = operation_name in ("upload_documents", "merge_or_upload_documents") and any(
+            isinstance(document, dict) and document.get("embedding") is not None
+            for document in documents or []
+    )
+    slot_options = {}
+    if vector_write:
+        slot_options["embedding_profile_id"] = next(
+            (getattr(document.get("embedding"), "profile_id", None) for document in documents if document.get("embedding") is not None),
+            None,
+        )
+    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container, **slot_options):
+        if vector_write:
+            prepare_embedding_search_documents(search_client, documents)
         results = getattr(search_client, operation_name)(*args, **kwargs)
     if not _search_indexing_results_succeeded(results):
         raise RuntimeError(
@@ -1273,20 +1289,21 @@ def set_document_chunk_visibility(document_item, active=True):
 
     documents_to_update = []
     for chunk_item in chunk_results:
+        visibility_update = {"id": chunk_item["id"]}
         if is_public_workspace:
-            chunk_item["public_workspace_id"] = public_workspace_id if active else _build_archived_scope_value(public_workspace_id)
+            visibility_update["public_workspace_id"] = public_workspace_id if active else _build_archived_scope_value(public_workspace_id)
         elif is_group:
-            chunk_item["group_id"] = group_id if active else _build_archived_scope_value(group_id)
-            chunk_item["shared_group_ids"] = document_item.get("shared_group_ids", []) if active else []
+            visibility_update["group_id"] = group_id if active else _build_archived_scope_value(group_id)
+            visibility_update["shared_group_ids"] = document_item.get("shared_group_ids", []) if active else []
         else:
-            chunk_item["user_id"] = user_id if active else _build_archived_scope_value(user_id)
-            chunk_item["shared_user_ids"] = document_item.get("shared_user_ids", []) if active else []
+            visibility_update["user_id"] = user_id if active else _build_archived_scope_value(user_id)
+            visibility_update["shared_user_ids"] = document_item.get("shared_user_ids", []) if active else []
 
-        documents_to_update.append(chunk_item)
+        documents_to_update.append(visibility_update)
 
     _execute_document_search_write(
         search_client,
-        "upload_documents",
+        "merge_documents",
         documents=documents_to_update,
     )
     return len(documents_to_update)
@@ -1762,6 +1779,8 @@ def save_video_chunk(
 
             debug_print(f"[VIDEO_CHUNK] Embedding generated successfully")
             print(f"[VIDEO_CHUNK] EMBEDDING OK for {document_id}@{start_time}", flush=True)
+        except AIConnectionError:
+            raise
         except Exception as e:
             debug_print(f"[VIDEO_CHUNK] Embedding generation failed: {str(e)}")
             print(f"[VIDEO_CHUNK] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
@@ -1842,10 +1861,15 @@ def save_video_chunk(
             )
             debug_print(f"[VIDEO_CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VIDEO_CHUNK] UPLOAD OK for {chunk_id}", flush=True)
+        except AIConnectionError:
+            raise
         except Exception as e:
             debug_print(f"[VIDEO_CHUNK] Upload to search index failed: {str(e)}")
             print(f"[VIDEO_CHUNK] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
 
+    except AIConnectionError as exc:
+        log_event("[EMBEDDING] Video chunk could not be indexed", extra={"code": exc.code})
+        raise
     except Exception as e:
         debug_print(f"[VIDEO_CHUNK] Unexpected error processing chunk: {str(e)}")
         print(f"[VIDEO_CHUNK] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
@@ -3059,6 +3083,11 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         # index. Only the embedding input is clamped: the full text is still stored below, so the
         # chunk stays readable and citable and only its vector comes from the leading portion.
         if embedding_input and len(embedding_input) > max_embedding_characters:
+            if not active_embedding_profile().legacy:
+                raise AIConnectionError(
+                    "The chunk is too large for the selected embedding model. Reprocess with smaller chunks.",
+                    "embedding_input_too_large",
+                )
             log_event(
                 "Chunk exceeded the embedding character budget and was clamped for embedding only.",
                 extra={
@@ -3559,17 +3588,18 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
         if is_group:
             updatable_fields.append('shared_group_ids')
 
+        metadata_update = {"id": chunk_id}
         for field in updatable_fields:
             if field in kwargs:
                 if field == 'author':
-                    chunk_item[field] = ensure_list(kwargs[field])
+                    metadata_update[field] = ensure_list(kwargs[field])
                 else:
-                    chunk_item[field] = kwargs[field]
+                    metadata_update[field] = kwargs[field]
 
         _execute_document_search_write(
             search_client,
-            "upload_documents",
-            documents=[chunk_item],
+            "merge_documents",
+            documents=[metadata_update],
         )
 
     except Exception as e:

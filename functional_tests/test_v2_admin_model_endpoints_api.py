@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.105
+Version: 0.261.106
 Implemented in: 0.261.059
 
 Global model endpoints were the only scope without per-resource routes. They were
@@ -369,7 +369,8 @@ def _load_persistence_helper():
         },
     }
 
-    def fake_save(endpoint, scope_value, scope="global", existing_endpoint=None):
+    def fake_save(endpoint, scope_value, scope="global", existing_endpoint=None, *, stage_new_secrets=False):
+        assert stage_new_secrets is True
         calls["events"].append("save")
         calls["saved"].append((endpoint.get("id"), scope, scope_value))
         return endpoint
@@ -391,12 +392,15 @@ def _load_persistence_helper():
         return True
 
     selection_helpers = _load_selection_helpers()
+    connections = import_app_module("functions_ai_connections")
 
     namespace = {
         "keyvault_model_endpoint_save_helper": fake_save,
         "keyvault_model_endpoint_cleanup_helper": fake_cleanup,
         "keyvault_model_endpoint_delete_helper": fake_delete,
         "get_settings": lambda: calls["settings"],
+        "read_embedding_settings": lambda: calls["settings"],
+        "preflight_embedding_settings": lambda current, candidate: calls["events"].append("preflight"),
         "update_settings": fake_update_settings,
         "resolve_default_model_selection": selection_helpers[
             "resolve_default_model_selection"
@@ -405,7 +409,11 @@ def _load_persistence_helper():
             "resolve_metadata_extraction_model_selection"
         ],
         "IMAGE_SELECTION_KEY": "image_generation_model_selection",
-        "resolve_capability_model_selection": import_app_module("functions_ai_connections").resolve_capability_model_selection,
+        "EMBEDDING_SELECTION_KEY": connections.EMBEDDING_SELECTION_KEY,
+        "EMBEDDINGS_CAPABILITY": connections.EMBEDDINGS_CAPABILITY,
+        "embedding_settings_use_connections": connections.embedding_settings_use_connections,
+        "AIConnectionError": connections.AIConnectionError,
+        "resolve_capability_model_selection": connections.resolve_capability_model_selection,
     }
     exec(compile(ast.Module(body=[target], type_ignores=[]), str(ROUTES_FILE), "exec"), namespace)
     return namespace["_persist_global_model_endpoints"], calls
@@ -435,6 +443,7 @@ def test_persistence_runs_all_three_key_vault_passes():
     assert calls["updates"], "settings were never written"
     assert calls["updates"][0]["model_endpoints"] == saved
     assert calls["events"].index("commit") < calls["events"].index("cleanup")
+    assert calls["events"].index("preflight") < calls["events"].index("save")
     assert calls["events"].index("commit") < calls["events"].index("delete")
 
     print("  Save, cleanup and delete each ran over the right endpoints.")

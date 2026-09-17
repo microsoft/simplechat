@@ -24,6 +24,8 @@ from semantic_kernel_plugins.math_plugin import MathPlugin
 from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
+from functions_ai_connections import AIConnectionError
+from functions_embedding_profile import resolve_embedding_profile
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
@@ -1048,16 +1050,16 @@ def load_document_search_plugin(kernel: Kernel):
     )
 
 def load_embedding_model_plugin(kernel: Kernel, settings):
-    embedding_endpoint = settings.get('azure_openai_embedding_endpoint')
-    embedding_key = settings.get('azure_openai_embedding_key')
-    embedding_model = settings.get('embedding_model', {}).get('selected', [None])[0]
-    if embedding_endpoint and embedding_key and embedding_model:
-        plugin = EmbeddingModelPlugin()
-        kernel.add_plugin(
-            plugin,
-            plugin_name="embedding_model",
-            description="Provides text embedding functions using the configured embedding model."
-        )
+    try:
+        resolve_embedding_profile(settings)
+    except AIConnectionError as exc:
+        log_event("[SK_LOADER] Embedding action is unavailable", extra={"code": exc.code})
+        return
+    kernel.add_plugin(
+        EmbeddingModelPlugin(),
+        plugin_name="embedding_model",
+        description="Provides text embedding functions using the configured embedding model."
+    )
 
 def load_tabular_processing_plugin(kernel: Kernel):
     kernel.add_plugin(

@@ -1,7 +1,7 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'model-endpoints' %} show active{% endif %}" id="model-endpoints" role="tabpanel" aria-labelledby="model-endpoints-tab">
 
                 <p class="text-muted">
-                    Configure shared AI Connections for chat and image generation. Each capability keeps its own default model.
+                    Configure shared AI Connections for chat, image generation and embeddings. Each capability keeps its own default model.
                 </p>
 
                 <div class="card p-3 mb-4" id="multi-endpoint-configuration">
@@ -9,7 +9,7 @@
                         <i class="bi bi-hdd-network me-2"></i>AI Connections
                     </h5>
                     <p class="text-muted small">
-                        Manage Azure OpenAI and Azure AI Foundry connections once. Models can be available for chat, image generation, or both. Image connections work independently of the chat mode switch.
+                        Manage Azure OpenAI, Azure AI Foundry and custom OpenAI-compatible embedding connections once. Publish each model for its supported operations. Images and embeddings work independently of the chat mode switch.
                     </p>
 
                     {% if not settings.enable_multi_model_endpoints %}
@@ -399,5 +399,54 @@
                     </div>
                 </div>
 
+                <template id="model-endpoint-embedding-template">
+                    <fieldset class="border rounded p-3 mt-3" id="model-endpoint-embedding-settings">
+                        <legend class="h6">Embedding inference</legend>
+                        <p class="form-text">
+                            These operation settings reuse this connection's credentials without changing chat or image routing.
+                            Only current OpenAI-compatible text embedding APIs are supported, not vendor-native or deprecated APIs.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label for="model-endpoint-embedding-api" class="form-label">Embedding API</label>
+                                <select id="model-endpoint-embedding-api" class="form-select">
+                                    <option value="">Provider default</option>
+                                    <option value="azure_openai">Azure OpenAI versioned</option>
+                                    <option value="openai">Current OpenAI-compatible API</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="model-endpoint-embedding-endpoint" class="form-label">Embedding inference base URL</label>
+                                <input id="model-endpoint-embedding-endpoint" type="url" class="form-control" aria-describedby="model-endpoint-embedding-endpoint-help" />
+                                <p class="form-text" id="model-endpoint-embedding-endpoint-help">
+                                    Optional when the connection endpoint already serves embeddings. Preserve the explicit API base path for a custom gateway.
+                                </p>
+                            </div>
+                            <div class="col-md-6" id="model-endpoint-embedding-version-group">
+                                <label for="model-endpoint-embedding-version" class="form-label">Embedding API version</label>
+                                <input id="model-endpoint-embedding-version" type="text" class="form-control" />
+                                <p class="form-text">Azure OpenAI versioned operations only. Leave blank to use the connection version; OpenAI-compatible APIs must leave this blank.</p>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="model-endpoint-embedding-auth-header" class="form-label">Embedding authentication header</label>
+                                <select id="model-endpoint-embedding-auth-header" class="form-select">
+                                    <option value="">Protocol default</option>
+                                    <option value="api-key">api-key</option>
+                                    <option value="authorization">Authorization</option>
+                                    <option value="Ocp-Apim-Subscription-Key">Ocp-Apim-Subscription-Key</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="model-endpoint-embedding-apim" class="form-label">Embedding API Management routing</label>
+                                <select id="model-endpoint-embedding-apim" class="form-select">
+                                    <option value="">Protocol default</option>
+                                    <option value="true">API Management gateway</option>
+                                    <option value="false">Direct inference</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p class="form-text mt-2">Model changes, even at the same dimensions, may require a controlled rebuild. Saving does not automatically rebuild existing vectors.</p>
+                    </fieldset>
+                </template>
                 {% include '_multiendpoint_modal.html' %}
             </div>

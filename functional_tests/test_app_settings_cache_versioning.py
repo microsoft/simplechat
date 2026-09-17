@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for shared app settings and governance cache versioning.
-Version: 0.242.020
+Version: 0.261.106
 Implemented in: 0.242.020
 
 This test ensures Redis deployments keep shared version keys and non-Redis
@@ -52,7 +52,7 @@ def test_app_settings_cache_shared_version_contract():
     assert "_refresh_app_settings_cache_after_write(merged, context=\"merge_upsert\")" in settings_content, (
         "Expected merge upsert path to refresh and version app settings cache"
     )
-    assert "_refresh_app_settings_cache_after_write(settings_item, context=\"update_settings\")" in settings_content, (
+    assert "_refresh_app_settings_cache_after_write(persisted, context=\"update_settings\")" in settings_content, (
         "Expected update_settings path to refresh and version app settings cache"
     )
     assert "before_version_bump" in settings_content and "after_version_bump" in settings_content, (

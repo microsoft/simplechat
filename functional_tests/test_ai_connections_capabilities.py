@@ -1,8 +1,8 @@
 # test_ai_connections_capabilities.py
 """
 Pure functional tests for shared AI Connections capability and binding contracts.
-Version: 0.261.105
-Implemented in: 0.261.105
+Version: 0.261.106
+Implemented in: 0.261.106
 
 Exercise the real leaf modules and shipped catalog without Flask, settings-store,
 Azure, or inference clients. Each test loads private module instances and restores
@@ -39,11 +39,15 @@ class IsolatedConnectionsTestCase(unittest.TestCase):
         self.capabilities = _load_module(
             "functions_model_capabilities", "functions_model_capabilities.py"
         )
+        self.embedding_policy = _load_module(
+            "functions_embedding_policy", "functions_embedding_policy.py"
+        )
         self.connections = _load_module(
             "_test_ai_connections_capabilities", "functions_ai_connections.py"
         )
         self.chat = self.connections.CHAT_CAPABILITY
         self.images = self.connections.IMAGE_GENERATION_CAPABILITY
+        self.embeddings = self.connections.EMBEDDINGS_CAPABILITY
         self.empty_selection = {
             "endpoint_id": "",
             "model_id": "",
@@ -121,6 +125,7 @@ class CapabilityResolutionTests(IsolatedConnectionsTestCase):
 
         with mock.patch("builtins.__import__", side_effect=guarded_import):
             _load_module("functions_model_capabilities", "functions_model_capabilities.py")
+            _load_module("functions_embedding_policy", "functions_embedding_policy.py")
             module = _load_module(
                 "_test_ai_connections_import_boundary", "functions_ai_connections.py"
             )
@@ -734,7 +739,7 @@ class ProjectionAndSelectionTests(IsolatedConnectionsTestCase):
 
 class CapabilityExtensionTests(IsolatedConnectionsTestCase):
     def test_only_implemented_capabilities_and_no_clients_ship_in_the_leaf_registry(self):
-        self.assertEqual(set(self.connections.CAPABILITY_DEFINITIONS), {self.chat, self.images})
+        self.assertEqual(set(self.connections.CAPABILITY_DEFINITIONS), {self.chat, self.images, self.embeddings})
         self.assertEqual(self.connections._CLIENT_FACTORIES, {})
 
     def test_dummy_future_capability_reuses_catalog_binding_and_client_contracts(self):

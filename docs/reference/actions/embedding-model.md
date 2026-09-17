@@ -4,6 +4,7 @@ title: "Embedding Model"
 description: "Reference for the Embedding Model SimpleChat action."
 section: "Reference"
 audience: user
+version: "0.261.106"
 ---
 
 <!-- action-slug: embedding-model -->
@@ -13,6 +14,8 @@ audience: user
 ## What this action does
 
 Creates embeddings for supplied text through a configured embedding endpoint.
+The default action uses the global AI Connections embedding default; this integration
+was implemented in version **0.261.106**.
 
 ## Why and when to use it
 
@@ -20,12 +23,17 @@ Use it for workflows that need vector representations, not for conversational an
 
 ## Before you start
 
-- Embedding endpoint and key; global toggle `enable_default_embedding_model_plugin`; UI hides `embedding_model`.
+- A configured global embedding model in AI Connections and the
+  `enable_default_embedding_model_plugin` capability. Azure identity authentication
+  does not require storing an API key.
 - Users also need access to the action through workspace or governance policy where applicable.
 
 ## Configuration overview
 
 Configure existing/default embedding action settings through Agents controls.
+The default action follows the administrator's global selection. Explicitly
+configured action manifests retain their own endpoint contract; they are not
+silently redirected to the application's document-search model.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

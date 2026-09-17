@@ -27,9 +27,10 @@ import {
     Zap,
 } from 'lucide-react';
 import { ApiError } from '../../lib/apiClient';
-import { capabilityDescription, testImageModel } from '../../lib/capabilityModels';
+import { capabilityDescription, embeddingPolicyDescription, testCapabilityModel } from '../../lib/capabilityModels';
 import {
     AUTH_TYPE_OPTIONS,
+    CAPABILITY_OPTIONS,
     IDENTITY_HEADER_MODE_OPTIONS,
     IDENTITY_VALUE_TYPE_OPTIONS,
     MANAGEMENT_CLOUD_OPTIONS,
@@ -39,17 +40,21 @@ import {
     createModelConnection,
     deleteModelConnection,
     defaultOpenAiApiVersion,
+    defaultEmbeddingApi,
     discoverModels,
     emptyConnection,
     enabledModelCount,
     fetchModelConnections,
     isFoundryProvider,
+    isKnownEmbeddingModel,
     mergeDiscoveredModels,
     modelPublishesCapability,
+    modelNeedsEmbeddingGateway,
     modelSupportsCapability,
     projectNameFromEndpoint,
     providerLabel,
     setModelCapabilityEnabled,
+    setEmbeddingOperation,
     testConnection,
     testConnectionModel,
     toEditableConnection,
@@ -58,6 +63,8 @@ import {
     visibleFields,
     type ConnectionModel,
     type ConnectionMigrationNotice,
+    type EmbeddingConfig,
+    type EmbeddingOperationSettings,
     type ImplementedCapability,
     type ModelConnection,
 } from '../../lib/modelConnections';
@@ -135,16 +142,31 @@ function Pill({ tone, children }: { tone: 'ok' | 'muted' | 'warn'; children: Rea
     );
 }
 
-function ModelCapabilities({ model, disabled, onChange }: {
+function ModelCapabilities({ model, provider, disabled, errors, onChange }: {
     model: ConnectionModel;
+    provider: string;
     disabled: boolean;
+    errors: Record<string, string>;
     onChange: (next: ConnectionModel) => void;
 }) {
     const metadataId = useId();
-    const capabilities: Array<{ key: ImplementedCapability; label: string }> = [
-        { key: 'chat', label: 'chat' },
-        { key: 'image_generation', label: 'images' },
-    ];
+    const custom = provider === 'openai_compatible';
+    const capabilities = CAPABILITY_OPTIONS.filter(({ key }) => !custom || key === 'embeddings');
+    const embedding = custom || modelSupportsCapability(model, 'embeddings') || isKnownEmbeddingModel(model) || Boolean(model.embedding_config);
+    const setEmbeddingConfig = (key: keyof EmbeddingConfig, value: string | boolean) => {
+        const config = { ...model.embedding_config };
+        if (value === '') {
+            delete config[key];
+        } else {
+            Object.assign(config, {
+                [key]: key === 'dimensions' || key === 'max_input_tokens' ? Number(value) : value,
+            });
+        }
+        const next: ConnectionModel = { ...model, embedding_config: config };
+        delete next.capability_status;
+        if (!Object.keys(config).length) delete next.embedding_config;
+        onChange(next);
+    };
     return (
         <div className="mt-3 space-y-2">
             {capabilities.map(({ key, label }) => (
@@ -159,31 +181,33 @@ function ModelCapabilities({ model, disabled, onChange }: {
                         />
                         Use for {label}
                     </label>
-                    <p className="mt-1 text-xs text-text-3">{capabilityDescription(model.capability_status?.[key])}</p>
+                    <p className="mt-1 text-xs text-text-3">{capabilityDescription(model.capability_status?.[key], key)}</p>
                 </div>
             ))}
-            {model.capability_status?.vision ? (
+            {!custom && model.capability_status?.vision ? (
                 <p className="text-xs text-text-3">
                     Image input (vision): {model.capability_status.vision.supported ? 'supported' : 'not supported'}
                     {' · '}{model.capability_status.vision.source}. This is separate from image output.
                 </p>
             ) : null}
+            {embedding ? <p className="text-xs text-text-3">{embeddingPolicyDescription(model.embedding_policy)}</p> : null}
             {model.enabled === false ? <p className="text-xs text-warn">Model is disabled. Enable it and save to publish the selected uses.</p> : null}
-            <details className="text-xs text-text-3">
+            <details className="text-xs text-text-3" open={custom ? true : undefined}>
                 <summary className="cursor-pointer py-1 text-text-2">Capability metadata</summary>
                 <p className="mb-2">Use automatic metadata unless you have verified the deployment’s capabilities. Saving rechecks provider compatibility; this is not an inference test.</p>
                 {([
                     ['supportsChat', 'Text output support'],
                     ['supportsImageGeneration', 'Image generation support'],
                     ['supportsVision', 'Image input support'],
-                ] as const).map(([key, label]) => (
+                    ['supportsEmbeddings', 'Text embedding support'],
+                ] as const).filter(([key]) => !custom || key === 'supportsEmbeddings').map(([key, label]) => (
                     <div key={key} className="mt-2">
                         <label htmlFor={`${metadataId}-${key}`} className="mb-1 block">{label}</label>
                         <select
                             id={`${metadataId}-${key}`}
                             className={inputClass}
                             value={typeof model[key] === 'boolean' ? String(model[key]) : ''}
-                            disabled={disabled}
+                            disabled={disabled || (isKnownEmbeddingModel(model) && key !== 'supportsEmbeddings')}
                             onChange={(event) => {
                                 const next = { ...model };
                                 delete next.capability_status;
@@ -199,8 +223,57 @@ function ModelCapabilities({ model, disabled, onChange }: {
                             <option value="true">Supported (verified by administrator)</option>
                             <option value="false">Not supported</option>
                         </select>
+                        {errors[key] ? <p role="alert" className="mt-1 text-danger">{errors[key]}</p> : null}
                     </div>
                 ))}
+                {embedding ? (
+                    <div className="mt-3 border-t border-edge pt-2">
+                        <p className="mb-2">Leave overrides blank to retain catalog defaults. Unknown models require declared embedding support, dimensions and an input token limit. Setting dimensions is an explicit model change, not an automatic resize.</p>
+                        {([
+                            ['dimensions', 'Embedding dimensions'],
+                            ['max_input_tokens', 'Embedding input token limit'],
+                        ] as const).map(([key, label]) => (
+                            <Field key={key} label={label} htmlFor={`${metadataId}-${key}`} error={errors[key]}>
+                                <input
+                                    id={`${metadataId}-${key}`}
+                                    className={inputClass}
+                                    type="number"
+                                    min="1"
+                                    step="1"
+                                    placeholder={model.embedding_policy?.[key] ? `Catalog: ${model.embedding_policy[key]}` : isKnownEmbeddingModel(model) ? 'Use catalog default' : 'Required for an unknown model'}
+                                    value={model.embedding_config?.[key] ?? ''}
+                                    disabled={disabled}
+                                    onChange={(event) => setEmbeddingConfig(key, event.target.value)}
+                                />
+                            </Field>
+                        ))}
+                        <Field label="Embedding model revision" htmlFor={`${metadataId}-revision`} help="Optional for known models; identify a custom deployment revision so vector-space changes are detectable.">
+                            <input
+                                id={`${metadataId}-revision`}
+                                className={inputClass}
+                                type="text"
+                                value={model.embedding_config?.model_revision ?? ''}
+                                disabled={disabled}
+                                onChange={(event) => setEmbeddingConfig('model_revision', event.target.value)}
+                            />
+                        </Field>
+                        {custom || modelNeedsEmbeddingGateway(model) || model.embedding_policy?.api === 'unsupported' || model.embedding_config?.openai_compatible !== undefined ? (
+                            <Field label="Verified OpenAI-compatible gateway" htmlFor={`${metadataId}-compatible`} help="Declare only a verified gateway exposing the supported text embedding contract. Vendor-native and deprecated inference APIs are not supported.">
+                                <select
+                                    id={`${metadataId}-compatible`}
+                                    className={inputClass}
+                                    value={model.embedding_config?.openai_compatible === undefined ? '' : String(model.embedding_config.openai_compatible)}
+                                    disabled={disabled}
+                                    onChange={(event) => setEmbeddingConfig('openai_compatible', event.target.value === '' ? '' : event.target.value === 'true')}
+                                >
+                                    <option value="">Use catalog compatibility</option>
+                                    <option value="true">Verified compatible gateway</option>
+                                    <option value="false">Not compatible</option>
+                                </select>
+                            </Field>
+                        ) : null}
+                    </div>
+                ) : null}
             </details>
         </div>
     );
@@ -229,7 +302,10 @@ function ConnectionEditor({
 
     const isNew = !initial.id;
     const foundry = isFoundryProvider(draft.provider);
+    const custom = draft.provider === 'openai_compatible';
     const authType = String(draft.auth?.type ?? 'managed_identity');
+    const embeddingOperation = draft.connection?.operation_settings?.embeddings;
+    const embeddingApi = embeddingOperation?.api || defaultEmbeddingApi(draft);
 
     const shown = useMemo(() => visibleFields(draft), [draft]);
     const savedBinding = !isNew && JSON.stringify(buildConnectionPayload(draft)) ===
@@ -255,6 +331,14 @@ function ConnectionEditor({
                         ...next.connection,
                         openai_api_version: defaultOpenAiApiVersion(value),
                     };
+                    if (value === 'openai_compatible') {
+                        next.auth = { ...next.auth, type: 'api_key' };
+                    }
+                    next.models = next.models?.map((model) => {
+                        const nextModel = { ...model };
+                        delete nextModel.capability_status;
+                        return nextModel;
+                    });
                 }
                 return next;
             }
@@ -270,6 +354,15 @@ function ConnectionEditor({
     const setModels = useCallback((models: ConnectionModel[]) => {
         setDraft((current) => ({ ...current, models }));
     }, []);
+
+    const setOperation = (key: keyof EmbeddingOperationSettings, value: string | boolean) => {
+        setDraft((current) => setEmbeddingOperation(current, key, value));
+        setErrors((current) => {
+            const next = { ...current };
+            delete next[`embedding_${key}`];
+            return next;
+        });
+    };
 
     const runDiscovery = async () => {
         const validation = validateConnection(draft, { requireDiscovery: true });
@@ -302,6 +395,7 @@ function ConnectionEditor({
     };
 
     const runConnectionTest = async () => {
+        if (custom) return;
         const validation = validateConnection(draft, { requireDiscovery: true });
         delete validation.name;
         if (Object.keys(validation).length) {
@@ -327,8 +421,8 @@ function ConnectionEditor({
     };
 
     const runModelTest = async (model: ConnectionModel, capability: ImplementedCapability) => {
-        if (capability === 'image_generation' && !savedBinding) {
-            setFormError('Save the connection first. Image tests use only the saved model and credentials.');
+        if (capability !== 'chat' && !savedBinding) {
+            setFormError(`Save the connection first. ${capability === 'embeddings' ? 'Embedding' : 'Image'} tests use only the saved model and credentials.`);
             return;
         }
         const deploymentName = String(model.deploymentName ?? '').trim();
@@ -339,17 +433,25 @@ function ConnectionEditor({
         setTestingModelId(String(model.id ?? deploymentName));
         setFormError(null);
         try {
-            if (capability === 'image_generation') {
-                const response = await testImageModel({
+            if (capability !== 'chat') {
+                const response = await testCapabilityModel(capability, {
                     endpoint_id: initial.id,
                     model_id: String(model.id || model.deploymentName || ''),
                     provider: String(initial.provider || ''),
                 });
                 if (response.success !== true) {
-                    throw new Error(response.error || 'The saved model did not return an image.');
+                    throw new Error(response.error || 'The saved model did not return a valid result.');
                 }
-                toast.success(`${deploymentName} generated an image.`);
+                if (capability === 'embeddings') {
+                    if (!Number.isSafeInteger(response.dimensions) || Number(response.dimensions) <= 0) {
+                        throw new Error('The saved embedding model did not return valid vector dimensions.');
+                    }
+                    toast.success(`${deploymentName} returned ${response.dimensions?.toLocaleString()} dimensions. No vectors were stored and the default was not changed.`);
+                } else {
+                    toast.success(`${deploymentName} generated an image.`);
+                }
             } else {
+                if (custom) return;
                 await testConnectionModel(buildConnectionPayload(draft), deploymentName);
                 toast.success(`${deploymentName} answered a chat request. Image inference was not tested.`);
             }
@@ -461,11 +563,13 @@ function ConnectionEditor({
             <SectionHeading>Connection</SectionHeading>
 
             <Field
-                label={foundry ? 'Project endpoint' : 'Endpoint URL'}
+                label={custom ? 'Embedding API base URL' : foundry ? 'Project endpoint' : 'Endpoint URL'}
                 error={errors.endpoint}
                 htmlFor="connection-endpoint"
                 help={
-                    foundry
+                    custom
+                        ? 'Use the explicit OpenAI-compatible API base, for example https://gateway.example/api/v1. Its path is preserved; no Azure route is added.'
+                        : foundry
                         ? 'A Foundry project URL. Including /api/projects/<name> names the project for you.'
                         : 'The resource endpoint, for example https://my-resource.openai.azure.com.'
                 }
@@ -474,7 +578,7 @@ function ConnectionEditor({
                     id="connection-endpoint"
                     type="url"
                     className={inputClass}
-                    placeholder={foundry ? 'https://…/api/projects/my-project' : 'https://my-resource.openai.azure.com'}
+                    placeholder={custom ? 'https://gateway.example/api/v1' : foundry ? 'https://…/api/projects/my-project' : 'https://my-resource.openai.azure.com'}
                     value={String(draft.connection?.endpoint ?? '')}
                     disabled={busy}
                     spellCheck={false}
@@ -482,7 +586,7 @@ function ConnectionEditor({
                 />
             </Field>
 
-            <Field
+            {shown.openAiVersion ? <Field
                 label="OpenAI API version"
                 error={errors.openai_api_version}
                 htmlFor="connection-openai-version"
@@ -496,7 +600,7 @@ function ConnectionEditor({
                     spellCheck={false}
                     onChange={(event) => setField('connection.openai_api_version', event.target.value)}
                 />
-            </Field>
+            </Field> : null}
 
             {shown.project ? (
                 <>
@@ -547,7 +651,7 @@ function ConnectionEditor({
                 Authentication
             </SectionHeading>
 
-            <Field label="Method" htmlFor="connection-auth-type">
+            <Field label="Method" htmlFor="connection-auth-type" error={errors.auth_type}>
                 <select
                     id="connection-auth-type"
                     className={inputClass}
@@ -555,7 +659,7 @@ function ConnectionEditor({
                     disabled={busy}
                     onChange={(event) => setField('auth.type', event.target.value)}
                 >
-                    {AUTH_TYPE_OPTIONS.map((option) => (
+                    {AUTH_TYPE_OPTIONS.filter((option) => !custom || option.value === 'api_key').map((option) => (
                         <option key={option.value} value={option.value}>
                             {option.label}
                         </option>
@@ -762,23 +866,101 @@ function ConnectionEditor({
                 </>
             ) : null}
 
+            <SectionHeading hint="These operation-specific settings reuse this connection’s credentials without changing chat or image routing.">
+                Embedding inference
+            </SectionHeading>
+            <Field label="Embedding API" htmlFor="connection-embedding-api" error={errors.embedding_api}>
+                <select
+                    id="connection-embedding-api"
+                    className={inputClass}
+                    value={embeddingOperation?.api ?? ''}
+                    disabled={busy}
+                    onChange={(event) => setOperation('api', event.target.value)}
+                >
+                    <option value="">Provider default ({defaultEmbeddingApi(draft) === 'azure_openai' ? 'Azure OpenAI versioned' : 'OpenAI-compatible'})</option>
+                    {draft.provider === 'aoai' ? <option value="azure_openai">Azure OpenAI versioned</option> : null}
+                    <option value="openai">Current OpenAI-compatible API</option>
+                </select>
+            </Field>
+            <Field
+                label="Embedding inference base URL"
+                htmlFor="connection-embedding-endpoint"
+                error={errors.embedding_endpoint}
+                help={foundry
+                    ? 'Foundry project endpoints do not route embeddings. Supply the explicit resource inference base ending /openai/v1/; the project URL is never rewritten.'
+                    : 'Optional when the connection URL already serves embeddings. Preserve a custom gateway’s API base path exactly.'}
+            >
+                <input
+                    id="connection-embedding-endpoint"
+                    className={inputClass}
+                    type="url"
+                    placeholder={foundry ? 'https://resource.services.ai.azure.com/openai/v1/' : 'Use the connection endpoint'}
+                    value={embeddingOperation?.endpoint ?? ''}
+                    disabled={busy}
+                    onChange={(event) => setOperation('endpoint', event.target.value)}
+                />
+            </Field>
+            {embeddingApi === 'azure_openai' || embeddingOperation?.api_version ? (
+                <Field label="Embedding API version" htmlFor="connection-embedding-version" error={errors.embedding_api_version} help="Only Azure OpenAI versioned operations accept an api-version. Leave blank for the connection’s version; OpenAI-compatible operations must leave this blank.">
+                    <input
+                        id="connection-embedding-version"
+                        className={inputClass}
+                        type="text"
+                        value={embeddingOperation?.api_version ?? ''}
+                        disabled={busy}
+                        onChange={(event) => setOperation('api_version', event.target.value)}
+                    />
+                </Field>
+            ) : null}
+            <Field label="Embedding authentication header" htmlFor="connection-embedding-auth-header" error={errors.embedding_auth_header} help="Reuses the connection’s stored credential. Only these supported gateway headers can be overridden.">
+                <select
+                    id="connection-embedding-auth-header"
+                    className={inputClass}
+                    value={embeddingOperation?.auth_header ?? ''}
+                    disabled={busy}
+                    onChange={(event) => setOperation('auth_header', event.target.value)}
+                >
+                    <option value="">Protocol default</option>
+                    <option value="api-key">api-key</option>
+                    <option value="authorization">Authorization</option>
+                    <option value="Ocp-Apim-Subscription-Key">Ocp-Apim-Subscription-Key</option>
+                </select>
+            </Field>
+            <Field label="Embedding API Management routing" htmlFor="connection-embedding-apim" help="Keep imported gateway behavior unless intentionally changing the embedding route.">
+                <select
+                    id="connection-embedding-apim"
+                    className={inputClass}
+                    value={embeddingOperation?.is_apim === undefined ? '' : String(embeddingOperation.is_apim)}
+                    disabled={busy}
+                    onChange={(event) => setOperation('is_apim', event.target.value === '' ? '' : event.target.value === 'true')}
+                >
+                    <option value="">Protocol default</option>
+                    <option value="true">API Management gateway</option>
+                    <option value="false">Direct inference</option>
+                </select>
+            </Field>
+            <p className="mt-2 text-xs text-warn">Embedding model and dimension changes, including same-dimension model switches, are checked against existing vectors when saved. No automatic rebuild is performed.</p>
+
             <SectionHeading
                 hint={
-                    shown.apiKey
-                        ? 'Discovery needs Azure credentials, so with an API key the models have to be listed by hand.'
-                        : 'Discovered models arrive switched off. Turn on the ones people may use.'
+                    custom
+                        ? 'Custom connections support text embeddings only. Add a model manually and declare its verified dimensions and input limit when it is not in the catalog.'
+                        : shown.apiKey
+                          ? 'Discovery needs Azure credentials, so with an API key the models have to be listed by hand.'
+                          : 'Discovered models arrive switched off. Turn on the ones people may use.'
                 }
             >
                 Models
             </SectionHeading>
 
             <div className="mb-3 flex flex-wrap gap-2">
+                {!custom ? <>
                 <GlassButton
                     type="button"
                     variant="subtle"
                     size="sm"
                     onClick={() => void runDiscovery()}
-                    disabled={busy || shown.apiKey}
+                    disabled={busy || !shown.discovery}
                 >
                     {discovering ? (
                         <Loader2 size={14} className="animate-spin" />
@@ -797,6 +979,7 @@ function ConnectionEditor({
                     {testing ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                     Test connection
                 </GlassButton>
+                </> : null}
                 <GlassButton
                     type="button"
                     variant="subtle"
@@ -810,6 +993,7 @@ function ConnectionEditor({
                                 deploymentName: '',
                                 displayName: '',
                                 enabled: false,
+                                ...(custom ? { supportsChat: false, supportsImageGeneration: false, supportsVision: false } : {}),
                             },
                         ])
                     }
@@ -819,8 +1003,8 @@ function ConnectionEditor({
                 </GlassButton>
             </div>
             <p className="mb-3 text-xs text-text-3">
-                Connection checks do not test image inference. Image tests use saved bindings and may incur generation costs.
-                {!savedBinding ? ' Save the connection first before testing images or choosing a default.' : ''}
+                Connection checks do not test image or embedding inference. Operation tests use saved bindings and may incur inference costs.
+                {!savedBinding ? ' Save the connection first before testing images or embeddings, or choosing a default.' : ''}
             </p>
 
             {models.length === 0 ? (
@@ -922,18 +1106,27 @@ function ConnectionEditor({
                                 </label>
                                 <ModelCapabilities
                                     model={model}
+                                    provider={String(draft.provider || 'aoai')}
                                     disabled={busy}
+                                    errors={Object.fromEntries(Object.entries(errors)
+                                        .filter(([name]) => name.startsWith(`model_${index}_`))
+                                        .map(([name, message]) => [name.slice(`model_${index}_`.length), message]))}
                                     onChange={(nextModel) => setModels(models.map((item, at) => at === index ? nextModel : item))}
                                 />
                                 <div className="mt-3 flex flex-wrap gap-2">
-                                    {modelPublishesCapability(model, 'chat') ? (
+                                    {!custom && modelPublishesCapability(model, 'chat') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'chat')}>
                                             Test chat
                                         </GlassButton>
                                     ) : null}
-                                    {modelSupportsCapability(model, 'image_generation') ? (
+                                    {!custom && modelSupportsCapability(model, 'image_generation') ? (
                                         <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'image_generation')}>
                                             Test image generation
+                                        </GlassButton>
+                                    ) : null}
+                                    {modelSupportsCapability(model, 'embeddings') ? (
+                                        <GlassButton type="button" variant="subtle" size="sm" disabled={busy} onClick={() => void runModelTest(model, 'embeddings')}>
+                                            Test embeddings
                                         </GlassButton>
                                     ) : null}
                                 </div>
@@ -1018,6 +1211,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
     const [busyId, setBusyId] = useState<string | null>(null);
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const [migration, setMigration] = useState<ConnectionMigrationNotice | null>(null);
+    const [embeddingMigration, setEmbeddingMigration] = useState<ConnectionMigrationNotice | null>(null);
     const [defaultNotices, setDefaultNotices] = useState<string[]>([]);
 
     // Turning connections on seeds this list server-side with the classic chat endpoint,
@@ -1030,6 +1224,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             const response = await fetchModelConnections(signal);
             setConnections(Array.isArray(response.endpoints) ? response.endpoints : []);
             setMigration(response.migration ?? null);
+            setEmbeddingMigration(response.embedding_migration ?? null);
             setDefaultNotices(Object.values(response.default_notices ?? {}).filter((notice): notice is string => typeof notice === 'string' && Boolean(notice)));
             setError(null);
         } catch (loadError) {
@@ -1130,12 +1325,12 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             </div>
 
             {help ? <p className="mb-3 text-xs leading-relaxed text-text-3">{help}</p> : null}
-            <p className="mb-3 text-xs text-text-3">Configure credentials once, then choose independent chat and image defaults. Image connections remain available when chat uses its classic endpoint.</p>
-            {migration?.message ? (
-                <p role="status" className={`mb-3 rounded-lg p-3 text-xs ${migration.status === 'complete' ? 'bg-surface-2 text-text-2' : 'bg-warn-soft text-warn'}`}>
-                    {migration.message}
+            <p className="mb-3 text-xs text-text-3">Configure credentials once, then choose independent chat, image and embedding defaults. Images and embeddings remain available when chat uses its classic endpoint.</p>
+            {[migration, embeddingMigration].map((notice, index) => notice?.message ? (
+                <p key={index} role="status" className={`mb-3 rounded-lg p-3 text-xs ${notice.status === 'complete' ? 'bg-surface-2 text-text-2' : 'bg-warn-soft text-warn'}`}>
+                    {notice.message}
                 </p>
-            ) : null}
+            ) : null)}
             {defaultNotices.map((notice, index) => (
                 <p key={index} role="status" className="mb-2 text-xs text-warn">{notice}</p>
             ))}
@@ -1175,7 +1370,7 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
             ) : visible.length === 0 ? (
                 <p className="rounded-lg border border-edge bg-surface-1 p-4 text-xs text-text-3">
                     {connections.length === 0
-                        ? 'No connections yet. Add one to publish models from an Azure OpenAI or Foundry resource.'
+                        ? 'No connections yet. Add an Azure OpenAI or Foundry resource, or a custom OpenAI-compatible embedding connection.'
                         : 'No connections match your search.'}
                 </p>
             ) : (
@@ -1214,9 +1409,11 @@ export function ModelConnectionsManager({ help }: { help?: string }) {
                                     <p className="mt-1 text-xs text-text-3">
                                         {connection.enabled === false ? 'Connection disabled' : (
                                             <>
-                                                {(connection.models ?? []).filter((model) => modelPublishesCapability(model, 'chat')).length} chat
+                                                {connection.provider === 'openai_compatible' ? 0 : (connection.models ?? []).filter((model) => modelPublishesCapability(model, 'chat')).length} chat
                                                 {' · '}
-                                                {(connection.models ?? []).filter((model) => modelPublishesCapability(model, 'image_generation')).length} image generation
+                                                {connection.provider === 'openai_compatible' ? 0 : (connection.models ?? []).filter((model) => modelPublishesCapability(model, 'image_generation')).length} image generation
+                                                {' · '}
+                                                {(connection.models ?? []).filter((model) => modelPublishesCapability(model, 'embeddings')).length} embeddings
                                             </>
                                         )}
                                     </p>
