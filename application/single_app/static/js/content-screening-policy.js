@@ -97,7 +97,7 @@
             const region = element("section", "screening-policy-baseline");
             region.append(
                 element("h3", "h6", "Required administrator baseline"),
-                element("p", "small", "These checks always apply. Workspace additions cannot remove, disable, or weaken them.")
+                element("p", "small", "Workspace additions cannot remove, disable, or weaken required administrator checks. When the administrator baseline is disabled, additions are inactive.")
             );
             const rules = element("ul", "mb-2");
             (baseline?.rules || []).filter(rule => rule.enabled).forEach(rule => {
@@ -152,12 +152,25 @@
                 element("h3", "h5", global ? "Mandatory screening policy" : "Workspace additions"),
                 element("p", "small text-body-secondary", "Policies are saved separately from application settings. Pattern checks are indicators, not a guarantee that all PII or instruction manipulation will be detected.")
             );
+            const summary = element("div", "alert alert-secondary");
+            summary.setAttribute("role", "status");
+            summary.setAttribute("aria-label", "Configured screening checks");
+            this.summaryLabel = element("p", "fw-semibold mb-1");
+            this.summaryDetail = element("p", "small mb-1");
+            summary.append(
+                this.summaryLabel, this.summaryDetail,
+                element("p", "small mb-0", "This summarizes the current draft. Save the policy to apply it; new scans must also be enabled separately.")
+            );
+            this.panel.appendChild(summary);
             const controls = element("fieldset");
             controls.disabled = !canEdit;
             this.controls = controls;
             this.panel.appendChild(controls);
-            this.enabledInput = field(controls, global ? "Enable the mandatory policy" : "Enable workspace additions", "checkbox", policy.enabled);
-            this.enabledInput.disabled = !prerequisitesReady && !policy.enabled;
+            this.enabledInput = field(controls, global ? "Baseline policy enabled" : "Workspace additions enabled", "checkbox", policy.enabled);
+            controls.append(
+                element("h4", "h6", "Deterministic checks"),
+                element("p", "small text-body-secondary", "PII patterns, regular expressions, and literal values are checked in code. They do not call an AI model.")
+            );
             const starterBar = element("div", "row g-3 align-items-end");
             const starterColumn = element("div", "col-md-8");
             this.packInput = field(starterColumn, "Starter rule pack", "select", "", [
@@ -199,9 +212,10 @@
             actions.append(this.saveButton, this.reloadButton);
             this.panel.appendChild(actions);
             this.saveButton.disabled = !canEdit;
-            controls.addEventListener("input", () => { this.dirty = true; });
-            controls.addEventListener("change", () => { this.dirty = true; });
+            controls.addEventListener("input", () => { this.dirty = true; this.updateSummary(); });
+            controls.addEventListener("change", () => { this.dirty = true; this.updateSummary(); });
             this.renderSample(controls);
+            this.updateSummary();
             if (!canEdit) showMessage(this.message, "This policy is read-only. The server has not granted policy editing for this workspace.", "info");
         }
 
@@ -211,7 +225,33 @@
             pack.rules.forEach(rule => {
                 if (!this.ruleEditors.some(editor => editor.id === rule.id)) this.addRule(rule);
             });
+            this.packInput.value = "";
             this.dirty = true;
+            this.updateSummary();
+        }
+
+        updateSummary() {
+            if (!this.summaryLabel || !this.enabledInput) return;
+            const global = this.scope.scopeType === "global";
+            const inherited = this.data.baseline;
+            if (!global && !inherited) {
+                this.summaryLabel.textContent = "Required baseline unavailable";
+                this.summaryDetail.textContent = "Reload the policy before interpreting its effective checks.";
+                return;
+            }
+            if (!(global ? this.enabledInput.checked : inherited.enabled)) {
+                this.summaryLabel.textContent = global ? "Policy disabled" : "Administrator baseline disabled";
+                this.summaryDetail.textContent = "Saved rules and model selections are inactive until the required baseline is enabled.";
+                return;
+            }
+            const requiredRules = global ? 0 : inherited.rule_count;
+            const requiredAi = global ? 0 : inherited.ai_check_count;
+            const rules = requiredRules + (this.enabledInput.checked ? this.ruleEditors.filter(rule => rule.enabled.checked).length : 0);
+            const ai = requiredAi + (this.enabledInput.checked && this.aiEnabled?.checked ? 1 : 0);
+            this.summaryLabel.textContent = `${rules} deterministic check${rules === 1 ? "" : "s"} | ${ai ? `${ai} AI check${ai === 1 ? "" : "s"}` : "AI screening off"}`;
+            this.summaryDetail.textContent = requiredAi
+                ? `Includes ${requiredAi} required administrator AI check${requiredAi === 1 ? "" : "s"}. Disabling workspace AI additions does not disable required checks.`
+                : "Deterministic checks do not call a model. Model permission selections do not run checks.";
         }
 
         addRule(rule) {
@@ -225,6 +265,7 @@
                 this.ruleEditors = this.ruleEditors.filter(item => item !== editor);
                 container.remove();
                 this.dirty = true;
+                this.updateSummary();
             }));
             container.appendChild(heading);
             editor.name = field(container, "Rule name", "text", value.name || "");
@@ -238,67 +279,104 @@
             container.appendChild(row);
             if (value.type === "pii") {
                 editor.piiType = field(container, "Built-in PII detector", "select", value.pii_type || "", [
-                    { value: "", label: "Choose a detector" }, ...enumOptions(this.templates.pii_types)
+                    { value: "", label: "Choose a detector" }, ...this.templates.pii_choices
                 ]);
             } else if (value.type === "regex") {
                 editor.pattern = field(container, "Regular expression", "textarea", value.pattern || "");
             } else {
-                editor.values = field(container, "Literal values (one per line)", "textarea", (value.values || []).join("\n"));
+                editor.values = field(container, "Literal values or phrases", "textarea", (value.values || []).join("\n"));
             }
             if (value.type !== "pii") {
                 editor.caseSensitive = field(container, "Case sensitive", "checkbox", value.case_sensitive);
-                editor.wholeWord = field(container, "Whole word", "checkbox", value.whole_word);
+                editor.wholeWord = field(container, "Whole words only", "checkbox", value.whole_word);
             }
             this.rulesContainer.appendChild(container);
             this.ruleEditors.push(editor);
+            this.updateSummary();
         }
 
         renderModels(container, policy, global) {
             const section = element("section", "border-top pt-3 mt-3");
             section.append(
-                element("h4", "h6", "Optional model evaluation"),
-                element("p", "small text-body-secondary", "The selected configured model receives the extracted content as untrusted data. This adds model usage and latency. Once enabled, every required model check must complete; deterministic findings cannot be overridden.")
+                element("h4", "h6", "AI checks (optional)"),
+                element("p", "small text-body-secondary", "Send content to one selected model for this policy's additional criteria. AI findings cannot override deterministic findings.")
             );
-            this.aiEnabled = field(section, "Enable model criteria", "checkbox", policy.ai.enabled);
+            this.aiEnabled = field(section, "Enable AI checks", "checkbox", policy.ai.enabled);
+            this.aiDisabledNotice = element("p", "small text-body-secondary", "AI checks for this policy are off. Saved model settings are retained but are not used. Required administrator AI checks still apply to workspace additions.");
+            section.appendChild(this.aiDisabledNotice);
+            const configuration = element("fieldset");
+            configuration.appendChild(element("legend", "visually-hidden", "AI check configuration"));
+            this.aiConfiguration = configuration;
             const modelOptions = [{ value: "", label: "Choose an approved configured model" }];
             this.models.choices.forEach((model, index) => modelOptions.push({
                 value: String(index), label: [model.connection_name, model.label || model.model_id].filter(Boolean).join(" / ")
             }));
             const selectedIndex = this.models.choices.findIndex(model => sameModel(model, policy.ai.model_selection));
-            this.aiModel = field(section, "Scanner model", "select", selectedIndex < 0 ? "" : String(selectedIndex), modelOptions);
-            if (selectedIndex < 0 && policy.ai.model_selection?.model_id) {
+            const unavailable = selectedIndex < 0 && Boolean(policy.ai.model_selection?.model_id);
+            if (unavailable) modelOptions.push({ value: "unavailable", label: "Saved model unavailable" });
+            this.aiModel = field(configuration, "Scanner model", "select",
+                unavailable ? "unavailable" : selectedIndex < 0 ? "" : String(selectedIndex), modelOptions);
+            if (unavailable) {
                 section.appendChild(element("p", "text-danger small", "The saved scanner model is unavailable. Choose an approved replacement; no fallback model is selected."));
             }
-            if (global) {
-                const allowed = element("fieldset", "screening-model-list border rounded p-3 mb-3");
-                allowed.appendChild(element("legend", "h6", "Models permitted for workspace additions"));
-                this.models.choices.forEach(model => {
-                    const input = field(allowed, [model.connection_name, model.label || model.model_id].filter(Boolean).join(" / "),
-                        "checkbox", (policy.allowed_models || []).some(item => sameModel(item, model)));
-                    this.allowedModelInputs.push({ input, model });
-                });
-                section.appendChild(allowed);
-            }
-            const aiStarter = field(section, "Model criteria starter", "select", "", [
+            const aiStarter = field(configuration, "AI starter criteria", "select", "", [
                 { value: "", label: "Keep current criteria" },
                 ...this.templates.ai_starters.map(starter => ({ value: starter.id, label: starter.name || starter.id.replace(/_/g, " ") }))
             ]);
-            section.appendChild(button("Use starter criteria", "btn btn-sm btn-outline-secondary mb-3", async () => {
+            configuration.appendChild(button("Use criteria", "btn btn-sm btn-outline-secondary mb-3", async () => {
                 const starter = this.templates.ai_starters.find(item => item.id === aiStarter.value);
                 if (!starter) return;
                 if (this.aiInstructions.value && !await screening.confirmAction("Replace model criteria?", "The selected starter will replace the current model criteria in this draft.", "Use criteria")) return;
                 this.aiInstructions.value = starter.instructions;
                 this.dirty = true;
             }));
-            this.aiInstructions = field(section, "Model evaluation criteria", "textarea", policy.ai.instructions);
-            this.aiSeverity = field(section, "Model finding severity", "select", policy.ai.severity, enumOptions(this.templates.severities));
-            this.aiCategory = field(section, "Model finding category", "text", policy.ai.category);
-            this.aiWindow = field(section, "Model window unit", "select", policy.ai.window_unit, enumOptions(["pages", "chunks"]));
-            this.aiSize = field(section, "Units per model window", "number", policy.ai.window_size);
-            this.aiCharacters = field(section, "Maximum characters per model window", "number", policy.ai.max_characters);
-            this.aiOverlap = field(section, "Boundary overlap characters", "number", policy.ai.overlap_characters);
+            this.aiInstructions = field(configuration, "Model instructions", "textarea", policy.ai.instructions);
+            this.aiSeverity = field(configuration, "Model finding severity", "select", policy.ai.severity, enumOptions(this.templates.severities));
+            this.aiCategory = field(configuration, "Model finding category", "text", policy.ai.category);
+            this.aiWindow = field(configuration, "Scan window unit", "select", policy.ai.window_unit, enumOptions(["pages", "chunks"]));
+            this.aiSize = field(configuration, "Pages or chunks per window", "number", policy.ai.window_size);
+            this.aiCharacters = field(configuration, "Maximum characters per window", "number", policy.ai.max_characters);
+            this.aiOverlap = field(configuration, "Boundary overlap characters", "number", policy.ai.overlap_characters);
             [this.aiSize, this.aiCharacters, this.aiOverlap].forEach(input => { input.step = "1"; });
+            section.appendChild(configuration);
             container.appendChild(section);
+            if (global) {
+                const permissions = element("details", "border rounded p-3 my-3");
+                permissions.append(
+                    element("summary", "fw-semibold", "Models workspaces may use"),
+                    element("p", "small text-body-secondary mt-2", "This is a permission list, not a list of models to run. It can be configured while this policy's AI checks are off. A workspace must enable its own AI check to use one of these models. The saved baseline scanner is also permitted automatically.")
+                );
+                const allowed = element("fieldset", "screening-model-list");
+                allowed.appendChild(element("legend", "visually-hidden", "Workspace model permissions"));
+                this.models.choices.forEach(model => {
+                    const explicit = (policy.allowed_models || []).some(item => sameModel(item, model));
+                    const input = field(allowed, [model.connection_name, model.label || model.model_id].filter(Boolean).join(" / "), "checkbox", explicit);
+                    const note = element("span", "small ms-1 d-none", "(included by baseline scanner selection)");
+                    input.parentElement.querySelector("label").appendChild(note);
+                    const permission = { input, model, explicit, note };
+                    input.addEventListener("change", () => { permission.explicit = input.checked; });
+                    this.allowedModelInputs.push(permission);
+                });
+                permissions.appendChild(allowed);
+                container.appendChild(permissions);
+            }
+            this.aiEnabled.addEventListener("change", () => this.updateModelControls());
+            this.aiModel.addEventListener("change", () => this.updateModelControls());
+            this.updateModelControls();
+        }
+
+        updateModelControls() {
+            this.aiConfiguration.disabled = !this.aiEnabled.checked;
+            this.aiConfiguration.classList.toggle("opacity-50", !this.aiEnabled.checked);
+            this.aiDisabledNotice.classList.toggle("d-none", this.aiEnabled.checked);
+            const selected = this.aiModel.value === "" ? null : this.models.choices[Number(this.aiModel.value)];
+            this.allowedModelInputs.forEach(permission => {
+                const implicit = Boolean(selected && sameModel(permission.model, selected));
+                permission.input.checked = permission.explicit || implicit;
+                permission.input.disabled = implicit;
+                permission.note.classList.toggle("d-none", !implicit);
+            });
+            this.updateSummary();
         }
 
         readPolicy() {
@@ -331,7 +409,9 @@
                 rules,
                 ai: {
                     enabled: this.aiEnabled.checked,
-                    model_selection: selection ? modelReference(selection) : { endpoint_id: "", model_id: "" },
+                    model_selection: selection ? modelReference(selection)
+                        : this.aiModel.value === "unavailable" ? modelReference(this.data.policy.ai.model_selection)
+                        : { endpoint_id: "", model_id: "" },
                     instructions: this.aiInstructions.value,
                     severity: this.aiSeverity.value,
                     category: this.aiCategory.value,
@@ -341,7 +421,7 @@
                     overlap_characters: Number(this.aiOverlap.value)
                 },
                 allowed_models: this.scope.scopeType === "global"
-                    ? this.allowedModelInputs.filter(item => item.input.checked).map(item => modelReference(item.model)) : [],
+                    ? this.allowedModelInputs.filter(item => item.explicit).map(item => modelReference(item.model)) : [],
                 limits: Object.fromEntries(Array.from(this.limitInputs, ([key, input]) => [key, Number(input.value)]))
             };
         }

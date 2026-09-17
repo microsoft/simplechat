@@ -17,6 +17,7 @@ import {
     editableScreeningPolicy,
     screeningCatalogChoices,
     screeningPolicyTemplates,
+    screeningPolicySummary,
     validateScreeningPolicy,
     type ScreeningPolicy,
 } from '../../lib/contentScreeningPolicy';
@@ -128,6 +129,7 @@ function PolicyEditor({
     }
 
     const disabled = busy || stale || loading;
+    const summary = policy && response ? screeningPolicySummary(policy, global, response.inherited_summary) : null;
     return (
         <section className="min-w-0 space-y-4 py-4" aria-label={global ? 'Global screening policy' : 'Workspace screening policy'}>
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -155,6 +157,11 @@ function PolicyEditor({
             {!loading && policy && templates && response ? (
                 <>
                     {response.inherited_summary ? <ScreeningBaselineSummary summary={response.inherited_summary} /> : null}
+                    {summary ? <div className="space-y-1 rounded-lg border border-edge bg-surface-2 p-3" role="status" aria-label="Configured screening checks">
+                        <p className="text-sm font-semibold text-text-1">{summary.label}</p>
+                        <p className="text-xs text-text-3">{summary.detail}</p>
+                        <p className="text-xs text-text-3">This summarizes the current draft. Save the policy to apply it; new scans must also be enabled separately.</p>
+                    </div> : null}
                     <ScreeningPolicyFields policy={policy} templates={templates} models={models}
                         baseline={global} disabled={disabled} onChange={(next) => {
                             setPolicy(next);

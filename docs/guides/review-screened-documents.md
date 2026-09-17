@@ -4,7 +4,7 @@ title: "Screen and review workspace documents"
 description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
 section: "Guides"
 audience: user
-version: "0.261.107"
+version: "0.261.108"
 ---
 
 ## What this does
@@ -25,9 +25,29 @@ Add or edit the rules, enable **Baseline policy enabled**, then select **Save sc
 
 Choose baseline checks that reflect the information your organization actually needs to control. A policy that treats every email address as unacceptable can create a large review queue for otherwise ordinary public documents. Use representative allowed examples and known matches when testing the rules.
 
-For contextual checks, select an approved configured model and describe the criterion precisely. A useful instruction distinguishes an instruction to manipulate source priority from an ordinary discussion of prompt injection. The content being inspected is sent to that selected model, so review its approved data routing first.
+### Choose deterministic rules
 
-Workspace managers can add local rules and instructions without disabling the required administrator baseline.
+Both interfaces offer **Add literal rule**, **Add regex rule**, and **Add PII rule**. Custom rules start with a blank name and match configuration; choose the values, pattern, or built-in PII detector you actually need. Literal and regex rules support case-sensitive and whole-word matching.
+
+For a starting set, use **Starter rule pack** and **Add starter pack**. The four shared packs cover structured PII, confidentiality markings, credentials, and prompt/source-ranking manipulation. Existing starter rules are not duplicated or reset when you add the same pack again. You can edit their severity, match configuration, or enabled state.
+
+These checks run in code and do not call a model. Selecting an email pattern does not send the document to an AI service or identify every kind of personal information.
+
+### Add contextual AI checks only when needed
+
+For contextual checks, first select **Enable AI checks**, then choose one approved **Scanner model** and describe the criterion precisely. **AI starter criteria** can provide a starting instruction. A useful instruction distinguishes an instruction to manipulate source priority from an ordinary discussion of prompt injection. The content being inspected is sent to that selected model, so review its approved data routing first.
+
+The scanner, criteria, and window controls are disabled while AI checks are off. Their saved values remain available when you turn AI checks back on; turning the switch off does not clear them. This controls screening inference only, not extraction, embeddings, or other uses of models.
+
+### Delegate model permissions without enabling inference
+
+Administrators use **Models workspaces may use** to permit models for optional workspace checks. Checking several models here does not run several scanners, and the permission list can be configured while baseline AI checks are off. The baseline's saved scanner is permitted automatically and is marked separately from explicit permissions.
+
+Workspace managers can add local rules and instructions without disabling the required administrator baseline. A workspace's **Enable AI checks** switch controls only its own additional check. Required administrator AI checks still run when local AI additions are off.
+
+Read **Configured screening checks** before saving. It shows enabled deterministic and AI checks in the draft, including inherited requirements for a workspace. If the administrator baseline is disabled, local additions are inactive too. The summary is not the separate enrollment switch and does not change an existing document hold.
+
+**Policy-editor alignment implemented in version: 0.261.108**, tracked in `application\single_app\config.py`.
 
 ## Inspect existing knowledge
 

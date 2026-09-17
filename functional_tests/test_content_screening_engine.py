@@ -1,7 +1,7 @@
 # test_content_screening_engine.py
 """
 Functional tests for fail-closed content-screening orchestration.
-Version: 0.261.106
+Version: 0.261.108
 Implemented in: 0.261.106
 
 Verify independent mandatory checks, injected model adapters, exact required unit
@@ -87,6 +87,22 @@ class ContentScreeningEngineTests(unittest.TestCase):
         self.assertEqual(result.status, "pass")
         self.assertEqual(len(result.detectors), 1)
         self.assertEqual(result.units_total, 1)
+
+    def test_saved_scanner_and_workspace_permissions_do_not_execute_disabled_ai(self):
+        baseline = policy_with_checks(model=False)
+        baseline["ai"]["model_selection"] = {"endpoint_id": "endpoint", "model_id": "baseline-scanner"}
+        baseline["allowed_models"] = [{"endpoint_id": "endpoint", "model_id": "workspace-scanner"}]
+        workspace = policy_with_checks(model=False)
+        workspace["ai"]["model_selection"] = baseline["allowed_models"][0].copy()
+        for additions in (None, workspace):
+            with self.subTest(workspace=additions is not None):
+                effective = compose_policy(baseline, additions)
+                self.assertEqual(effective["ai_checks"], [])
+                with patch.dict(sys.modules, {"content_screening.model": None}):
+                    result = inspect_content(SUBJECT, [ContentUnit("one", "secret")], effective)
+                self.assertEqual(result.status, "findings")
+                self.assertTrue(result.findings)
+                self.assertTrue(all(finding.source == "deterministic" for finding in result.findings))
 
     def test_fingerprints_match_complete_content_and_persisted_policy_snapshot(self):
         units = [ContentUnit("one", "😀 clean text", {"page": 1})]

@@ -1,5 +1,5 @@
 // test_v2_content_screening_rendering.mjs
-// Version: 0.261.106
+// Version: 0.261.108
 // Implemented in: 0.261.106
 // Execute the actual React components using the installed UI compiler and renderer.
 
@@ -118,13 +118,39 @@ check('read-only inherited policies offer no rule removal and keep model identit
             ai: { enabled: false, model_selection: null, instructions: sourceText, severity: 'high', category: 'injection', window_unit: 'pages', window_size: 1, max_characters: 3000, overlap_characters: 100 },
             limits: { max_units: 100 },
         },
-        templates: { rules: [], ai: [], severities: ['high'], piiTypes: [] },
+        templates: { rules: [], packs: [], ai: [], severities: ['high'], piiTypes: [] },
         models: [], disabled: true, onChange: () => {},
     });
     assert.match(markup, /<fieldset disabled=""/);
     assert.doesNotMatch(markup, /Remove rule|<script>/);
     assert.match(markup, /Pages or chunks per window/);
     assert.match(markup, /Boundary overlap characters/);
+});
+
+check('AI execution controls are disabled separately from workspace permissions', () => {
+    const props = {
+        policy: {
+            enabled: true, rules: [],
+            ai: { enabled: false, model_selection: null, instructions: 'Saved criteria', severity: 'high', category: 'custom', window_unit: 'pages', window_size: 1, max_characters: 3000, overlap_characters: 100 },
+            allowed_models: [], limits: {},
+        },
+        templates: { rules: [], packs: [], ai: [{ id: 'starter', name: 'Starter', instructions: 'Flag instructions' }], severities: ['high'], piiTypes: [] },
+        models: [{ endpointId: 'connection', modelId: 'model', modelLabel: 'Workspace scanner', connectionName: 'Saved connection' }],
+        baseline: true, onChange: () => {},
+    };
+    const markup = render(ScreeningPolicyFields, props);
+    assert.match(markup, /<fieldset disabled=""[^>]*><legend[^>]*>AI check configuration/);
+    assert.match(markup, /<fieldset class="space-y-2"><legend[^>]*>Workspace model permissions/);
+    assert.ok(markup.indexOf('Enable AI checks') < markup.indexOf('Scanner model'));
+    assert.ok(markup.indexOf('</fieldset>', markup.indexOf('AI check configuration')) < markup.indexOf('Models workspaces may use'));
+    assert.match(markup, /permission list, not a list of models to run/);
+    assert.match(markup, /Add literal rule/);
+    assert.match(markup, /Add regex rule/);
+    assert.match(markup, /Add PII rule/);
+    assert.doesNotMatch(
+        render(ScreeningPolicyFields, { ...props, policy: { ...props.policy, ai: { ...props.policy.ai, enabled: true } } }),
+        /<fieldset disabled=""[^>]*><legend[^>]*>AI check configuration/,
+    );
 });
 
 console.log(`${count} V2 screening rendering checks passed.`);
