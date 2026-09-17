@@ -21,6 +21,7 @@
                             <li><strong>Azure OpenAI</strong>: assign <code>Reader</code> plus <code>Cognitive Services OpenAI User</code> on the Azure OpenAI resource when using managed identity or service principal model discovery.</li>
                             <li><strong>Foundry (classic)</strong>: assign <code>Foundry User</code>, or <code>Azure AI User</code> where older role names still appear, on the target Foundry project or backing resource.</li>
                             <li><strong>New Foundry</strong>: use the same Foundry project access as classic Foundry, then select the New Foundry provider and the project endpoint in this modal.</li>
+                            <li><strong>Custom</strong>: select an API type, enter an HTTPS endpoint and API key, then add models manually.</li>
                             <li><strong>Provider setup</strong>: for Foundry project model endpoints, keep OpenAI API Version at endpoint default <code>v1</code>. Use separate endpoints when Grok, Meta/Llama, DeepSeek, OpenAI-compatible, or other model families need different project settings, auth, or manual deployment rows.</li>
                             <li><strong>API Key</strong>: use for inference-only endpoints or APIM paths. Model and Foundry project discovery requires managed identity or service principal RBAC.</li>
                         </ul>
@@ -38,15 +39,37 @@
                             <option value="aoai">Azure OpenAI</option>
                             <option value="aifoundry">Foundry (classic)</option>
                             <option value="new_foundry">New Foundry</option>
+                            <option value="custom">Custom</option>
                         </select>
                         <div class="form-text">
-                            For APIM, choose the matching provider with API key auth. If using classic Foundry, use Foundry (classic). If using the application-based runtime, use New Foundry.
+                            Choose Custom for a manually configured API type and model list.
                         </div>
+                    </div>
+                    <div class="col-md-6 d-none" id="model-endpoint-api-type-group">
+                        <label for="model-endpoint-api-type" class="form-label">API Type</label>
+                        <select class="form-select" id="model-endpoint-api-type"
+                            data-api-types="{{ model_endpoint_api_types | tojson | forceescape }}">
+                            {% for api_type in model_endpoint_api_types %}
+                            <option value="{{ api_type.value }}">{{ api_type.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text" id="model-endpoint-api-type-help">The API type controls request paths, model identifiers, and headers for this Custom endpoint.</div>
                     </div>
                     <div class="col-md-6">
                         <label for="model-endpoint-endpoint" class="form-label" id="model-endpoint-endpoint-label">Endpoint Fully Qualified Domain Name (FQDN)</label>
                         <input type="text" class="form-control" id="model-endpoint-endpoint" />
                         <div class="form-text" id="model-endpoint-endpoint-help">For Azure OpenAI, paste the resource endpoint.</div>
+                        <div class="form-check mt-2 d-none" id="model-endpoint-url-mode-group">
+                            <input class="form-check-input" type="checkbox" id="model-endpoint-url-mode-exact" />
+                            <label class="form-check-label" for="model-endpoint-url-mode-exact">
+                                Use this URL exactly as entered
+                            </label>
+                            <div class="form-text">
+                                SimpleChat normally appends <code>/v1</code> when the URL does not already
+                                say where the API lives. Select this when your gateway serves the API at a
+                                path that cannot be inferred. Test Connection reports the URL actually called.
+                            </div>
+                        </div>
                     </div>
                     <div class="col-md-3" id="model-endpoint-project-api-version-group">
                         <label for="model-endpoint-project-api-version" class="form-label">Project API Version</label>
@@ -72,6 +95,11 @@
                         </select>
                         <input type="text" class="form-control mt-2 d-none" id="model-endpoint-openai-api-version-custom" placeholder="Enter OpenAI API version" />
                         <div class="form-text">For Foundry project endpoints, Project API Version controls discovery and usually stays v1. OpenAI API Version controls the normalized /openai/v1 inference client and should stay Endpoint default (v1); the /v1 path does not allow an api-version query. Split model families into separate endpoints when they need different project settings or auth. Claude deployments are detected from the model name and use the Anthropic messages protocol.</div>
+                    </div>
+                    <div class="col-md-3 d-none" id="model-endpoint-anthropic-version-group">
+                        <label for="model-endpoint-anthropic-version" class="form-label">Anthropic Version</label>
+                        <input type="text" class="form-control" id="model-endpoint-anthropic-version" value="2023-06-01" />
+                        <div class="form-text">Sent as the <code>anthropic-version</code> request header.</div>
                     </div>
                     <div class="col-md-6" id="model-endpoint-project-group">
                         <label for="model-endpoint-project-name" class="form-label">Foundry Project Name</label>
@@ -144,7 +172,7 @@
 
                 <div id="model-endpoint-api-key-note" class="alert alert-info mt-3 d-none">
                     <i class="bi bi-info-circle me-2"></i>
-                    API key authentication is for inference only. Use a managed identity or service principal for model discovery, or use Add Model and enter the deployment name manually exactly as it appears in Foundry.
+                    <span id="model-endpoint-api-key-note-text">API key authentication is for inference only. Use a managed identity or service principal for model discovery, or use Add Model and enter the deployment name manually exactly as it appears in Foundry.</span>
                 </div>
 
                 <div class="border rounded p-3 mt-3">
@@ -240,6 +268,11 @@
                                 <td><strong>New Foundry</strong></td>
                                 <td>Application-based Foundry runtime, New Foundry agents, and project model deployments.</td>
                                 <td>Use the New Foundry project endpoint. Set <strong>Project API Version</strong> for discovery, usually <code>v1</code>, and keep <strong>OpenAI API Version</strong> at endpoint default <code>v1</code> for the normalized <code>/openai/v1</code> inference path.</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Custom</strong></td>
+                                <td>Manually configured OpenAI API, Azure OpenAI API, or Anthropic models.</td>
+                                <td>Use an HTTPS endpoint with API key authentication, select the API type, and add models manually.</td>
                             </tr>
                         </tbody>
                     </table>

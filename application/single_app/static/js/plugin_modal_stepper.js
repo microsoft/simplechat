@@ -13,6 +13,7 @@ const DATABRICKS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'manag
 const SNOWFLAKE_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
 const TABLEAU_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'username_password'];
 const YAMCS_ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'username_password'];
+const YAMCS_BASIC_AUTH_IDENTITY_AUTH_TYPES = ['username_password'];
 const LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES = ['client_secret', 'managed_identity'];
 const BLOB_STORAGE_PLUGIN_TYPE = 'blob_storage';
 const AZURE_STORAGE_ENDPOINT_SUFFIXES = [
@@ -37,6 +38,19 @@ const YAMCS_AUTH_METHOD_USERNAME_PASSWORD = 'username_password';
 const YAMCS_AUTH_METHOD_API_KEY = 'api_key';
 const YAMCS_AUTH_METHOD_BEARER_TOKEN = 'bearer_token';
 const YAMCS_AUTH_METHOD_NONE = 'none';
+const YAMCS_BASIC_AUTH_COMPATIBLE_AUTH_METHODS = [YAMCS_AUTH_METHOD_NONE, YAMCS_AUTH_METHOD_API_KEY];
+const ACTION_IDENTITY_SELECT_IDS = {
+  openapi: 'plugin-auth-identity-select',
+  mcp: 'mcp-identity-select',
+  databricks: 'databricks-identity-select',
+  snowflake: 'snowflake-identity-select',
+  tableau: 'tableau-identity-select',
+  yamcs: 'yamcs-identity-select',
+  yamcsBasicAuth: 'yamcs-basic-auth-identity-select',
+  logAnalytics: 'log-analytics-identity-select',
+  generic: 'plugin-auth-identity-select-generic',
+  sql: 'sql-identity-select'
+};
 const publicWorkspacePlural = window.getPublicWorkspaceLabel ? window.getPublicWorkspaceLabel('plural') : 'Public Workspaces';
 const MCP_PLUGIN_TYPE = 'mcp';
 const KEY_VAULT_SECRET_REMINDERS_METADATA_FIELD = 'key_vault_secret_reminders';
@@ -544,6 +558,9 @@ export class PluginModalStepper {
     if (kind === 'yamcs') {
       return this.actionIdentities.filter(identity => YAMCS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
+    if (kind === 'yamcsBasicAuth') {
+      return this.actionIdentities.filter(identity => YAMCS_BASIC_AUTH_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
+    }
     if (kind === 'logAnalytics') {
       return this.actionIdentities.filter(identity => LOG_ANALYTICS_ACTION_IDENTITY_AUTH_TYPES.includes(this.getIdentityAuthType(identity)));
     }
@@ -557,9 +574,18 @@ export class PluginModalStepper {
     this.populateActionIdentitySelector('snowflake', 'snowflake-identity-select', 'snowflake-action-identity-group', 'snowflake-identity-status');
     this.populateActionIdentitySelector('tableau', 'tableau-identity-select', 'tableau-action-identity-group', 'tableau-identity-status');
     this.populateActionIdentitySelector('yamcs', 'yamcs-identity-select', 'yamcs-action-identity-group', 'yamcs-identity-status');
+    this.populateActionIdentitySelector('yamcsBasicAuth', 'yamcs-basic-auth-identity-select', 'yamcs-basic-auth-identity-group', 'yamcs-basic-auth-identity-status');
     this.populateActionIdentitySelector('logAnalytics', 'log-analytics-identity-select', 'log-analytics-action-identity-group', 'log-analytics-identity-status');
     this.populateActionIdentitySelector('generic', 'plugin-auth-identity-select-generic', 'generic-action-identity-group', 'plugin-auth-identity-status-generic');
     this.populateActionIdentitySelector('sql', 'sql-identity-select', 'sql-action-identity-group', 'sql-identity-status');
+  }
+
+  getStoredActionIdentityId(kind) {
+    if (kind === 'yamcsBasicAuth') {
+      const additionalFields = this.originalPlugin?.additionalFields || this.originalPlugin?.additional_fields || {};
+      return additionalFields.basic_auth_identity_id || '';
+    }
+    return this.originalPlugin?.identity_id || '';
   }
 
   populateActionIdentitySelector(kind, selectId, groupId, statusId) {
@@ -568,7 +594,7 @@ export class PluginModalStepper {
     const status = document.getElementById(statusId);
     if (!select || !group) return;
 
-    const previousValue = select.value || this.originalPlugin?.identity_id || '';
+    const previousValue = select.value || this.getStoredActionIdentityId(kind);
     const identities = this.getActionIdentitiesForKind(kind);
     select.replaceChildren();
 
@@ -614,18 +640,7 @@ export class PluginModalStepper {
   }
 
   getSelectedActionIdentity(kind) {
-    const selectIds = {
-      openapi: 'plugin-auth-identity-select',
-      mcp: 'mcp-identity-select',
-      databricks: 'databricks-identity-select',
-      snowflake: 'snowflake-identity-select',
-      tableau: 'tableau-identity-select',
-      yamcs: 'yamcs-identity-select',
-      logAnalytics: 'log-analytics-identity-select',
-      generic: 'plugin-auth-identity-select-generic',
-      sql: 'sql-identity-select'
-    };
-    const selectedId = document.getElementById(selectIds[kind])?.value || '';
+    const selectedId = document.getElementById(ACTION_IDENTITY_SELECT_IDS[kind])?.value || '';
     if (!selectedId) {
       return null;
     }
@@ -633,18 +648,7 @@ export class PluginModalStepper {
   }
 
   setSelectedActionIdentity(kind, identityId) {
-    const selectIds = {
-      openapi: 'plugin-auth-identity-select',
-      mcp: 'mcp-identity-select',
-      databricks: 'databricks-identity-select',
-      snowflake: 'snowflake-identity-select',
-      tableau: 'tableau-identity-select',
-      yamcs: 'yamcs-identity-select',
-      logAnalytics: 'log-analytics-identity-select',
-      generic: 'plugin-auth-identity-select-generic',
-      sql: 'sql-identity-select'
-    };
-    const select = document.getElementById(selectIds[kind]);
+    const select = document.getElementById(ACTION_IDENTITY_SELECT_IDS[kind]);
     if (!select) return;
     select.value = identityId || '';
   }
@@ -658,6 +662,11 @@ export class PluginModalStepper {
   }
 
   handleActionIdentityChange(kind) {
+    if (kind === 'yamcsBasicAuth') {
+      this.toggleYamcsBasicAuthFields();
+      return;
+    }
+
     const selectedIdentity = this.getSelectedActionIdentity(kind);
     if (kind === 'sql') {
       const authSelect = document.getElementById('sql-auth-type');
@@ -734,6 +743,8 @@ export class PluginModalStepper {
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
     document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
+    document.getElementById('yamcs-enable-basic-auth').addEventListener('change', () => this.toggleYamcsBasicAuthFields());
+    document.getElementById('yamcs-basic-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcsBasicAuth'));
     const logAnalyticsCloud = document.getElementById('log-analytics-cloud');
     if (logAnalyticsCloud) {
       logAnalyticsCloud.addEventListener('change', () => this.handleLogAnalyticsCloudChange());
@@ -2572,6 +2583,8 @@ export class PluginModalStepper {
       }
     });
 
+    this.toggleYamcsBasicAuthFields();
+
     if (selectedIdentity) {
       return;
     }
@@ -2583,6 +2596,49 @@ export class PluginModalStepper {
       apiKeyGroup?.classList.remove('d-none');
     } else if (authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN) {
       bearerTokenGroup?.classList.remove('d-none');
+    }
+  }
+
+  getYamcsAuthMethodForConflictCheck() {
+    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    if (selectedIdentity) {
+      return this.getYamcsIdentityAuthMethod(selectedIdentity);
+    }
+    return document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
+  }
+
+  yamcsBasicAuthConflicts() {
+    return !YAMCS_BASIC_AUTH_COMPATIBLE_AUTH_METHODS.includes(this.getYamcsAuthMethodForConflictCheck());
+  }
+
+  isYamcsBasicAuthEnabled() {
+    return document.getElementById('yamcs-enable-basic-auth')?.checked === true;
+  }
+
+  toggleYamcsBasicAuthFields() {
+    const fields = document.getElementById('yamcs-basic-auth-fields');
+    const conflictAlert = document.getElementById('yamcs-basic-auth-conflict');
+    const usernameInput = document.getElementById('yamcs-basic-auth-username');
+    const passwordInput = document.getElementById('yamcs-basic-auth-password');
+    const enabled = this.isYamcsBasicAuthEnabled();
+
+    fields?.classList.toggle('d-none', !enabled);
+    conflictAlert?.classList.toggle('d-none', !(enabled && this.yamcsBasicAuthConflicts()));
+
+    // A reusable identity supplies both values, so the inline inputs become read-only
+    // mirrors of the stored credential rather than a second place to edit it.
+    const selectedIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    if (usernameInput) {
+      usernameInput.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        usernameInput.value = selectedIdentity.credentials?.username || '';
+      }
+    }
+    if (passwordInput) {
+      passwordInput.disabled = Boolean(selectedIdentity);
+      if (selectedIdentity) {
+        passwordInput.value = '';
+      }
     }
   }
 
@@ -2598,6 +2654,9 @@ export class PluginModalStepper {
     document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
     document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
     document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
+    document.getElementById('yamcs-enable-basic-auth').checked = additionalFields.enable_basic_auth === true;
+    document.getElementById('yamcs-basic-auth-username').value = additionalFields.basic_auth_username || '';
+    document.getElementById('yamcs-basic-auth-password').value = additionalFields.basic_auth_password || '';
 
     let authMethod = additionalFields.auth_method || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
     if (auth.type === 'NoAuth') {
@@ -2617,12 +2676,16 @@ export class PluginModalStepper {
 
     document.getElementById('yamcs-auth-method').value = authMethod;
     this.setSelectedActionIdentity('yamcs', plugin.identity_id || '');
+    this.setSelectedActionIdentity('yamcsBasicAuth', additionalFields.basic_auth_identity_id || '');
     this.handleActionIdentityChange('yamcs');
+    this.handleActionIdentityChange('yamcsBasicAuth');
   }
 
   getYamcsConfiguration() {
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     const selectedIdentity = this.getSelectedActionIdentity('yamcs');
+    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    const enableBasicAuth = this.isYamcsBasicAuthEnabled();
     const authMethod = selectedIdentity
       ? this.getYamcsIdentityAuthMethod(selectedIdentity)
       : (document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD);
@@ -2634,6 +2697,21 @@ export class PluginModalStepper {
       tls_verify: document.getElementById('yamcs-tls-verify')?.checked !== false,
       read_only: true,
       enable_archive_sql: document.getElementById('yamcs-enable-archive-sql')?.checked === true,
+      enable_basic_auth: enableBasicAuth,
+      // Only an identity selection blanks the inline credential. Turning the toggle off
+      // must keep the stored values, otherwise saving would drop the Key Vault reference
+      // and leave its secret orphaned. Runtime and validation already ignore these fields
+      // while the toggle is off. An untouched password field still holds the Key Vault
+      // placeholder, which the save helper resolves back to the existing reference.
+      basic_auth_identity_id: basicAuthIdentity
+        ? (basicAuthIdentity.id || basicAuthIdentity.identity_id || '')
+        : '',
+      basic_auth_username: basicAuthIdentity
+        ? ''
+        : (document.getElementById('yamcs-basic-auth-username')?.value.trim() || ''),
+      basic_auth_password: basicAuthIdentity
+        ? ''
+        : (document.getElementById('yamcs-basic-auth-password')?.value || ''),
       max_rows: parseInt(document.getElementById('yamcs-max-rows')?.value, 10) || 500,
       timeout: parseInt(document.getElementById('yamcs-timeout')?.value, 10) || 30
     };
@@ -4249,6 +4327,19 @@ export class PluginModalStepper {
             this.showError('Yamcs bearer token is required for bearer token authentication.');
             return false;
           }
+          if (this.isYamcsBasicAuthEnabled()) {
+            const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+            const basicAuthUsername = document.getElementById('yamcs-basic-auth-username').value.trim();
+            const basicAuthPassword = document.getElementById('yamcs-basic-auth-password').value;
+            if (this.yamcsBasicAuthConflicts()) {
+              this.showError('HTTP Basic authentication cannot be combined with username/password or access token authentication. Choose "No Authentication" or "API Key".');
+              return false;
+            }
+            if (!basicAuthIdentity && (!basicAuthUsername || !basicAuthPassword)) {
+              this.showError('A proxy username and password are required for HTTP Basic authentication.');
+              return false;
+            }
+          }
           if (Number.isNaN(maxRows) || maxRows < 1 || maxRows > 5000) {
             this.showError('Yamcs max rows must be between 1 and 5000.');
             return false;
@@ -5188,6 +5279,32 @@ export class PluginModalStepper {
       return;
     }
 
+    const enableBasicAuth = this.isYamcsBasicAuthEnabled();
+    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    const basicAuthUsername = document.getElementById('yamcs-basic-auth-username')?.value?.trim() || '';
+    const basicAuthPassword = document.getElementById('yamcs-basic-auth-password')?.value || '';
+
+    if (enableBasicAuth) {
+      if (this.yamcsBasicAuthConflicts()) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'HTTP Basic authentication cannot be combined with username/password or access token authentication. Choose "No Authentication" or "API Key".';
+        return;
+      }
+      if (basicAuthIdentity) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'Save the action first to test a connection that uses a reusable identity.';
+        return;
+      }
+      if ((!basicAuthUsername || !basicAuthPassword) && !existingPluginContext) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-warning mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'A proxy username and password are required before testing an HTTP Basic authenticated connection.';
+        return;
+      }
+    }
+
     const originalText = btn.innerHTML;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>Testing...';
     btn.disabled = true;
@@ -5207,6 +5324,11 @@ export class PluginModalStepper {
       }
       if (authMethod !== YAMCS_AUTH_METHOD_NONE) {
         payload.auth_key = authKey;
+      }
+      if (enableBasicAuth) {
+        payload.enable_basic_auth = true;
+        payload.basic_auth_username = basicAuthUsername;
+        payload.basic_auth_password = basicAuthPassword;
       }
       if (existingPluginContext) {
         payload.existing_plugin = existingPluginContext;
@@ -7377,10 +7499,23 @@ export class PluginModalStepper {
       ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
       : this.formatYamcsAuthMethod(authMethod);
     document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
+    document.getElementById('summary-yamcs-basic-auth').textContent = this.formatYamcsBasicAuthSummary();
     document.getElementById('summary-yamcs-max-rows').textContent = document.getElementById('yamcs-max-rows')?.value.trim() || '500';
     document.getElementById('summary-yamcs-timeout').textContent = `${document.getElementById('yamcs-timeout')?.value || '30'} seconds`;
     document.getElementById('summary-yamcs-archive-sql').textContent = document.getElementById('yamcs-enable-archive-sql')?.checked === true ? 'Enabled (read-only)' : 'Disabled';
     yamcsSection.classList.remove('d-none');
+  }
+
+  formatYamcsBasicAuthSummary() {
+    if (!this.isYamcsBasicAuthEnabled()) {
+      return 'Disabled';
+    }
+    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    if (basicAuthIdentity) {
+      return `Enabled (reusable identity: ${basicAuthIdentity.name || 'Workspace identity'})`;
+    }
+    const username = document.getElementById('yamcs-basic-auth-username')?.value.trim() || '';
+    return username ? `Enabled (${username})` : 'Enabled';
   }
 
   populateMcpSummary() {

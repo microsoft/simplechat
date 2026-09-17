@@ -105,6 +105,7 @@ from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
 from functions_custom_pages import get_custom_pages_nav
 from functions_debug import debug_print
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_terms_of_use import has_terms_of_use_acceptance
 from functions_mcp_server_auth import inbound_mcp_required_blueprint
 
@@ -176,7 +177,7 @@ from swagger_wrapper import register_swagger_routes
 register_swagger_routes(app)
 
 from flask_session import Session
-from redis import Redis
+import functions_redis_client
 from functions_settings import get_settings
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
@@ -221,41 +222,18 @@ def configure_sessions(settings):
                 try:
                     if redis_auth_type == 'managed_identity':
                         log_event("Redis enabled using Managed Identity", level=logging.INFO)
-                        redis_client = app_settings_cache.create_redis_managed_identity_client(
-                            redis_url,
-                            settings=settings,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     elif redis_auth_type == 'key_vault':
                         log_event("Redis enabled using Key Vault Secret", level=logging.INFO)
-                        from functions_keyvault import retrieve_secret_direct
-                        redis_key_secret_name = settings.get('redis_key', '').strip()
-                        redis_password = retrieve_secret_direct(redis_key_secret_name)
-                        if redis_password:
-                            redis_password = redis_password.strip()
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_password,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
                     else:
-                        redis_key = settings.get('redis_key', '').strip()
                         log_event("Redis enabled using Access Key", level=logging.INFO)
-                        redis_client = Redis(
-                            host=redis_url,
-                            port=6380,
-                            db=0,
-                            password=redis_key,
-                            ssl=True,
-                            socket_connect_timeout=5,
-                            socket_timeout=5
-                        )
-                    
+
+                    redis_client = functions_redis_client.create_redis_client(
+                        settings=settings,
+                        credential_purpose=functions_redis_client.CREDENTIAL_PURPOSE_SESSION,
+                        socket_connect_timeout=5,
+                        socket_timeout=5
+                    )
+
                     # Test the connection
                     redis_client.ping()
                     log_event("✅ Redis connection successful", level=logging.INFO)
@@ -307,11 +285,11 @@ def initialize_application(force=False):
         print("Initializing application...")
         settings = get_settings(use_cosmos=True)
         redis_hostname = settings.get('redis_url', '').strip().split('.')[0]
-        app_settings_cache.configure_app_cache(
+        configure_application_cache(
             settings,
-            get_redis_cache_infrastructure_endpoint(redis_hostname)
+            get_redis_cache_infrastructure_endpoint(redis_hostname),
+            redis_client_factory=functions_redis_client.create_redis_client,
         )
-        app_settings_cache.update_settings_cache(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
         sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
@@ -612,6 +590,7 @@ def inject_settings():
         idle_timeout_enabled=idle_timeout_enabled,
         idle_timeout_minutes=idle_timeout_minutes,
         idle_warning_minutes=idle_warning_minutes,
+        model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
         mcp_ui_enabled=is_mcp_ui_enabled()
     )
 

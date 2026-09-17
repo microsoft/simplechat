@@ -681,14 +681,14 @@
                                 {% for endpoint in settings.model_endpoints if endpoint.enabled %}
                                     {% for m in endpoint.models if m.enabled %}
                                         {% if is_vision_capable_model is defined and is_vision_capable_model(m) %}
-                                            {% set option_value = m.deploymentName %}
+                                            {% set option_value = m.modelName or m.deploymentName %}
                                             <option value="{{ option_value }}"
                                                 data-endpoint-id="{{ endpoint.id or '' }}"
                                                 data-model-id="{{ m.id or '' }}"
                                                 data-provider="{{ endpoint.provider or '' }}"
                                                 data-model-name="{{ m.modelName or '' }}"
                                                 {% if settings.multimodal_vision_model == option_value %}selected{% endif %}>
-                                                {{ m.displayName or m.deploymentName }}{% if m.modelName %} ({{ m.modelName }}){% endif %}
+                                                {{ m.displayName or m.modelName or m.deploymentName }}{% if m.modelName and m.displayName != m.modelName %} ({{ m.modelName }}){% endif %}
                                             </option>
                                         {% endif %}
                                     {% endfor %}

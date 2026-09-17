@@ -44,13 +44,14 @@ function getSortedGroups() {
 }
 
 function getModelDisplayName(option) {
-    return (option.display_name || option.model_id || option.deployment_name || 'Unnamed Model').trim() || 'Unnamed Model';
+    return (option.display_name || option.request_model || option.model_id || option.deployment_name || 'Unnamed Model').trim() || 'Unnamed Model';
 }
 
 function getModelSearchText(option, sectionLabel) {
     return [
         getModelDisplayName(option),
         option.model_id || '',
+        option.request_model || '',
         option.deployment_name || '',
         sectionLabel,
     ].join(' ').trim();
@@ -71,7 +72,7 @@ function getModelOptionLabel(option, duplicateCounts) {
         return displayName;
     }
 
-    return `${displayName} (${option.deployment_name || option.model_id || 'model'})`;
+    return `${displayName} (${option.request_model || option.deployment_name || option.model_id || 'model'})`;
 }
 
 function getKnownGroupIds() {
@@ -260,6 +261,7 @@ function getSelectionSnapshot() {
             value: null,
             selectionKey: null,
             modelId: null,
+            requestModel: null,
             deploymentName: null,
         };
     }
@@ -269,6 +271,7 @@ function getSelectionSnapshot() {
         value: modelSelect.value || null,
         selectionKey: selectedOption?.dataset?.selectionKey || null,
         modelId: selectedOption?.dataset?.modelId || null,
+        requestModel: selectedOption?.dataset?.requestModel || null,
         deploymentName: selectedOption?.dataset?.deploymentName || null,
     };
 }
@@ -316,14 +319,20 @@ function resolveSelectedSelectionKey(options, restoreOptions = {}) {
     }
 
     if (preferredModelDeployment) {
-        const deploymentOption = matchBy(option => option.deployment_name === preferredModelDeployment);
+        const deploymentOption = matchBy(option => (
+            option.request_model === preferredModelDeployment
+            || option.deployment_name === preferredModelDeployment
+        ));
         if (deploymentOption) {
             return deploymentOption.selection_key;
         }
     }
 
-    if (preserveCurrentSelection && currentSelection?.deploymentName) {
-        const currentDeploymentOption = matchBy(option => option.deployment_name === currentSelection.deploymentName);
+    if (preserveCurrentSelection && (currentSelection?.requestModel || currentSelection?.deploymentName)) {
+        const currentDeploymentOption = matchBy(option => (
+            option.request_model === currentSelection.requestModel
+            || option.deployment_name === currentSelection.deploymentName
+        ));
         if (currentDeploymentOption) {
             return currentDeploymentOption.selection_key;
         }
@@ -376,11 +385,12 @@ function rebuildModelOptions(sections, restoreOptions = {}) {
 
         section.options.forEach(option => {
             const modelOption = document.createElement('option');
-            modelOption.value = option.deployment_name || option.model_id || option.selection_key;
+            modelOption.value = option.request_model || option.deployment_name || option.model_id || option.selection_key;
             modelOption.textContent = option.optionLabel;
             modelOption.dataset.selectionKey = option.selection_key || '';
             modelOption.dataset.modelId = option.model_id || '';
             modelOption.dataset.displayName = option.display_name || '';
+            modelOption.dataset.requestModel = option.request_model || '';
             modelOption.dataset.deploymentName = option.deployment_name || '';
             modelOption.dataset.endpointId = option.endpoint_id || '';
             modelOption.dataset.provider = option.provider || '';

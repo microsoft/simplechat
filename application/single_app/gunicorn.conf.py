@@ -31,6 +31,9 @@ keepalive = _env_int('GUNICORN_KEEPALIVE', 75)
 # Request-count recycling can terminate in-process background exports mid-batch.
 max_requests = _env_int('GUNICORN_MAX_REQUESTS', 0 if background_tasks_enabled else 500)
 max_requests_jitter = _env_int('GUNICORN_MAX_REQUESTS_JITTER', 0 if max_requests == 0 else 50)
+# Azure AD auth callback query strings can exceed Gunicorn's default (4094).
+# Use the Gunicorn maximum by default, while still allowing override via env var.
+limit_request_line = _env_int('GUNICORN_LIMIT_REQUEST_LINE', 8190)
 accesslog = '-'
 errorlog = '-'
 capture_output = True
