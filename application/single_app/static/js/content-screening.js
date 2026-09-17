@@ -66,6 +66,12 @@
     }
 
     function errorMessage(error) {
+        if (error?.code === "screening_policy_empty") {
+            return "No active checks are configured for this workspace. Add and save a rule or AI check before starting a scan. An empty policy can stay enabled; existing holds are unchanged.";
+        }
+        if (error?.code === "screening_policy_required") {
+            return "The saved content screening policy is unavailable. Save Content Screening settings again to initialize a missing policy. Existing holds are unchanged.";
+        }
         if (error?.status === 409 || error?.status === 412 || error?.status === 428) {
             return "This revision or policy has changed. Refresh required; no decision was applied by this request.";
         }

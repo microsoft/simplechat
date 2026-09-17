@@ -6,7 +6,7 @@ Content screening creates an admission checkpoint between document extraction an
 
 **Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
 
-**Current documentation version: 0.261.113.** Classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
+**Current documentation version: 0.261.114.** Enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
 
 **Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
 
@@ -29,6 +29,8 @@ Release also records the exact approved Blob and content-derived metadata finger
 ## Policies and evaluators
 
 Administrators define a required baseline. Authorized workspace managers can add rules and instructions, but a workspace pass cannot cancel a baseline finding.
+
+An enabled policy may contain no checks. Enabling Content Screening creates an enabled empty baseline only when no policy exists, without selecting detectors or a scanner. New uploads with no effective checks follow ordinary processing without a screening marker, evidence, or a fabricated passing result. Enabled workspace additions may supply checks under an empty enabled baseline. A disabled baseline still disables additions, and persisted document holds retain their release requirements.
 
 | Evaluator | Intended use | Important limit |
 | --- | --- | --- |
@@ -95,6 +97,8 @@ The optional **Enable AI checks** switch precedes the policy's single scanner an
 
 Configured-check summaries count enabled local and mandatory baseline rules/model checks. Disabling workspace additions does not hide required administrator AI checks; a disabled baseline makes additions inactive. Summaries describe the draft rather than the separate enrollment capability.
 
+Since **0.261.114**, enabling and saving the feature no longer requires selecting checks first. Enabled empty policies can be saved, and the summary explains that new uploads are not screened until applicable checks are added. The classic toggle persists immediately; V2 uses **Save changes**. Both editors refresh an automatically created baseline without discarding policy drafts or silently overwriting a concurrent administrator's edits. Detailed policy changes still use **Save screening policy**. Sample testing requires checks to evaluate and never describes an empty policy as a clean inspection.
+
 The **0.261.113** React V2 integration retains these controls alongside unified embedding/image connections and durable Analyze results. Sequential and isolated concurrent Analyze model calls recheck source availability, final coverage retains screening provenance, and completed checkpoints cannot bypass a later hold. Saved-result responses and exports retain both their source-access rules and screening checks.
 
 Use the [content-review guide]({{ '/guides/review-screened-documents/' | relative_url }}) for baseline selection, existing-workspace scans, and remediation. The capability is distinct from the existing Azure AI Content Safety chat-category feature.
@@ -106,6 +110,8 @@ The shared API family is `/api/content-screening/...`; its policy, job, and revi
 Functional coverage lives in `functional_tests\test_content_screening_*.py`, with route-policy coverage under `functional_tests\route_tests\` and classic/V2 browser workflows under `ui_tests\`.
 
 `ui_tests\test_content_screening_policy_parity.py` runs the same custom-rule, starter-pack, AI-toggle, permission, and inherited-summary workflows against both real interfaces, including narrow and desktop layouts. Logic/rendering regressions cover the V2 helpers, and the engine tests prove that saved scanner references and permission lists do not invoke disabled AI checks.
+
+Enabled-empty policy coverage also exercises first activation, save/reload without checks, later starter-pack insertion, clearing the last check, draft preservation, and concurrency. Backend coverage distinguishes unmarked new uploads with no applicable checks from previously enrolled or held documents; empty policies do not bypass review or publication proof.
 
 The core cases include a last-page finding, complete window coverage, regex deadlines, strict model responses, sticky review holds, authorization, revision conflicts, safe derivatives, and recovery from partial publication.
 

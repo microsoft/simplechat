@@ -4,7 +4,7 @@
 Starter rules are indicators, not a complete PII or prompt-injection classifier.
 Email support is Unicode-aware; phone checks cover common North American and
 international-plus formats, SSNs are US-specific, and cards use Luhn validation.
-Administrators must explicitly select checks before enabling screening.
+An enabled empty policy is valid configuration, but does not enroll new content.
 """
 
 import math
@@ -407,8 +407,6 @@ def normalize_policy(value, *, scope_type="global"):
     }
     if scope_type != "global" and result["allowed_models"]:
         _invalid("Only administrators can approve scanner models.")
-    if result["enabled"] and not (any(rule["enabled"] for rule in result["rules"]) or result["ai"]["enabled"]):
-        _invalid("Select at least one active check before enabling screening.", code="screening_policy_empty")
     result["fingerprint"] = hash_payload(result)
     return result
 
@@ -479,12 +477,8 @@ def normalize_effective_policy(value):
         "baseline_fingerprint": _fingerprint(value["baseline_fingerprint"]),
         "workspace_fingerprint": _fingerprint(value["workspace_fingerprint"], allow_none=True),
     }
-    if enabled and not (rules or ai_checks):
-        _invalid("The effective policy has no active checks.", code="screening_policy_empty")
     if not enabled and (rules or ai_checks):
         _invalid("A disabled effective policy cannot contain required checks.")
-    if enabled and not any(item["origin"] == "global" for item in rules + ai_checks):
-        _invalid("An effective policy must retain required baseline checks.")
     for check in ai_checks:
         if check["model_selection"] not in result["allowed_models"]:
             _invalid("An effective AI check selected an unapproved model.")

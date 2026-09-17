@@ -1,9 +1,10 @@
 # test_content_screening_settings_api.py
 """
 Functional tests for content screening settings and authenticated API contracts.
-Version: 0.261.113
+Version: 0.261.114
 Implemented in: 0.261.106
 Embedding settings concurrency and sanitization merge coverage: 0.261.113
+Enabled-empty policies implemented in: 0.261.114
 
 Uses the existing unittest/Flask runners with isolated application service mocks.
 No Azure configuration, credentials, model requests or storage accounts are used.
@@ -132,6 +133,7 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.original_validation = service.validate_screening_configuration
         self.validate = self.stack.enter_context(patch.object(service, "validate_screening_configuration"))
+        self.initialize = self.stack.enter_context(patch.object(service, "initialize_screening_policy"))
         self.embedding_guard = Mock(side_effect=lambda *args, **kwargs: nullcontext())
         self.stack.enter_context(patch.dict(sys.modules, {
             "functions_embedding_compatibility": module(
@@ -174,6 +176,7 @@ class ScreeningSettingsTests(unittest.TestCase):
     def test_enable_validates_policy_and_working_storage_before_any_write(self):
         self.assertFalse(self.functions["update_settings"]({"enable_content_screening": True}))
         self.validate.assert_not_called()
+        self.initialize.assert_not_called()
         self.container.replace_item.assert_not_called()
         self.current["enable_enhanced_citations"] = True
         self.validate.side_effect = ScreeningConfigurationError()
@@ -181,6 +184,7 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.assertIs(self.validate.call_args.kwargs["check_storage"], True)
         self.container.replace_item.assert_not_called()
         self.assertIs(self.current["enable_content_screening"], False)
+        self.initialize.assert_not_called()
 
     def test_generic_settings_activation_cannot_bypass_current_model_binding_validation(self):
         self.current["enable_enhanced_citations"] = True
@@ -227,7 +231,7 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.container.replace_item.side_effect = CosmosAccessConditionFailedError()
         self.assertFalse(self.functions["update_settings"]({"enable_content_screening": True}))
         self.assertEqual(self.container.read_item.call_count, 2)
-        self.validate.assert_called_once()
+        self.assertEqual(self.validate.call_count, 2)
         self.embedding_guard.assert_called_once()
         self.container.replace_item.assert_called_once()
         self.container.upsert_item.assert_not_called()

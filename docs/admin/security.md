@@ -153,7 +153,9 @@ The feature requires Enhanced Citations and reuses its storage account for priva
 
 Open **Admin Settings > Security > Content Screening** in either interface. The tab is visible even when Enhanced Citations is off; only activation is blocked by that prerequisite. It does not depend on **Enable Content Safety**.
 
-Use **Save screening policy** to persist rules and model criteria independently of the main Admin Settings save. Enable the policy and add at least one active check before enabling new scans. In V2, change **Screen workspace content before publication**, then use **Save changes**. A rejected or failed write is displayed as an error and is not reported as saved.
+You can enable Content Screening before choosing checks. First activation creates an enabled empty baseline if no policy has been saved; it never replaces an existing policy or activates a deliberately disabled baseline. In V2, change **Screen workspace content before publication**, then use **Save changes**. The classic interface saves its new-scan switch immediately.
+
+Use **Save screening policy** to persist rules and model criteria independently of the main Admin Settings save. An enabled policy with no checks is valid and stays enabled after saving. New uploads follow normal processing when their effective policy has no checks; no screening result or hold is created. Enabled workspace additions can supply checks even when the baseline is empty. Adding checks later screens subsequent uploads; use an explicit workspace scan for existing knowledge.
 
 Both editors provide **Add literal rule**, **Add regex rule**, and **Add PII rule**, plus the same four **Starter rule pack** choices. Deterministic rules run in code, not through a model. Adding a pack again leaves existing rules and their edits intact.
 
@@ -161,13 +163,13 @@ Both editors provide **Add literal rule**, **Add regex rule**, and **Add PII rul
 
 The separate **Models workspaces may use** section is a permission list, not additional scanners to execute. It remains editable while baseline AI checks are off. The baseline's saved scanner is automatically permitted; its marked checkbox does not create an additional explicit permission. Workspace managers must enable their own AI check to use a permitted model.
 
-The **Configured screening checks** summary describes the current draft. Workspace summaries include required administrator checks even when local additions are off. An inactive baseline makes workspace additions inactive; disabling future scans never releases an existing document hold.
+The **Configured screening checks** summary describes the current draft and explicitly identifies an enabled policy with no active checks. Workspace summaries include required administrator checks even when local additions are off. A disabled baseline makes workspace additions inactive; emptying a policy or disabling future scans never releases an existing document hold. Sample testing requires a check to evaluate, but an empty policy can still be saved.
 
-Added in **0.261.106**; admin discovery and save feedback corrected in **0.261.107**; classic/V2 policy-editor alignment implemented in **0.261.108**, tracked in `application\single_app\config.py`. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) for policy selection, existing-workspace scans, reviewer roles, and remediation limits.
+Added in **0.261.106**; admin discovery and save feedback corrected in **0.261.107**; classic/V2 policy-editor alignment implemented in **0.261.108**; enabled-empty policy configuration implemented in **0.261.114**, tracked in `application\single_app\config.py`. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) for policy selection, existing-workspace scans, reviewer roles, and remediation limits.
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Content Screening | Prevents workspace documents from becoming usable knowledge before inspection and any required review. Existing holds remain enforced if future scanning is disabled. | Off | `enable_content_screening`; requires Enhanced Citations, working storage, and an active policy |
+| Enable Content Screening | Applies configured baseline and workspace checks before new documents become usable knowledge. With no applicable checks, new uploads use normal processing; existing holds remain enforced. | Off | `enable_content_screening`; requires Enhanced Citations and working storage; creates an enabled empty baseline if absent |
 
 ## Content Safety {#content-safety}
 
