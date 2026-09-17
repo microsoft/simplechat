@@ -1,7 +1,7 @@
 # test_workflow_model_core_capabilities.py
 """
 Functional test for Direct Model workflow core capabilities.
-Version: 0.261.106
+Version: 0.261.112
 Implemented in: 0.250.063
 Enhanced in: 0.250.064
 

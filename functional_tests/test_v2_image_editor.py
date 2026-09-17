@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the inline image editor.
-Version: 0.261.058
+Version: 0.261.107
 Implemented in: 0.261.058
 
 This test ensures a generated image can be changed in place — by asking the model, by rewriting
@@ -15,9 +15,9 @@ metadata and the image is served from a URL carrying the revision id, which is t
 an edit becomes visible at all: `/api/image/<id>` is otherwise identical before and after, and
 is served with a long cache.
 
-Region editing is offered only where `/images/edits` exists. DALL-E 3 has no such endpoint, and
-an APIM deployment records no model name, so both fall back to whole-image regeneration and say
-so rather than failing after a reader has selected a region and waited.
+Region editing is offered only by a verified provider/model mask operation. Reference-image
+edits and prompt-only regeneration are distinct, and retired or unavailable image defaults
+do not become optimistic regeneration choices.
 
 And every route carries the swagger decorator the repository requires, including the shared
 counterparts, which are what make an image editable in a conversation somebody else owns.
@@ -245,7 +245,8 @@ def test_a_shared_edit_is_written_through_to_the_source():
 def test_capability_is_reported_rather_than_discovered_by_failing():
     """A reader should be told up front, not after selecting a region and waiting."""
     edit = _read(EDIT_PY)
-    assert "dall-e-2" in edit and "gpt-image" in edit
+    assert "resolve_selected_image_capability" in edit
+    assert "EDIT_CAPABLE_MODEL_MARKERS" not in edit, "model names must not replace provider-qualified editing metadata"
     assert "MIN_IMAGE_EDIT_API_VERSION = '2025-04-01-preview'" in edit
     assert "resolve_image_edit_capability" in _read(BOOTSTRAP_PY), (
         "the capability must reach the client through the bootstrap payload"

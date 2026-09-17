@@ -39,6 +39,10 @@ class DataManagementSearchWriteFenceLostError(DataManagementSearchWriteGateError
     """Raised when a migration no longer owns its target Search write fence."""
 
 
+class DataManagementEmbeddingProfileChangedError(DataManagementSearchWriteGateError):
+    """A vector was generated before the active embedding profile changed."""
+
+
 class DataManagementTargetMigrationCoordinatorError(DataManagementSearchWriteGateError):
     """Raised when a target migration coordinator cannot be acquired safely."""
 
@@ -106,6 +110,7 @@ def _new_open_gate(now=None):
     return {
         "id": DATA_MANAGEMENT_SEARCH_WRITE_GATE_ID,
         "type": DATA_MANAGEMENT_SEARCH_WRITE_GATE_TYPE,
+        "ttl": -1,
         "state": DATA_MANAGEMENT_SEARCH_WRITE_GATE_STATE_OPEN,
         "writer_leases": [],
         "active_writer_count": 0,
@@ -179,12 +184,19 @@ def _open_expired_gate(container, gate, now=None):
     if _is_active_migration_fence(gate, timestamp):
         return gate
     replacement = _new_open_gate(timestamp)
+    _preserve_embedding_gate_state(gate, replacement)
     replacement["writer_leases"] = _active_writer_leases(gate, timestamp)
     replacement["active_writer_count"] = len(replacement["writer_leases"])
     return _replace_gate(container, gate, replacement)
 
 
-def acquire_data_management_search_write_slot(container):
+def _preserve_embedding_gate_state(source, target):
+    for key in ("embedding_profile_id", "embedding_vectors_written"):
+        if key in source:
+            target[key] = source[key]
+
+
+def acquire_data_management_search_write_slot(container, *, embedding_profile_id=None, records_vectors=True):
     """Reserve one bounded target Search write before issuing the data-plane request."""
     for _attempt in range(12):
         now = _now_utc()
@@ -201,8 +213,18 @@ def acquire_data_management_search_write_slot(container):
             if _open_expired_gate(container, gate, now) is None:
                 continue
             continue
+        if embedding_profile_id and gate.get("embedding_profile_id") not in (None, "", embedding_profile_id):
+            raise DataManagementEmbeddingProfileChangedError(
+                "The embedding profile changed or its activation is incomplete. Reload the embedding default before retrying."
+            )
         lease_token = uuid.uuid4().hex
         replacement = copy.deepcopy(gate)
+        if embedding_profile_id:
+            replacement["ttl"] = -1
+            replacement["embedding_profile_id"] = embedding_profile_id
+            if records_vectors:
+                # Persist write intent through CAS, not an eventually consistent document count.
+                replacement["embedding_vectors_written"] = True
         active_leases = _active_writer_leases(gate, now)
         active_leases.append({
             "token": lease_token,
@@ -249,9 +271,11 @@ def release_data_management_search_write_slot(container, lease_token):
 
 
 @contextmanager
-def hold_data_management_search_write_slot(container):
+def hold_data_management_search_write_slot(container, *, embedding_profile_id=None, records_vectors=True):
     """Hold a target Search write slot until a response is known or its ambiguity lease expires."""
-    lease_token = acquire_data_management_search_write_slot(container)
+    lease_token = acquire_data_management_search_write_slot(
+        container, embedding_profile_id=embedding_profile_id, records_vectors=records_vectors,
+    )
     response_confirmed = False
     try:
         yield
@@ -347,6 +371,8 @@ def acquire_data_management_search_write_fence(
                     "fence_token": fence_token,
                     "lease_seconds": normalized_lease_seconds,
                     "expires_at": replacement.get("expires_at"),
+                    "embedding_profile_id": replacement.get("embedding_profile_id"),
+                    "embedding_vectors_written": replacement.get("embedding_vectors_written"),
                 }
             continue
         if callable(heartbeat_callback) and time.monotonic() - last_heartbeat >= 2.0:
@@ -391,6 +417,26 @@ def renew_data_management_search_write_fence(container, fence, lease_seconds):
     return fence
 
 
+def publish_data_management_embedding_profile(container, fence, profile_id):
+    """Publish a profile under the same CAS boundary every vector writer acquires."""
+    for _attempt in range(12):
+        gate = _read_gate(container)
+        if (
+            not isinstance(gate, dict)
+            or gate.get("migration_id") != fence.get("migration_id")
+            or gate.get("fence_token") != fence.get("fence_token")
+            or gate.get("state") != DATA_MANAGEMENT_SEARCH_WRITE_GATE_STATE_FROZEN
+            or not _is_active_migration_fence(gate)
+        ):
+            raise DataManagementSearchWriteFenceLostError("The embedding activation fence was lost.")
+        replacement = copy.deepcopy(gate)
+        replacement["ttl"] = -1
+        replacement["embedding_profile_id"] = profile_id
+        if _replace_gate(container, gate, replacement) is not None:
+            return
+    raise DataManagementSearchWriteFenceLostError("The embedding activation state changed during publication.")
+
+
 def release_data_management_search_write_fence(container, fence):
     """Open only the exact target Search gate owned by the completed migration."""
     if not isinstance(fence, dict) or not fence.get("fence_token"):
@@ -406,6 +452,7 @@ def release_data_management_search_write_fence(container, fence):
             return False
         now = _now_utc()
         replacement = _new_open_gate(now)
+        _preserve_embedding_gate_state(gate, replacement)
         replacement["writer_leases"] = _active_writer_leases(gate, now)
         replacement["active_writer_count"] = len(replacement["writer_leases"])
         if _replace_gate(container, gate, replacement) is not None:

@@ -1,5 +1,5 @@
 # functions_ai_connection_migration.py
-"""Idempotent legacy image import; pure planning is separate from startup I/O."""
+"""Idempotent legacy AI connection imports, with pure planning separate from I/O."""
 
 import copy
 import uuid
@@ -8,52 +8,83 @@ from urllib.parse import urlsplit
 
 from functions_ai_connections import (
     AIConnectionError,
+    EMBEDDINGS_CAPABILITY,
+    EMBEDDING_MIGRATION_VERSION,
+    EMBEDDING_MIGRATION_VERSION_KEY,
+    EMBEDDING_SELECTION_KEY,
     EMPTY_MODEL_SELECTION,
     IMAGE_GENERATION_CAPABILITY,
     IMAGE_MIGRATION_VERSION,
     IMAGE_MIGRATION_VERSION_KEY,
     IMAGE_SELECTION_KEY,
+    embedding_connection_import_is_complete,
+    embedding_settings_use_connections,
     image_connection_import_is_complete,
     image_settings_use_connections,
     resolve_model_capability,
     supports_model_capability,
 )
+from functions_embedding_policy import resolve_embedding_policy
+from functions_embedding_profile import legacy_embedding_context_override
+from functions_model_capabilities import get_model_catalog_capabilities
 
 
 MIGRATION_NOTICE_KEY = "ai_connections_image_migration_notice"
+EMBEDDING_MIGRATION_NOTICE_KEY = "ai_connections_embedding_migration_notice"
 
 
 class ImageMigrationConflict(RuntimeError):
     """Another process changed settings; rebuild from its committed version."""
 
 
-def preserve_legacy_image_form_settings(updates, submitted_fields, current_settings):
+class EmbeddingMigrationConflict(ImageMigrationConflict):
+    """An embedding import must be rebuilt from a concurrent settings write."""
+
+
+def _preserve_legacy_form_settings(
+    updates, submitted_fields, managed, prefixes, model_key, toggle_key,
+):
     """Omitted/disabled recovery controls are not instructions to erase retained data."""
     preserved = dict(updates)
-    managed = image_settings_use_connections(current_settings)
     legacy_keys = {
         key for key in preserved
-        if key.startswith(("azure_openai_image_gen_", "azure_apim_image_gen_"))
-        or key in ("image_gen_model", "enable_image_gen_apim")
+        if key.startswith(prefixes) or key in (model_key, toggle_key)
     }
     legacy_controls_submitted = any(
-        ("image_gen_model_json" if key == "image_gen_model" else key) in submitted_fields
+        (f"{model_key}_json" if key == model_key else key) in submitted_fields
         for key in legacy_keys
     )
     for key in legacy_keys:
-        field_name = "image_gen_model_json" if key == "image_gen_model" else key
+        field_name = f"{model_key}_json" if key == model_key else key
         if managed or (
-            not legacy_controls_submitted if key == "enable_image_gen_apim"
+            not legacy_controls_submitted if key == toggle_key
             else field_name not in submitted_fields
         ):
             preserved.pop(key)
     return preserved
 
 
-def _endpoint_identity(endpoint):
+def preserve_legacy_image_form_settings(updates, submitted_fields, current_settings):
+    return _preserve_legacy_form_settings(
+        updates, submitted_fields, image_settings_use_connections(current_settings),
+        ("azure_openai_image_gen_", "azure_apim_image_gen_"),
+        "image_gen_model", "enable_image_gen_apim",
+    )
+
+
+def preserve_legacy_embedding_form_settings(updates, submitted_fields, current_settings):
+    """Keep retained embedding configuration safe from unrelated legacy form saves."""
+    return _preserve_legacy_form_settings(
+        updates, submitted_fields, embedding_settings_use_connections(current_settings),
+        ("azure_openai_embedding_", "azure_apim_embedding_"),
+        "embedding_model", "enable_embedding_apim",
+    )
+
+
+def _endpoint_identity(endpoint, label="image"):
     parsed = urlsplit(str(endpoint or "").strip())
     if parsed.scheme not in ("http", "https") or not parsed.netloc:
-        raise AIConnectionError("The legacy image connection has an invalid endpoint.")
+        raise AIConnectionError(f"The legacy {label} connection has an invalid endpoint.")
     return (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), parsed.query)
 
 
@@ -98,13 +129,14 @@ def _legacy_image_connection(settings, apim):
         if deployment == active_name:
             support = resolve_model_capability(model, IMAGE_GENERATION_CAPABILITY, "aoai")
             model_name = str(model.get("modelName") or "").lower()
-            legacy_route = (
-                "responses"
-                if not apim and model_name and not any(marker in model_name for marker in ("image", "dall-e", "dalle"))
-                else "images"
-            )
-            model["supportsImageGeneration"] = True
-            model["image_generation_api"] = support["api"] or legacy_route
+            if model.get("supportsImageGeneration") is not False:
+                if support["supported"]:
+                    model["supportsImageGeneration"] = True
+                    model["image_generation_api"] = support["api"]
+                elif not model_name:
+                    # An unrecorded legacy Images deployment remains recoverable, not a GPT tool guess.
+                    model["supportsImageGeneration"] = True
+                    model["image_generation_api"] = "images"
         models.append(model)
 
     auth_type = "api_key" if apim else str(settings.get("azure_openai_image_gen_authentication_type") or "key")
@@ -143,7 +175,7 @@ def _legacy_image_connection(settings, apim):
     }, active_name
 
 
-def _compatible_connection(existing, imported):
+def _compatible_connection(existing, imported, capability=IMAGE_GENERATION_CAPABILITY):
     if not isinstance(existing, Mapping) or existing.get("enabled") is False:
         return False
     if str(existing.get("provider") or "aoai") != imported["provider"]:
@@ -165,19 +197,29 @@ def _compatible_connection(existing, imported):
     fields = ("api_key", "client_secret", "client_id", "tenant_id", "managed_identity_client_id", "management_cloud", "custom_authority")
     if any((existing_auth.get(field) or "") != (imported_auth.get(field) or "") for field in fields):
         return False
-    existing_profile = (connection.get("operation_settings") or {}).get(IMAGE_GENERATION_CAPABILITY)
-    if existing_profile and existing_profile != imported["connection"]["operation_settings"][IMAGE_GENERATION_CAPABILITY]:
+    profiles = connection.get("operation_settings") or {}
+    if not isinstance(profiles, Mapping):
+        return False
+    existing_profile = profiles.get(capability)
+    if existing_profile and existing_profile != imported["connection"]["operation_settings"][capability]:
         return False
     existing_identity = existing.get("identity_header") or {}
     imported_identity = imported.get("identity_header") or {}
+    if not isinstance(existing_identity, Mapping):
+        return False
     if existing_identity.get("mode", "inherit") != imported_identity.get("mode", "inherit"):
+        return False
+    models = existing.get("models") or []
+    if not isinstance(models, list) or any(not isinstance(model, Mapping) for model in models):
         return False
     for incoming in imported["models"]:
         match = next(
-            (model for model in existing.get("models") or [] if model.get("deploymentName") == incoming["deploymentName"]),
+            (model for model in models if model.get("deploymentName") == incoming["deploymentName"]),
             None,
         )
-        if match and incoming["enabled"] and not supports_model_capability(match, IMAGE_GENERATION_CAPABILITY, existing.get("provider")):
+        if match and incoming["enabled"] and not supports_model_capability(
+            match, capability, existing.get("provider"), endpoint=existing
+        ):
             return False
     return bool(existing.get("id"))
 
@@ -196,6 +238,7 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
     endpoints = copy.deepcopy(current)
     selected = dict(EMPTY_MODEL_SELECTION)
     imported_count = 0
+    default_warning = ""
     active_apim = bool(settings.get("enable_image_gen_apim"))
     for apim in (False, True):
         imported, active_name = _legacy_image_connection(settings, apim)
@@ -228,7 +271,12 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
                 "model_id": str(model["id"]),
                 "provider": str(existing["provider"]).lower(),
             }
-    return {
+            if not supports_model_capability(model, IMAGE_GENERATION_CAPABILITY, existing["provider"], endpoint=existing):
+                default_warning = (
+                    "The imported image default is not supported on its provider. "
+                    "Select a dedicated image model in AI Connections; the original settings have been retained."
+                )
+    patch = {
         "model_endpoints": endpoints,
         IMAGE_SELECTION_KEY: selected,
         IMAGE_MIGRATION_VERSION_KEY: IMAGE_MIGRATION_VERSION,
@@ -238,26 +286,302 @@ def build_image_connection_migration(settings, normalize_endpoint=None):
             "message": "Existing image configuration is now managed through AI Connections.",
         },
     }
+    if default_warning:
+        patch["ai_connection_default_notices"] = {
+            **(settings.get("ai_connection_default_notices") or {}),
+            IMAGE_GENERATION_CAPABILITY: default_warning,
+        }
+    return patch
+
+
+def _legacy_embedding_connection(settings, apim):
+    prefix = "azure_apim_embedding" if apim else "azure_openai_embedding"
+    endpoint = str(settings.get(f"{prefix}_endpoint") or "").strip()
+    if not endpoint:
+        return None, ""
+    identity = _endpoint_identity(endpoint, "embedding")
+    parsed = urlsplit(endpoint)
+    try:
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError
+        _ = parsed.port
+    except ValueError as exc:
+        raise AIConnectionError(
+            "The legacy embedding endpoint must be an API base URL without credentials, query, or fragment."
+        ) from exc
+    source = "apim" if apim else "direct"
+    endpoint_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"simplechat:legacy-embedding:{source}:{identity}"))
+    if apim:
+        deployment = settings.get("azure_apim_embedding_deployment") or ""
+        if not isinstance(deployment, str):
+            raise AIConnectionError("The legacy embedding gateway deployment is invalid.")
+        selected = [{"deploymentName": deployment.strip()}] if deployment.strip() else []
+        if selected:
+            context_limit = legacy_embedding_context_override(settings)
+            if context_limit is not None:
+                selected[0]["context_window"] = context_limit
+        available = []
+    else:
+        catalog = settings.get("embedding_model") or {}
+        if not isinstance(catalog, Mapping):
+            raise AIConnectionError("The legacy embedding model selection is invalid.")
+        selected = catalog.get("selected", [])
+        available = catalog.get("all", [])
+        selected = [] if selected is None else selected
+        available = [] if available is None else available
+        if not isinstance(selected, list) or not isinstance(available, list):
+            raise AIConnectionError("The legacy embedding model list is invalid.")
+
+    active_name = ""
+    if selected:
+        first = selected[0]
+        if not isinstance(first, Mapping) or not isinstance(first.get("deploymentName"), str):
+            raise AIConnectionError("The selected legacy embedding deployment is invalid.")
+        active_name = first["deploymentName"].strip()
+        if not active_name:
+            raise AIConnectionError("The selected legacy embedding deployment is missing.")
+    models = []
+    seen = set()
+    for entry in [*selected, *available]:
+        if not isinstance(entry, Mapping):
+            raise AIConnectionError("Each legacy embedding model must be an object.")
+        deployment = entry.get("deploymentName") or entry.get("deployment") or ""
+        if not isinstance(deployment, str):
+            raise AIConnectionError("The legacy embedding deployment name is invalid.")
+        deployment = deployment.strip()
+        if not deployment or deployment in seen:
+            continue
+        seen.add(deployment)
+        model = copy.deepcopy(entry)
+        model.update({
+            "id": str(uuid.uuid5(uuid.UUID(endpoint_id), deployment)),
+            "deploymentName": deployment,
+            "enabled": deployment == active_name,
+            "enabled_capabilities": [EMBEDDINGS_CAPABILITY],
+            "supportsEmbeddings": True,
+        })
+        catalog_entry = get_model_catalog_capabilities(model, strict_identity=True)
+        if not catalog_entry or "embeddingPolicy" not in catalog_entry:
+            policy = resolve_embedding_policy(model, legacy=True)
+            model.setdefault("embedding_config", {}).update({
+                "dimensions": policy["dimensions"],
+                "max_input_tokens": policy["max_input_tokens"],
+            })
+        models.append(model)
+    if not models:
+        return None, active_name
+
+    auth_type = "api_key" if apim else settings.get("azure_openai_embedding_authentication_type") or "key"
+    if auth_type == "key":
+        auth_type = "api_key"
+    if auth_type not in ("api_key", "managed_identity"):
+        raise AIConnectionError("The legacy embedding authentication type is unsupported.")
+    auth = {"type": auth_type}
+    if auth_type == "api_key":
+        key = settings.get(
+            "azure_apim_embedding_subscription_key" if apim else "azure_openai_embedding_key"
+        )
+        if not isinstance(key, str) or not key.strip():
+            raise AIConnectionError("The legacy embedding connection requires its API key or stored secret reference.")
+        auth["api_key"] = key
+    profile = {
+        "api": "azure_openai",
+        "api_version": str(settings.get(f"{prefix}_api_version") or ""),
+        "is_apim": apim,
+    }
+    if apim:
+        profile["auth_header"] = "api-key"
+    return {
+        "id": endpoint_id,
+        "name": "Imported embedding gateway" if apim else "Imported embedding connection",
+        "provider": "aoai",
+        "enabled": True,
+        "identity_header": {"mode": "disabled"},
+        "migration_source": f"legacy_embedding_{source}",
+        "connection": {
+            "endpoint": endpoint,
+            "operation_settings": {EMBEDDINGS_CAPABILITY: profile},
+        },
+        "auth": auth,
+        "management": {
+            "subscription_id": "" if apim else settings.get("azure_openai_embedding_subscription_id", ""),
+            "resource_group": "" if apim else settings.get("azure_openai_embedding_resource_group", ""),
+        },
+        "models": models,
+    }, active_name
+
+
+def _compatible_embedding_connection(existing, imported):
+    if not _compatible_connection(existing, imported, EMBEDDINGS_CAPABILITY):
+        return False
+    if existing.get("migration_source") not in (None, "", imported["migration_source"]):
+        return False
+    models = existing.get("models") or []
+    model_ids = [str(model["id"]) for model in models if model.get("id")]
+    if len(model_ids) != len(set(model_ids)):
+        return False
+    profiles = (existing.get("connection") or {}).get("operation_settings") or {}
+    if EMBEDDINGS_CAPABILITY in profiles and not isinstance(profiles[EMBEDDINGS_CAPABILITY], Mapping):
+        return False
+    for incoming in imported["models"]:
+        matches = [
+            model for model in existing.get("models") or []
+            if model.get("deploymentName") == incoming["deploymentName"]
+        ]
+        if len(matches) > 1:
+            return False
+        if matches:
+            model = matches[0]
+            for field in ("modelName", "modelVersion", "model_version", "version", "behavior_name", "embedding_config"):
+                if (model.get(field) or "") != (incoming.get(field) or ""):
+                    return False
+            # Input and batch limits are not part of the vector-space identity.
+            try:
+                if resolve_embedding_policy(model, legacy=True) != resolve_embedding_policy(incoming, legacy=True):
+                    return False
+            except ValueError:
+                return False
+        elif any(model.get("id") == incoming["id"] for model in existing.get("models") or []):
+            return False
+    return True
+
+
+def build_embedding_connection_migration(settings, normalize_endpoint=None):
+    """Preserve legacy inference and vector identity without probing any provider."""
+    if not isinstance(settings, Mapping):
+        raise AIConnectionError("The saved embedding settings are invalid.")
+    if embedding_connection_import_is_complete(settings):
+        return None
+    if EMBEDDING_SELECTION_KEY in settings:
+        return {EMBEDDING_MIGRATION_VERSION_KEY: EMBEDDING_MIGRATION_VERSION}
+    current = settings.get("model_endpoints", [])
+    if current is None:
+        current = []
+    if not isinstance(current, list):
+        raise AIConnectionError("The saved AI connection list is invalid.")
+    if any(not isinstance(endpoint, Mapping) for endpoint in current):
+        raise AIConnectionError("Each saved AI connection must be an object.")
+    endpoints = copy.deepcopy(current)
+    selected = dict(EMPTY_MODEL_SELECTION)
+    imported_count = 0
+    active_apim = bool(settings.get("enable_embedding_apim"))
+    for apim in (False, True):
+        imported, active_name = _legacy_embedding_connection(settings, apim)
+        if imported is None:
+            continue
+        if normalize_endpoint is not None:
+            imported = normalize_endpoint(imported)
+        existing = next(
+            (item for item in endpoints if _compatible_embedding_connection(item, imported)), None
+        )
+        if existing is None:
+            if any(item.get("id") == imported["id"] for item in endpoints):
+                raise AIConnectionError("An imported embedding connection conflicts with an existing connection.")
+            existing = imported
+            endpoints.append(existing)
+            imported_count += 1
+        else:
+            profiles = existing.setdefault("connection", {}).setdefault("operation_settings", {})
+            profiles[EMBEDDINGS_CAPABILITY] = imported["connection"]["operation_settings"][EMBEDDINGS_CAPABILITY]
+            if not existing.get("migration_source"):
+                existing["migration_source"] = imported["migration_source"]
+            models = existing.setdefault("models", [])
+            for model in imported["models"]:
+                if not any(item.get("deploymentName") == model["deploymentName"] for item in models):
+                    models.append(model)
+        if apim == active_apim and active_name:
+            model = next(item for item in existing["models"] if item.get("deploymentName") == active_name)
+            if not model.get("id"):
+                model["id"] = active_name
+            if not existing.get("provider"):
+                existing["provider"] = "aoai"
+            selected = {
+                "endpoint_id": str(existing["id"]),
+                "model_id": str(model["id"]),
+                "provider": str(existing["provider"]).lower(),
+            }
+
+    catalog = settings.get("embedding_model") or {}
+    configured = any(settings.get(key) for key in (
+        "azure_openai_embedding_endpoint", "azure_apim_embedding_endpoint",
+        "azure_apim_embedding_deployment",
+    )) or (
+        bool(catalog.get("selected") or catalog.get("all"))
+        if isinstance(catalog, Mapping) else bool(catalog)
+    )
+    if configured and not selected["endpoint_id"]:
+        raise AIConnectionError(
+            "The active legacy embedding route is incomplete. Configure its endpoint and selected deployment before importing."
+        )
+    updates = {
+        "model_endpoints": endpoints,
+        EMBEDDING_SELECTION_KEY: selected,
+        EMBEDDING_MIGRATION_VERSION_KEY: EMBEDDING_MIGRATION_VERSION,
+        EMBEDDING_MIGRATION_NOTICE_KEY: {
+            "status": "complete",
+            "imported_connections": imported_count,
+            "message": "Existing embedding configuration is now managed through AI Connections.",
+        },
+    }
+    if selected["endpoint_id"]:
+        # Profile resolution participates in settings initialization; load it only
+        # when a configured embedding import needs a pure vector-space baseline.
+        from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+
+        original_profile = resolve_embedding_profile(settings)
+        if EMBEDDING_VECTOR_PROFILE_KEY not in settings:
+            updates[EMBEDDING_VECTOR_PROFILE_KEY] = original_profile.as_state()
+        imported_profile = resolve_embedding_profile({**settings, **updates})
+        if (
+            original_profile.profile_id != imported_profile.profile_id
+            or original_profile.legacy != imported_profile.legacy
+            or original_profile.policy != imported_profile.policy
+        ):
+            raise AIConnectionError("The imported embedding connection would change the existing vector profile or request semantics.")
+    return updates
 
 
 def migrate_image_connections(
     read_settings, write_settings, prepare_endpoint, attempts=3,
     normalize_endpoint=None, discard_endpoint=None,
 ):
+    """Commit the image import without depending on embedding migration state."""
+    return _migrate_connections(
+        read_settings, write_settings, prepare_endpoint, build_image_connection_migration,
+        "Image", attempts, normalize_endpoint, discard_endpoint,
+    )
+
+
+def migrate_embedding_connections(
+    read_settings, write_settings, prepare_endpoint, attempts=3,
+    normalize_endpoint=None, discard_endpoint=None,
+):
+    """Import embeddings independently of image migration state."""
+    return _migrate_connections(
+        read_settings, write_settings, prepare_endpoint, build_embedding_connection_migration,
+        "Embedding", attempts, normalize_endpoint, discard_endpoint,
+    )
+
+
+def _migrate_connections(
+    read_settings, write_settings, prepare_endpoint, build_migration,
+    label, attempts, normalize_endpoint, discard_endpoint,
+):
     """Commit the import with optimistic concurrency; collaborators make I/O testable."""
     for _attempt in range(attempts):
         original = read_settings()
-        updates = build_image_connection_migration(original, normalize_endpoint)
+        updates = build_migration(original, normalize_endpoint)
         if updates is None:
             return original
         etag = original.get("_etag")
         if not etag:
-            raise AIConnectionError("Image configuration import requires a current settings version.")
+            raise AIConnectionError(f"{label} configuration import requires a current settings version.")
         candidate = copy.deepcopy(original)
-        existing = {item.get("id"): item for item in original.get("model_endpoints") or []}
         prepared_changes = []
         if "model_endpoints" in updates:
+            existing = {item.get("id"): item for item in original.get("model_endpoints") or []}
             prepared_endpoints = []
+            preparation_complete = False
             try:
                 for endpoint in updates["model_endpoints"]:
                     previous = existing.get(endpoint.get("id"))
@@ -265,13 +589,14 @@ def migrate_image_connections(
                         endpoint = prepare_endpoint(endpoint, previous)
                         prepared_changes.append((endpoint, previous))
                     prepared_endpoints.append(endpoint)
-            except (RuntimeError, ValueError):
-                if discard_endpoint is not None:
+                preparation_complete = True
+            finally:
+                if not preparation_complete and discard_endpoint is not None:
                     for prepared, previous in prepared_changes:
                         discard_endpoint(prepared, previous)
-                raise
             updates["model_endpoints"] = prepared_endpoints
         candidate.update(updates)
+        # Other write errors may hide a committed transaction; retain those staged credentials.
         try:
             return write_settings(candidate, etag)
         except ImageMigrationConflict:
@@ -279,12 +604,12 @@ def migrate_image_connections(
                 for prepared, previous in prepared_changes:
                     discard_endpoint(prepared, previous)
             continue
-    raise AIConnectionError("Image configuration changed during import. Retry after other settings changes finish.")
+    raise AIConnectionError(f"{label} configuration changed during import. Retry after other settings changes finish.")
 
 
 def initialize_ai_connections(settings):
     """Import after cache initialization; retain legacy operation on a reported failure."""
-    if image_connection_import_is_complete(settings):
+    if image_connection_import_is_complete(settings) and embedding_connection_import_is_complete(settings):
         return settings
 
     # Startup collaborators are lazy so the migration builder is usable without Azure.
@@ -301,8 +626,18 @@ def initialize_ai_connections(settings):
     )
     from functions_settings import _refresh_app_settings_cache_after_write, normalize_model_endpoints
 
+    latest = copy.deepcopy(settings)
+    transaction_settings = latest
+    failed_notices = {}
+
     def read():
-        return cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
+        nonlocal latest, transaction_settings
+        transaction_settings = cosmos_settings_container.read_item(
+            item="app_settings", partition_key="app_settings"
+        )
+        latest = copy.deepcopy(transaction_settings)
+        latest.update(failed_notices)
+        return transaction_settings
 
     def normalize(endpoint):
         normalized, _ = normalize_model_endpoints([endpoint])
@@ -312,23 +647,26 @@ def initialize_ai_connections(settings):
         prepared = normalize(endpoint)
         auth = prepared.get("auth") or {}
         if (
-            settings.get("enable_key_vault_secret_storage")
-            and not settings.get("key_vault_name")
+            transaction_settings.get("enable_key_vault_secret_storage")
+            and not transaction_settings.get("key_vault_name")
             and any(auth.get(field) for field in ("api_key", "client_secret"))
         ):
-            raise AIConnectionError("Configure Key Vault before importing image credentials.")
-        if previous is None and prepared.get("migration_source"):
-            for field in ("api_key", "client_secret"):
-                value = auth.get(field)
-                if value and validate_secret_name_dynamic(value):
-                    auth[field] = resolve_secret_reference_for_context(
-                        value, scope="global", allowed_sources={"other"},
-                        context_label="legacy image configuration",
-                    )
-        return keyvault_model_endpoint_save_helper(
-            prepared, prepared["id"], scope="global", existing_endpoint=previous,
-            stage_new_secrets=True,
-        )
+            raise AIConnectionError(f"Configure Key Vault before importing {label} credentials.")
+        try:
+            if previous is None and prepared.get("migration_source"):
+                for field in ("api_key", "client_secret"):
+                    value = auth.get(field)
+                    if value and validate_secret_name_dynamic(value):
+                        auth[field] = resolve_secret_reference_for_context(
+                            value, scope="global", allowed_sources={"other"},
+                            context_label=f"legacy {label} configuration",
+                        )
+            return keyvault_model_endpoint_save_helper(
+                prepared, prepared["id"], scope="global", existing_endpoint=previous,
+                stage_new_secrets=True,
+            )
+        except AzureError as exc:
+            raise RuntimeError("Unable to stage imported connection credentials.") from exc
 
     def discard(prepared, previous):
         try:
@@ -337,7 +675,7 @@ def initialize_ai_connections(settings):
             )
         except (AzureError, RuntimeError, ValueError) as exc:
             log_event(
-                "[AI_CONNECTIONS] Uncommitted image credential cleanup failed",
+                f"[AI_CONNECTIONS] Uncommitted {label} credential cleanup failed",
                 extra={"error_type": type(exc).__name__},
             )
 
@@ -350,25 +688,30 @@ def initialize_ai_connections(settings):
         except CosmosAccessConditionFailedError as exc:
             raise ImageMigrationConflict() from exc
 
-    try:
-        result = migrate_image_connections(
-            read, write, prepare, normalize_endpoint=normalize, discard_endpoint=discard
-        )
-        _refresh_app_settings_cache_after_write(result, context="ai_connections_image_import")
-        log_event("[AI_CONNECTIONS] Legacy image connection import completed")
-        return result
-    except (AzureError, RuntimeError, ValueError) as exc:
-        retained = dict(settings)
-        retained[MIGRATION_NOTICE_KEY] = {
-            "status": "error",
-            "message": (
-                f"{exc.public_message} "
-                if isinstance(exc, AIConnectionError)
-                else "Image connection import could not finish. Review connection and Key Vault permissions. "
-            ) + "Existing image settings remain active. Restart after correcting the configuration to retry.",
-        }
-        log_event(
-            "[AI_CONNECTIONS] Image connection import failed; retaining legacy configuration",
-            extra={"error_type": type(exc).__name__},
-        )
-        return retained
+    for label, migrate, notice_key in (
+        ("image", migrate_image_connections, MIGRATION_NOTICE_KEY),
+        ("embedding", migrate_embedding_connections, EMBEDDING_MIGRATION_NOTICE_KEY),
+    ):
+        try:
+            result = migrate(
+                read, write, prepare, normalize_endpoint=normalize, discard_endpoint=discard
+            )
+            latest = copy.deepcopy(result)
+            latest.update(failed_notices)
+            _refresh_app_settings_cache_after_write(latest, context=f"ai_connections_{label}_import")
+            log_event(f"[AI_CONNECTIONS] Legacy {label} connection import completed")
+        except (AzureError, RuntimeError, ValueError) as exc:
+            failed_notices[notice_key] = {
+                "status": "error",
+                "message": (
+                    f"{exc.public_message} "
+                    if isinstance(exc, AIConnectionError)
+                    else f"{label.capitalize()} connection import could not finish. Review connection and Key Vault permissions. "
+                ) + f"Existing {label} settings are unchanged. Restart after correcting the configuration to retry.",
+            }
+            latest.update(failed_notices)
+            log_event(
+                f"[AI_CONNECTIONS] {label.capitalize()} connection import failed; retaining legacy configuration",
+                extra={"error_type": type(exc).__name__},
+            )
+    return latest

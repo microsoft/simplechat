@@ -1,26 +1,33 @@
-# Shared AI Connections Framework (v0.261.105)
+# Shared AI Connections Framework (v0.261.108)
 
 ## Overview
 
-AI Connections reuses the existing `model_endpoints` registry for chat and image
-generation. Administrators configure a resource and its authentication once, publish
+AI Connections reuses the existing `model_endpoints` registry for chat, image
+generation, and text embeddings. Administrators configure a resource and its authentication once, publish
 appropriate models, and choose a separate default for each task. An image-only resource
 can remain separate from the chat resource without needing a second endpoint manager.
 
 Implemented in version: **0.261.105**. Application versioning remains in
 `application/single_app/config.py`.
+Provider-qualified images and Custom image operations were implemented in version
+**0.261.107**.
 
 Associated issue: [#1436 — Unify AI connections and fix GPT image generation](https://github.com/microsoft/simplechat/issues/1436).
 
 **Dependencies:** the existing model catalog and endpoint normalization, application
 settings cache and Cosmos DB settings document, scoped Key Vault helpers when secret
 storage is enabled, and operation-specific clients for an existing supported deployment.
-Connection discovery and inference require their respective Azure permissions.
+Azure discovery and inference require their respective permissions; Custom
+connections use their configured API contract and credentials.
 
-Only `chat` and `image_generation` are registered product capabilities in this release.
-Embeddings, transcription, speech, computer use, and other integrations are deferred;
-their existing configuration is neither migrated nor replaced. No provider family or
-unfinished capability control is added.
+Embedding support was implemented in version **0.261.106**; the original chat/image
+framework was implemented in **0.261.105**. The registered capabilities are `chat`,
+`image_generation`, and `embeddings`. Transcription, speech, and computer use remain
+separate. See [Embedding connections](AI_CONNECTIONS_EMBEDDINGS.md) for supported
+transports, configuration import, and vector-compatibility restrictions.
+The combined Custom/image and embedding integration is available in **0.261.108**.
+Image integration does not add personal/group image defaults or a separate
+OpenAI credential manager.
 
 ## Architecture and persisted data
 
@@ -43,7 +50,8 @@ Defaults are references, not copies of endpoints or credentials:
 ```
 
 Chat keeps `default_model_selection`. Images use
-`image_generation_model_selection`. Resolving either reference finds the exact stored
+`image_generation_model_selection`. Embeddings use `embedding_model_selection`.
+Resolving a reference finds the exact stored
 connection/model pair and derives the provider from that connection. A caller cannot
 redirect it by supplying another provider, endpoint URL, or credential.
 
@@ -59,13 +67,11 @@ chat or legacy root versions; explicit imported image versions are retained.
 See [Image API versions](IMAGE_GENERATION_RESPONSES_MODELS.md#image-api-versions)
 for the shared, imported, legacy, and Responses contracts.
 
-The image adapter recognizes `api_version` for the Images operation, `is_apim`, and
-`auth_header` for key-based gateway/provider authentication. Its optional
-`image_deployment` is an explicitly stored backing-image binding used with Responses,
-not another model picker. It is sent as `x-ms-oai-image-generation-deployment`;
-without it, backend routing is left to the provider. Only retain a binding verified
-against existing deployment/provider configuration, never invent a name or select
-an arbitrary image model from the registry.
+The image adapter recognizes `api_version` for Azure Images, `is_apim`, and
+`auth_header` for gateway/provider authentication. Azure/Foundry use dedicated image
+models; the older Azure Responses `image_deployment` binding is not used or sent.
+Direct OpenAI Responses uses the configured Custom connection and the hosted image
+tool, not an Azure deployment-routing header.
 
 ## Technical support, publication, and readiness
 
@@ -85,7 +91,11 @@ These are different questions and must remain separate:
 | --- | --- |
 | `supportsChat` | Optional boolean declaration of text-chat support |
 | `supportsImageGeneration` | Optional boolean declaration of image-generation support, not proof that the service is currently usable |
-| `image_generation_api` | Optional compatible image-operation route: `images` or `responses`; this is metadata, not a mandatory administrator API-mode choice |
+| `supportsEmbeddings` | Optional declaration of compatible text embedding support; a model's vector dimensions and operation requirements are resolved separately |
+| `embedding_config` | Embedding dimension/input-budget overrides, model revision, and optional document/query prefixes; not a second credential record |
+| `supportsImageEditing` | Separate declaration of source-image editing for a compatible Custom operation |
+| `supportsImageMasking` | Separate uploaded-mask declaration; requires editing and cannot override a known missing mask adapter |
+| `image_generation_api` | Implemented image-operation metadata: `images`, `responses`, `mai`, or `flux`. Known catalog models select their operation automatically; unknown Custom declarations must identify a compatible API |
 | `enabled_capabilities` | Publication list containing implemented capability keys. An absent list imposes no task-specific restriction on technically supported operations; an empty list publishes none |
 | `capability_status` | Computed, non-secret projection for consumers. Incoming values are discarded during normalization, not trusted as capability declarations |
 
@@ -106,10 +116,14 @@ not inherit image-tool support from the `gpt-4o` prefix. The separate legacy
 vision/name heuristic remains available for image-input classification; it does
 not establish image output support.
 
-The image capability is restricted to existing `aoai`, `aifoundry`, and `new_foundry`
-connection types with a compatible implemented operation. Being a model in one of
-those providers, supporting generic tools, or belonging to a GPT family does not by
-itself establish image-generation support.
+The image capability supports `aoai`, `aifoundry`, `new_foundry`, and qualified
+`custom` connections. Resolution includes the actual endpoint/API context. Direct
+OpenAI publisher facts do not enable Azure GPT image orchestration, and an
+OpenAI-compatible gateway is not automatically the direct OpenAI service.
+
+Provider/cloud availability, implemented operations, publication, and application
+hosting are separate facts. Unknown Government image availability is not a blanket
+Government-hosting restriction. See the [provider capability fix](../fixes/IMAGE_PROVIDER_CAPABILITIES_FIX.md).
 
 ## Capability and client contracts
 
@@ -154,6 +168,8 @@ Unless qualified, these files are under `application/single_app/`.
 | --- | --- |
 | `functions_ai_connections.py` | Capability definitions, publication rules, safe catalogs, binding validation, and client-factory registration |
 | `functions_model_capabilities.py`, `static/json/model_capabilities.json` | Existing shared model catalog and capability evidence |
+| `functions_image_capabilities.py` | Provider/cloud-qualified image profiles, effective editing support, and option validation |
+| `functions_image_adapters.py` | Distinct OpenAI, MAI, and FLUX wire contracts |
 | `functions_settings.py` | Endpoint/model normalization and non-secret frontend projections |
 | `functions_ai_connection_migration.py` | Pure import planning plus startup persistence, scoped credential conversion, and ETag retries |
 | `functions_keyvault.py` | Existing scoped secret references plus opt-in staging for new import credentials |
@@ -228,8 +244,9 @@ image settings that no longer control generation. Integrations must use
 `GET`/`PUT /api/v2/admin/capability-models/image_generation` and its `selection`
 reference instead of retrying a legacy catalog write.
 
-The legacy embedding endpoint,
-`GET`/`PUT /api/v2/admin/model-selection/embedding`, is unchanged.
+The legacy embedding selector follows the same handoff after embedding import:
+`GET`/`PUT /api/v2/admin/model-selection/embedding` returns `409` once embeddings use
+the shared default. Use `/api/v2/admin/capability-models/embeddings` instead.
 
 ## Automatic legacy image import
 
@@ -334,13 +351,13 @@ An extension needs more than a new key in the registry:
    persistence failures with targeted tests. Update the relevant settings/feature
    documentation and generated application-surface inventory when the UI changes.
 
-Registration does not provision resources, add providers, or implement embeddings,
+Registration does not provision resources, add providers, or implement
 speech, transcription, or computer use automatically.
 
 For example, a future adapter could describe service-provided voices through a
 resolver rather than a text-model catalog flag. This is an extension example, not
-a shipped voice integration: the active product capabilities remain chat and image
-generation, and their existing configuration boundaries are unchanged.
+a shipped voice integration. Chat, image generation, and embeddings have independent
+defaults and operation adapters.
 
 ## Testing and validation
 
@@ -370,14 +387,14 @@ tests. This coverage description is not a claim of a completed live-provider run
 Deployment discovery performs no paid image generation; an explicit image request is
 needed to verify image readiness and can incur provider charges.
 
-Azure Responses availability, image-tool access, gateway operations, and any required
-backing image deployment/default are deployment-specific. Do not infer them from a
-successful text response, invent a backing deployment, or provision a resource as a
-fallback.
+Standalone image availability and direct OpenAI image-tool access remain
+endpoint-specific. Do not infer either from a successful text response, invent a
+deployment, or provision a resource as a fallback. Azure GPT orchestration is not
+offered by the current standalone-only image policy.
 
 ## Related
 
 - [Configure AI connections](../../guides/configure-ai-connections.md)
 - [AI Models settings](../../admin/ai-models.md)
 - [Image generation through Responses-capable models](IMAGE_GENERATION_RESPONSES_MODELS.md)
-- [GPT chat model image-generation fix](../fixes/GPT_CHAT_MODEL_IMAGE_GENERATION_FIX.md)
+- [Provider-qualified image generation fix](../fixes/IMAGE_PROVIDER_CAPABILITIES_FIX.md)

@@ -63,6 +63,8 @@ from functions_image_messages import (
     is_external_image_url,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     hydrate_agent_citations_from_artifacts,
@@ -1464,6 +1466,12 @@ def _build_summary_model_endpoint_client(
     )
     auth_type = _normalize_summary_model_value(auth_settings.get('type') or 'managed_identity').lower()
     normalized_provider = _normalize_summary_model_value(provider or 'aoai').lower()
+    if normalized_provider == 'custom':
+        client, _ = build_model_endpoint_sync_chat_client(
+            auth_settings, normalized_provider, endpoint, api_version, deployment_name,
+            settings=settings, endpoint_config=endpoint_config, identity_context=identity_context,
+        )
+        return client
     runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name)
 
     if auth_type in ('api_key', 'key'):
@@ -1577,12 +1585,12 @@ def _resolve_summary_multi_endpoint_client(
         require_model_capability(model_cfg, provider=provider)
         connection = resolved_endpoint_cfg.get('connection', {}) or {}
         auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
-        deployment = _normalize_summary_model_value(
-            model_cfg.get('deploymentName') or model_cfg.get('deployment') or model_cfg.get('id')
-        )
+        deployment = resolve_model_endpoint_request_model(resolved_endpoint_cfg, model_cfg)
         endpoint = _normalize_summary_model_value(connection.get('endpoint'))
         api_version = _normalize_summary_model_value(connection.get('openai_api_version') or connection.get('api_version'))
-        runtime_protocol = infer_model_endpoint_protocol(provider, endpoint, deployment)
+        runtime_protocol = infer_model_endpoint_protocol(
+            provider, endpoint, deployment, get_model_endpoint_api_type(resolved_endpoint_cfg),
+        )
 
         missing_required_config = not endpoint or not deployment or (
             runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version

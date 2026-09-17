@@ -2,9 +2,17 @@
 
 Planning version: **0.250.062**
 
-Implemented in version: **Not implemented - discovery and planning only**
+Historical plan status: **Discovery and planning only; not implemented in full**
 
-Related configuration version: `application/single_app/config.py` currently sets `VERSION = "0.250.062"`.
+Related configuration version at planning time: `application/single_app/config.py` set `VERSION = "0.250.062"`.
+
+The backend source-storage mismatch described below is fixed for Development/v1 in
+**0.261.024** under [#1472](https://github.com/microsoft/simplechat/issues/1472).
+The separate React/v2 port and People-panel group-context handling are implemented
+in **0.261.106**.
+See [Group Collaboration Source Storage Fix](../fixes/GROUP_COLLABORATION_SOURCE_STORAGE_FIX.md)
+for the implemented scope and coverage. Neither change implements this historical
+plan's classic-UI wording, stale-DOM, or endpoint-selection proposals in full.
 
 ## Overview
 
@@ -315,4 +323,3 @@ Cover:
 1. Should `/from-group/<id>/members` delegate when `<id>` is already a group collaborative conversation ID, or should it return a diagnostic error?
 2. Should the UI show a one-line hint with the active group name in the participant picker?
 3. Should group participant suggestions include pending group users, or only accepted/current group members? Current behavior should remain accepted/current members unless product requirements change.
-

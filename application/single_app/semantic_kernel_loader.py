@@ -24,6 +24,8 @@ from semantic_kernel_plugins.math_plugin import MathPlugin
 from semantic_kernel_plugins.text_plugin import TextPlugin
 from semantic_kernel.functions.kernel_plugin import KernelPlugin
 from semantic_kernel_plugins.embedding_model_plugin import EmbeddingModelPlugin
+from functions_ai_connections import AIConnectionError
+from functions_embedding_profile import resolve_embedding_profile
 from semantic_kernel_plugins.fact_memory_plugin import FactMemoryPlugin
 from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 from semantic_kernel_plugins.chart_plugin import ChartPlugin
@@ -45,6 +47,8 @@ from model_endpoint_clients import (
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_ai_connections import require_model_capability
 from functions_workflow_context import wrap_workflow_chat_service
+from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
@@ -169,6 +173,7 @@ def resolve_agent_endpoint_protocol(agent_config):
         agent_config.get("model_provider") or agent_config.get("provider") or "aoai",
         agent_config.get("endpoint"),
         agent_config.get("deployment"),
+        agent_config.get("api_type"),
     )
 
 
@@ -186,7 +191,24 @@ def resolve_agent_endpoint_token(agent_config):
 def create_model_endpoint_chat_completion_service(agent_config, service_id):
     """Create the correct Semantic Kernel chat service for an endpoint-bound agent."""
     if not agent_config.get("endpoint") or not agent_config.get("deployment"):
+        if agent_config.get("model_provider") == "custom":
+            raise ValueError("The selected Custom agent connection or request model is unavailable.")
         return None
+
+    if agent_config.get("model_provider") == "custom":
+        endpoint_config = agent_config.get("model_endpoint_config")
+        if not isinstance(endpoint_config, dict):
+            raise ValueError("The selected Custom agent connection could not be resolved.")
+        service, _ = build_semantic_kernel_chat_service_for_model(
+            agent_config["deployment"], get_settings(), service_id=service_id,
+            model_context={
+                "provider": "custom", "api_type": agent_config.get("api_type"),
+                "model_id": agent_config.get("model_id"),
+                "model_deployment": agent_config["deployment"],
+            },
+            resolved_model_endpoint=endpoint_config,
+        )
+        return service
 
     runtime_protocol = resolve_agent_endpoint_protocol(agent_config)
     token_or_key = resolve_agent_endpoint_token(agent_config)
@@ -581,7 +603,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
 
         connection = endpoint_cfg.get("connection", {}) or {}
         auth = endpoint_cfg.get("auth", {}) or {}
-        deployment = model_cfg.get("deploymentName") or model_cfg.get("deployment") or ""
+        deployment = resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
         api_version = connection.get("openai_api_version") or connection.get("api_version")
         endpoint = connection.get("endpoint")
         return {
@@ -591,6 +613,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "deployment": deployment,
             "auth": auth,
             "model": model_cfg,
+            "api_type": get_model_endpoint_api_type(endpoint_cfg),
+            "model_endpoint_config": endpoint_cfg,
         }
 
     def resolve_multi_endpoint_agent_config():
@@ -813,7 +837,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
     if not per_user_enabled:
         try:
             token_provider = None
-            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow"):
+            if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow", "custom"):
                 auth = multi_endpoint_config.get("auth", {}) or {}
                 auth_type = (auth.get("type") or "managed_identity").lower()
                 provider = multi_endpoint_config.get("provider")
@@ -821,7 +845,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                 deployment = multi_endpoint_config.get("deployment")
                 api_version = multi_endpoint_config.get("api_version")
                 key = auth.get("api_key") or ""
-                if auth_type != "api_key":
+                if auth_type != "api_key" and provider != "custom":
                     token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
                 return {
                     "endpoint": endpoint,
@@ -849,6 +873,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                     "model_id": agent.get("model_id", ""),
                     "model_provider": provider,
                     "model_metadata": multi_endpoint_config.get("model") or {},
+                    "api_type": multi_endpoint_config.get("api_type"),
+                    "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
                 }
             if global_apim_enabled:
                 g_apim = get_global_apim()
@@ -891,7 +917,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
     can_use_agent_endpoints = allow_custom_agent_endpoints
     user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
 
-    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow"):
+    if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow", "custom"):
         auth = multi_endpoint_config.get("auth", {}) or {}
         auth_type = (auth.get("type") or "managed_identity").lower()
         provider = multi_endpoint_config.get("provider")
@@ -900,7 +926,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         api_version = multi_endpoint_config.get("api_version")
         key = auth.get("api_key") or ""
         token_provider = None
-        if auth_type != "api_key":
+        if auth_type != "api_key" and provider != "custom":
             token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
         result = {
             "endpoint": endpoint,
@@ -928,6 +954,8 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "model_id": agent.get("model_id", ""),
             "model_provider": provider,
             "model_metadata": multi_endpoint_config.get("model") or {},
+            "api_type": multi_endpoint_config.get("api_type"),
+            "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
         }
         return result
 
@@ -1051,16 +1079,16 @@ def load_document_search_plugin(kernel: Kernel):
     )
 
 def load_embedding_model_plugin(kernel: Kernel, settings):
-    embedding_endpoint = settings.get('azure_openai_embedding_endpoint')
-    embedding_key = settings.get('azure_openai_embedding_key')
-    embedding_model = settings.get('embedding_model', {}).get('selected', [None])[0]
-    if embedding_endpoint and embedding_key and embedding_model:
-        plugin = EmbeddingModelPlugin()
-        kernel.add_plugin(
-            plugin,
-            plugin_name="embedding_model",
-            description="Provides text embedding functions using the configured embedding model."
-        )
+    try:
+        resolve_embedding_profile(settings)
+    except AIConnectionError as exc:
+        log_event("[SK_LOADER] Embedding action is unavailable", extra={"code": exc.code})
+        return
+    kernel.add_plugin(
+        EmbeddingModelPlugin(),
+        plugin_name="embedding_model",
+        description="Provides text embedding functions using the configured embedding model."
+    )
 
 def load_tabular_processing_plugin(kernel: Kernel):
     kernel.add_plugin(

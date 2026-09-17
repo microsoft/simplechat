@@ -821,11 +821,12 @@ export function AdminSettingsPage() {
                         />
                     );
                 case 'image-generation-model-selection':
+                case 'embedding-default-model-selection':
                     return (
                         <CapabilityModelPicker
                             key={key}
-                            capability="image_generation"
-                            featureEnabled={asBoolean(settings['enable_image_generation'])}
+                            capability={field.component === 'embedding-default-model-selection' ? 'embeddings' : 'image_generation'}
+                            featureEnabled={field.component === 'embedding-default-model-selection' || asBoolean(settings['enable_image_generation'])}
                             help={field.help}
                         />
                     );

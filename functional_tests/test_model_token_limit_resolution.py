@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional tests for catalog-backed, bounded model token-limit resolution.
-Version: 0.261.106
+Version: 0.261.112
 Implemented in: 0.261.106
+Shared React V2 catalog integration: 0.261.112
 
 Validates canonical identities, explicitly verified snapshots, independent
 context/input/output ceilings, authorized deployment constraints, provenance,
@@ -55,6 +56,24 @@ class ModelTokenLimitResolutionTests(unittest.TestCase):
 
     def resolve(self, model, **kwargs):
         return self.capabilities.resolve_model_token_limits(model, **kwargs)
+
+    def test_token_image_and_embedding_metadata_survive_the_same_catalog_load(self):
+        catalog = self.capabilities.load_model_capability_catalog(force_refresh=True)
+        fields = {"tokenLimits", "embeddingPolicy", "imageProfiles", "imageLifecycle"}
+        observed = set()
+        for model in self.document["models"]:
+            identifier = self.capabilities._normalize_model_identifier(model["id"])
+            for field in fields.intersection(model):
+                with self.subTest(model=model["id"], field=field):
+                    self.assertEqual(catalog[identifier][field], model[field])
+                observed.add(field)
+        self.assertEqual(observed, fields)
+        model = catalog[self.capabilities._normalize_model_identifier("gpt-4.1")]
+        self.assertEqual(model["tokenLimits"]["contextWindow"], 1047576)
+        self.assertEqual(
+            self.capabilities.get_image_operation_profile(model["imageProfiles"]["openai"])["api"],
+            "responses",
+        )
 
     def test_exact_public_contract_and_verified_openai_limits(self):
         expected = {

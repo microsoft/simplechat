@@ -33,6 +33,7 @@ identities, declared snapshots, and authorized deployment constraints establish
 capacity; unknown limits stay unknown.
 """
 
+import copy
 import json
 import os
 import re
@@ -87,6 +88,7 @@ VISION_SOURCE_INFERRED = "inferred"
 
 _CATALOG_LOCK = threading.Lock()
 _CATALOG_CACHE = None
+_IMAGE_OPERATION_PROFILES = {}
 
 
 def _normalize_model_identifier(value):
@@ -106,7 +108,7 @@ def load_model_capability_catalog(force_refresh=False):
     A missing or malformed catalog yields an empty mapping rather than raising.
     Vision keeps its legacy heuristic; reasoning support remains unknown.
     """
-    global _CATALOG_CACHE
+    global _CATALOG_CACHE, _IMAGE_OPERATION_PROFILES
 
     if _CATALOG_CACHE is not None and not force_refresh:
         return _CATALOG_CACHE
@@ -116,11 +118,15 @@ def load_model_capability_catalog(force_refresh=False):
             return _CATALOG_CACHE
 
         catalog = {}
+        image_profiles = {}
         path = os.path.join(os.path.dirname(os.path.abspath(__file__)), CATALOG_FILENAME)
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 document = json.load(handle)
 
+            image_profiles = document.get("imageOperationProfiles") or {}
+            if not isinstance(image_profiles, Mapping):
+                raise ValueError("Image operation profiles must be an object.")
             for model in document.get("models", []):
                 if not isinstance(model, Mapping):
                     continue
@@ -132,6 +138,13 @@ def load_model_capability_catalog(force_refresh=False):
                     capabilities["reasoningPolicy"] = model["reasoningPolicy"]
                 if isinstance(model.get("tokenLimits"), Mapping):
                     capabilities["tokenLimits"] = model["tokenLimits"]
+                if "embeddingPolicy" in model:
+                    capabilities["embeddingPolicy"] = copy.deepcopy(model["embeddingPolicy"])
+                for field_name in ("imageProfiles", "imageLifecycle"):
+                    if isinstance(model.get(field_name), Mapping):
+                        capabilities[field_name] = copy.deepcopy(model[field_name])
+                if model.get("provider"):
+                    capabilities["publisher"] = model["provider"]
                 if not capabilities:
                     continue
                 capabilities["_model_id"] = model.get("id")
@@ -143,9 +156,18 @@ def load_model_capability_catalog(force_refresh=False):
                         catalog[normalized] = capabilities
         except (OSError, ValueError, TypeError, AttributeError):
             catalog = {}
+            image_profiles = {}
 
+        _IMAGE_OPERATION_PROFILES = copy.deepcopy(image_profiles)
         _CATALOG_CACHE = catalog
         return _CATALOG_CACHE
+
+
+def get_image_operation_profile(profile_id):
+    """Return an isolated provider operation profile from the same cached catalog."""
+    load_model_capability_catalog()
+    profile = _IMAGE_OPERATION_PROFILES.get(profile_id)
+    return copy.deepcopy(profile) if isinstance(profile, Mapping) else None
 
 
 def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):
@@ -255,11 +277,13 @@ def _model_identifiers(model, fields=MODEL_IDENTIFIER_FIELDS):
     return [getattr(model, field, None) for field in fields]
 
 
-def get_model_catalog_capabilities(model):
+def get_model_catalog_capabilities(model, *, strict_identity=False):
     """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
 
     Vision retains its legacy deployment-name heuristic separately. Image tool
     support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
+    Strict identity uses only a canonical/deployment name and exact catalog
+    aliases, never display labels, configuration ids, or unverified snapshots.
     """
     underlying = ""
     for field_name in ("modelName", "behavior_name"):
@@ -268,18 +292,27 @@ def get_model_catalog_capabilities(model):
             underlying = value
             break
     identifiers = [underlying] if underlying else _model_identifiers(model)
+    if strict_identity and not underlying and not isinstance(model, str):
+        identifiers = []
+        for field_name in ("deploymentName", "deployment", "name"):
+            value = model.get(field_name) if isinstance(model, Mapping) else getattr(model, field_name, None)
+            if isinstance(value, str) and value.strip():
+                identifiers = [value]
+                break
     catalog = load_model_capability_catalog()
     for identifier in identifiers:
         normalized = _normalize_model_identifier(identifier)
         if normalized in catalog:
-            return dict(catalog[normalized])
+            return copy.deepcopy(catalog[normalized])
+        if strict_identity:
+            continue
         snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
         if snapshot and snapshot.group(1) in catalog:
             try:
                 date(*(int(value) for value in snapshot.groups()[1:]))
             except ValueError:
                 continue
-            return dict(catalog[snapshot.group(1)])
+            return copy.deepcopy(catalog[snapshot.group(1)])
     return None
 
 
@@ -472,8 +505,13 @@ def resolve_model_vision_support(model):
     ``source`` is one of ``declared``, ``catalog`` or ``inferred``, so a caller
     can tell an administrator whether the answer is known or guessed. That
     matters in the Model Endpoints editor, where a guessed value is exactly the
-    one worth reviewing.
+    one worth reviewing. Embedding-only models cannot produce the text needed
+    for vision analysis, even when the model itself accepts image input.
     """
+    catalog = get_model_catalog_capabilities(model)
+    if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False:
+        return False, VISION_SOURCE_CATALOG
+
     declared = _declared_vision_support(model)
     if declared is not None:
         return declared, VISION_SOURCE_DECLARED
