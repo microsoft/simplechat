@@ -36,6 +36,7 @@ from functions_workflow_results import (
     workflow_result_summary,
     authorize_workflow_task_result_read,
 )
+from functions_saved_analysis import SavedAnalysisInput, explain_saved_analysis
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_bindings import (
     WorkflowInputError,
