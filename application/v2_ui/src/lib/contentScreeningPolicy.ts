@@ -67,6 +67,38 @@ export interface ScreeningPolicyTemplates {
     piiTypes: Array<{ value: string; label: string }>;
 }
 
+export interface ScreeningTemplateCatalog {
+    rules: Record<string, ScreeningRule>;
+    packs: Record<string, string[]>;
+    ai: Record<string, string | { name: string; instructions: string }>;
+}
+
+export function newScreeningRule(template: ScreeningRule): ScreeningRule {
+    // Unlike randomUUID, getRandomValues is available on HTTP development hosts.
+    const id = Array.from(
+        crypto.getRandomValues(new Uint8Array(16)),
+        (value) => value.toString(16).padStart(2, '0'),
+    ).join('');
+    return { ...structuredClone(template), id };
+}
+
+export function screeningPolicyTemplates(catalog: ScreeningTemplateCatalog): ScreeningPolicyTemplates {
+    const rules = Object.values(catalog.rules).map((rule) => structuredClone(rule));
+    return {
+        rules,
+        ai: Object.entries(catalog.ai).map(([id, value]) => ({
+            id,
+            name: typeof value === 'string' ? id.replaceAll('_', ' ') : value.name,
+            instructions: typeof value === 'string' ? value : value.instructions,
+        })),
+        severities: ['low', 'medium', 'high', 'critical'],
+        piiTypes: rules.filter((rule) => rule.type === 'pii' && rule.pii_type).map((rule) => ({
+            value: rule.pii_type ?? '',
+            label: rule.name,
+        })),
+    };
+}
+
 export function screeningModelIndex(
     models: DefaultModelChoice[],
     selection: ScreeningModelSelection | null,
@@ -118,6 +150,7 @@ export function approvedScreeningChoices(
 
 export function editableScreeningPolicy(policy: ScreeningPolicy, global: boolean): ScreeningPolicy {
     const copy = structuredClone(policy);
+    copy.ai.model_selection ??= { endpoint_id: '', model_id: '' };
     if (!global) {
         delete copy.allowed_models;
     }
@@ -139,6 +172,9 @@ export function screeningModelCatalog(models: DefaultModelChoice[]): AdminModelC
 
 export function validateScreeningPolicy(policy: ScreeningPolicy, models: DefaultModelChoice[]): string[] {
     const errors: string[] = [];
+    if (policy.enabled && !policy.rules.some((rule) => rule.enabled) && !policy.ai.enabled) {
+        errors.push('Add at least one enabled rule or model check before enabling the policy.');
+    }
     const ids = new Set<string>();
     for (const rule of policy.rules) {
         if (!rule.id || ids.has(rule.id)) {
@@ -159,20 +195,21 @@ export function validateScreeningPolicy(policy: ScreeningPolicy, models: Default
         }
     }
     if (policy.ai.enabled) {
-        if (!policy.ai.model_selection || screeningModelIndex(models, policy.ai.model_selection) === 'unavailable') {
+        const selection = screeningModelIndex(models, policy.ai.model_selection);
+        if (!selection || selection === 'unavailable') {
             errors.push('Select an approved, available scanner model.');
         }
         if (!policy.ai.instructions.trim()) {
             errors.push('Provide criteria for the model scanner.');
         }
     }
-    if (!Number.isInteger(policy.ai.window_size) || policy.ai.window_size < 1) {
-        errors.push('The scan window must contain at least one page or chunk.');
+    if (!Number.isInteger(policy.ai.window_size) || policy.ai.window_size < 1 || policy.ai.window_size > 20) {
+        errors.push('The scan window must contain between 1 and 20 pages or chunks.');
     }
-    if (!Number.isInteger(policy.ai.max_characters) || policy.ai.max_characters < 1 ||
+    if (!Number.isInteger(policy.ai.max_characters) || policy.ai.max_characters < 256 || policy.ai.max_characters > 64000 ||
         !Number.isInteger(policy.ai.overlap_characters) || policy.ai.overlap_characters < 0 ||
-        policy.ai.overlap_characters >= policy.ai.max_characters) {
-        errors.push('Overlap must be nonnegative and smaller than the maximum characters per window.');
+        policy.ai.overlap_characters > 16000 || policy.ai.overlap_characters >= policy.ai.max_characters) {
+        errors.push('Use 256-64000 characters per window and overlap from 0-16000, smaller than the window.');
     }
     if (Object.values(policy.limits).some((value) => !Number.isFinite(value) || value < 0)) {
         errors.push('Execution limits must be finite, nonnegative numbers.');

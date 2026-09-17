@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { DefaultModelChoice } from '../../lib/modelConnections';
 import {
+    newScreeningRule,
     screeningModelCatalog,
     screeningModelIndex,
     type ScreeningAiPolicy,
@@ -161,9 +162,7 @@ export function ScreeningPolicyFields({
                             onClick={() => {
                                 const template = templates.rules[Number(templateIndex)];
                                 if (template) {
-                                    onChange({ ...policy, rules: [...policy.rules, {
-                                        ...structuredClone(template), id: crypto.randomUUID(),
-                                    }] });
+                                    onChange({ ...policy, rules: [...policy.rules, newScreeningRule(template)] });
                                     setTemplateIndex('');
                                 }
                             }}>
@@ -214,7 +213,8 @@ export function ScreeningPolicyFields({
                     disabled={disabled} onChange={(value) => {
                         const selected = value === '' ? undefined : approvedModels[Number(value)];
                         updateAi({ model_selection: selected
-                            ? { endpoint_id: selected.endpointId, model_id: selected.modelId } : null });
+                            ? { endpoint_id: selected.endpointId, model_id: selected.modelId }
+                            : { endpoint_id: '', model_id: '' } });
                     }} />
                 {!disabled && templates.ai.length ? (
                     <div className="flex flex-wrap items-end gap-2">
@@ -273,7 +273,7 @@ export function ScreeningPolicyFields({
                         min={1} disabled={disabled} onChange={(window_size) => updateAi({ window_size })}
                         help="Use 1 for a single page/chunk; larger values form bounded batches." />
                     <ScreeningNumberField label="Maximum characters per window" value={policy.ai.max_characters}
-                        min={1} disabled={disabled} onChange={(max_characters) => updateAi({ max_characters })} />
+                        min={256} disabled={disabled} onChange={(max_characters) => updateAi({ max_characters })} />
                     <ScreeningNumberField label="Boundary overlap characters" value={policy.ai.overlap_characters}
                         disabled={disabled} onChange={(overlap_characters) => updateAi({ overlap_characters })} />
                 </div>

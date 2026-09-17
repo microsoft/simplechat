@@ -6,6 +6,7 @@ from flask import g, has_request_context, jsonify, request, session
 
 from config import *
 from content_screening.contracts import (
+    ScreeningCitationsRequiredError,
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
@@ -2091,7 +2092,7 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
     if merged.get('enable_content_screening') is not True:
         return
     if merged.get('enable_enhanced_citations') is not True:
-        raise ScreeningConfigurationError()
+        raise ScreeningCitationsRequiredError()
     storage_fields = (
         'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint',
         'office_docs_key', 'office_docs_authentication_type',

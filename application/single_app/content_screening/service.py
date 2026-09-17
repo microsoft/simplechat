@@ -21,9 +21,11 @@ from content_screening.contracts import (
     DocumentHeldError,
     Finding,
     InspectionResult,
+    ScreeningCitationsRequiredError,
     ScreeningConfigurationError,
     ScreeningConflictError,
     ScreeningError,
+    ScreeningPolicyRequiredError,
     ScreeningValidationError,
     Subject,
     content_fingerprint,
@@ -122,7 +124,7 @@ def validate_screening_configuration(settings=None, *, repository=None, check_st
     if settings.get("enable_content_screening") is not True:
         return
     if settings.get("enable_enhanced_citations") is not True:
-        raise ScreeningConfigurationError()
+        raise ScreeningCitationsRequiredError()
 
     from content_screening.policies import compose_policy, default_policy, policy_is_active
 
@@ -130,7 +132,7 @@ def validate_screening_configuration(settings=None, *, repository=None, check_st
     baseline = repository.get_policy("global", "global")
     effective = compose_policy(baseline["policy"] if baseline else default_policy())
     if not policy_is_active(effective):
-        raise ScreeningConfigurationError("Configure an active baseline policy before enabling screening.")
+        raise ScreeningPolicyRequiredError()
     if effective.get("ai_checks"):
         from content_screening.model import validate_model_bindings
 

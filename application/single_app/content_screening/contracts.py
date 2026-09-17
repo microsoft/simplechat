@@ -49,6 +49,24 @@ class ScreeningConfigurationError(ScreeningError):
     public_message = "Content screening requires a valid policy and configured Enhanced Citations."
 
 
+class ScreeningPolicyRequiredError(ScreeningConfigurationError):
+    code = "screening_policy_required"
+    status_code = 400
+    public_message = (
+        "Save an enabled policy with at least one rule or model check under "
+        "Security > Content Screening before enabling new scans."
+    )
+
+
+class ScreeningCitationsRequiredError(ScreeningConfigurationError):
+    code = "screening_citations_required"
+    status_code = 400
+    public_message = (
+        "Enable Enhanced Citations under Chat > Citations > Enhanced and configure its storage first. "
+        "Azure AI Content Safety is a separate feature and is not required."
+    )
+
+
 class ScreeningConflictError(ScreeningError):
     code = "screening_revision_conflict"
     status_code = 409

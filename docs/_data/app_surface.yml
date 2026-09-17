@@ -3,8 +3,8 @@
 counts:
   capabilities: 115
   admin_groups: 15
-  admin_tabs: 47
-  admin_sections: 108
+  admin_tabs: 48
+  admin_sections: 109
   actions: 28
   chat_controls: 47
   sub_elements: 3
@@ -320,6 +320,7 @@ admin_groups:
   tabs:
   - access-roles
   - content-safety
+  - content-screening
   - network
   - rate-limiting
   - secrets
@@ -370,6 +371,9 @@ admin_tabs:
   group: data-lifecycle
 - id: content-safety
   label: Content Safety
+  group: security
+- id: content-screening
+  label: Content Screening
   group: security
 - id: control-center-config
   label: Control Center
@@ -564,6 +568,10 @@ admin_sections:
 - id: content-safety-section
   label: Content Safety
   tab: content-safety
+  group: security
+- id: content-screening-section
+  label: Content Screening
+  tab: content-screening
   group: security
 - id: content-understanding-section
   label: Content Understanding

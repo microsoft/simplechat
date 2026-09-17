@@ -24,7 +24,7 @@ import { AdminModal } from '../admin/AdminModal';
 import { GlassButton, Skeleton } from '../ui/primitives';
 import { ScreeningScanControls, type ScreeningScanScope } from './ScreeningScanControls';
 import { ScreeningField, screeningInputClass } from './ScreeningFields';
-import { ScreeningBaselineSummary } from './ScreeningBaselineSummary';
+import { ScreeningPolicyEditor } from './ScreeningPolicyEditor';
 
 function ScopeControls({ scope, documentIds }: { scope: ScreeningScope; documentIds?: string[] }) {
     const [configuration, setConfiguration] = useState<ScreeningConfiguration | null>(null);
@@ -214,8 +214,8 @@ function ScopeControls({ scope, documentIds }: { scope: ScreeningScope; document
                         : 'Workspace additions never replace or disable the administrative baseline.'}
                 </p>
             ) : null}
-            {scope.scope_type !== 'global' && policy?.inherited_summary ? (
-                <ScreeningBaselineSummary summary={policy.inherited_summary} />
+            {scope.scope_type !== 'global' && policy ? (
+                <ScreeningPolicyEditor scope={scope} onSaved={setPolicy} />
             ) : null}
             {jobs.length ? (
                 <ScreeningField label="Recent screening scans">

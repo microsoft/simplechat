@@ -5006,11 +5006,11 @@ ADMIN_SETTINGS_FIELDS = {
             ],
         },
     ],
-    "content-safety-section": [
+    "content-screening-section": [
         {
             "key": "enable_content_screening",
             "type": "switch",
-            "group": "Content Screening",
+            "role": "capability",
             "label": "Screen workspace content before publication",
             "help": (
                 "Hold extracted workspace knowledge until required checks complete. "
@@ -5019,8 +5019,23 @@ ADMIN_SETTINGS_FIELDS = {
                 "existing holds."
             ),
             "default": False,
-            "depends_on": {"key": "enable_enhanced_citations", "equals": True},
+            "requires": {
+                "key": "enable_enhanced_citations",
+                "label": "Enhanced Citations",
+                "description": (
+                    "Configure Chat > Citations > Enhanced and its storage before enabling new scans. "
+                    "You can prepare and save the screening policy below first."
+                ),
+            },
         },
+        {
+            "type": "component",
+            "component": "content-screening-policy",
+            "label": "Screening policies and scans",
+            "help": "Edit required PII, regex, value, and model checks; policies are saved separately from Admin Settings.",
+        },
+    ],
+    "content-safety-section": [
         {
             "key": "enable_content_safety",
             "type": "switch",
