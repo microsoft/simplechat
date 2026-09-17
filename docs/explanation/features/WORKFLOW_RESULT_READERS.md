@@ -3,6 +3,11 @@
 Implemented in version: **0.261.107**, recorded in
 `application/single_app/config.py`.
 
+Reader-policy alignment updated in version: **0.261.110**. An explicit empty
+nested access policy is rejected rather than replaced by a different policy,
+and `allow_partial` must be a boolean. Source lineage alone does not label a
+raw-model result as an original Analyze run.
+
 ## Purpose and dependencies
 
 This incremental foundation extends the existing `workflow-result-v1` store.
