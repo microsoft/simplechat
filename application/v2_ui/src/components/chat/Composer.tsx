@@ -881,7 +881,8 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         const seeds: Record<string, unknown> = {
             web_search_enabled: options.webSearch,
             required_capabilities: [
-                ...(options.documentSearch || contextItems.length > 0 ? ['document_search'] : []),
+                // Pinned sources constrain inputs, not the operation (search, Analyze, or Compare).
+                ...(options.documentSearch ? ['document_search'] : []),
                 ...(options.webSearch ? ['web_search'] : []),
                 ...(options.deepResearch ? ['deep_research'] : []),
                 ...(options.urlAccess && promptUrls(message).length > 0 ? ['url_fetch'] : []),
@@ -991,10 +992,6 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
                     return;
                 }
                 handoffApplied.current = true;
-                setOptions((current) => ({
-                    ...current,
-                    documentSearch: items.length > 0 || current.documentSearch,
-                }));
                 setDraft((current) => ({
                     ...current,
                     contextItems: items.reduce(

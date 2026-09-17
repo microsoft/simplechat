@@ -269,13 +269,37 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
     );
 }
 
-export function Sidebar() {
-    const { railCollapsed, toggleRail, theme, toggleTheme } = useUiStore();
+export function Sidebar({ mobile = false }: { mobile?: boolean }) {
+    const { railCollapsed, toggleRail, theme, toggleTheme, mobileNavOpen, setMobileNavOpen } = useUiStore();
     const startNewConversation = useChatStore((state) => state.startNewConversation);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
     const location = useLocation();
+    const expandRef = useRef<HTMLButtonElement>(null);
+    const collapseRef = useRef<HTMLButtonElement>(null);
 
     const onChatPage = location.pathname.startsWith('/chat');
-    const collapsed = railCollapsed;
+    const collapsed = mobile ? !mobileNavOpen : railCollapsed;
+    const toggleNavigation = () => mobile ? setMobileNavOpen(!mobileNavOpen) : toggleRail();
+
+    useEffect(() => {
+        if (mobile) setMobileNavOpen(false);
+    }, [mobile, location.pathname, activeConversationId, setMobileNavOpen]);
+
+    useEffect(() => {
+        if (!mobile || !mobileNavOpen) return;
+        collapseRef.current?.focus();
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setMobileNavOpen(false);
+            }
+        };
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            expandRef.current?.focus();
+        };
+    }, [mobile, mobileNavOpen, setMobileNavOpen]);
 
     /**
      * Arriving at the chat page from elsewhere starts a fresh chat.
@@ -306,10 +330,18 @@ export function Sidebar() {
 
     return (
         <nav
+            id="primary-navigation"
             aria-label="Primary"
+            onClickCapture={(event) => {
+                if (mobile && event.target instanceof Element && event.target.closest('a')) {
+                    setMobileNavOpen(false);
+                }
+            }}
             className={clsx(
-                'glass glass-edge flex h-full flex-col rounded-none border-y-0 border-l-0 transition-[width] duration-200',
+                'glass glass-edge flex h-full shrink-0 flex-col rounded-none border-y-0 border-l-0 transition-[width] duration-200',
                 collapsed ? 'w-[68px]' : 'w-[280px]',
+                mobile && 'absolute inset-y-0 left-0 z-50 max-w-full',
+                mobile && mobileNavOpen && 'glass-modal',
             )}
         >
             <div
@@ -322,8 +354,11 @@ export function Sidebar() {
                 {!collapsed && (
                     <button
                         type="button"
-                        onClick={toggleRail}
+                        ref={collapseRef}
+                        onClick={toggleNavigation}
                         aria-label="Collapse navigation"
+                        aria-expanded="true"
+                        aria-controls="primary-navigation"
                         className="ml-auto rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                     >
                         <ChevronLeft size={17} />
@@ -334,8 +369,11 @@ export function Sidebar() {
             {collapsed && (
                 <button
                     type="button"
-                    onClick={toggleRail}
+                    ref={expandRef}
+                    onClick={toggleNavigation}
                     aria-label="Expand navigation"
+                    aria-expanded="false"
+                    aria-controls="primary-navigation"
                     className="mx-auto mb-2 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
                 >
                     <ChevronRight size={17} />
@@ -349,7 +387,10 @@ export function Sidebar() {
                 <div className="px-3">
                     <button
                         type="button"
-                        onClick={startNewConversation}
+                        onClick={() => {
+                            startNewConversation();
+                            if (mobile) setMobileNavOpen(false);
+                        }}
                         title="Start a new chat"
                         className={clsx(
                             'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',

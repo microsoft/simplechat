@@ -15,7 +15,7 @@ import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { clsx } from 'clsx';
 import { Download, Eye, FileLock2, Loader2, X } from 'lucide-react';
-import { generatedArtifactDownloadUrl } from '../../lib/endpoints';
+import { downloadGeneratedArtifact, generatedArtifactDownloadUrl } from '../../lib/endpoints';
 import { resolveGeneratedFileApproval } from '../../lib/collaboration';
 import { toast } from '../../stores/toastStore';
 import { GlassButton, GlassPanel } from '../ui/primitives';
@@ -265,6 +265,7 @@ export function GeneratedArtifactCard({
     const [finished, setFinished] = useState<GeneratedArtifact[] | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [deciding, setDeciding] = useState<'approve' | 'deny' | null>(null);
+    const [downloading, setDownloading] = useState(false);
 
     // A completed run replaces its own progress card with the files it produced.
     if (finished) {
@@ -354,17 +355,22 @@ export function GeneratedArtifactCard({
         }
     };
 
-    const download = () => {
+    const download = async () => {
+        if (downloading) {
+            return;
+        }
         if (!downloadUrl) {
             toast.error('Generated export is missing download metadata.');
             return;
         }
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+        setDownloading(true);
+        try {
+            await downloadGeneratedArtifact(artifact, conversationId);
+        } catch {
+            toast.error('The artifact could not be downloaded. Refresh the conversation and try again.');
+        } finally {
+            setDownloading(false);
+        }
     };
 
     // While a run is in flight the supporting notes move inside its collapsed details, so the
@@ -386,7 +392,7 @@ export function GeneratedArtifactCard({
     );
 
     return (
-        <section className="glass-flat mt-3 rounded-xl p-3">
+        <section className="glass-flat mt-3 min-w-0 rounded-xl p-3 [overflow-wrap:anywhere]">
             <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                     <h4 className="text-sm font-semibold text-text-1">{artifactTitle(artifact)}</h4>
@@ -491,9 +497,9 @@ export function GeneratedArtifactCard({
 
             {!running && !withheld && downloadUrl && (
                 <div className="mt-3 flex flex-wrap gap-2">
-                    <GlassButton size="sm" variant="subtle" onClick={download}>
-                        <Download size={13} />
-                        Download {outputFormat.toUpperCase()}
+                    <GlassButton size="sm" variant="subtle" onClick={() => void download()} disabled={downloading}>
+                        {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                        {downloading ? 'Downloading' : 'Download'} {outputFormat.toUpperCase()}
                     </GlassButton>
 
                     {compact && hasArtifactPreview(artifact) && (

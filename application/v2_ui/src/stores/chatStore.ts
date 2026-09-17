@@ -112,7 +112,11 @@ import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imagePro
 import { toast } from './toastStore';
 import { ApiError } from '../lib/apiClient';
 import { normalizeOrchestrationAttempt } from '../lib/orchestration';
-import { openOrchestrationRecovery } from '../lib/orchestrationController';
+import {
+    forgetOrchestrationConversation,
+    openOrchestrationRecovery,
+    retryOrchestrationPlanning,
+} from '../lib/orchestrationController';
 import { foundryAuthUrl } from '../lib/foundryAuth';
 import { useBootstrapStore } from './bootstrapStore';
 import { useCollaborationStore, participantName } from './collaborationStore';
@@ -1949,6 +1953,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             } else {
                 await deleteConversationApi(conversationId);
             }
+            forgetOrchestrationConversation(conversationId);
         } catch (error) {
             set({ conversations: previous });
             toast.error(
@@ -2964,6 +2969,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const message = get().messages.find((candidate) => candidate.id === messageId);
         const attempt = normalizeOrchestrationAttempt(message?.metadata?.orchestration);
         const recoveryConversationId = get().activeConversationId;
+        if (messageId.startsWith('pending-user-')) {
+            const turnId = message?.metadata?.orchestration_turn_id;
+            const result = recoveryConversationId && typeof turnId === 'string' && turnId
+                ? await retryOrchestrationPlanning(recoveryConversationId, turnId, messageId)
+                : {
+                    ok: false,
+                    error: 'This message has not been saved. Copy the original message to the composer, review your selections, and send it again.',
+                };
+            if (!result.ok && get().activeConversationId === recoveryConversationId
+                && get().messages.some((candidate) => candidate.id === messageId)) {
+                set({ streamError: result.error, streamAuthUrl: null });
+            }
+            return;
+        }
         if (attempt.run_id && recoveryConversationId) {
             openOrchestrationRecovery(recoveryConversationId, attempt.run_id);
             return;

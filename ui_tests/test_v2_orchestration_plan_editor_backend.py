@@ -1,7 +1,7 @@
 # test_v2_orchestration_plan_editor_backend.py
 """
 Browser-to-Flask regression for editing and running an orchestration plan.
-Version: 0.261.104
+Version: 0.261.113
 Implemented in: 0.261.102
 Selected model continuity through editing and execution: 0.261.103
 
@@ -145,6 +145,9 @@ def integrated_editor(request, editor_browser, editor_assets):
 def test_real_editor_add_remove_question_restore_and_run(integrated_editor):
     page, backend, requests, original = integrated_editor
     initial_message_count = len(backend.messages.items)
+    initial_chat_count = sum(
+        message.get('role') in {'user', 'assistant'} for message in backend.messages.items.values()
+    )
     dialog = editor_tests.open_editor(page)
     expect(dialog.get_by_role('button', name='Run saved revision')).to_be_enabled()
     held = backend.runs.read_item(original['run_id'], 'conv1')
@@ -206,7 +209,10 @@ def test_real_editor_add_remove_question_restore_and_run(integrated_editor):
     assert task in json.dumps(backend.model.calls[-1]['messages'])
     saved = backend.runs.read_item(current['plan']['run_id'], 'conv1')
     assert saved['status'] == 'completed'
-    assert len(backend.messages.items) == initial_message_count + 1
+    # Saved payload sections share this container but are not extra conversation messages.
+    assert sum(
+        message.get('role') in {'user', 'assistant'} for message in backend.messages.items.values()
+    ) == initial_chat_count + 1
     if hasattr(backend, 'model_clients'):
         assert saved['seeds']['model'] == backend_tests.TERRA_SELECTION
         assert all(call['model'] == 'gpt-5.6-terra' for call in backend.edit_calls)

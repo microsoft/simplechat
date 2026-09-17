@@ -17,6 +17,7 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import { getDownloadFilename, triggerBlobDownload } from "./chat-enhanced-citations.js";
 import {
   buildGeneratedFileApprovalBlock,
   generatedFileApprovalBlocksDownload,
@@ -4441,7 +4442,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return '';
   }
 
-  function triggerGeneratedTabularOutputDownload(outputMetadata) {
+  async function triggerGeneratedTabularOutputDownload(outputMetadata, downloadButton) {
     const downloadHref = buildGeneratedArtifactDownloadUrl(outputMetadata);
 
     if (!downloadHref) {
@@ -4449,13 +4450,26 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return;
     }
 
-    const downloadLink = document.createElement('a');
-    downloadLink.href = downloadHref;
-    downloadLink.rel = 'noopener';
-    downloadLink.className = 'd-none';
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
+    if (downloadButton.disabled) {
+        return;
+    }
+    const originalText = downloadButton.textContent;
+    downloadButton.disabled = true;
+    downloadButton.textContent = 'Downloading...';
+    try {
+        const response = await fetch(downloadHref, { credentials: 'same-origin', cache: 'no-store' });
+        const disposition = response.headers.get('Content-Disposition') || '';
+        if (!response.ok || response.redirected || !/^\s*attachment(?:;|$)/i.test(disposition)) {
+            throw new Error('The artifact could not be downloaded.');
+        }
+        const blob = await response.blob();
+        triggerBlobDownload(blob, getDownloadFilename(response, outputMetadata.file_name || 'generated-artifact'));
+    } catch {
+        showToast('The artifact could not be downloaded. Refresh the conversation and try again.', 'danger');
+    } finally {
+        downloadButton.disabled = false;
+        downloadButton.textContent = originalText;
+    }
   }
 
   async function viewGeneratedMarkdownArtifact(outputMetadata, viewButton) {
@@ -5579,7 +5593,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         memberCount: 1,
         formats: [outputFormat],
       });
-      triggerGeneratedTabularOutputDownload(outputMetadata);
+      void triggerGeneratedTabularOutputDownload(outputMetadata, downloadButton);
     });
     actions.appendChild(downloadButton);
 

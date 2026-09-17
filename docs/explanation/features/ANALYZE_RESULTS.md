@@ -3,6 +3,9 @@
 Implemented in version: **0.261.109**, recorded in
 `application/single_app/config.py`.
 
+Planning, download, and responsive stabilization updated in version:
+**0.261.113**. See [Analyze stabilization](../fixes/ANALYZE_STABILIZATION_FIX.md).
+
 ## Overview
 
 Analyze separates accepted findings from window-level candidates, source
@@ -101,6 +104,18 @@ uncertain outcome is not treated as permission to create a second copy.
 Already published workspace copies have their own destination permissions and
 lifecycle. They do not inherit later access changes to the original sources.
 Previously delivered or downloaded bytes cannot be recalled.
+
+Original chat artifacts use their own authorized byte reader rather than the
+workspace-document citation reader. Conversation participation, generated-file
+approval, publication state, and saved-source access are checked before and
+after reading the persisted blob reference. Changed identity, revision, or
+recorded content digest prevents delivery. Legacy artifacts without a saved
+analysis binding retain their existing authorization contract.
+
+Classic and V2 download controls fetch the attachment before invoking browser
+download handling. An error response or sign-in page is not saved as a file and
+does not navigate away from chat. Original artifact responses are not cached for
+reuse after an authorization change.
 
 ## Validation and limitations
 

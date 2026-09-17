@@ -325,12 +325,12 @@ async function dispatchPlan(
     };
 
     const body: OrchestrationPlanRequest = {
+        ...context.seeds,
         message: context.message,
         conversation_id: currentConversationId,
         turn_id: currentTurnId,
         revision: context.revision,
         approval_mode: context.approvalMode,
-        ...context.seeds,
     };
     if (continuation) {
         body.elicitation = continuation.elicitation;
@@ -377,15 +377,9 @@ async function dispatchPlan(
                 if (!isCurrentRequest()) {
                     return;
                 }
-                adoptServerTurnId(plan.turn_id);
-                context.revision = plan.revision ?? context.revision;
-                useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, {
-                    ...plan,
-                    reasoning_adjustments: normalizeReasoningAdjustments([
-                        ...reasoningAdjustments, ...(plan.reasoning_adjustments ?? []),
-                    ]),
-                });
-                if (!selectPlan(useOrchestrationStore.getState(), currentConversationId, currentTurnId)) {
+                const normalized = normalizePlan(plan);
+                if (!normalized?.plan_id || !normalized.run_id || !normalized.turn_id
+                    || normalized.conversation_id !== currentConversationId || !isPlanRunnable(normalized)) {
                     errored = true;
                     failure = 'The planner returned an invalid plan. Please try again.';
                     useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
@@ -394,8 +388,16 @@ async function dispatchPlan(
                     });
                     return;
                 }
+                adoptServerTurnId(normalized.turn_id);
+                context.revision = normalized.revision ?? context.revision;
+                useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, {
+                    ...normalized,
+                    reasoning_adjustments: normalizeReasoningAdjustments([
+                        ...reasoningAdjustments, ...(normalized.reasoning_adjustments ?? []),
+                    ]),
+                });
                 produced = true;
-                maybeAutoOpenDrawer(currentConversationId, plan);
+                maybeAutoOpenDrawer(currentConversationId, normalized);
             },
             onElicitation: (elicitation) => {
                 if (!isCurrentRequest()) {
@@ -487,6 +489,7 @@ export async function startOrchestrationPlan(params: StartPlanParams): Promise<v
     if (!message) {
         return;
     }
+    const seeds = structuredClone(params.seeds ?? {});
     const conversationId = await ensureConversation(params.conversationId, message);
     if (!conversationId) {
         return;
@@ -498,12 +501,64 @@ export async function startOrchestrationPlan(params: StartPlanParams): Promise<v
         {
             message,
             approvalMode: params.approvalMode,
-            seeds: params.seeds ?? {},
+            seeds,
             revision: 0,
             pendingUserMessageId: '',
         },
         true,
     );
+}
+
+/** Retry only an unsaved planning turn whose original request is still held in this tab. */
+export async function retryOrchestrationPlanning(
+    conversationId: string,
+    turnId: string,
+    messageId: string,
+): Promise<ElicitationSubmitResult> {
+    const chat = useChatStore.getState();
+    const context = turnContexts.get(scopeKey(conversationId, turnId));
+    const message = chat.messages.find((candidate) => candidate.id === messageId);
+    if (chat.activeConversationId !== conversationId || !context
+        || context.pendingUserMessageId !== messageId
+        || message?.conversation_id !== conversationId || message.role !== 'user'
+        || message.content !== context.message) {
+        return {
+            ok: false,
+            error: 'This planning request is no longer available in this tab. Copy the original message to the composer, review the model and documents, and send it again.',
+        };
+    }
+    if (hasActiveOrchestration(conversationId) || chat.streaming) {
+        return { ok: false, error: 'This conversation already has a request in progress.' };
+    }
+    const store = useOrchestrationStore.getState();
+    if (selectPlan(store, conversationId, turnId)) {
+        return { ok: false, error: 'This request already has a plan. Review the saved plan instead of starting another attempt.' };
+    }
+    if (selectElicitation(store, conversationId, turnId)) {
+        return { ok: false, error: 'This request has a planner question. Continue from that question so your answers are preserved.' };
+    }
+    return dispatchPlan(conversationId, turnId, { ...context }, false);
+}
+
+/** A deleted conversation must not regain a plan from a late response or retained Retry context. */
+export function forgetOrchestrationConversation(conversationId: string): void {
+    activeControllers.get(conversationId)?.abort();
+    activeControllers.delete(conversationId);
+    activeRunIds.delete(conversationId);
+    const store = useOrchestrationStore.getState();
+    const prefix = `${conversationId}\u0000`;
+    for (const key of turnContexts.keys()) {
+        if (!key.startsWith(prefix)) {
+            continue;
+        }
+        const turnId = key.slice(prefix.length);
+        turnContexts.delete(key);
+        store.clearPlan(conversationId, turnId);
+        store.clearElicitation(conversationId, turnId);
+        editorControllers.get(key)?.abort();
+        editorControllers.delete(key);
+    }
+    store.clearActiveTurn(conversationId);
 }
 
 /**
@@ -1062,6 +1117,7 @@ export function hasActiveOrchestration(conversationId: string): boolean {
 export function dismissOrchestrationTurn(conversationId: string, turnId: string): void {
     cancelOrchestration(conversationId);
     const key = scopeKey(conversationId, turnId);
+    turnContexts.delete(key);
     editorControllers.get(key)?.abort();
     editorControllers.delete(key);
     const store = useOrchestrationStore.getState();

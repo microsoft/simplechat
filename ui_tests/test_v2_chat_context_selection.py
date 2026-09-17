@@ -1,7 +1,7 @@
 # test_v2_chat_context_selection.py
 """
 Browser regressions for V2 context selection and explicitly chosen inline mentions.
-Version: 0.261.099
+Version: 0.261.113
 Implemented in: 0.261.094
 Shared editor and prompt dispatch regression coverage added in: 0.261.096
 
@@ -120,6 +120,7 @@ class ContextApi:
                             "plan_id": "context-plan",
                             "run_id": "context-run",
                             "turn_id": body["turn_id"],
+                            "conversation_id": body["conversation_id"],
                             "intent": {"summary": "Compare sources", "complexity": "simple"},
                             "steps": [
                                 {
@@ -392,6 +393,18 @@ def send_draft(page: Page, api: ContextApi, dispatch="chat"):
     if dispatch == "plan":
         assert state["plans"] == 1
     return payload
+
+
+def test_pinned_documents_do_not_force_search_in_an_analyze_plan(context_page):
+    page, api = context_page
+    mount_workflow(page, orchestration=True)
+    pick_context(page, "Quarterly brief", "Budget notes")
+    page.get_by_role("textbox", name="Message", exact=True).fill(
+        "Use Analyze on the selected documents. Explain the main risks and provide CSV and Markdown."
+    )
+    payload = send_draft(page, api, dispatch="plan")
+    assert payload["selected_document_ids"] == ["personal-brief", "personal-budget"]
+    assert "document_search" not in payload["required_capabilities"]
 
 
 def expect_context_metadata(payload, *, documents=(), tags=(), group=False, public=False):
