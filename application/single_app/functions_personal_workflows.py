@@ -44,6 +44,7 @@ from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
 from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
+from functions_workflow_runtime_store import workflow_runtime_store
 
 
 WORKFLOW_TRIGGER_TYPES = {'manual', 'interval', 'file_sync'}
@@ -62,8 +63,6 @@ WORKFLOW_TASK_INSTRUCTIONS_MAX_LENGTH = 12000
 WORKFLOW_TASK_NAME_MAX_LENGTH = 120
 WORKFLOW_TASK_RUNNER_TYPES = {'inherit', 'agent', 'model'}
 WORKFLOW_CONVERSATION_ACCESS_ERROR = 'Workflow conversation not found or access denied.'
-
-
 def _utc_now():
     return datetime.now(timezone.utc)
 
@@ -1108,6 +1107,7 @@ def is_public_workflow_run_item(item):
     private_types = (
         "workflow_result_chunk", "chat_analysis_result_chunk",
         "orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint",
+        "workflow_runtime_control",
     )
     return isinstance(item, dict) and not any(
         item.get(field) in private_types for field in ("type", "item_type")
@@ -1117,10 +1117,10 @@ def is_public_workflow_run_item(item):
 WORKFLOW_PUBLIC_RUN_ITEMS_FILTER = (
     'AND (NOT IS_DEFINED(c.type) OR c.type NOT IN '
     '("workflow_result_chunk", "chat_analysis_result_chunk", '
-    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint")) '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
     'AND (NOT IS_DEFINED(c.item_type) OR c.item_type NOT IN '
     '("workflow_result_chunk", "chat_analysis_result_chunk", '
-    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint")) '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
 )
 
 
@@ -1155,6 +1155,10 @@ def delete_personal_workflow(user_id, workflow_id):
     if not workflow:
         return False
 
+    update_workflow_runtime_record(
+        cosmos_personal_workflows_container, user_id, workflow_id,
+        {"deleting": True, "status": "deleting"}, datetime.now(timezone.utc).isoformat(),
+    )
     runs = cosmos_personal_workflow_runs_container.query_items(
         query='SELECT c.id FROM c WHERE c.user_id = @user_id AND c.workflow_id = @workflow_id',
         parameters=[{'name': '@user_id', 'value': user_id}, {'name': '@workflow_id', 'value': workflow_id}],
@@ -1162,6 +1166,7 @@ def delete_personal_workflow(user_id, workflow_id):
     )
     for run in runs:
         run_id = run.get('id')
+        workflow_runtime_store(workflow, run_id).tombstone()
         delete_workflow_run_results(workflow, run_id)
         items = cosmos_personal_workflow_run_items_container.query_items(
             query='SELECT c.id, c.type, c.item_type FROM c WHERE c.run_id = @run_id ' + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,

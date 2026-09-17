@@ -17,7 +17,7 @@ This guide starts a saved workflow, explains scheduling, and points you to the a
 
 ## Why you would use this
 
-A workflow only helps when it runs at the right moment and leaves evidence you can inspect. Manual runs are best for tests and controlled work; schedules fit routine checks that can run unattended. Do not schedule workflows that require approval before each step.
+A workflow only helps when it runs at the right moment and leaves evidence you can inspect. Manual runs are best for tests and controlled work; schedules fit routine checks. A scheduled durable run can wait for approval, but later due triggers do not overlap that waiting run.
 
 ## Before you start
 
@@ -50,6 +50,27 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
 ## Verify it worked
 
 The workflow's **Last Run** updates, and the activity view or history shows the run status and task output.
+
+## Continue a durable run
+
+With durable execution enabled in **0.261.111**, **Run** queues background work
+rather than keeping a browser request open. Open its V2 run history to inspect
+progress and run memory. Closing the page does not cancel the run.
+
+**Waiting for approval** needs an authorized decision. **Waiting for output**
+keeps the original background result reference and resumes when its supported
+final representation becomes available; a preview does not satisfy that gate.
+**Waiting for recovery** means an action might already have happened. Inspect
+the external destination before confirming a retry.
+
+Resume continues the same definition and reuses completed checkpoints. It does
+not silently pick up edited source content. Cancel and start a new run if its
+saved inputs changed. Cancelling fences further checkpoint writes but cannot
+undo an email, upload, or other completed external action.
+
+Classic workflows remain synchronous unless opted in. Classic can run and cancel
+durable definitions, but V2 provides their approval, checkpoint-resume, and
+memory controls. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md).
 
 ## Troubleshooting
 

@@ -3250,12 +3250,14 @@ function getWorkflowDisplayStatus(workflow) {
 }
 
 function isWorkflowRunActive(workflow) {
-    return isWorkflowActiveStatus(getWorkflowDisplayStatus(workflow));
+    return Boolean(normalizeText(workflow?.active_run_id))
+        || isWorkflowActiveStatus(getWorkflowDisplayStatus(workflow));
 }
 
 function isWorkflowActiveStatus(status) {
     return [
-        "running", "cancelling", "awaiting_approval", "awaiting_sharing_approval",
+        "queued", "running", "cancelling", "waiting_approval", "waiting_output",
+        "waiting_recovery", "paused", "awaiting_approval", "awaiting_sharing_approval",
         "awaiting_analysis_approval", "awaiting_run_as_approval", "awaiting_sign_in",
         "ready_to_resume", "resuming",
     ].includes(status);
@@ -4580,11 +4582,11 @@ function renderRunHistory(runs) {
         const activityUrl = buildWorkflowActivityUrl(conversationId, normalizeText(run.id), currentHistoryWorkflowId);
         const runStatus = normalizeText(run.status).toLowerCase();
         const failedWindows = Number(run.analysis_coverage?.failed_windows || 0);
-        const canResumeFailed = normalizeText(run.status).toLowerCase() === "failed" || failedWindows > 0;
+        const canResumeFailed = !run.durable_execution && (runStatus === "failed" || failedWindows > 0);
         const resumeFailedButton = canResumeFailed
             ? `<button type="button" class="btn btn-sm btn-outline-warning" data-resume-run-id="${escapeHtml(normalizeText(run.id))}"><i class="bi bi-arrow-clockwise me-1"></i>Resume failed</button>`
             : "";
-        const cancelRunButton = ["running", "cancelling"].includes(runStatus)
+        const cancelRunButton = ["queued", "running", "cancelling", "waiting_approval", "waiting_output", "waiting_recovery", "paused"].includes(runStatus)
             ? `<button type="button" class="btn btn-sm btn-outline-danger" data-cancel-run-id="${escapeHtml(normalizeText(run.id))}" ${runStatus === "cancelling" ? "disabled" : ""}><i class="bi bi-x-circle me-1"></i>${runStatus === "cancelling" ? "Cancelling" : "Cancel"}</button>`
             : "";
         const runActionButtons = `${cancelRunButton}${resumeFailedButton}`;
@@ -4787,6 +4789,8 @@ async function runWorkflow(workflow) {
         const runStatus = normalizeText(data.run?.status).toLowerCase();
         if (runStatus === "cancelled" || runStatus === "canceled") {
             showToast("Workflow run cancelled.", "info");
+        } else if (response.status === 202) {
+            showToast("Workflow queued. Open it in V2 to review durable progress and approval gates.", "info");
         } else {
             showToast(runStatus === "skipped" ? "Workflow skipped; no File Sync changes were found." : "Workflow run completed.", "success");
         }

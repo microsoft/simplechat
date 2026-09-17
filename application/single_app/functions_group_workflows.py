@@ -50,6 +50,8 @@ from functions_personal_workflows import (
     _utc_now_iso,
     compute_next_run_at,
     get_workflow_max_tasks,
+    WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
+    is_public_workflow_run_item,
 )
 from functions_settings import get_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
@@ -57,6 +59,7 @@ from functions_workflow_result_store import delete_workflow_run_results
 from functions_workflow_bindings import authorize_workflow_reference
 from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
 from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
+from functions_workflow_runtime_store import workflow_runtime_store
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
@@ -818,6 +821,10 @@ def delete_group_workflow(group_id, workflow_id):
     if not workflow:
         return False
 
+    update_workflow_runtime_record(
+        cosmos_group_workflows_container, group_id, workflow_id,
+        {"deleting": True, "status": "deleting"}, datetime.now(timezone.utc).isoformat(),
+    )
     runs = cosmos_group_workflow_runs_container.query_items(
         query='SELECT c.id FROM c WHERE c.group_id = @group_id AND c.workflow_id = @workflow_id',
         parameters=[{'name': '@group_id', 'value': group_id}, {'name': '@workflow_id', 'value': workflow_id}],
@@ -825,6 +832,7 @@ def delete_group_workflow(group_id, workflow_id):
     )
     for run in runs:
         run_id = run.get('id')
+        workflow_runtime_store(workflow, run_id).tombstone()
         delete_workflow_run_results(workflow, run_id)
         items = cosmos_group_workflow_run_items_container.query_items(
             query='SELECT c.id, c.type, c.item_type FROM c WHERE c.run_id = @run_id ' + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,

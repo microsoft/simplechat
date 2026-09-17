@@ -13,13 +13,13 @@ from jsonschema.exceptions import SchemaError
 WORKFLOW_DEFINITION_VERSION = 2
 WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json", "documents"})
 WORKFLOW_OUTPUT_KINDS = frozenset({"any", "text", "records", "json", "document_results"})
-WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract"})
+WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "output_contract", "approval"})
 WORKFLOW_DEFINITION_FIELDS = (
     "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
     "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
     "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
-    "definition_version", "reference_inputs",
+    "definition_version", "reference_inputs", "durable_execution",
 )
 SCHEMA_KEYWORDS = frozenset({
     "type", "properties", "required", "additionalProperties", "items",
@@ -249,7 +249,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     raw_tasks = payload.get("tasks", existing.get("tasks", []))
     if len(raw_tasks) != len(tasks):
         raise WorkflowDefinitionError("Task data does not match the normalized task list.")
-    has_flow = "reference_inputs" in payload or any(
+    has_flow = "reference_inputs" in payload or payload.get("durable_execution") is True or any(
         WORKFLOW_FLOW_TASK_FIELDS.intersection(task) for task in raw_tasks
     )
     if version == 1:
@@ -261,6 +261,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         payload.get("reference_inputs", existing.get("reference_inputs", [])), user_id=user_id, group_id=group_id,
     )
     reference_ids = {reference["id"] for reference in references}
+    durable = _boolean(payload.get("durable_execution", existing.get("durable_execution", False)), "Durable execution")
     normalized_tasks = []
     earlier = {}
     for task, raw in zip(tasks, raw_tasks):
@@ -274,10 +275,20 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             if set(selected_ids) - reference_ids:
                 raise WorkflowDefinitionError("A task references a shared document which is not in this workflow.")
             prepared["reference_ids"] = selected_ids
+        if raw.get("approval") is not None:
+            approval = _object(raw["approval"], {"required", "message"}, "Task approval")
+            required = _boolean(approval.get("required", False), "Task approval requirement")
+            if required and not durable:
+                raise WorkflowDefinitionError("Task approval requires durable execution.")
+            message = approval.get("message", "")
+            if not isinstance(message, str) or len(message) > 1000:
+                raise WorkflowDefinitionError("Task approval message must be text of at most 1000 characters.")
+            prepared["approval"] = {"required": required, "message": message.strip()}
         normalized_tasks.append(prepared)
         earlier[prepared["id"]] = prepared
     return {
         "definition_version": WORKFLOW_DEFINITION_VERSION,
         "reference_inputs": references,
+        "durable_execution": durable,
         "tasks": normalized_tasks,
     }

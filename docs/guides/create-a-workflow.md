@@ -51,6 +51,24 @@ draft instead of overwriting another editor's changes.
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
 
+## Durable execution and task approval
+
+Starting in **0.261.111**, new V2 workflows enable **Durable execution**.
+Existing workflows keep their previous setting until you opt in. The run saves
+its definition, completed task results, and decisions so closing the browser or
+restarting a worker does not discard progress.
+
+For a task that needs a review before execution, enable its approval requirement
+and explain what the reviewer should inspect. In run history, review the gate
+and choose whether to approve or reject it. Approval applies only to those
+specific inputs; it cannot make an invalid output valid.
+
+Run memory shows checkpoint units, attempts, and decisions. If a worker may have
+performed an external action without saving its result, a recovery gate asks you
+to check the destination before retrying. This is different from rerunning every
+task. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md)
+for readiness, recovery, and cancellation limits.
+
 ## Classic interface steps
 
 1. Open **Personal Workspace** or a **Group Workspace**.

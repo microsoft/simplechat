@@ -1,7 +1,7 @@
 # test_workflow_output_validation.py
 """
 Functional tests for deterministic workflow output requirements and outcomes.
-Version: 0.261.108
+Version: 0.261.111
 Implemented in: 0.261.108
 
 Model prose cannot prove completion. Type, schema, identity, coverage and count
@@ -38,6 +38,18 @@ def test_unconfigured_legacy_output_remains_explicitly_unvalidated():
     report = validate_workflow_task_output(envelope([{"id": "one"}]))
     assert report["status"] == "not_requested"
     assert report["eligible"] is True
+
+
+@pytest.mark.parametrize("completed,eligible", [(2, True), (1, False)])
+def test_modern_analyze_uses_final_coverage_not_ready_to_save_presentation(completed, eligible):
+    report = validate_workflow_task_output(envelope(
+        [{"id": "one"}], analysis_origin=True,
+        coverage={"progress_meta": {"phase": "ready_to_save", "status": "running"}},
+        validation={"status": "valid", "coverage": {
+            "status": "complete", "assigned_work_units": 2, "completed_work_units": completed,
+        }},
+    ))
+    assert report["eligible"] is eligible
 
 
 def test_accepting_any_output_does_not_claim_validation_occurred():

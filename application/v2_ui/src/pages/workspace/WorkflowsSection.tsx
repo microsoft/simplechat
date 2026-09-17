@@ -29,6 +29,7 @@ import {
     workflowScopeKey,
     type WorkflowDefinition,
     type WorkflowEditorOptions,
+    type WorkflowRunStartResponse,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
 
@@ -134,6 +135,37 @@ export function WorkflowsSection({
             setExpandedId(workflow.id);
             await refresh();
             setError(errorMessage(actionError, failure));
+        } finally {
+            setHistoryRefreshToken((value) => value + 1);
+            setBusyId(null);
+        }
+    };
+
+    const onRun = async (workflow: WorkflowDefinition) => {
+        if (!workflow.id) {
+            setError('This workflow has no stable identifier. Reload before trying again.');
+            return;
+        }
+        setBusyId(workflow.id);
+        setError(null);
+        setExpandedId(workflow.id);
+        try {
+            const response: WorkflowRunStartResponse = await startScopedWorkflowRun(scope, workflow.id);
+            const nextWorkflow = response.workflow
+                ? response.workflow
+                : response.run?.durable_execution === true && response.run.id
+                    ? {
+                        ...workflow,
+                        active_run_id: response.run.id,
+                        status: response.run.status ?? 'queued',
+                    }
+                    : workflow;
+            setItems(items.map((item) => item.id === workflow.id ? nextWorkflow : item));
+            await refresh();
+        } catch (actionError) {
+            setExpandedId(workflow.id);
+            await refresh();
+            setError(errorMessage(actionError, 'Could not start the workflow.'));
         } finally {
             setHistoryRefreshToken((value) => value + 1);
             setBusyId(null);
@@ -258,13 +290,7 @@ export function WorkflowsSection({
                                                 icon={<Play size={15} />}
                                                 label={`Run ${workflow.name ?? 'workflow'}`}
                                                 busy={busyId === workflow.id}
-                                                onClick={() =>
-                                                    void runAction(
-                                                        workflow,
-                                                        (id) => startScopedWorkflowRun(scope, id),
-                                                        'Could not start the workflow.',
-                                                    )
-                                                }
+                                                onClick={() => void onRun(workflow)}
                                             />
                                         )}
                                         <ConfirmAction
@@ -279,9 +305,11 @@ export function WorkflowsSection({
                             />
                             {expanded && workflowId ? (
                                 <WorkflowRunHistory
-                                    key={`${workflowId}:${historyRefreshToken}`}
+                                    key={workflowId}
                                     scope={scope}
                                     workflowId={workflowId}
+                                    refreshToken={historyRefreshToken}
+                                    onWorkflowRefresh={() => void refresh()}
                                 />
                             ) : null}
                         </div>

@@ -15,6 +15,7 @@ WORKFLOW_RUNTIME_FIELDS = frozenset({
     "status", "last_run_started_at", "last_run_at", "last_run_status", "last_run_error",
     "last_run_response_preview", "last_run_trigger_source", "run_count", "active_run_id",
     "cancellation_requested_at", "cancellation_requested_by", "next_run_at", "conversation_id", "last_run_id",
+    "active_runtime_version", "deleting",
 })
 
 
@@ -31,6 +32,8 @@ def save_workflow_definition_record(container, partition_key, workflow, existing
             current = container.read_item(item=workflow["id"], partition_key=partition_key)
         except CosmosResourceNotFoundError as exc:
             raise WorkflowDefinitionConflict("This workflow was deleted. Your draft was not saved.") from exc
+        if current.get("deleting"):
+            raise WorkflowDefinitionConflict("This workflow is being deleted. Your draft was not saved.")
         if workflow_definition_revision(current) != expected:
             raise WorkflowDefinitionConflict("This workflow changed since it was opened. Reload it before saving.")
         if workflow.get("definition_version") == 2 and current.get("active_run_id"):

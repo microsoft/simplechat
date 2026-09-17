@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.108
+Version: 0.261.111
 Implemented in: 0.261.108
 """
 
@@ -37,6 +37,7 @@ from functions_workflow_definitions import (
 
 
 WORKFLOW_ID = "workflow-v2-review"
+DURABLE_WORKFLOW_ID = "durable-approval-workflow"
 UNSUPPORTED_WORKFLOW_ID = "workflow-v3-future"
 GROUP_ID = "group-alpha"
 SECOND_GROUP_ID = "group-beta"
@@ -181,6 +182,25 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
                 active_run_id="active-run",
                 status="running",
             ),
+            DURABLE_WORKFLOW_ID: workflow_record(
+                DURABLE_WORKFLOW_ID,
+                name="Durable approval workflow",
+                durable_execution=True,
+                tasks=[
+                    {
+                        "id": "approval-task",
+                        "type": "instructions",
+                        "name": "Approval task",
+                        "instructions": "Wait for approval before running.",
+                        "order": 1,
+                        "runner": {"type": "inherit"},
+                        "approval": {
+                            "required": True,
+                            "message": "Review the checkpoint before this task starts.",
+                        },
+                    }
+                ],
+            ),
             UNSUPPORTED_WORKFLOW_ID: workflow_record(
                 UNSUPPORTED_WORKFLOW_ID,
                 definition_version=3,
@@ -199,6 +219,36 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             SECOND_GROUP_ID: {},
         }
         self.workflow_writes = []
+        self.workflow_runs = {
+            DURABLE_WORKFLOW_ID: [{
+                "id": "durable-run-1",
+                "workflow_id": DURABLE_WORKFLOW_ID,
+                "status": "waiting_approval",
+                "durable_execution": True,
+                "started_at": "2026-09-16T12:00:00Z",
+            }]
+        }
+        self.workflow_runtimes = {
+            ("user", DURABLE_WORKFLOW_ID, "durable-run-1"): self.runtime_projection(
+                state="waiting_approval",
+                version=2,
+                gate={
+                    "id": "approval-gate-1",
+                    "kind": "approval",
+                    "unit_id": "approval-task",
+                    "input_digest": "sha256:approval",
+                    "reason": "Approval is required before Approval task starts.",
+                    "choices": ["approve", "reject"],
+                },
+            )
+        }
+        self.runtime_can_decide = {("user", DURABLE_WORKFLOW_ID, "durable-run-1"): True}
+        self.runtime_get_count = {}
+        self.runtime_get_transitions = {}
+        self.stale_next_decision = False
+        self.stale_next_resume = False
+        self.fail_next_decision_status = None
+        self.fail_next_resume_status = None
         self.documents = [
             {
                 "id": "personal-brief",
@@ -236,6 +286,38 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             }
         ]
         self.fail_next_run = False
+
+    def runtime_projection(self, state="running", version=1, gate=None, can_resume=False):
+        runtime = {
+            "version": version,
+            "state": state,
+            "phase": "Task checkpoint",
+            "progress": {"completed": 1 if state.startswith("waiting") else 0, "total": 2},
+            "memory": {
+                "decisions": [],
+                "units": [
+                    {
+                        "unit_id": "collect-evidence",
+                        "state": "completed",
+                        "attempt": 1,
+                        "replay_safe": True,
+                        "output_available": True,
+                    },
+                    {
+                        "unit_id": "approval-task",
+                        "state": state,
+                        "attempt": 1,
+                        "replay_safe": False,
+                        "output_available": False,
+                    },
+                ],
+            },
+        }
+        if gate:
+            runtime["gate"] = gate
+        if can_resume:
+            runtime["can_resume"] = True
+        return runtime
 
     def _bootstrap(self):
         payload = super()._bootstrap()
@@ -330,6 +412,8 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             group_id = entry.query.get("group_id", [""])[0]
             assert group_id == GROUP_ID, entry
             self._workflow_collection(route, entry, self.group_workflows.setdefault(group_id, {}), "group", group_id)
+        elif re.fullmatch(r"/api/(user|group)/workflows/[^/]+/runs/[^/]+/runtime(?:/(?:decision|resume))?", path):
+            self._workflow_runtime(route, entry)
         elif re.fullmatch(r"/api/(user|group)/workflows/[^/]+/runs/[^/]+/tasks/[^/]+/result", path):
             self._workflow_resource(route, entry)
         elif re.fullmatch(r"/api/(user|group)/workflows/[^/]+(?:/(?:run|cancel|runs)(?:/[^/]+(?:/items)?)?)?", path):
@@ -368,6 +452,9 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             # Human-readable fixture revisions are checked above. The structural
             # contract uses the production authored-content revision algorithm.
             validation_payload["definition_revision"] = workflow_definition_revision(existing)
+        validation_payload.pop("durable_execution", None)
+        for task in validation_payload.get("tasks", []):
+            task.pop("approval", None)
         try:
             normalize_workflow_definition(
                 validation_payload, existing, validation_payload["tasks"],
@@ -397,6 +484,29 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             del workflows[workflow_id]
             self._json(route, {"success": True})
         elif entry.path.endswith("/run") and entry.method == "POST":
+            if workflows[workflow_id].get("durable_execution") is True:
+                run_id = f"{workflow_id}-run-{len(self.workflow_runs.get(workflow_id, [])) + 1}"
+                run = {
+                    "id": run_id,
+                    "workflow_id": workflow_id,
+                    "status": "queued",
+                    "durable_execution": True,
+                    "started_at": "2026-09-16T13:00:00Z",
+                }
+                runtime = self.runtime_projection(state="queued", version=1)
+                key = (scope_type, workflow_id, run_id)
+                self.workflow_runs[workflow_id] = [run, *self.workflow_runs.get(workflow_id, [])]
+                self.workflow_runtimes[key] = runtime
+                self.runtime_can_decide[key] = True
+                workflows[workflow_id]["active_run_id"] = run_id
+                workflows[workflow_id]["status"] = "queued"
+                self._json(route, {
+                    "success": True,
+                    "run": run,
+                    "workflow": workflows[workflow_id],
+                    "runtime": runtime,
+                }, 202)
+                return
             if self.fail_next_run:
                 self.fail_next_run = False
                 workflows[workflow_id]["active_run_id"] = None
@@ -410,8 +520,18 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
         elif entry.path.endswith("/cancel") and entry.method == "POST":
             workflows[workflow_id]["active_run_id"] = None
             workflows[workflow_id]["status"] = "cancelled"
+            for key, runtime in list(self.workflow_runtimes.items()):
+                if key[1] == workflow_id and runtime["state"] not in {
+                    "cancelled", "failed", "invalid", "incomplete", "completed", "completed_partial"
+                }:
+                    runtime["state"] = "cancelled"
+                    runtime["version"] += 1
+                    runtime.pop("gate", None)
             self._json(route, {"success": True})
         elif entry.path.endswith("/runs") and entry.method == "GET":
+            if workflow_id in self.workflow_runs:
+                self._json(route, {"runs": self.workflow_runs[workflow_id]})
+                return
             self._json(route, {"runs": [{
                 "id": "run-1",
                 "workflow_id": workflow_id,
@@ -522,11 +642,158 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             self.unexpected_requests.append(f"{entry.method} {entry.path}?{entry.query}")
             self._json(route, {"error": "Unsupported workflow route."}, 404)
 
+    def _workflow_runtime(self, route, entry):
+        path_parts = entry.path.split("/")
+        scope_type = path_parts[2]
+        workflow_id = path_parts[4]
+        run_id = path_parts[6]
+        if scope_type == "group":
+            assert entry.query.get("group_id") == [GROUP_ID], entry
+        key = (scope_type, workflow_id, run_id)
+        runtime = self.workflow_runtimes.get(key)
+        if runtime is None:
+            self._json(route, {"error": "runtime not found"}, 404)
+            return
+        if entry.path.endswith("/runtime") and entry.method == "GET":
+            self.runtime_get_count[key] = self.runtime_get_count.get(key, 0) + 1
+            transition = self.runtime_get_transitions.get(key)
+            if transition and self.runtime_get_count[key] >= transition["after_count"]:
+                runtime = copy.deepcopy(transition["runtime"])
+                self.workflow_runtimes[key] = runtime
+                self.runtime_get_transitions.pop(key, None)
+                for run in self.workflow_runs.get(workflow_id, []):
+                    if run["id"] == run_id:
+                        run["status"] = runtime["state"]
+            self._json(route, {
+                "runtime": copy.deepcopy(runtime),
+                "can_decide": self.runtime_can_decide.get(key, True),
+            })
+            return
+        if entry.path.endswith("/runtime/decision") and entry.method == "POST":
+            assert isinstance(entry.body, dict), entry
+            assert entry.body.get("expected_version") == runtime["version"], entry.body
+            assert re.fullmatch(
+                r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+                entry.body.get("request_id", ""),
+            ), entry.body
+            if self.fail_next_decision_status:
+                status = self.fail_next_decision_status
+                self.fail_next_decision_status = None
+                self.expected_http_errors.add((route.request.url, status))
+                self._json(route, {"error": "transient decision failure"}, status)
+                return
+            if self.stale_next_decision:
+                self.stale_next_decision = False
+                runtime["version"] += 1
+                runtime["gate"] = {
+                    "id": "approval-gate-refreshed",
+                    "kind": "approval",
+                    "unit_id": "approval-task",
+                    "input_digest": "sha256:refreshed",
+                    "reason": "Approval is still required for the refreshed gate.",
+                    "choices": ["approve", "reject"],
+                }
+                self.expected_http_errors.add((route.request.url, 409))
+                self._json(route, {"error": "stale runtime gate"}, 409)
+                return
+            choice = entry.body["choice"]
+            runtime["version"] += 1
+            runtime.setdefault("memory", {}).setdefault("decisions", []).append({
+                "unit_id": runtime.get("gate", {}).get("unit_id", "approval-task"),
+                "choice": choice,
+                "actor_user_id": OWNER_ID,
+                "decided_at": "2026-09-16T13:01:00Z",
+                "input_digest": runtime.get("gate", {}).get("input_digest"),
+                "attempt": 1,
+            })
+            runtime.pop("gate", None)
+            runtime["state"] = "queued" if choice in {"approve", "retry", "resume"} else "cancelled"
+            for run in self.workflow_runs.get(workflow_id, []):
+                if run["id"] == run_id:
+                    run["status"] = runtime["state"]
+            self._json(route, {
+                "runtime": copy.deepcopy(runtime),
+                "can_decide": self.runtime_can_decide.get(key, True),
+            })
+            return
+        if entry.path.endswith("/runtime/resume") and entry.method == "POST":
+            assert isinstance(entry.body, dict), entry
+            assert entry.body.get("expected_version") == runtime["version"], entry.body
+            if self.fail_next_resume_status:
+                status = self.fail_next_resume_status
+                self.fail_next_resume_status = None
+                self.expected_http_errors.add((route.request.url, status))
+                self._json(route, {"error": "resume rejected"}, status)
+                return
+            if self.stale_next_resume:
+                self.stale_next_resume = False
+                runtime["version"] += 1
+                runtime["state"] = "failed"
+                runtime["can_resume"] = True
+                runtime["phase"] = "Recovered checkpoint review"
+                runtime["gate"] = {
+                    "id": "resume-review-gate",
+                    "kind": "recovery",
+                    "unit_id": "approval-task",
+                    "input_digest": "sha256:resume-refresh",
+                    "reason": "Review the refreshed checkpoint before resuming.",
+                    "choices": ["retry", "cancel"],
+                }
+                self.expected_http_errors.add((route.request.url, 409))
+                self._json(route, {"error": "stale runtime resume"}, 409)
+                return
+            runtime["version"] += 1
+            runtime["state"] = "queued"
+            runtime.pop("gate", None)
+            for run in self.workflow_runs.get(workflow_id, []):
+                if run["id"] == run_id:
+                    run["status"] = "queued"
+            self._json(route, {
+                "runtime": copy.deepcopy(runtime),
+                "can_decide": self.runtime_can_decide.get(key, True),
+            })
+            return
+        self.unexpected_requests.append(f"{entry.method} {entry.path}?{entry.query}")
+        self._json(route, {"error": "Unsupported runtime route."}, 404)
+
     def mutate_revision(self, workflow_id=WORKFLOW_ID):
         self.personal_workflows[workflow_id]["definition_revision"] = "revision:external-change"
 
     def fail_next_workflow_run(self):
         self.fail_next_run = True
+
+    def set_runtime(self, workflow_id, run_id, runtime, can_decide=True, scope_type="user"):
+        key = (scope_type, workflow_id, run_id)
+        self.workflow_runs[workflow_id] = [{
+            "id": run_id,
+            "workflow_id": workflow_id,
+            "status": runtime["state"],
+            "durable_execution": True,
+            "started_at": "2026-09-16T12:00:00Z",
+        }]
+        self.workflow_runtimes[key] = copy.deepcopy(runtime)
+        self.runtime_can_decide[key] = can_decide
+        self.runtime_get_count[key] = 0
+        self.runtime_get_transitions.pop(key, None)
+
+    def transition_runtime_on_get(self, workflow_id, run_id, after_count, runtime, scope_type="user"):
+        key = (scope_type, workflow_id, run_id)
+        self.runtime_get_transitions[key] = {
+            "after_count": after_count,
+            "runtime": copy.deepcopy(runtime),
+        }
+
+    def stale_next_runtime_decision(self):
+        self.stale_next_decision = True
+
+    def fail_next_runtime_decision(self, status=503):
+        self.fail_next_decision_status = status
+
+    def stale_next_runtime_resume(self):
+        self.stale_next_resume = True
+
+    def fail_next_runtime_resume(self, status=503):
+        self.fail_next_resume_status = status
 
 
 @pytest.fixture
