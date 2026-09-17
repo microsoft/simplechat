@@ -2,7 +2,7 @@
 # test_workflow_task_document_actions.py
 """
 Functional test for per-task workflow workspace documents and the document picker fix.
-Version: 0.261.106
+Version: 0.261.111
 Implemented in: 0.250.225
 
 This test ensures that:
@@ -515,8 +515,11 @@ def test_task_document_action_failures_stay_inside_the_retry_loop() -> None:
     print("Testing task document action failure containment...")
     runner_source = read_text(RUNNER_FILE)
 
-    sequence_start = runner_source.index("def _execute_workflow_task_sequence(")
-    sequence_body = runner_source[sequence_start:sequence_start + 6000]
+    sequence_node = next(
+        node for node in ast.parse(runner_source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_execute_workflow_task_sequence"
+    )
+    sequence_body = ast.get_source_segment(runner_source, sequence_node)
     attempt_loop_index = sequence_body.index("for attempt_index in range(retry_count + 1):")
     build_index = sequence_body.index("attempt_workflow = _build_workflow_task_execution_workflow(")
     try_index = sequence_body.index("try:", attempt_loop_index)

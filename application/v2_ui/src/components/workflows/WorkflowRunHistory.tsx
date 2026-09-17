@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileJson, Loader2 } from 'lucide-react';
+import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
 import { useSectionResource } from '../workspace/useSectionResource';
@@ -13,6 +14,7 @@ import {
     type WorkflowInputOutput,
     type WorkflowRunItem,
     type WorkflowRunResultPage,
+    type WorkflowRunSummary,
     type WorkflowScope,
 } from '../../lib/workflowEditor';
 
@@ -21,13 +23,18 @@ function statusTone(status: unknown): 'ok' | 'warn' | 'danger' | 'neutral' {
     if (['completed', 'succeeded', 'success', 'finished'].includes(value)) {
         return 'ok';
     }
-    if (['running', 'queued', 'pending', 'in_progress', 'started', 'completed_partial'].includes(value)) {
+    if (['running', 'queued', 'pending', 'in_progress', 'started', 'completed_partial', 'waiting_approval', 'waiting_output', 'waiting_recovery', 'paused', 'cancelling'].includes(value)) {
         return 'warn';
     }
-    if (['failed', 'error', 'cancelled', 'canceled', 'incomplete'].includes(value)) {
+    if (['failed', 'error', 'cancelled', 'canceled', 'incomplete', 'invalid'].includes(value)) {
         return 'danger';
     }
     return 'neutral';
+}
+
+function isTerminalStatus(status: unknown): boolean {
+    const value = String(status ?? '').toLowerCase();
+    return ['completed', 'succeeded', 'success', 'finished', 'failed', 'error', 'cancelled', 'canceled', 'incomplete', 'invalid', 'completed_partial'].includes(value);
 }
 
 function formatTimestamp(value: unknown): string {
@@ -287,16 +294,35 @@ function RunItems({
 export function WorkflowRunHistory({
     scope,
     workflowId,
+    refreshToken = 0,
+    onWorkflowRefresh,
 }: {
     scope: WorkflowScope;
     workflowId: string;
+    refreshToken?: number;
+    onWorkflowRefresh?: () => void;
 }) {
-    const { items, loading, error } = useSectionResource<Record<string, unknown>>(
+    const { items, loading, error, refresh } = useSectionResource<WorkflowRunSummary>(
         (signal) => fetchScopedWorkflowRuns(scope, workflowId, signal),
         'Failed to load run history.',
     );
     const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
     const shown = useMemo(() => items.slice(0, 10), [items]);
+
+    useEffect(() => {
+        if (refreshToken > 0) {
+            void refresh();
+        }
+    }, [refresh, refreshToken]);
+
+    useEffect(() => {
+        const shouldPoll = shown.some((run) => run.durable_execution === true && !isTerminalStatus(run.status));
+        if (!shouldPoll) {
+            return undefined;
+        }
+        const timer = window.setTimeout(() => void refresh(), 2500);
+        return () => window.clearTimeout(timer);
+    }, [refresh, shown]);
 
     if (loading) {
         return <p role="status" className="px-3 pb-3 text-xs text-text-3">Loading runs…</p>;
@@ -333,7 +359,21 @@ export function WorkflowRunHistory({
                             <span>Validation:</span>
                             <Pill tone={validationTone(run.workflow_validation)}>{validation}</Pill>
                         </p> : null}
-                        {expanded ? <RunItems scope={scope} workflowId={workflowId} runId={runId} /> : null}
+                        {expanded ? (
+                            <>
+                                <WorkflowRuntimePanel
+                                    scope={scope}
+                                    workflowId={workflowId}
+                                    runId={runId}
+                                    durable={run.durable_execution === true}
+                                    onRuntimeChanged={() => {
+                                        void refresh();
+                                        onWorkflowRefresh?.();
+                                    }}
+                                />
+                                <RunItems scope={scope} workflowId={workflowId} runId={runId} />
+                            </>
+                        ) : null}
                     </li>
                 );
             })}

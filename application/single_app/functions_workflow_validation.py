@@ -55,7 +55,7 @@ def workflow_coverage_status(coverage):
         return "incomplete"
     for field in (
         "failed_windows", "failed_chunks", "failed_documents", "failed_count",
-        "missing_count", "missing_document_count", "unprocessed_count",
+        "missing_count", "missing_document_count", "unprocessed_count", "failed_work_units", "pending_work_units",
     ):
         value = coverage.get(field)
         if value is not None and not (
@@ -67,6 +67,8 @@ def workflow_coverage_status(coverage):
         ("total_windows", "processed_windows"),
         ("total_chunks", "processed_chunks"),
         ("expected_count", "processed_count"),
+        ("assigned_sources", "completed_sources"),
+        ("assigned_work_units", "completed_work_units"),
     ):
         total, processed = coverage.get(total_key), coverage.get(processed_key)
         if total_key not in coverage and processed_key not in coverage:
@@ -100,7 +102,12 @@ def validate_workflow_task_output(envelope, contract=None):
         incomplete.append("producer_coverage_incomplete")
     elif producer_validation.get("valid") is False:
         reasons.append("producer_validation_failed")
-    coverage_state = workflow_coverage_status(envelope.get("coverage"))
+    coverage = envelope.get("coverage")
+    if envelope.get("analysis_origin") is True and isinstance(producer_validation.get("coverage"), Mapping):
+        # Finalized Analyze coverage is authoritative; its presentation progress
+        # can still be at ready_to_save while these validation counts are final.
+        coverage = producer_validation["coverage"]
+    coverage_state = workflow_coverage_status(coverage)
     if coverage_state == "incomplete":
         incomplete.append("producer_coverage_incomplete")
     elif coverage_state == "pending":

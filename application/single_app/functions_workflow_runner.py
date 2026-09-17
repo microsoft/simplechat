@@ -208,6 +208,19 @@ from functions_workflow_validation import (
     workflow_output_contract_instruction,
     workflow_run_outcome,
 )
+from functions_workflow_execution import (
+    WorkflowSuspended,
+    assert_workflow_execution_owned,
+    current_workflow_execution,
+    workflow_checkpoint_scope_guard,
+    workflow_unit,
+)
+from functions_workflow_readiness import (
+    WorkflowOutputUnavailable,
+    pending_workflow_output_references,
+    reconcile_workflow_pending_output,
+)
+from functions_workflow_runtime_store import WorkflowRuntimeConflict
 from functions_workflow_results import (
     WorkflowResultNotReadyError,
     authorize_workflow_task_result_read,
@@ -338,13 +351,19 @@ def _is_authorized_workflow_conversation(conversation, workflow):
 
 
 def _save_workflow_run_record(workflow, run_record):
+    assert_workflow_execution_owned()
     run_record = _preserve_workflow_run_cancellation_request(workflow, run_record)
+    workflow_checkpoint_scope_guard(run_record)
     if _get_workflow_scope(workflow) == 'group':
         return save_group_workflow_run(_get_workflow_group_id(workflow), run_record)
     return save_personal_workflow_run(str((workflow or {}).get('user_id') or '').strip(), run_record)
 
 
 def _save_workflow_run_item_record(workflow, item_record):
+    assert_workflow_execution_owned()
+    execution = current_workflow_execution()
+    if execution is not None:
+        return execution.store.write_record(execution.lease.token, item_record)
     if _get_workflow_scope(workflow) == 'group':
         return save_group_workflow_run_item(_get_workflow_group_id(workflow), item_record)
     return save_personal_workflow_run_item(str((workflow or {}).get('user_id') or '').strip(), item_record)
@@ -386,6 +405,12 @@ def _has_workflow_run_cancellation_request(run_record):
 
 
 def _is_workflow_run_cancellation_requested(workflow, run_id):
+    execution = current_workflow_execution()
+    if execution is not None:
+        try:
+            execution.check()
+        except WorkflowRuntimeConflict:
+            return True
     normalized_run_id = str(run_id or '').strip()
     if not normalized_run_id:
         return False
@@ -397,6 +422,8 @@ def _is_workflow_run_cancellation_requested(workflow, run_id):
     runtime_workflow = _get_current_workflow_runtime(workflow)
     if not isinstance(runtime_workflow, dict):
         return False
+    if runtime_workflow.get('deleting'):
+        return True
 
     return (
         str(runtime_workflow.get('active_run_id') or '').strip() == normalized_run_id
@@ -408,6 +435,7 @@ def _is_workflow_run_cancellation_requested(workflow, run_id):
 
 
 def _raise_if_workflow_run_cancelled(workflow, run_id):
+    assert_workflow_execution_owned()
     if _is_workflow_run_cancellation_requested(workflow, run_id):
         raise WorkflowRunCancelledError(WORKFLOW_RUN_CANCELLED_MESSAGE)
 
@@ -5842,7 +5870,20 @@ def _ensure_workflow_conversation(workflow):
         except CosmosResourceNotFoundError:
             pass
 
-    conversation_id = str(uuid.uuid4())
+    execution = current_workflow_execution()
+    conversation_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f"workflow-conversation:{workflow.get('id')}:{execution.run_id}"))
+        if execution is not None else str(uuid.uuid4())
+    )
+    if execution is not None:
+        try:
+            existing = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
+        except CosmosResourceNotFoundError:
+            existing = None
+        if existing is not None:
+            if not _is_authorized_workflow_conversation(existing, workflow):
+                raise PermissionError(WORKFLOW_CONVERSATION_ACCESS_ERROR)
+            return existing
     conversation = {
         'id': conversation_id,
         'user_id': user_id,
@@ -5891,9 +5932,22 @@ def _get_latest_thread_id(conversation_id):
 
 
 def _create_user_message(conversation_id, workflow, trigger_source, run_id):
+    execution = current_workflow_execution()
+    message_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-user:{run_id}'))
+        if execution is not None else str(uuid.uuid4())
+    )
+    if execution is not None:
+        try:
+            existing = cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+        except CosmosResourceNotFoundError:
+            existing = None
+        if existing is not None:
+            if (existing.get('metadata', {}).get('workflow') or {}).get('run_id') != run_id:
+                raise ValueError('Workflow message identity does not match the run.')
+            return existing
     previous_thread_id = _get_latest_thread_id(conversation_id)
     current_thread_id = str(uuid.uuid4())
-    message_id = str(uuid.uuid4())
     document_action = _get_document_action_config(workflow)
     metadata = {
         'source': 'workflow',
@@ -5933,7 +5987,11 @@ def _create_user_message(conversation_id, workflow, trigger_source, run_id):
 
 
 def _initialize_workflow_assistant_tracking(conversation_id, user_id, user_message_doc):
-    assistant_message_id = str(uuid.uuid4())
+    execution = current_workflow_execution()
+    assistant_message_id = (
+        str(uuid.uuid5(uuid.NAMESPACE_URL, f'workflow-assistant:{execution.run_id}'))
+        if execution is not None else str(uuid.uuid4())
+    )
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
     thought_tracker = ThoughtTracker(
         conversation_id=conversation_id,
@@ -6138,6 +6196,7 @@ def _maybe_create_workflow_assistant_table_generated_output(*args, **kwargs):
 
 
 def _create_assistant_message(conversation, workflow, result, trigger_source, run_id, user_message_doc, assistant_message_id=None):
+    assert_workflow_execution_owned()
     assistant_message_id = assistant_message_id or str(uuid.uuid4())
     timestamp = _utc_now_iso()
     user_thread_info = (user_message_doc.get('metadata') or {}).get('thread_info') or {}
@@ -9962,6 +10021,7 @@ def _execute_workflow_dispatch(
     url_access_context,
     file_sync_result=None,
 ):
+    prior_signal_count = len(get_workflow_alert_signals()) if current_workflow_execution() is not None else 0
     if execution_workflow.get('_saved_analysis_inputs'):
         output_format = saved_analysis_format_request(execution_workflow.get('task_prompt'))
         if output_format:
@@ -10047,6 +10107,9 @@ def _execute_workflow_dispatch(
         )
         execution_result = _attach_workflow_search_context(execution_result, workflow_search_context)
 
+    if current_workflow_execution() is not None:
+        execution_result['_durable_context_budget'] = dict(execution_workflow.get('context_budget') or {})
+        execution_result['agent_alert_signals'] = get_workflow_alert_signals()[prior_signal_count:]
     return execution_result
 
 
@@ -10108,6 +10171,7 @@ def _merge_workflow_task_execution_results(task_results):
         'generated_analysis_artifacts',
         'generated_tabular_outputs',
         'alert_targets',
+        'agent_alert_signals',
     ):
         merged_result[field] = [
             value
@@ -10126,6 +10190,8 @@ def _prepare_workflow_analysis_checkpoints(workflow, run_id, task_id, actor_user
     from functions_document_analysis_checkpoints import analysis_checkpoints_for_workflow
 
     def authorize():
+        if durable is not None:
+            durable.check()
         current = _get_current_workflow_runtime(workflow)
         run = _get_workflow_run_record(workflow, run_id)
         if (
@@ -10142,8 +10208,14 @@ def _prepare_workflow_analysis_checkpoints(workflow, run_id, task_id, actor_user
         _raise_if_workflow_run_cancelled(workflow, run_id)
         return True
 
+    durable = current_workflow_execution()
+    options = {}
+    if durable is not None:
+        token_record = durable.cache(f'analysis-token:{task_id}', {'token': uuid.uuid4().hex})
+        options['attempt_token'] = token_record['token']
+        options['recover_running_unit'] = lambda: durable.may_recover_analysis_unit(task_id)
     checkpoints = analysis_checkpoints_for_workflow(
-        workflow, run_id, task_id, user_id=actor_user_id, authorize=authorize, settings=settings,
+        workflow, run_id, task_id, user_id=actor_user_id, authorize=authorize, settings=settings, **options,
     )
     checkpoints.prepare()
     return checkpoints
@@ -10173,6 +10245,14 @@ def _execute_workflow_task_sequence(
     reference_cache = {}
     actor_id = str(actor_user_id or workflow.get('user_id') or '')
     advanced_definition = workflow.get('definition_version') == 2
+    durable = current_workflow_execution()
+    if durable is not None:
+        reference_cache = durable.snapshot('shared_references') or {}
+        control = durable.check()
+        durable._update(control, {'progress': {
+            'completed': int((control.get('progress') or {}).get('completed') or 0),
+            'total': len(tasks),
+        }})
     if advanced_definition:
         all_reference_ids = {reference['id'] for reference in workflow.get('reference_inputs') or []}
         used_reference_ids = set()
@@ -10183,7 +10263,10 @@ def _execute_workflow_task_sequence(
             if reference['id'] in used_reference_ids:
                 reference_cache[reference['id']] = load_workflow_reference(
                     workflow, reference, actor_user_id=actor_id,
+                    snapshot=reference_cache.get(reference['id']),
                 )
+        if durable is not None:
+            durable.cache('shared_references', reference_cache)
 
     def raise_if_cancelled():
         cancel_check = globals().get('_raise_if_workflow_run_cancelled')
@@ -10196,6 +10279,24 @@ def _execute_workflow_task_sequence(
         task['order'] = task_index + 1
         task_id = str(task.get('id') or f'task-{task_index + 1}').strip()
         task['id'] = task_id
+        task_unit_key = f'task:{task_id}'
+        if durable is not None:
+            checkpoint = durable.snapshot(f'task-result:{task_id}')
+            if checkpoint is not None:
+                saved_result = checkpoint['result']
+                summary = saved_result['workflow_result']
+                authorize_workflow_task_result_read(
+                    workflow, run_id, task_id, summary['result_ref'], reader_user_id=actor_id,
+                )
+                task_results.append(checkpoint)
+                completed_results[task_id] = {
+                    'run_id': run_id, 'result_ref': summary['result_ref'],
+                    'outputs': summary['outputs'],
+                    'workflow_validation': saved_result['workflow_validation'],
+                }
+                previous_result_ref = summary['result_ref']
+                previous_task_id = task_id
+                continue
         created_at = _utc_now_iso()
         runner_audit = {
             'requested_mode': _get_workflow_task_requested_runner_mode(task),
@@ -10233,10 +10334,17 @@ def _execute_workflow_task_sequence(
             try:
                 if task.get('publication') is not None:
                     task_stage = 'publication'
-                    task_result, consumed_inputs = _execute_workflow_analysis_publication(
-                        workflow, run_id, task, previous_task_id, previous_result_ref,
-                        actor_user_id=actor_user_id,
+                    task_result, consumed_inputs = workflow_unit(
+                        task_unit_key,
+                        lambda: _execute_workflow_analysis_publication(
+                            workflow, run_id, task, previous_task_id, previous_result_ref,
+                            actor_user_id=actor_user_id,
+                        ),
+                        inputs={'task': task, 'producer_task_id': previous_task_id, 'result_ref': previous_result_ref},
+                        approval=task.get('approval'),
                     )
+                    if durable is not None:
+                        attempt_count = durable.check()['units'][task_unit_key]['attempt']
                     attempt_workflow = {**workflow, 'consumed_inputs': consumed_inputs}
                     runner_audit = {'requested_mode': 'publication', 'resolved_type': 'publication'}
                     task_error = ''
@@ -10330,16 +10438,30 @@ def _execute_workflow_task_sequence(
                     consumed_inputs=consumed_inputs,
                 )
                 task_stage = 'execution'
+                operation_inputs = {
+                    'task': task, 'prompt': attempt_workflow['task_prompt'],
+                    'consumed_inputs': consumed_inputs, 'references': reference_sources,
+                    'runner': runner_audit,
+                }
+                replay_safe = (
+                    attempt_workflow.get('runner_type') == 'model'
+                    and not attempt_workflow.get('chat_capabilities_enabled')
+                    and (attempt_workflow.get('document_action') or {}).get('type') in {None, 'none'}
+                )
                 with workflow_context_budget_scope(attempt_workflow):
-                    task_result = _execute_workflow_dispatch(
-                        attempt_workflow,
-                        settings,
-                        conversation_id,
-                        run_id,
-                        thought_tracker,
-                        {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
-                        file_sync_result=file_sync_result,
+                    task_result = workflow_unit(
+                        task_unit_key,
+                        lambda: _execute_workflow_dispatch(
+                            attempt_workflow, settings, conversation_id, run_id,
+                            thought_tracker, {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
+                            file_sync_result=file_sync_result,
+                        ),
+                        inputs=operation_inputs, replay_safe=replay_safe,
+                        approval=task.get('approval'),
                     )
+                if durable is not None:
+                    saved_unit = (durable.check().get('units') or {}).get(task_unit_key) or {}
+                    attempt_count = int(saved_unit.get('attempt') or attempt_count)
                 raise_if_workflow_context_blocked(attempt_workflow)
                 task_error = ''
                 runner_audit = dict(runner_audit)
@@ -10351,6 +10473,7 @@ def _execute_workflow_task_sequence(
                     runner_audit['provider'] = provider
                 break
             except Exception as exc:
+                assert_workflow_execution_owned()
                 task_result = None
                 blocked_audit = ((attempt_workflow or {}).get('context_budget') or {}).get('blocked_request')
                 safe_error = WorkflowContextBudgetError(blocked_audit) if blocked_audit else exc
@@ -10396,7 +10519,9 @@ def _execute_workflow_task_sequence(
         if task_result is not None:
             # Persistence is outside the invocation retry loop: a failed write
             # must not replay an otherwise successful agent's external actions.
-            context_budget = dict((attempt_workflow or {}).get('context_budget') or {})
+            context_budget = dict(
+                (attempt_workflow or {}).get('context_budget') or task_result.get('_durable_context_budget') or {}
+            )
             consumed_inputs = (attempt_workflow or {}).get('consumed_inputs') or []
             result_summary = None
             try:
@@ -10408,6 +10533,37 @@ def _execute_workflow_task_sequence(
                     task_result, workflow=workflow, run_id=run_id, task=task,
                     attempt_count=attempt_count,
                 )
+                if durable is not None and envelope['execution']['status'] == 'pending':
+                    try:
+                        refreshed = reconcile_workflow_pending_output(
+                            attempt_workflow, task_result, conversation_id=conversation_id,
+                            actor_user_id=actor_id, run_id=run_id,
+                        )
+                    except WorkflowOutputUnavailable as exc:
+                        durable.store.wait(durable.lease.token, state='paused', gate={
+                            'id': uuid.uuid4().hex, 'kind': 'pause', 'unit_id': task_unit_key,
+                            'input_digest': (durable.check().get('units') or {}).get(task_unit_key, {}).get('input_digest', ''),
+                            'reason': str(exc), 'choices': ['cancel'],
+                        })
+                        raise WorkflowSuspended('paused') from exc
+                    if refreshed is None:
+                        envelope['context_budget'] = context_budget
+                        envelope['consumed_inputs'] = consumed_inputs
+                        pending_manifest, pending_ref = persist_workflow_task_result(
+                            envelope, workflow=workflow, run_id=run_id, task_id=task_id, settings=settings,
+                        )
+                        _save_workflow_task_run_item(
+                            workflow, run_id, task, 'waiting_output', attempt_count=attempt_count,
+                            created_at=created_at, runner_audit=runner_audit,
+                            result_summary=workflow_result_summary(pending_manifest, pending_ref),
+                            consumed_inputs=consumed_inputs, context_budget=context_budget,
+                        )
+                        durable.wait_for_output(task_unit_key, pending_workflow_output_references(task_result))
+                    task_result = refreshed
+                    durable.replace_unit_result(task_unit_key, task_result)
+                    envelope = build_workflow_task_result(
+                        task_result, workflow=workflow, run_id=run_id, task=task, attempt_count=attempt_count,
+                    )
                 envelope['context_budget'] = context_budget
                 envelope['consumed_inputs'] = consumed_inputs
                 envelope['definition_revision'] = workflow.get('definition_revision')
@@ -10500,6 +10656,8 @@ def _execute_workflow_task_sequence(
                 'runner': runner_audit,
                 'consumed_inputs': consumed_inputs,
             })
+            if durable is not None and validation['eligible']:
+                durable.cache(f'task-result:{task_id}', task_results[-1])
             if thought_tracker and run_id:
                 _add_workflow_activity_thought(
                     thought_tracker,
@@ -10517,11 +10675,23 @@ def _execute_workflow_task_sequence(
                 'run_id': run_id, 'result_ref': result_ref, 'outputs': manifest['outputs'],
                 'workflow_validation': validation,
             }
+            if durable is not None:
+                control = durable.check()
+                durable._update(control, {'progress': {
+                    'completed': max(
+                        int((control.get('progress') or {}).get('completed') or 0),
+                        sum(item.get('workflow_validation', {}).get('eligible', False) for item in completed_results.values()),
+                    ),
+                    'total': len(tasks),
+                }})
             if validation['eligible']:
                 previous_result_ref = result_ref
                 previous_task_id = task_id
-            elif error_strategy != 'continue':
-                break
+            else:
+                if durable is not None:
+                    durable.invalidate_task(task_unit_key)
+                if error_strategy != 'continue':
+                    break
             continue
 
         _save_workflow_task_run_item(
@@ -10751,6 +10921,8 @@ def _finalize_cancelled_workflow_run(
 def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, actor_user_id=None, run_id=None):
     """Execute a workflow and persist a run record."""
     workflow = workflow if isinstance(workflow, dict) else {}
+    if workflow.get('durable_execution') is True and current_workflow_execution() is None:
+        raise ValueError('Durable workflows must be submitted to the background run queue.')
     resolved_run_id = str(run_id or create_workflow_run_id())
     execution_actor_id = str(actor_user_id or workflow.get('user_id') or '').strip()
     identity = capture_execution_identity(execution_actor_id)
@@ -10774,6 +10946,7 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
     run_id = str(run_id or create_workflow_run_id())
     started_at = _utc_now_iso()
     settings = get_settings()
+    durable = current_workflow_execution()
 
     run_record = {
         'id': run_id,
@@ -10796,6 +10969,18 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
         'cancellation_requested_at': None,
         'cancellation_requested_by': '',
     }
+    if durable is not None:
+        control = durable.check()
+        existing_progress = (
+            durable.load_result(
+                workflow, run_id, 'runtime:run-record', control['run_record_ref'],
+            )['run_record'] if control.get('run_record_ref') else control.get('run_record') or {}
+        )
+        if not existing_progress:
+            existing_progress = _get_workflow_run_record(workflow, run_id) or {}
+        run_record.update(existing_progress)
+        run_record.update(durable_execution=True, status='running', completed_at=None)
+        started_at = run_record['started_at']
     _save_workflow_run_record(workflow, run_record)
 
     conversation = None
@@ -10807,7 +10992,12 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
         file_sync_result = _execute_cancelable_workflow_step(
             workflow,
             run_id,
-            lambda: _execute_workflow_file_sync(workflow, run_id, trigger_source),
+            lambda: workflow_unit(
+                'file_sync',
+                lambda: _execute_workflow_file_sync(workflow, run_id, trigger_source),
+                inputs={'file_sync': workflow.get('file_sync') or {}},
+                replay_safe=not (workflow.get('file_sync') or {}).get('enabled'),
+            ),
         )
         if file_sync_result and file_sync_result.get('enabled'):
             run_record['file_sync'] = file_sync_result
@@ -10860,10 +11050,19 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
             execution_workflow = _apply_file_sync_context_to_workflow(workflow, file_sync_result)
 
         _raise_if_workflow_run_cancelled(workflow, run_id)
-        conversation = _ensure_workflow_conversation(execution_workflow)
+        conversation = workflow_unit(
+            'conversation', lambda: _ensure_workflow_conversation(execution_workflow),
+            inputs={'workflow_id': workflow_id}, replay_safe=True,
+        )
+        if durable is not None:
+            conversation = _ensure_workflow_conversation({**execution_workflow, 'conversation_id': conversation['id']})
         run_record['conversation_id'] = conversation.get('id')
         _raise_if_workflow_run_cancelled(workflow, run_id)
-        user_message_doc = _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id)
+        user_message_doc = workflow_unit(
+            'user_message',
+            lambda: _create_user_message(conversation.get('id'), execution_workflow, trigger_source, run_id),
+            inputs={'conversation_id': conversation['id']}, replay_safe=True,
+        )
         _raise_if_workflow_run_cancelled(workflow, run_id)
         assistant_message_id, thought_tracker = _initialize_workflow_assistant_tracking(
             conversation.get('id'),
@@ -10898,13 +11097,13 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
         url_access_context = _execute_cancelable_workflow_step(
             execution_workflow,
             run_id,
-            lambda: _prepare_workflow_url_access_context(
-                url_access_workflow,
-                settings,
-                conversation.get('id'),
-                run_id,
-                thought_tracker=thought_tracker,
-                user_roles=user_roles,
+            lambda: workflow_unit(
+                'url_context',
+                lambda: _prepare_workflow_url_access_context(
+                    url_access_workflow, settings, conversation.get('id'), run_id,
+                    thought_tracker=thought_tracker, user_roles=user_roles,
+                ),
+                inputs={'enabled': _workflow_url_access_enabled(workflow)}, replay_safe=True,
             ),
         )
         conversation_id = str(conversation.get('id') or '')
@@ -10938,21 +11137,27 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
         )
 
         _raise_if_workflow_run_cancelled(execution_workflow, run_id)
-        assistant_doc = _create_assistant_message(
-            conversation,
-            execution_workflow,
-            execution_result,
-            trigger_source,
-            run_id,
-            user_message_doc,
-            assistant_message_id=assistant_message_id,
-        )
-        _raise_if_workflow_run_cancelled(execution_workflow, run_id)
-        _mirror_workflow_visualizations_to_created_conversations(
-            execution_workflow,
-            assistant_doc,
-            execution_result,
-        )
+        if durable is not None and not outcome['success']:
+            # Failed durable attempts remain visible in task history; do not
+            # cache a provisional message as the final answer before a retry.
+            assistant_doc = {'id': assistant_message_id}
+        else:
+            assistant_doc = workflow_unit(
+                'assistant_message',
+                lambda: _create_assistant_message(
+                    conversation, execution_workflow, execution_result, trigger_source, run_id,
+                    user_message_doc, assistant_message_id=assistant_message_id,
+                ),
+                inputs={'assistant_message_id': assistant_message_id}, replay_safe=False,
+            )
+            _raise_if_workflow_run_cancelled(execution_workflow, run_id)
+            workflow_unit(
+                'mirror_outputs',
+                lambda: {'result': _mirror_workflow_visualizations_to_created_conversations(
+                    execution_workflow, assistant_doc, execution_result,
+                )},
+                inputs={'assistant_message_id': assistant_message_id}, replay_safe=False,
+            )
         _raise_if_workflow_run_cancelled(execution_workflow, run_id)
 
         _add_workflow_activity_thought(
@@ -11007,12 +11212,13 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
         alert_notification = _execute_cancelable_workflow_step(
             execution_workflow,
             run_id,
-            lambda: _create_workflow_priority_alert(
-                execution_workflow,
-                run_record,
-                conversation,
-                execution_result=execution_result,
-                settings=settings,
+            lambda: workflow_unit(
+                f'notification:{outcome["status"]}',
+                lambda: _create_workflow_priority_alert(
+                    execution_workflow, run_record, conversation,
+                    execution_result=execution_result, settings=settings,
+                ),
+                inputs={'run_id': run_id}, replay_safe=False,
             ),
         )
 
@@ -11116,11 +11322,12 @@ def _run_personal_workflow_impl(workflow, trigger_source='manual', user_roles=No
             level=logging.ERROR,
             exceptionTraceback=True,
         )
-        alert_notification = _create_workflow_priority_alert(
-            execution_workflow,
-            run_record,
-            conversation,
-            settings=settings,
+        alert_notification = workflow_unit(
+            'notification:failed',
+            lambda: _create_workflow_priority_alert(
+                execution_workflow, run_record, conversation, settings=settings,
+            ),
+            inputs={'run_id': run_id}, replay_safe=False,
         )
         return {
             'success': False,

@@ -43,6 +43,7 @@ from azure.cosmos import exceptions as cosmos_exceptions
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from azure.storage.blob import ContentSettings
 
+from functions_workflow_runtime_store import WorkflowRuntimeConflict
 
 STORAGE_SCHEMA_VERSION = 1
 RESULT_RECORD_TYPE = "workflow_result_chunk"
@@ -293,6 +294,24 @@ def _quota_bytes(settings):
     return _positive_integer(value, "Generated artifact size limit in MB") * 1024 * 1024
 
 
+def _active_workflow_execution():
+    # The runtime imports this storage leaf; resolve the request-local owner only
+    # at an I/O boundary to avoid a module cycle and preserve ordinary chat use.
+    from functions_workflow_execution import current_workflow_execution
+
+    return current_workflow_execution()
+
+
+def _workflow_execution_guard(identity, execution=None):
+    execution = execution or _active_workflow_execution()
+    if execution is None or "workflow_id" not in identity:
+        return None
+    if execution.workflow["id"] != identity["workflow_id"] or execution.run_id != identity["run_id"]:
+        raise WorkflowResultIntegrityError("Workflow result write does not match the active execution.")
+    execution.check()
+    return execution
+
+
 class WorkflowResultStore:
     """Dependency-injected store; clients may be real SDK clients or isolated fakes.
 
@@ -318,6 +337,7 @@ class WorkflowResultStore:
         ):
             raise ValueError("The configured workflow result Blob container name is required.")
         self.container = container
+        self._workflow_execution = _active_workflow_execution()
         self.blob_client = blob_client
         self.blob_container_name = blob_container_name
         self.max_size_bytes = _positive_integer(max_size_bytes, "Result size limit")
@@ -352,10 +372,13 @@ class WorkflowResultStore:
         }
 
     def _create_immutable_record(self, record, *, analysis_identity=None, guard_token=None):
+        execution = _workflow_execution_guard(record, self._workflow_execution)
         if analysis_identity is not None:
             return self._write_analysis_record(
                 analysis_identity, record, token=guard_token, immutable=True,
             )
+        if execution is not None:
+            return execution.store.write_record(execution.lease.token, record, immutable=True)
         try:
             self.container.create_item(body=record)
         except CosmosResourceExistsError:
@@ -409,6 +432,7 @@ class WorkflowResultStore:
     def _save(self, identity, result, *, guard_token=None, require_analysis_guard=False):
         """Persist using a validated result binding, with identical I/O."""
         payload = self._serialize(result)
+        execution = _workflow_execution_guard(identity, self._workflow_execution)
         guard = self._analysis_guard(
             identity, required=require_analysis_guard, writable=True, token=guard_token,
         )
@@ -464,10 +488,11 @@ class WorkflowResultStore:
             self._create_immutable_record(
                 manifest, analysis_identity=fenced_identity, guard_token=guard_token,
             )
-        except AnalysisWorkUnitConflictError:
+        except (AnalysisWorkUnitConflictError, WorkflowRuntimeConflict):
             if storage == "blob":
-                current = self._analysis_guard(identity, required=True)
-                if current.get("deleted"):
+                current = self._analysis_guard(identity, required=guard is not None)
+                runtime_deleted = execution is not None and execution.store.read(allow_deleted=True).get("deleted")
+                if (current or {}).get("deleted") or runtime_deleted:
                     try:
                         blob, properties = self._checked_blob(identity, reference)
                         blob.delete_blob(
@@ -555,6 +580,9 @@ class WorkflowResultStore:
                 if not previous.get("_etag"):
                     raise WorkflowResultIntegrityError("Analysis claim is missing its conditional-write version.")
                 operations.append(("replace", (record["id"], record), {"if_match_etag": previous["_etag"]}))
+            execution = _workflow_execution_guard(identity, self._workflow_execution)
+            if execution is not None:
+                operations = execution.fence_batch(operations)
             try:
                 self.container.execute_item_batch(
                     batch_operations=operations, partition_key=identity["run_id"],
@@ -571,10 +599,42 @@ class WorkflowResultStore:
                     saved = self.container.read_item(item=record["id"], partition_key=identity["run_id"])
                     _require_fields(saved, record)
                     self._analysis_guard(identity, required=True, writable=True, token=token)
+                    _workflow_execution_guard(identity, self._workflow_execution)
                     return
                 if exc.status_code in (409, 412):
                     raise AnalysisWorkUnitConflictError() from None
                 raise
+        raise AnalysisWorkUnitConflictError()
+
+    def _write_analysis_lifecycle(self, record, *, previous=None):
+        """Admit first-use guards and request registration behind the run fence."""
+        execution = _workflow_execution_guard(record, self._workflow_execution)
+        if execution is None:
+            if previous is None:
+                return self.container.create_item(body=record)
+            return self.container.replace_item(
+                item=record["id"], body=record, etag=previous["_etag"],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        operation = (
+            ("create", (record,)) if previous is None else
+            ("replace", (record["id"], record), {"if_match_etag": previous["_etag"]})
+        )
+        for _ in range(8):
+            try:
+                return self.container.execute_item_batch(
+                    batch_operations=execution.fence_batch([operation]), partition_key=record["run_id"],
+                )
+            except (cosmos_exceptions.CosmosBatchOperationError, cosmos_exceptions.CosmosHttpResponseError) as exc:
+                if exc.status_code == 409:
+                    raise CosmosResourceExistsError(status_code=409) from exc
+                if exc.status_code != 412:
+                    raise
+                execution.check()
+                if previous is not None:
+                    latest = self.container.read_item(item=record["id"], partition_key=record["run_id"])
+                    if latest["_etag"] != previous["_etag"]:
+                        raise cosmos_exceptions.CosmosAccessConditionFailedError(status_code=412) from exc
         raise AnalysisWorkUnitConflictError()
 
     def _link_analysis_parent(self, identity, resume_from, *, request_digest=None):
@@ -631,7 +691,7 @@ class WorkflowResultStore:
             **{key: parent[key] for key in ("request_digest", "source_count", "source_snapshot_digest") if key in parent},
         }
         try:
-            self.container.create_item(body=row)
+            self._write_analysis_lifecycle(row)
         except CosmosResourceExistsError:
             guard = self._analysis_guard(identity, required=True, writable=True, token=token)
             _require_fields(guard, {"resume_from": resume_from})
@@ -657,7 +717,7 @@ class WorkflowResultStore:
         if resume_from is not None:
             self._link_analysis_parent(identity, resume_from, request_digest=request_digest)
         try:
-            self.container.create_item(body=row)
+            self._write_analysis_lifecycle(row)
         except CosmosResourceExistsError:
             for _ in range(8):
                 guard = self._analysis_guard(identity, required=True, writable=True, token=token)
@@ -667,10 +727,7 @@ class WorkflowResultStore:
                     replacement = {key: value for key, value in guard.items() if not key.startswith("_")}
                     replacement.update(row)
                     try:
-                        self.container.replace_item(
-                            item=guard["id"], body=replacement, etag=guard["_etag"],
-                            match_condition=MatchConditions.IfNotModified,
-                        )
+                        self._write_analysis_lifecycle(replacement, previous=guard)
                         break
                     except cosmos_exceptions.CosmosAccessConditionFailedError:
                         continue

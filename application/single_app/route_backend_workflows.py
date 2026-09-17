@@ -92,6 +92,13 @@ from functions_workflow_editor import get_workflow_editor_options
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import authorize_workflow_run_read, authorize_workflow_task_result_read
 from functions_saved_analysis import sanitize_workflow_analysis_history
+from functions_workflow_runtime import (
+    cancel_durable_workflow_run,
+    decide_workflow_runtime,
+    queue_durable_workflow_run,
+    workflow_runtime_status,
+)
+from functions_workflow_runtime_store import RuntimeUnavailable, WorkflowRuntimeConflict
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -220,9 +227,13 @@ def _request_workflow_run_cancellation(
         raise LookupError('Workflow run not found.')
     if not run_record and target_run_id != active_run_id:
         raise LookupError('Workflow run not found.')
+    if run_record and run_record.get('durable_execution') is True:
+        cancelled = cancel_durable_workflow_run(workflow, target_run_id, actor_user_id=requested_by)
+        safe_run = {key: cancelled['run'].get(key) for key in ('id', 'workflow_id', 'status', 'durable_execution', 'runtime')}
+        return _workflow_definition_response(cancelled['workflow'], requested_by), safe_run
 
     run_status = _normalize_identifier((run_record or {}).get('status')).lower()
-    if run_status in {'completed', 'failed', 'skipped', 'cancelled', 'canceled'}:
+    if run_status in {'completed', 'completed_partial', 'failed', 'invalid', 'incomplete', 'skipped', 'cancelled', 'canceled'}:
         raise WorkflowCancellationConflictError('This workflow run has already finished.')
 
     requested_at = datetime.now(timezone.utc).isoformat()
@@ -252,6 +263,79 @@ def _request_workflow_run_cancellation(
         'cancellation_requested_by': run_record.get('cancellation_requested_by') or requested_by,
     })
     return updated_workflow, run_record
+
+
+def _workflow_runtime_response(workflow_id, run_id, *, group=False, action=None):
+    user_id = get_current_user_id()
+    try:
+        if group:
+            group_id, settings = _resolve_group_workflow_request_group(user_id)
+            workflow = get_group_workflow(group_id, workflow_id)
+            try:
+                assert_group_role(user_id, group_id, allowed_roles=get_group_workflow_management_roles(settings))
+                can_decide = True
+            except PermissionError:
+                can_decide = False
+        else:
+            workflow = get_personal_workflow(user_id, workflow_id)
+            can_decide = True
+        if not workflow:
+            return jsonify({'error': 'Workflow not found.'}), 404
+        if action:
+            if not can_decide:
+                return jsonify({'error': 'You cannot make decisions for this workflow.'}), 403
+            data = request.get_json(silent=True)
+            allowed = {'expected_version', 'request_id'} | ({'gate_id', 'choice'} if action == 'decision' else set())
+            if not isinstance(data, dict) or data.keys() - allowed:
+                return jsonify({'error': 'Invalid workflow decision.'}), 400
+            runtime = decide_workflow_runtime(workflow, run_id, data, actor_user_id=user_id, resume=action == 'resume')
+        else:
+            runtime = workflow_runtime_status(workflow, run_id, reader_user_id=user_id)
+        return jsonify({'runtime': runtime, 'can_decide': can_decide})
+    except WorkflowRuntimeConflict as exc:
+        return jsonify({'error': exc.public_message, 'code': exc.code}), 409
+    except PermissionError:
+        return jsonify({'error': 'Workflow progress is unavailable because current access could not be confirmed.'}), 403
+    except (LookupError, CosmosResourceNotFoundError):
+        return jsonify({'error': 'Durable workflow run not found.'}), 404
+    except ValueError:
+        return jsonify({'error': 'Invalid workflow decision or request identifier.'}), 400
+    except (AzureError, RuntimeUnavailable) as exc:
+        log_event(
+            '[WORKFLOW_ROUTES] Durable workflow operation failed',
+            extra={'workflow_id': workflow_id, 'run_id': run_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+        )
+        return jsonify({'error': 'Workflow progress is temporarily unavailable.'}), 503
+
+
+def _queue_workflow_response(workflow, user_id):
+    data = request.get_json(silent=True)
+    if data is None and not request.data:
+        data = {}
+    if not isinstance(data, dict) or data.keys() - {'request_id'}:
+        return jsonify({'error': 'Invalid workflow run request.'}), 400
+    try:
+        queued = queue_durable_workflow_run(
+            workflow, actor_user_id=user_id, request_id=data.get('request_id'),
+        )
+        queued['workflow'] = _workflow_definition_response(queued['workflow'], user_id)
+        queued['run'] = {key: queued['run'].get(key) for key in (
+            'id', 'workflow_id', 'status', 'success', 'durable_execution', 'started_at', 'completed_at',
+        )}
+        return jsonify(queued), 202
+    except WorkflowRuntimeConflict as exc:
+        return jsonify({'error': exc.public_message, 'code': exc.code}), 409
+    except (ValueError, LookupError):
+        return jsonify({'error': 'The workflow could not be queued. Reload its saved definition.'}), 400
+    except PermissionError:
+        return jsonify({'error': 'You cannot run this workflow.'}), 403
+    except (AzureError, RuntimeUnavailable) as exc:
+        log_event(
+            '[WORKFLOW_ROUTES] Durable workflow submission failed',
+            extra={'workflow_id': workflow['id'], 'error_type': type(exc).__name__}, level=logging.ERROR,
+        )
+        return jsonify({'error': 'The workflow could not be queued right now.'}), 503
 
 
 def _normalize_workflow_instruction_draft_input(value, max_length=WORKFLOW_INSTRUCTION_FIELD_LIMIT):
@@ -819,6 +903,60 @@ def _stream_group_workflow_activity(user_id, group_id, conversation_id='', workf
 
 
 def register_route_backend_workflows(bp):
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/runtime', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def get_user_workflow_runtime(workflow_id, run_id):
+        return _workflow_runtime_response(workflow_id, run_id)
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/runtime/decision', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def decide_user_workflow_runtime(workflow_id, run_id):
+        return _workflow_runtime_response(workflow_id, run_id, action='decision')
+
+    @bp.route('/api/user/workflows/<workflow_id>/runs/<run_id>/runtime/resume', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('allow_user_workflows')
+    @workflow_user_required
+    def resume_user_workflow_runtime(workflow_id, run_id):
+        return _workflow_runtime_response(workflow_id, run_id, action='resume')
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/runtime', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def get_group_workflow_runtime(workflow_id, run_id):
+        return _workflow_runtime_response(workflow_id, run_id, group=True)
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/runtime/decision', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def decide_group_workflow_runtime(workflow_id, run_id):
+        return _workflow_runtime_response(workflow_id, run_id, group=True, action='decision')
+
+    @bp.route('/api/group/workflows/<workflow_id>/runs/<run_id>/runtime/resume', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required('enable_group_workspaces')
+    @enabled_required('allow_group_workflows')
+    def resume_group_workflow_runtime(workflow_id, run_id):
+        return _workflow_runtime_response(workflow_id, run_id, group=True, action='resume')
+
     @bp.route('/api/workflows/draft-instructions', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1169,6 +1307,8 @@ def register_route_backend_workflows(bp):
         workflow = get_personal_workflow(user_id, workflow_id)
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
+        if workflow.get('durable_execution') is True:
+            return jsonify({'error': 'Use the durable run resume controls to reuse checkpoints without restarting completed tasks.'}), 409
 
         source_run = get_personal_workflow_run(user_id, run_id)
         if not source_run or _normalize_identifier(source_run.get('workflow_id')) != _normalize_identifier(workflow_id):
@@ -1645,6 +1785,8 @@ def register_route_backend_workflows(bp):
         workflow = get_group_workflow(group_id, workflow_id)
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
+        if workflow.get('durable_execution') is True:
+            return jsonify({'error': 'Use the durable run resume controls to reuse checkpoints without restarting completed tasks.'}), 409
 
         source_run = get_group_workflow_run(group_id, run_id)
         if not source_run or _normalize_identifier(source_run.get('workflow_id')) != _normalize_identifier(workflow_id):
@@ -1848,6 +1990,8 @@ def register_route_backend_workflows(bp):
         workflow = get_group_workflow(group_id, workflow_id)
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
+        if workflow.get('durable_execution') is True:
+            return _queue_workflow_response(workflow, user_id)
 
         lock_document = acquire_distributed_task_lock(f'group_workflow_run_{group_id}_{workflow_id}', lease_seconds=900)
         if not lock_document:
@@ -2002,6 +2146,8 @@ def register_route_backend_workflows(bp):
         workflow = get_personal_workflow(user_id, workflow_id)
         if not workflow:
             return jsonify({'error': 'Workflow not found.'}), 404
+        if workflow.get('durable_execution') is True:
+            return _queue_workflow_response(workflow, user_id)
 
         lock_document = acquire_distributed_task_lock(f'workflow_run_{workflow_id}', lease_seconds=900)
         if not lock_document:

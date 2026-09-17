@@ -1,7 +1,7 @@
 # test_workflow_private_analysis_records.py
 """
 Functional tests for private Analyze records in workflow history and cleanup.
-Version: 0.261.109
+Version: 0.261.111
 Implemented in: 0.261.109
 
 Writer guards and payloads cannot appear in history, consume a public page
@@ -10,6 +10,7 @@ limit, or lose their deletion tombstones during workflow cleanup.
 
 import ast
 from copy import deepcopy
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,7 +22,7 @@ from azure.cosmos import exceptions
 APP = Path(__file__).resolve().parents[1] / "application" / "single_app"
 PRIVATE_TYPES = (
     "workflow_result_chunk", "chat_analysis_result_chunk",
-    "orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint",
+    "orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control",
 )
 
 
@@ -49,6 +50,7 @@ def helpers(scope, records):
     if scope == "group":
         workflow["group_id"] = "group-1"
     cleaned = []
+    admission = []
     namespace = {
         "exceptions": exceptions, "logging": logging,
         "log_event": lambda *args, **kwargs: None,
@@ -58,6 +60,9 @@ def helpers(scope, records):
         f"cosmos_{scope}_workflows_container": Items([workflow]),
         f"get_{scope}_workflow": lambda *args: workflow,
         "delete_workflow_run_results": lambda *args: cleaned.append(args),
+        "workflow_runtime_store": lambda *args: SimpleNamespace(tombstone=lambda: admission.append("fenced")),
+        "update_workflow_runtime_record": lambda *args: admission.append("deleting"),
+        "datetime": datetime, "timezone": timezone,
     }
     common = ast.parse((APP / "functions_personal_workflows.py").read_text(encoding="utf-8"))
     nodes = [
@@ -72,7 +77,7 @@ def helpers(scope, records):
     names = {f"get_{scope}_workflow_run_item", f"list_{scope}_workflow_run_items", f"delete_{scope}_workflow"}
     nodes.extend(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name in names)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "<workflow store functions>", "exec"), namespace)
-    return SimpleNamespace(namespace=namespace, items=items, workflow=workflow, cleaned=cleaned)
+    return SimpleNamespace(namespace=namespace, items=items, workflow=workflow, cleaned=cleaned, admission=admission)
 
 
 @pytest.mark.parametrize("scope", ["personal", "group"])
@@ -109,6 +114,7 @@ def test_workflow_deletion_retains_the_private_writer_tombstone(scope):
     assert fixture.cleaned == [(fixture.workflow, "run-1")]
     assert fixture.items.deleted == ["ordinary-task"]
     assert fixture.items.records == {"guard": tombstone}
+    assert fixture.admission == ["deleting", "fenced"]
 
 
 @pytest.mark.parametrize("scope", ["personal", "group"])

@@ -190,8 +190,8 @@ def resolve_workflow_task_inputs(workflow, task, completed_results, *, previous_
         cache[reference["id"]] = snapshot
         reference_data.append(snapshot)
     return {
-        "task_context": json.dumps({"inputs": inputs}, ensure_ascii=False) if inputs else "",
-        "reference_context": json.dumps({"shared_references": reference_data}, ensure_ascii=False) if reference_data else "",
+        "task_context": json.dumps({"inputs": inputs}, ensure_ascii=False, sort_keys=True) if inputs else "",
+        "reference_context": json.dumps({"shared_references": reference_data}, ensure_ascii=False, sort_keys=True) if reference_data else "",
         "consumed_inputs": consumed_inputs,
         "reference_sources": [dict(reference["source"]) for reference in reference_data],
     }

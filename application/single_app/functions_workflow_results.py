@@ -802,7 +802,7 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         **({
             "accepted_subset_only": True, "execution": manifest.get("execution") or {},
         } if (manifest.get("validation") or {}).get("status") == "partial" else {}),
-    }, ensure_ascii=False, allow_nan=False)
+    }, ensure_ascii=False, allow_nan=False, sort_keys=True)
     return prompt, consumed
 
 

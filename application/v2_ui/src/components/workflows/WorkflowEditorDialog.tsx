@@ -20,6 +20,7 @@ import {
     saveWorkflowDefinition,
     workflowErrorMessage,
     workflowForSave,
+    WORKFLOW_APPROVAL_MESSAGE_LIMIT,
     workflowSchemaErrors,
     workflowScopeKey,
     workflowValidationErrors,
@@ -595,6 +596,83 @@ function TaskRunnerFields({
     );
 }
 
+function TaskApprovalFields({
+    task,
+    durableExecution,
+    onNeedsDurable,
+    onChange,
+}: {
+    task: WorkflowTask;
+    durableExecution: boolean;
+    onNeedsDurable: () => void;
+    onChange: (task: WorkflowTask) => void;
+}) {
+    const approval = task.approval;
+    const required = approval?.required === true;
+    const message = approval?.message ?? '';
+
+    const setRequired = (checked: boolean) => {
+        if (!checked) {
+            const next = { ...task };
+            delete next.approval;
+            onChange(next);
+            return;
+        }
+        if (!durableExecution) {
+            onNeedsDurable();
+        }
+        onChange({
+            ...task,
+            approval: {
+                required: true,
+                ...(message ? { message } : {}),
+            },
+        });
+    };
+
+    const setMessage = (value: string) => {
+        onChange({
+            ...task,
+            approval: {
+                required: true,
+                ...(value ? { message: value } : {}),
+            },
+        });
+    };
+
+    return (
+        <div className="space-y-3 rounded-xl border border-edge p-3">
+            <Toggle
+                label="Require approval before this task"
+                checked={required}
+                onChange={setRequired}
+                description="Pause durable execution before this task so an approver can review the checkpoint and decide whether to continue."
+            />
+            {required && !durableExecution ? (
+                <p role="alert" className="text-xs text-danger">
+                    Task approval requires durable execution. Enable durable execution or remove this approval gate before saving.
+                </p>
+            ) : null}
+            {required ? (
+                <label className="block text-sm text-text-2">
+                    Approval message
+                    <textarea
+                        className={`${textareaClass} mt-1`}
+                        aria-label={`Approval message for ${task.name || 'task'}`}
+                        maxLength={WORKFLOW_APPROVAL_MESSAGE_LIMIT}
+                        value={message}
+                        onChange={(event) => setMessage(event.target.value)}
+                        placeholder="Optional context shown to the approver before this task runs."
+                    />
+                    <span className="mt-1 block text-xs text-text-3">
+                        {message.length.toLocaleString()} / {WORKFLOW_APPROVAL_MESSAGE_LIMIT.toLocaleString()} characters
+                    </span>
+                </label>
+            ) : null}
+        </div>
+    );
+}
+
 function evidenceFromAction(action: WorkflowDocumentAction | undefined): WorkflowReferenceInput[] {
     const ids = Array.isArray(action?.document_ids)
         ? action.document_ids.filter((item): item is string => typeof item === 'string' && Boolean(item))
@@ -824,6 +902,8 @@ function TaskCard({
     onMove,
     onRemove,
     onSchemaError,
+    durableExecution,
+    onNeedsDurable,
 }: {
     scope: WorkflowScope;
     task: WorkflowTask;
@@ -834,6 +914,8 @@ function TaskCard({
     onMove: (direction: -1 | 1) => void;
     onRemove: () => void;
     onSchemaError: (taskId: string, message: string) => void;
+    durableExecution: boolean;
+    onNeedsDurable: () => void;
 }) {
     const previousTasks = workflow.tasks.slice(0, index);
     const errors = taskValidationErrors(task, index, workflow.tasks, workflow);
@@ -904,6 +986,12 @@ function TaskCard({
                 <summary className="cursor-pointer text-sm font-medium text-text-1">Runner, inputs, references and outputs</summary>
                 <div className="mt-4 space-y-5">
                     <TaskRunnerFields runner={task.runner} options={options} onChange={(runner) => onChange({ ...task, runner })} />
+                    <TaskApprovalFields
+                        task={task}
+                        durableExecution={durableExecution}
+                        onNeedsDurable={onNeedsDurable}
+                        onChange={onChange}
+                    />
                     <DocumentActionFields scope={scope} task={task} onChange={onChange} />
                     <TaskInputs task={task} previousTasks={previousTasks} onChange={onChange} />
                     <TaskReferences task={task} workflow={workflow} onChange={onChange} />
@@ -1303,6 +1391,12 @@ export function WorkflowEditorDialog({
                                     description="Disabled workflows can be edited but will not run automatically."
                                 />
                                 <Toggle
+                                    label="Durable execution"
+                                    checked={draft.durable_execution === true}
+                                    onChange={(checked) => setWorkflow((current) => ({ ...current, durable_execution: checked }))}
+                                    description="Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab."
+                                />
+                                <Toggle
                                     label="Chat capabilities enabled"
                                     checked={draft.chat_capabilities_enabled}
                                     onChange={(checked) => setWorkflow((current) => ({ ...current, chat_capabilities_enabled: checked }))}
@@ -1357,6 +1451,8 @@ export function WorkflowEditorDialog({
                                     onMove={(direction) => moveTask(task.id, direction)}
                                     onRemove={() => removeTask(task.id)}
                                     onSchemaError={onSchemaError}
+                                    durableExecution={draft.durable_execution === true}
+                                    onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
                                 />
                             ))}
                         </section>

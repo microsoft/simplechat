@@ -17,6 +17,12 @@ export type WorkflowTaskRunnerType = 'inherit' | 'agent' | 'model';
 export type WorkflowInputOutput = WorkflowOutputKind | 'authoritative' | 'documents';
 export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
 export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison';
+export type WorkflowRuntimeState =
+    'queued' | 'running' | 'waiting_approval' | 'waiting_output' | 'waiting_recovery' |
+    'paused' | 'cancelling' | 'cancelled' | 'failed' | 'invalid' | 'incomplete' |
+    'completed' | 'completed_partial' | 'skipped';
+export type WorkflowRuntimeGateKind = 'approval' | 'output' | 'recovery' | 'pause';
+export type WorkflowRuntimeDecisionChoice = 'approve' | 'reject' | 'retry' | 'cancel' | 'resume';
 
 export interface WorkflowAgentOption {
     id: string;
@@ -78,6 +84,11 @@ export interface WorkflowTaskRunner {
     model_id?: string;
 }
 
+export interface WorkflowTaskApproval {
+    required: boolean;
+    message?: string;
+}
+
 export interface WorkflowTask {
     id: string;
     type: 'instructions';
@@ -89,6 +100,7 @@ export interface WorkflowTask {
     inputs?: WorkflowInputBinding[];
     reference_ids?: string[];
     output_contract?: WorkflowOutputContract;
+    approval?: WorkflowTaskApproval;
     [key: string]: unknown;
 }
 
@@ -133,7 +145,93 @@ export interface WorkflowDefinition {
     };
     tasks: WorkflowTask[];
     reference_inputs: WorkflowReferenceInput[];
+    durable_execution?: boolean;
     [key: string]: unknown;
+}
+
+export interface WorkflowRuntimeGate {
+    id: string;
+    kind: WorkflowRuntimeGateKind;
+    unit_id?: string;
+    input_digest?: string;
+    reason?: string;
+    choices: string[];
+}
+
+export interface WorkflowRuntimeDecision {
+    unit_id: string;
+    choice: string;
+    actor_user_id: string;
+    decided_at?: string;
+    input_digest?: string;
+    attempt?: number;
+}
+
+export interface WorkflowRuntimeUnitMemory {
+    unit_id: string;
+    state: string;
+    attempt: number;
+    replay_safe?: boolean;
+    output_available?: boolean;
+}
+
+export interface WorkflowRuntimeMemory {
+    decisions?: WorkflowRuntimeDecision[];
+    units?: WorkflowRuntimeUnitMemory[];
+    [key: string]: unknown;
+}
+
+export interface WorkflowRuntimeProjection {
+    version: number;
+    state: WorkflowRuntimeState;
+    phase?: string;
+    progress?: {
+        completed: number;
+        total: number;
+    };
+    gate?: WorkflowRuntimeGate;
+    memory?: WorkflowRuntimeMemory;
+    can_resume?: boolean;
+}
+
+export interface WorkflowRuntimeResponse {
+    runtime: WorkflowRuntimeProjection;
+    can_decide: boolean;
+}
+
+export interface WorkflowRuntimeDecisionRequest {
+    expected_version: number;
+    gate_id: string;
+    choice: WorkflowRuntimeDecisionChoice;
+    request_id: string;
+}
+
+export interface WorkflowRuntimeResumeRequest {
+    expected_version: number;
+    request_id: string;
+}
+
+export interface WorkflowRunSummary {
+    id?: string;
+    run_id?: string;
+    workflow_id?: string;
+    status?: string;
+    durable_execution?: boolean;
+    started_at?: string;
+    completed_at?: string;
+    workflow_validation?: WorkflowValidationResult;
+    [key: string]: unknown;
+}
+
+export interface WorkflowRunStartResponse {
+    success?: boolean;
+    run?: WorkflowRunSummary;
+    workflow?: WorkflowDefinition;
+    runtime?: WorkflowRuntimeProjection;
+    id?: string;
+    workflow_id?: string;
+    status?: string;
+    durable_execution?: boolean;
 }
 
 export interface WorkflowRunItem {
@@ -236,6 +334,16 @@ export const WORKFLOW_INPUT_OUTPUTS: WorkflowInputOutput[] = [
     'json',
     'documents',
 ];
+export const WORKFLOW_APPROVAL_MESSAGE_LIMIT = 1000;
+export const WORKFLOW_RUNTIME_TERMINAL_STATES = new Set<WorkflowRuntimeState>([
+    'cancelled',
+    'failed',
+    'invalid',
+    'incomplete',
+    'completed',
+    'completed_partial',
+    'skipped',
+]);
 
 function outputKindMatches(actual: WorkflowOutputKind, expected: WorkflowOutputKind): boolean {
     return expected === 'any' || actual === expected ||
@@ -379,6 +487,7 @@ export function createWorkflowTask(index: number): WorkflowTask {
 export function newWorkflowDefinition(scope: WorkflowScope): WorkflowDefinition {
     return {
         definition_version: 2,
+        durable_execution: true,
         name: '',
         description: '',
         runner_type: 'model',
@@ -447,6 +556,17 @@ function normalizeInputs(value: unknown): WorkflowInputBinding[] | undefined {
     }));
 }
 
+function normalizeApproval(value: unknown): WorkflowTaskApproval | undefined {
+    if (value === null || value === undefined || !isRecord(value)) {
+        return undefined;
+    }
+    const message = text(value.message);
+    return {
+        required: value.required === true,
+        ...(message ? { message } : {}),
+    };
+}
+
 function normalizeTask(value: unknown, index: number): WorkflowTask {
     const record = isRecord(value) ? value : {};
     const inputs = Object.hasOwn(record, 'inputs') && record.inputs !== null
@@ -456,6 +576,7 @@ function normalizeTask(value: unknown, index: number): WorkflowTask {
         ? record.reference_ids.filter((item): item is string => typeof item === 'string')
         : undefined;
     const outputContract = normalizeOutputContract(record.output_contract);
+    const approval = Object.hasOwn(record, 'approval') ? normalizeApproval(record.approval) : undefined;
     return {
         ...record,
         id: text(record.id) || taskIdFallback(),
@@ -468,6 +589,7 @@ function normalizeTask(value: unknown, index: number): WorkflowTask {
         ...(inputs !== undefined ? { inputs } : {}),
         ...(referenceIds !== undefined ? { reference_ids: referenceIds } : {}),
         ...(outputContract ? { output_contract: outputContract } : {}),
+        ...(approval ? { approval } : {}),
     };
 }
 
@@ -603,6 +725,7 @@ export function normalizeWorkflowDefinition(
         },
         tasks: tasks.length ? tasks : [legacyWorkflowTask(record) ?? createWorkflowTask(0)],
         reference_inputs: references,
+        ...(Object.hasOwn(record, 'durable_execution') ? { durable_execution: record.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
     };
 }
@@ -613,6 +736,8 @@ export function workflowForSave(
     scope: WorkflowScope,
 ): WorkflowDefinition {
     const base = original ? structuredClone(original) : newWorkflowDefinition(scope);
+    const originalHasDurable = original ? Object.hasOwn(original, 'durable_execution') : false;
+    const includeDurable = !original || originalHasDurable || draft.durable_execution === true;
     const next = {
         ...base,
         id: original?.id ?? draft.id,
@@ -632,8 +757,12 @@ export function workflowForSave(
         tasks: draft.tasks.map((task, index) => ({ ...task, order: index + 1 })),
         task_prompt: draft.tasks[0]?.instructions.trim() || '',
         reference_inputs: draft.reference_inputs,
+        ...(includeDurable ? { durable_execution: draft.durable_execution === true } : {}),
         ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
     };
+    if (!includeDurable) {
+        delete next.durable_execution;
+    }
     return normalizeWorkflowDefinition(next, scope);
 }
 
@@ -659,6 +788,7 @@ export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null
         'tasks',
         'task_prompt',
         'reference_inputs',
+        'durable_execution',
         'group_id',
     ]);
     const labels: Record<string, string> = {
@@ -712,6 +842,9 @@ export function workflowValidationErrors(
     if (draft.tasks.length > options.max_tasks) {
         errors.push(`This workspace allows at most ${options.max_tasks} tasks per workflow.`);
     }
+    if (draft.tasks.some((task) => task.approval?.required === true) && draft.durable_execution !== true) {
+        errors.push('Enable durable execution before requiring task approval.');
+    }
     const taskIds = new Map(draft.tasks.map((task, index) => [task.id, index]));
     draft.tasks.forEach((task, index) => {
         if (!task.name.trim()) {
@@ -722,6 +855,9 @@ export function workflowValidationErrors(
         }
         if (task.instructions.length > WORKFLOW_TASK_INSTRUCTIONS_LIMIT) {
             errors.push(`${task.name || `Task ${index + 1}`} exceeds the ${WORKFLOW_TASK_INSTRUCTIONS_LIMIT.toLocaleString()} character instruction limit.`);
+        }
+        if (task.approval?.message && task.approval.message.length > WORKFLOW_APPROVAL_MESSAGE_LIMIT) {
+            errors.push(`${task.name || `Task ${index + 1}`} approval message must be ${WORKFLOW_APPROVAL_MESSAGE_LIMIT.toLocaleString()} characters or fewer.`);
         }
         if (task.runner.type === 'agent' && !task.runner.selected_agent) {
             errors.push(`${task.name || `Task ${index + 1}`} uses an agent runner but no agent is selected.`);
@@ -886,7 +1022,7 @@ export function saveWorkflowDefinition(
 }
 
 export const startScopedWorkflowRun = (scope: WorkflowScope, workflowId: string) =>
-    api.post<unknown>(workflowUrl(scope, workflowId, '/run'));
+    api.post<WorkflowRunStartResponse>(workflowUrl(scope, workflowId, '/run'));
 
 export const cancelScopedWorkflow = (scope: WorkflowScope, workflowId: string) =>
     api.post<unknown>(workflowUrl(scope, workflowId, '/cancel'));
@@ -900,7 +1036,7 @@ export async function fetchScopedWorkflowRuns(
     signal?: AbortSignal,
 ) {
     const response = await api.get<unknown>(workflowUrl(scope, workflowId, '/runs'), signal);
-    return asArray<Record<string, unknown>>(response, 'runs');
+    return asArray<WorkflowRunSummary>(response, 'runs');
 }
 
 export async function fetchScopedWorkflowRunItems(
@@ -933,6 +1069,46 @@ export function fetchWorkflowTaskResult(
     });
     const path = `${workflowRoot(scope)}/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/result`;
     return api.get<WorkflowRunResultPage>(withScopeQuery(path, scope, params), signal);
+}
+
+export function fetchWorkflowRuntime(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    signal?: AbortSignal,
+) {
+    return api.get<WorkflowRuntimeResponse>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime`),
+        signal,
+    );
+}
+
+export function decideWorkflowRuntime(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    request: WorkflowRuntimeDecisionRequest,
+    signal?: AbortSignal,
+) {
+    return api.post<WorkflowRuntimeResponse>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/decision`),
+        request,
+        signal,
+    );
+}
+
+export function resumeWorkflowRuntime(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    request: WorkflowRuntimeResumeRequest,
+    signal?: AbortSignal,
+) {
+    return api.post<WorkflowRuntimeResponse>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/resume`),
+        request,
+        signal,
+    );
 }
 
 export function documentId(document: WorkspaceDocument): string {

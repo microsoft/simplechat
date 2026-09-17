@@ -63,6 +63,23 @@ visible to its members. Turning one on does not turn on the other.
 The action and task limits apply to personal and group runs alike, so they stay
 in effect whichever capability is enabled.
 
+## Durable runs
+
+In **0.261.111**, durability is a workflow-definition option, not another global
+capability toggle. New native V2 workflows enable it; existing definitions do not
+change automatically. The existing background scheduler must run for queued
+work to progress. Each application process uses at most two durable workers,
+with renewable Cosmos leases preventing simultaneous ownership of one run.
+
+Approval, pending-output, and recovery gates keep a run active without holding
+a worker. A scheduled trigger does not start a second run while that run waits.
+Completed outputs remain in the configured result store; run memory and lease
+controls are private records in the existing run-items partition. No additional
+Cosmos container is required.
+
+See [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}) for
+the operator's approval, continuation, and cancellation workflow.
+
 ## Common tasks
 
 1. **Pilot group workflows with one team.** Enable Group Workflows, turn on

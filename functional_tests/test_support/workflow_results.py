@@ -42,6 +42,19 @@ from functions_workflow_validation import (
     workflow_run_outcome,
 )
 from functions_saved_analysis import SavedAnalysisInput, explain_saved_analysis
+from functions_workflow_execution import (
+    WorkflowSuspended,
+    assert_workflow_execution_owned,
+    current_workflow_execution,
+    workflow_checkpoint_scope_guard,
+    workflow_unit,
+)
+from functions_workflow_readiness import (
+    WorkflowOutputUnavailable,
+    pending_workflow_output_references,
+    reconcile_workflow_pending_output,
+)
+from functions_workflow_runtime_store import WorkflowRuntimeConflict
 
 
 def workflow_result_helpers():
@@ -66,6 +79,15 @@ def workflow_result_helpers():
         "WorkflowResultNotReadyError": WorkflowResultNotReadyError,
         "AnalysisResultUnavailable": AnalysisResultUnavailable,
         "WorkflowInputError": WorkflowInputError,
+        "WorkflowSuspended": WorkflowSuspended,
+        "WorkflowRuntimeConflict": WorkflowRuntimeConflict,
+        "assert_workflow_execution_owned": assert_workflow_execution_owned,
+        "current_workflow_execution": current_workflow_execution,
+        "workflow_checkpoint_scope_guard": workflow_checkpoint_scope_guard,
+        "workflow_unit": workflow_unit,
+        "WorkflowOutputUnavailable": WorkflowOutputUnavailable,
+        "pending_workflow_output_references": pending_workflow_output_references,
+        "reconcile_workflow_pending_output": reconcile_workflow_pending_output,
         "attach_workflow_reference_sources": attach_workflow_reference_sources,
         "load_workflow_reference": load_workflow_reference,
         "resolve_workflow_task_inputs": resolve_workflow_task_inputs,
