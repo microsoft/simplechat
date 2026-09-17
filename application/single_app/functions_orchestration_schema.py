@@ -1076,6 +1076,9 @@ FAILURE_MESSAGES = {
     'execution_expired': 'The execution lease expired before the worker recorded a final outcome.',
     'ownership_lost': 'This execution no longer owns the attempt and cannot publish further results.',
     'context_unavailable': 'The original context or access changed. Review the request and create a new plan.',
+    'analysis_result_unavailable': 'The saved Analyze result is unavailable. No answer was generated from an incomplete preview.',
+    'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
+    'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
     'checkpoint_unavailable': 'Progress could not be saved or verified. This attempt cannot safely resume.',
     'checkpoint_invalid': 'Saved progress could not be verified. Review the request and create a new plan.',
     'recovery_changed': 'Saved step inputs changed. Previously completed work will not be repeated.',
@@ -1150,6 +1153,8 @@ def build_step_result(
     replan_hint=None,
     message=None,
     failure=None,
+    saved_analyses=None,
+    analysis_consumption=None,
 ):
     """The single shape every capability adapter returns.
 
@@ -1167,7 +1172,7 @@ def build_step_result(
     """
     if status not in STEP_STATUSES:
         status = STEP_STATUS_COMPLETED
-    return {
+    result = {
         'status': status,
         'summary': _text(summary, PLAN_MAX_SUMMARY_LENGTH),
         'evidence': list(evidence or ()),
@@ -1179,6 +1184,11 @@ def build_step_result(
         'message': message,
         'failure': safe_failure(failure) if failure else None,
     }
+    if saved_analyses:
+        result['saved_analyses'] = [dict(item) for item in saved_analyses]
+    if analysis_consumption:
+        result['analysis_consumption'] = dict(analysis_consumption)
+    return result
 
 
 # --------------------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 """Shared SimpleChat-native operations for routes and Semantic Kernel plugins."""
 
 import copy
+import hashlib
 import logging
 import mimetypes
 import os
@@ -94,6 +95,7 @@ from functions_public_workspaces import (
     find_public_workspace_by_id,
 )
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
+from functions_saved_analysis import analysis_artifact_metadata, authorize_analysis_artifact
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
@@ -1320,6 +1322,7 @@ def upload_generated_analysis_artifact_for_current_user(
     capability: str = "analysis",
     output_format: str = "",
     summary: str = "",
+    analysis_producer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload generated analysis content into the current user's current chat."""
     current_user_info = _require_current_user_info()
@@ -1364,6 +1367,7 @@ def upload_generated_analysis_artifact_for_current_user(
             "capability": normalized_capability,
             "output_format": normalized_output_format,
             "summary": normalized_summary,
+            **analysis_artifact_metadata(analysis_producer),
         },
     )
 
@@ -1442,6 +1446,7 @@ def upload_generated_analysis_artifact_for_user(
     output_format: str = "",
     summary: str = "",
     artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
+    analysis_producer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload generated analysis content for a known authorized user outside request context."""
     normalized_user_id = str(current_user_id or "").strip()
@@ -1488,6 +1493,7 @@ def upload_generated_analysis_artifact_for_user(
             "output_format": normalized_output_format,
             "summary": normalized_summary,
             **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
+            **analysis_artifact_metadata(analysis_producer),
         },
     )
 
@@ -1503,6 +1509,7 @@ def upload_generated_analysis_artifact_stream_for_user(
     summary: str = "",
     artifact_idempotency_key: str = "",
     artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
+    analysis_producer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload a bounded-memory generated artifact stream for an authorized user."""
     normalized_user_id = str(current_user_id or "").strip()
@@ -1549,6 +1556,7 @@ def upload_generated_analysis_artifact_stream_for_user(
             "output_format": normalized_output_format,
             "summary": normalized_summary,
             **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
+            **analysis_artifact_metadata(analysis_producer),
         },
         artifact_idempotency_key=artifact_idempotency_key,
     )
@@ -3122,6 +3130,18 @@ def _upload_generated_chat_artifact_for_current_user(
     access_context = build_conversation_participation_context(current_user_id, conversation_item)
 
     artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
+    analysis_metadata = analysis_artifact_metadata(artifact_metadata.get("analysis_producer"))
+    if artifact_metadata.get("analysis_result_required") and not analysis_metadata:
+        raise ValueError("The analysis artifact has no producer binding.")
+    content_digest = hashlib.sha256()
+    if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
+        file_content_bytes.seek(0)
+        for block in iter(lambda: file_content_bytes.read(1024 * 1024), b""):
+            content_digest.update(block)
+        file_content_bytes.seek(0)
+    else:
+        content_digest.update(file_content_bytes)
+    content_sha256 = content_digest.hexdigest()
     approval_metadata = {}
     if requires_generated_file_approval(
         access_context,
@@ -3170,6 +3190,10 @@ def _upload_generated_chat_artifact_for_current_user(
             and blob_client.exists()
         ):
             existing_metadata = existing_message.get("metadata") or {}
+            if existing_metadata.get("analysis_producer") != analysis_metadata.get("analysis_producer"):
+                raise ValueError("The existing artifact belongs to a different analysis.")
+            if existing_metadata.get("generated_artifact_content_sha256") not in (None, content_sha256):
+                raise ValueError("The existing artifact contains different bytes.")
             return {
                 "message": {
                     "id": artifact_message_id,
@@ -3223,6 +3247,8 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_output_format": artifact_output_format,
             "generated_artifact_summary": artifact_summary,
             "generated_artifact_idempotency_key": normalized_idempotency_key or None,
+            "generated_artifact_content_sha256": content_sha256,
+            **analysis_metadata,
             **lifecycle_metadata,
             **approval_metadata,
             "thread_info": {
@@ -3345,6 +3371,8 @@ def _generated_artifact_has_lifecycle_contract(metadata: Dict[str, Any]) -> bool
 def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, message_item: Dict[str, Any]) -> None:
     """Reauthorize a generated artifact against its committed artifact-set manifest."""
     metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if metadata.get("analysis_result_required") or metadata.get("analysis_result_contexts"):
+        authorize_analysis_artifact(current_user_id, message_item)
     if not _generated_artifact_has_lifecycle_contract(metadata):
         return
 

@@ -18,7 +18,7 @@ from azure.cosmos import exceptions
 import functions_orchestration_runs as run_store
 from functions_appinsights import log_event
 from functions_orchestration_checkpoints import (
-    CHECKPOINT_VERSION, CheckpointError, CheckpointStore, context_binding,
+    CHECKPOINT_VERSION, OPTIONAL_STATE_FIELDS, STATE_FIELDS, CheckpointError, CheckpointStore, context_binding,
     effective_plan, fingerprint, restore_context, step_input_fingerprint,
 )
 from functions_orchestration_plan_revisions import PlanRevisionError, read_revision_run
@@ -488,26 +488,66 @@ class ExecutionLease:
             return self.update({'execution_lease': None})
 
 
-def request_cancellation(run_id, user_id, conversation_id, authorize):
+def request_cancellation(run_id, user_id, conversation_id, authorize, *, analysis_cancel=None):
     for _ in range(8):
         record = _owned(run_id, user_id, conversation_id, authorize)
-        if record.get('status') in _TERMINAL and not _live(record):
-            return record
         try:
-            return _replace(record, {
-                'cancellation_requested_at': record.get('cancellation_requested_at') or _now().isoformat(),
-                'cancellation_requested_by': user_id,
-            })
+            if record.get('status') not in _TERMINAL or _live(record):
+                record = _replace(record, {
+                    'cancellation_requested_at': record.get('cancellation_requested_at') or _now().isoformat(),
+                    'cancellation_requested_by': user_id,
+                })
         except exceptions.CosmosAccessConditionFailedError:
             continue
+        analyze_steps = [
+            step for step in (record.get('plan') or {}).get('steps') or []
+            if step.get('capability_id') in {'document_analyze', 'tabular_analyze'}
+        ]
+        if analyze_steps:
+            # Keep this optional I/O dependency out of unrelated run recovery.
+            if analysis_cancel is None:
+                from functions_workflow_result_store import cancel_orchestration_analysis_result
+                analysis_cancel = cancel_orchestration_analysis_result
+            try:
+                for step in analyze_steps:
+                    analysis_cancel(user_id, conversation_id, run_id, step['step_id'])
+            except Exception as exc:
+                log_event(
+                    '[ORCHESTRATION_RUNS] Analysis cancellation fence could not be confirmed.',
+                    extra={'run_id': run_id, 'error_type': type(exc).__name__}, level=logging.ERROR,
+                )
+                raise RecoveryError('The cancellation could not be confirmed. Please retry.', status_code=503) from exc
+        return record
     raise RecoveryError('The cancellation could not be saved. Please retry.', status_code=503)
 
 
 def _validate_payload_sources(payload, context, settings, user_id):
-    # Lazy import avoids initializing adapter services in storage-only callers.
-    from functions_orchestration_adapters import resolve_context_source_manifest
-
     state = payload.get('state') or {}
+    saved_analyses = state.get('saved_analyses', [])
+    if not isinstance(saved_analyses, list):
+        raise CheckpointError('checkpoint_invalid')
+    if saved_analyses:
+        # Recovery needs access checks, not legacy full-data/model materialization.
+        from functions_saved_analysis import (
+            load_orchestration_analysis_input,
+            load_saved_analysis,
+            saved_analysis_context,
+        )
+
+        for descriptor in saved_analyses:
+            if not isinstance(descriptor, dict) or not isinstance(descriptor.get('binding'), dict):
+                raise CheckpointError('checkpoint_invalid')
+            try:
+                if descriptor['binding'].get('kind') == 'orchestration':
+                    load_orchestration_analysis_input(user_id, descriptor, authorize_only=True)
+                elif descriptor['binding'].get('kind') in {'chat', 'workflow'}:
+                    load_saved_analysis(user_id, saved_analysis_context(descriptor))
+                else:
+                    raise CheckpointError('checkpoint_invalid')
+            except CheckpointError:
+                raise
+            except Exception as exc:
+                raise CheckpointError('context_unavailable') from exc
     saved = state.get('execution_manifest') or []
     document_ids = set(state.get('documents_touched') or [])
     document_ids.update(
@@ -515,6 +555,9 @@ def _validate_payload_sources(payload, context, settings, user_id):
         if isinstance(citation, dict) and citation.get('document_id')
     )
     if document_ids:
+        # Only direct document checks need the adapter's source resolver.
+        from functions_orchestration_adapters import resolve_context_source_manifest
+
         fresh = resolve_context_source_manifest(context, sorted(document_ids), settings=settings, user_id=user_id)
         by_id = {item.get('document_id'): item for item in fresh}
         original = {item.get('document_id'): item for item in saved}
@@ -556,10 +599,10 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None)
         raise CheckpointError('recovery_changed')
     source_steps = {step['step_id']: step for step in _execution_steps(source)}
     payloads = {}
-    initial_state = {key: deepcopy(getattr(context, key, None)) for key in (
-        'evidence', 'citations', 'artifacts', 'notes', 'documents_touched', 'step_documents',
-        'execution_manifest', 'source_manifest',
-    )}
+    initial_state = {
+        key: deepcopy(getattr(context, key, None)) for key in STATE_FIELDS + OPTIONAL_STATE_FIELDS
+    }
+    absent_optional_fields = {key for key in OPTIONAL_STATE_FIELDS if not hasattr(context, key)}
     try:
         context.execution_manifest = deepcopy(source.get('execution_initial_manifest') or [])
         interrupted = False
@@ -585,7 +628,11 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None)
             payloads[step['step_id']] = payload
     finally:
         for key, value in initial_state.items():
-            setattr(context, key, value)
+            if key in absent_optional_fields:
+                if hasattr(context, key):
+                    delattr(context, key)
+            else:
+                setattr(context, key, value)
     return payloads
 
 
@@ -773,7 +820,10 @@ class ExecutionCheckpoints:
         )
 
 
-def cleanup_conversation_checkpoints(conversation_id, user_id, authorize, *, message_container=None, conversation_container=None):
+def cleanup_conversation_checkpoints(
+    conversation_id, user_id, authorize, *, message_container=None, conversation_container=None,
+    analysis_cleanup=None, analysis_fence=None,
+):
     """Explicit retention cleanup; no TTL or optional blob container is assumed."""
     if not callable(authorize) or authorize() is False:
         raise RecoveryError(code='not_found', status_code=404)
@@ -818,6 +868,23 @@ def cleanup_conversation_checkpoints(conversation_id, user_id, authorize, *, mes
         if current.get('latest_attempt_run_id') and current['latest_attempt_run_id'] not in visited:
             rows.append(read_revision_run(current['latest_attempt_run_id'], user_id, conversation_id))
         fence_publication(row, message_container)
+        if any(
+            step.get('capability_id') in {'document_analyze', 'tabular_analyze'}
+            for step in (current.get('plan') or {}).get('steps') or []
+        ):
+            if analysis_cleanup is None:
+                # Resolve private result I/O only for runs that actually planned Analyze.
+                from functions_workflow_result_store import (
+                    delete_orchestration_analysis_results,
+                    fence_orchestration_analysis_result,
+                )
+                analysis_cleanup = delete_orchestration_analysis_results
+                analysis_fence = analysis_fence or fence_orchestration_analysis_result
+            if analysis_fence is not None:
+                for step in (current.get('plan') or {}).get('steps') or []:
+                    if step.get('capability_id') in {'document_analyze', 'tabular_analyze'}:
+                        analysis_fence(user_id, conversation_id, row['id'], step['step_id'])
+            analysis_cleanup(user_id, conversation_id, row['id'])
         if current.get('checkpoint_version') == CHECKPOINT_VERSION:
             store = checkpoint_store(row, authorize)
             # initialize may have failed before creating the guard. A tombstone

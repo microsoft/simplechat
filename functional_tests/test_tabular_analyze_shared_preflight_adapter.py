@@ -2,7 +2,7 @@
 # test_tabular_analyze_shared_preflight_adapter.py
 """
 Functional test for the Analyze shared tabular preflight adapter.
-Version: 0.250.199
+Version: 0.261.109
 Implemented in: 0.250.160; updated in 0.250.161 and 0.250.199
 
 This test ensures Phase 4 routes pure single-source tabular Analyze durable
@@ -150,7 +150,7 @@ def load_workflow_namespace(orchestration_result=None, manifest=None):
         "normalize_mixed_source_correlation_id": orchestration.normalize_mixed_source_correlation_id,
         "partition_source_manifest": orchestration.partition_source_manifest,
         "raise_if_mixed_source_cancelled": orchestration.raise_if_mixed_source_cancelled,
-        "resolve_authorized_source_manifest": lambda *args, **kwargs: list(source_manifest),
+        "resolve_analysis_source_manifest": lambda *args, **kwargs: list(source_manifest),
         "run_document_analysis": lambda **kwargs: {},
         "emit_mixed_source_telemetry": lambda *args, **kwargs: False,
         "_build_mixed_source_analyze_reduction_prompt": lambda prompt, handoff: handoff["content"],

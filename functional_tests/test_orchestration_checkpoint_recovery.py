@@ -1,7 +1,7 @@
 # test_orchestration_checkpoint_recovery.py
 """Functional regressions for durable, checkpoint-only orchestration recovery.
 
-Version: 0.261.105
+Version: 0.261.109
 Implemented in: 0.261.105
 Runs real Flask endpoints, executor, checkpoint codec, conditional batches and
 assistant persistence against AtomicMemoryContainer; no live services.
@@ -22,6 +22,102 @@ from test_support.versioning import assert_app_version_at_least
 
 
 class CheckpointRecoveryTests(unittest.TestCase):
+    def test_empty_analysis_references_preserve_legacy_bindings_and_state(self):
+        with RecoveryFixture() as fixture:
+            functions = fixture.route.prepare_retry.__globals__
+            context_binding = functions['context_binding']
+            checkpoint_helpers = context_binding.__globals__
+            context = SimpleNamespace()
+            plan = fixture.plan_attempt()
+            baseline_binding = context_binding(context, plan, fixture.settings)
+            baseline_state = checkpoint_helpers['context_state'](context)
+            context.saved_analyses = []
+            context.analysis_result_contexts = []
+            self.assertEqual(context_binding(context, plan, fixture.settings), baseline_binding)
+            self.assertEqual(checkpoint_helpers['context_state'](context), baseline_state)
+            checkpoint_helpers['restore_context'](context, {'state': baseline_state})
+            self.assertEqual(context.saved_analyses, [])
+            self.assertEqual(checkpoint_helpers['context_state'](context), baseline_state)
+            context.saved_analyses = [{'reference': {'sha256': 'a' * 64}}]
+            self.assertNotEqual(checkpoint_helpers['context_state'](context), baseline_state)
+            context.analysis_result_contexts = [{'binding': {'run_id': 'real-prior-run'}}]
+            self.assertNotEqual(context_binding(context, plan, fixture.settings), baseline_binding)
+
+    def test_cleanup_fences_pending_analysis_steps_before_result_sweep(self):
+        with RecoveryFixture() as fixture:
+            plan = fixture.plan_attempt()
+            record = fixture.runs.items[('conv1', plan['run_id'])]
+            record['plan']['steps'][0]['capability_id'] = 'document_analyze'
+            recovery = fixture.route.prepare_retry.__globals__
+            calls = []
+            recovery['cleanup_conversation_checkpoints'](
+                'conv1', 'user1', lambda: True, conversation_container=fixture.conversations,
+                analysis_fence=lambda *args: calls.append(('fence', args)),
+                analysis_cleanup=lambda *args: calls.append(('cleanup', args)),
+            )
+            self.assertEqual(calls, [
+                ('fence', ('user1', 'conv1', plan['run_id'], 'a')),
+                ('cleanup', ('user1', 'conv1', plan['run_id'])),
+            ])
+            self.assertTrue(fixture.runs.items[('conv1', plan['run_id'])]['checkpoints_deleted'])
+
+    def test_stop_fences_planned_analysis_steps_before_acknowledgement(self):
+        with RecoveryFixture() as fixture:
+            plan = fixture.plan_attempt()
+            fixture.runs.items[('conv1', plan['run_id'])]['plan']['steps'][0]['capability_id'] = 'document_analyze'
+            recovery = fixture.route.prepare_retry.__globals__
+            calls = []
+            stopped = recovery['request_cancellation'](
+                plan['run_id'], 'user1', 'conv1', lambda: True,
+                analysis_cancel=lambda *args: calls.append(args),
+            )
+            self.assertEqual(calls, [('user1', 'conv1', plan['run_id'], 'a')])
+            self.assertEqual(stopped['cancellation_requested_by'], 'user1')
+            self.assertTrue(stopped['cancellation_requested_at'])
+
+    def test_stop_does_not_claim_confirmation_when_analysis_fencing_fails(self):
+        with RecoveryFixture() as fixture:
+            plan = fixture.plan_attempt()
+            fixture.runs.items[('conv1', plan['run_id'])]['plan']['steps'][0]['capability_id'] = 'document_analyze'
+            recovery = fixture.route.prepare_retry.__globals__
+
+            def unavailable(*args):
+                raise AzureError('Private unavailable write fence')
+
+            with self.assertRaises(recovery['RecoveryError']) as failure:
+                recovery['request_cancellation'](
+                    plan['run_id'], 'user1', 'conv1', lambda: True, analysis_cancel=unavailable,
+                )
+            self.assertEqual(failure.exception.status_code, 503)
+            self.assertNotIn('Private unavailable', failure.exception.message)
+            calls = []
+            recovery['request_cancellation'](
+                plan['run_id'], 'user1', 'conv1', lambda: True,
+                analysis_cancel=lambda *args: calls.append(args),
+            )
+            self.assertEqual(calls, [('user1', 'conv1', plan['run_id'], 'a')])
+
+    def test_tabular_only_run_is_fenced_and_swept_like_document_analysis(self):
+        with RecoveryFixture() as fixture:
+            plan = fixture.plan_attempt()
+            fixture.runs.items[('conv1', plan['run_id'])]['plan']['steps'][0]['capability_id'] = 'tabular_analyze'
+            recovery = fixture.route.prepare_retry.__globals__
+            calls = []
+            recovery['request_cancellation'](
+                plan['run_id'], 'user1', 'conv1', lambda: True,
+                analysis_cancel=lambda *args: calls.append(('cancel', args)),
+            )
+            recovery['cleanup_conversation_checkpoints'](
+                'conv1', 'user1', lambda: True, conversation_container=fixture.conversations,
+                analysis_fence=lambda *args: calls.append(('fence', args)),
+                analysis_cleanup=lambda *args: calls.append(('cleanup', args)),
+            )
+            self.assertEqual(calls, [
+                ('cancel', ('user1', 'conv1', plan['run_id'], 'a')),
+                ('fence', ('user1', 'conv1', plan['run_id'], 'a')),
+                ('cleanup', ('user1', 'conv1', plan['run_id'])),
+            ])
+
     def _crash_retry(self, fixture, child, phase):
         manager_type = fixture.route.ExecutionCheckpoints
         original_initialize = manager_type.initialize

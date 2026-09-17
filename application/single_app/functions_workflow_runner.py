@@ -42,6 +42,7 @@ from functions_m365_workflow_checkpoints import (
 )
 from openai import AzureOpenAI
 from semantic_kernel import Kernel
+from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.contents.chat_history import ChatHistory
@@ -90,6 +91,8 @@ from functions_generated_file_exports import (
     build_generated_file_artifact_metadata,
     build_generated_file_export,
     build_generated_file_output_guidance,
+    get_analysis_export_rows,
+    get_assistant_presentation_content,
     get_generated_file_export_content,
     get_requested_generated_file_format,
     get_requested_structured_artifact_format,
@@ -106,6 +109,7 @@ from functions_generated_file_exports import (
     normalize_xml_artifact_payload,
     serialize_generated_xml,
     serialize_generated_json,
+    serialize_generated_xml,
 )
 from functions_document_actions import (
     DOCUMENT_ACTION_ANALYSIS_MODE_PER_DOCUMENT,
@@ -140,6 +144,22 @@ from functions_document_access_index import (
 from functions_document_comparison import run_document_comparison, run_evidence_document_comparison
 from functions_debug import debug_print
 from functions_document_analysis import run_document_analysis
+from functions_analysis_access import analysis_source_snapshot, resolve_analysis_source_manifest
+from functions_native_analysis_results import (
+    adapt_native_analysis_result, collect_native_foreground_output, native_analysis_state,
+)
+from functions_saved_analysis import (
+    SavedAnalysisInput,
+    _bind_analysis_projection_contexts,
+    analysis_artifact_metadata,
+    analysis_result_contexts,
+    explain_saved_analysis,
+    format_saved_analysis,
+    saved_analysis_format_request,
+    saved_analysis_context,
+    sanitize_saved_analysis_messages,
+    workflow_saved_analysis_descriptor,
+)
 from functions_file_sync import get_authorized_sync_source, queue_file_sync_source_run
 from functions_group import assert_group_role, get_group_model_endpoints, get_user_groups
 from functions_group_workflows import (
@@ -216,6 +236,7 @@ from functions_workflow_validation import (
 )
 from functions_workflow_results import (
     WorkflowResultNotReadyError,
+    authorize_workflow_task_result_read,
     build_workflow_task_result,
     get_workflow_result_text,
     load_workflow_task_input,
@@ -1125,6 +1146,9 @@ def _extract_document_analysis_rows_from_text(analysis_text, source_context, inc
 
 def _build_document_analysis_structured_rows(analysis_result):
     analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    final_rows = get_analysis_export_rows(analysis_result)
+    if final_rows is not None:
+        return final_rows
     rows = []
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
     document_analysis_items = analysis_result.get('document_analysis_items') if isinstance(analysis_result.get('document_analysis_items'), list) else []
@@ -1220,6 +1244,11 @@ def _build_document_analysis_coverage_markdown(analysis_result):
 
 def _build_document_analysis_markdown_artifact(analysis_result):
     analysis_result = analysis_result if isinstance(analysis_result, dict) else {}
+    if get_analysis_export_rows(analysis_result) is not None:
+        return '\n\n'.join([
+            '# Document Analysis',
+            get_assistant_presentation_content(analysis_result),
+        ]).strip()
     analysis_reply = str(analysis_result.get('analysis_reply') or analysis_result.get('reply') or '').strip()
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
     document_analysis_items = analysis_result.get('document_analysis_items') if isinstance(analysis_result.get('document_analysis_items'), list) else []
@@ -1297,6 +1326,7 @@ def _upload_document_analysis_generated_artifact(
     preview_lines=None,
     cancel_requested=None,
     request_correlation_id=None,
+    analysis_producer=None,
 ):
     try:
         upload_result = upload_generated_analysis_artifact_for_current_user(
@@ -1306,6 +1336,7 @@ def _upload_document_analysis_generated_artifact(
             capability='analyze',
             output_format=output_format,
             summary=summary,
+            analysis_producer=analysis_producer,
         )
         try:
             raise_if_mixed_source_cancelled(
@@ -1343,6 +1374,7 @@ def _upload_document_analysis_generated_artifact(
         'file_name': upload_result.get('message', {}).get('file_name') or file_name,
         'output_format': output_format,
         'summary': summary,
+        **analysis_artifact_metadata(analysis_producer),
     }
     if preview_rows:
         artifact_payload['preview_rows'] = preview_rows
@@ -1409,6 +1441,7 @@ def _maybe_create_document_analysis_generated_artifacts(
     cancel_requested=None,
     request_correlation_id=None,
     suppress_xml_artifact=False,
+    analysis_producer=None,
 ):
     raise_if_mixed_source_cancelled(
         cancel_requested,
@@ -1429,7 +1462,8 @@ def _maybe_create_document_analysis_generated_artifacts(
     artifact_intent = _get_document_analysis_artifact_intent(analysis_result, analysis_prompt)
     primary_tabular_outputs = _get_primary_tabular_generated_outputs(primary_generated_outputs)
     raw_analysis_items = analysis_result.get('raw_analysis_items') if isinstance(analysis_result.get('raw_analysis_items'), list) else []
-    json_payload = _parse_json_artifact_payload(analysis_reply)
+    final_rows = get_analysis_export_rows(analysis_result)
+    json_payload = final_rows if final_rows is not None else _parse_json_artifact_payload(analysis_reply)
     json_artifact_requested = _prompt_explicitly_requests_json_artifact(analysis_prompt)
     xml_payload = normalize_xml_artifact_payload(analysis_reply)
     xml_artifact_requested = bool(
@@ -1438,6 +1472,27 @@ def _maybe_create_document_analysis_generated_artifacts(
     )
     if suppress_xml_artifact and xml_payload:
         return {'artifacts': [], 'assistant_reply': None}
+    if final_rows is not None and xml_artifact_requested:
+        xml_payload = serialize_generated_xml(final_rows, root_name='Analysis', item_name='Record')
+    sources = analysis_result.get('analysis_sources') or analysis_result.get('source_manifest') or []
+    if (
+        final_rows is not None and len(sources) == 1 and sources[0].get('source_kind') == 'tabular'
+        and primary_tabular_outputs and all(output.get('artifact_message_id') for output in primary_tabular_outputs)
+        and not _primary_tabular_generated_outputs_are_pending(primary_tabular_outputs)
+    ):
+        requested_formats = {
+            output_format for output_format in (
+                get_requested_generated_file_format(analysis_prompt),
+                get_requested_structured_artifact_format(analysis_prompt),
+                'md' if _prompt_explicitly_requests_markdown_artifact(analysis_prompt) else None,
+            ) if output_format
+        }
+        available_formats = {
+            'md' if output.get('output_format') == 'markdown' else output.get('output_format')
+            for output in primary_tabular_outputs
+        }
+        if requested_formats.issubset(available_formats):
+            return {'artifacts': [], 'assistant_reply': analysis_reply}
     debug_print(
         '[WORKFLOW_DOCUMENT_ANALYSIS] Analysis artifact sizing | '
         f'document_count={document_count} | '
@@ -1487,6 +1542,7 @@ def _maybe_create_document_analysis_generated_artifacts(
                     preview_rows=structured_rows[:DOCUMENT_ANALYSIS_ARTIFACT_PREVIEW_ROW_COUNT],
                     cancel_requested=cancel_requested,
                     request_correlation_id=request_correlation_id,
+                    analysis_producer=analysis_producer,
                 )
                 if csv_artifact:
                     artifacts.append(csv_artifact)
@@ -1499,8 +1555,12 @@ def _maybe_create_document_analysis_generated_artifacts(
             if should_create_markdown_artifact:
                 markdown_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'md')
                 markdown_summary = (
-                    f'Saved the final analysis plus retained raw analysis notes for {document_count} '
-                    'source document(s) as a downloadable Markdown artifact.'
+                    f'Saved the readable final analysis for {document_count} source document(s) '
+                    'as a downloadable Markdown report.'
+                    if final_rows is not None else (
+                        f'Saved the final analysis plus retained raw analysis notes for {document_count} '
+                        'source document(s) as a downloadable Markdown artifact.'
+                    )
                 )
                 markdown_artifact = _upload_document_analysis_generated_artifact(
                     normalized_conversation_id,
@@ -1511,11 +1571,12 @@ def _maybe_create_document_analysis_generated_artifacts(
                     preview_lines=_build_document_analysis_preview_lines(analysis_reply),
                     cancel_requested=cancel_requested,
                     request_correlation_id=request_correlation_id,
+                    analysis_producer=analysis_producer,
                 )
                 if markdown_artifact:
                     artifacts.append(markdown_artifact)
 
-            if xml_payload and xml_artifact_requested and not primary_tabular_outputs:
+            if xml_payload and xml_artifact_requested and (not primary_tabular_outputs or final_rows is not None):
                 xml_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'xml')
                 xml_summary = _build_document_analysis_artifact_summary(document_count, 'xml')
                 xml_artifact = _upload_document_analysis_generated_artifact(
@@ -1527,11 +1588,12 @@ def _maybe_create_document_analysis_generated_artifacts(
                     preview_lines=_build_document_analysis_preview_lines(xml_payload),
                     cancel_requested=cancel_requested,
                     request_correlation_id=request_correlation_id,
+                    analysis_producer=analysis_producer,
                 )
                 if xml_artifact:
                     artifacts.append(xml_artifact)
 
-            if json_payload is not None and json_artifact_requested and not primary_tabular_outputs:
+            if json_payload is not None and json_artifact_requested and (not primary_tabular_outputs or final_rows is not None):
                 json_file_name = _build_document_analysis_artifact_file_name(analysis_result, 'json')
                 json_summary = _build_document_analysis_artifact_summary(document_count, 'json')
                 json_preview_items = []
@@ -1548,6 +1610,7 @@ def _maybe_create_document_analysis_generated_artifacts(
                     preview_items=json_preview_items,
                     cancel_requested=cancel_requested,
                     request_correlation_id=request_correlation_id,
+                    analysis_producer=analysis_producer,
                 )
                 if json_artifact:
                     artifacts.append(json_artifact)
@@ -1588,6 +1651,8 @@ def _maybe_create_document_analysis_generated_artifacts(
                     len(raw_analysis_items),
                     primary_tabular_outputs,
                 )
+            if final_rows is not None:
+                assistant_reply = get_assistant_presentation_content(analysis_result)
             return {
                 'artifacts': artifacts,
                 'assistant_reply': assistant_reply,
@@ -1648,6 +1713,7 @@ def _maybe_create_document_analysis_generated_artifacts(
         preview_lines=preview_lines,
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
+        analysis_producer=analysis_producer,
     )
     raise_if_mixed_source_cancelled(
         cancel_requested,
@@ -1659,7 +1725,11 @@ def _maybe_create_document_analysis_generated_artifacts(
 
     return {
         'artifacts': [artifact_payload],
-        'assistant_reply': _build_document_analysis_artifact_reply(document_count, output_format, analysis_reply),
+        'assistant_reply': (
+            get_assistant_presentation_content(analysis_result)
+            if final_rows is not None
+            else _build_document_analysis_artifact_reply(document_count, output_format, analysis_reply)
+        ),
     }
 
 
@@ -2029,7 +2099,12 @@ def _reauthorize_mixed_source_workflow_result(
             'finalization',
             request_correlation_id=request_correlation_id,
         )
-        fresh_manifest = resolve_authorized_source_manifest(
+        resolve_manifest = (
+            resolve_analysis_source_manifest
+            if (action_config or {}).get('type') != DOCUMENT_ACTION_TYPE_COMPARISON
+            else resolve_authorized_source_manifest
+        )
+        fresh_manifest = resolve_manifest(
             requested_ids,
             user_id=user_id,
             selection_mode=selection_mode,
@@ -2995,6 +3070,25 @@ def _maybe_execute_pure_tabular_analyze_preflight(
     return None
 
 
+def _configure_analysis_checkpoints(workflow, analysis_config, manifest):
+    """Keep one real attempt fence and one full-operation fingerprint across document cohorts."""
+    checkpoints = workflow.get('_analysis_checkpoints')
+    if checkpoints is None or checkpoints.operation_request is not None:
+        return checkpoints
+    checkpoints.operation_request = json.loads(json.dumps({
+        'prompt': workflow.get('task_prompt', ''),
+        'document_action': analysis_config,
+        'runner': {
+            key: workflow.get(key) for key in (
+                'runner_type', 'model_endpoint_id', 'model_id', 'model_provider',
+                'legacy_model_deployment', 'selected_agent',
+            )
+        },
+    }, allow_nan=False))
+    checkpoints.operation_sources = analysis_source_snapshot(manifest)
+    return checkpoints
+
+
 def _execute_mixed_source_analyze_workflow(
     workflow,
     analysis_config,
@@ -3009,7 +3103,7 @@ def _execute_mixed_source_analyze_workflow(
     request_correlation_id=None,
     token_usage_callback=None,
 ):
-    """Run combined Analyze cohorts natively, then reduce bounded evidence once."""
+    """Keep modern native records lossless; retain the historical evidence adapter for legacy callers."""
     started_at = time.perf_counter()
     request_correlation_id = normalize_mixed_source_correlation_id(
         request_correlation_id
@@ -3042,7 +3136,7 @@ def _execute_mixed_source_analyze_workflow(
         )
     if callable(activity_callback):
         activity_callback({'type': 'mixed_source_progress', 'phase': 'resolving_sources', 'label': 'Resolving sources'})
-    manifest = resolve_authorized_source_manifest(
+    manifest = resolve_analysis_source_manifest(
         requested_ids,
         user_id=user_id,
         selection_mode=requested_selection_mode,
@@ -3053,11 +3147,17 @@ def _execute_mixed_source_analyze_workflow(
         cancel_requested=cancel_requested,
         request_correlation_id=request_correlation_id,
     )
+    analysis_checkpoints = (
+        _configure_analysis_checkpoints(workflow, analysis_config, manifest)
+        if workflow.get('_analysis_checkpoints') is not None else None
+    )
     partitions = partition_source_manifest(manifest)
     evidence_envelopes = []
     generated_tabular_outputs = []
     pending_tabular_runs = []
     tabular_agent_citations = []
+    native_results = []
+    modern_analysis = workflow.get('_analysis_result_version') == 'analyze-final-v1'
 
     tabular_preflight_result = _maybe_execute_pure_tabular_analyze_preflight(
         workflow,
@@ -3071,6 +3171,19 @@ def _execute_mixed_source_analyze_workflow(
         request_correlation_id=request_correlation_id,
     )
     if tabular_preflight_result:
+        if modern_analysis:
+            adapted = adapt_native_analysis_result(
+                user_id=user_id, conversation_id=conversation_id, source=partitions['tabular_sources'][0],
+                generated_outputs=tabular_preflight_result.get('generated_tabular_outputs') or [],
+                analysis_producer=workflow.get('_analysis_producer'),
+                analysis_options=analysis_config.get('analysis_options'),
+                transformation_spec=analysis_config.get('transformation_spec'),
+            )
+            return {
+                **tabular_preflight_result, **adapted,
+                'mixed_source_manifest': manifest,
+                'generated_tabular_outputs': adapted.get('generated_tabular_outputs') or [],
+            }
         return tabular_preflight_result
 
     narrative_sources = partitions['narrative_sources']
@@ -3097,6 +3210,11 @@ def _execute_mixed_source_analyze_workflow(
                 include_coverage_summary=False,
                 cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
+                result_version='analyze-final-v1',
+                source_manifest=narrative_sources,
+                analysis_options=analysis_config.get('analysis_options'),
+                transformation_spec=analysis_config.get('transformation_spec'),
+                **({'work_unit_checkpoints': analysis_checkpoints} if analysis_checkpoints is not None else {}),
             )
             documents_by_id = {
                 str(document.get('document_id') or ''): document
@@ -3150,7 +3268,10 @@ def _execute_mixed_source_analyze_workflow(
                     coverage={'terminal': True}, error='Narrative analysis could not be completed.',
                 ))
 
-    if narrative_sources and narrative_result is not None and not partitions['tabular_sources']:
+    if (
+        narrative_sources and narrative_result is not None and not partitions['tabular_sources']
+        and not partitions['unsupported_sources'] and not partitions['unresolved_sources']
+    ):
         # Pure-narrative Analyze (no tabular sources): use run_document_analysis's own
         # full-fidelity synthesis directly instead of the bounded evidence-envelope/collective-
         # reduction hop below, which exists to combine different engine types (narrative +
@@ -3169,6 +3290,7 @@ def _execute_mixed_source_analyze_workflow(
                 'status': EVIDENCE_STATUS_COMPLETED,
             })
         return {
+            **narrative_result,
             'reply': narrative_result.get('reply') or narrative_result.get('analysis_reply'),
             'analysis_reply': narrative_result.get('analysis_reply'),
             'coverage': narrative_result.get('coverage') or {},
@@ -3197,8 +3319,11 @@ def _execute_mixed_source_analyze_workflow(
                 cancel_requested=cancel_requested,
                 request_correlation_id=request_correlation_id,
                 token_usage_callback=token_usage_callback,
+                **({'source_manifest': [source]} if modern_analysis else {}),
             )
             if not tabular_payload:
+                if modern_analysis:
+                    native_results.append(native_analysis_state(source, 'failed'))
                 evidence_envelopes.append(build_evidence_envelope(
                     document_id=source.get('document_id'), source_kind='tabular',
                     engine=EVIDENCE_ENGINE_TABULAR_TOOLS, status=EVIDENCE_STATUS_FAILED,
@@ -3207,6 +3332,11 @@ def _execute_mixed_source_analyze_workflow(
                 ))
                 continue
             tabular_result = tabular_payload.get('result') or {}
+            if modern_analysis:
+                native_results.append(
+                    tabular_result if tabular_result.get('analysis_result_version') == 'analyze-final-v1'
+                    else native_analysis_state(source, 'unsupported')
+                )
             tabular_generated_outputs = list(tabular_payload.get('generated_tabular_outputs') or [])
             pending_generated_output = _get_pending_tabular_generated_output(
                 tabular_generated_outputs,
@@ -3293,6 +3423,44 @@ def _execute_mixed_source_analyze_workflow(
         f'handoff_bytes={len(json.dumps(handoff, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))} | '
         f"handoff_compacted={bool((handoff.get('mixed_source_coverage') or {}).get('handoff_compacted'))}"
     )
+    if modern_analysis:
+        final_results = ([narrative_result] if narrative_result is not None else [
+            native_analysis_state(source, 'failed') for source in narrative_sources
+        ]) + native_results
+        final_results.extend(
+            native_analysis_state(source, 'unsupported')
+            for source in partitions['unsupported_sources'] + partitions['unresolved_sources']
+        )
+        coverage = _native_analysis_coverage(final_results)
+        reply = '\n\n'.join(str(item.get('analysis_reply') or item.get('reply') or '') for item in final_results)
+        combined = _combine_final_analysis_results(final_results, reply, coverage)
+        if combined is None:
+            raise ValueError('Complete native outputs are unavailable; bounded evidence is not final data.')
+        combined.update({
+            'coverage': coverage, 'documents': coverage['documents'],
+            'document_ids': [source['document_id'] for source in manifest],
+            'analysis_sources': manifest, 'mixed_source_manifest': manifest,
+            'mixed_source_evidence': [], 'generated_tabular_outputs': generated_tabular_outputs,
+            'agent_citations': tabular_agent_citations,
+        })
+        if pending_tabular_runs:
+            deferred = _build_mixed_source_deferred_composition_descriptor(
+                workflow, conversation_id, manifest, pending_tabular_runs, settings,
+                request_correlation_id=request_correlation_id,
+            )
+            combined['deferred_composition'] = deferred
+            combined['reply'] += '\n\n' + (
+                'This environment has no automatic combined-result continuation. '
+                'Native files can finish separately; they do not upgrade this saved partial snapshot.'
+                if deferred.get('continuation_available') is False
+                else _build_mixed_source_deferred_reply(deferred)
+            )
+        if callable(activity_callback):
+            activity_callback({
+                'type': 'mixed_source_progress', 'phase': coverage['progress_meta']['status'],
+                'label': coverage['progress_meta']['phase_label'], 'status': coverage['progress_meta']['status'],
+            })
+        return combined
     mode_outcome = evaluate_mixed_source_mode_outcome(
         'analyze',
         {
@@ -3936,6 +4104,7 @@ def _maybe_execute_tabular_document_action(
     cancel_requested=None,
     request_correlation_id=None,
     token_usage_callback=None,
+    source_manifest=None,
 ):
     raise_if_mixed_source_cancelled(
         cancel_requested,
@@ -4013,6 +4182,8 @@ def _maybe_execute_tabular_document_action(
             plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
         )
     generated_tabular_outputs = []
+    native_outputs = {}
+    modern_analysis = action_type == DOCUMENT_ACTION_TYPE_ANALYZE and workflow.get('_analysis_result_version') == 'analyze-final-v1'
     task_prompt = str(workflow.get('task_prompt', '') or '').strip()
     tabular_post_processing_thought_callback = _build_tabular_document_action_thought_callback(
         thought_tracker=thought_tracker,
@@ -4021,6 +4192,8 @@ def _maybe_execute_tabular_document_action(
 
     try:
         for tabular_document in tabular_documents:
+            native_output = {'generated_outputs': [], 'complete_output': None}
+            native_outputs[tabular_document['document_id']] = native_output
             raise_if_mixed_source_cancelled(
                 cancel_requested,
                 'tabular',
@@ -4064,6 +4237,7 @@ def _maybe_execute_tabular_document_action(
                     )
                     if direct_generated_output:
                         generated_tabular_outputs.append(direct_generated_output)
+                        native_output['generated_outputs'].append(direct_generated_output)
                         continue
 
             parity_result = classify_tabular_parity_request(task_prompt)
@@ -4122,7 +4296,7 @@ def _maybe_execute_tabular_document_action(
                     document_baseline_invocation_count,
                 )
 
-                related_document_stats = augment_tabular_invocations_with_related_document_evidence(
+                related_document_stats = {} if modern_analysis else augment_tabular_invocations_with_related_document_evidence(
                     document_tabular_invocations,
                     task_prompt,
                     user_id,
@@ -4149,6 +4323,10 @@ def _maybe_execute_tabular_document_action(
                             request_correlation_id=request_correlation_id,
                             token_usage_callback=token_usage_callback,
                             mode='analyze',
+                            **({
+                                'final_result_callback': lambda value: native_output.update(complete_output=value),
+                                'analysis_producer': workflow.get('_analysis_producer'),
+                            } if modern_analysis else {}),
                         )
                     )
                 raise_if_mixed_source_cancelled(
@@ -4158,6 +4336,9 @@ def _maybe_execute_tabular_document_action(
                 )
                 if generated_tabular_output:
                     generated_tabular_outputs.append(generated_tabular_output)
+                    native_output['generated_outputs'].append(generated_tabular_output)
+                if modern_analysis and not native_output['complete_output'] and not native_output['generated_outputs']:
+                    native_output['complete_output'] = collect_native_foreground_output(document_tabular_invocations)
     except MixedSourceCancellationError:
         raise
     except Exception as exc:
@@ -4181,6 +4362,37 @@ def _maybe_execute_tabular_document_action(
         invocations_after = plugin_logger.get_invocations_for_conversation(user_id, conversation_id, limit=1000)
         tabular_invocations = get_new_plugin_invocations(invocations_after, baseline_invocation_count)
     tabular_agent_citations = _build_agent_citations_from_plugin_invocations(tabular_invocations)
+
+    if modern_analysis:
+        manifest = source_manifest or resolve_analysis_source_manifest(
+            [item['document_id'] for item in tabular_documents], user_id=user_id,
+            conversation_id=conversation_id, doc_scope=action_config.get('doc_scope', 'all'),
+            active_group_ids=action_config.get('active_group_ids'),
+            active_public_workspace_ids=action_config.get('active_public_workspace_id'),
+        )
+        final_results = [
+            adapt_native_analysis_result(
+                user_id=user_id, conversation_id=conversation_id, source=source,
+                **native_outputs[source['document_id']],
+                analysis_producer=workflow.get('_analysis_producer'),
+                analysis_options=action_config.get('analysis_options'),
+                transformation_spec=action_config.get('transformation_spec'),
+            ) for source in manifest
+        ]
+        coverage = _native_analysis_coverage(final_results)
+        reply = '\n\n'.join(item['reply'] for item in final_results)
+        analysis_result = _combine_final_analysis_results(final_results, reply, coverage)
+        analysis_result.update({
+            'coverage': coverage, 'documents': coverage['documents'],
+            'document_ids': [source['document_id'] for source in manifest],
+        })
+        return {
+            'result': analysis_result, 'agent_citations': tabular_agent_citations,
+            'generated_tabular_outputs': [
+                output for item, source in zip(final_results, manifest)
+                for output in item.get('generated_tabular_outputs') or []
+            ],
+        }
 
     if action_type == DOCUMENT_ACTION_TYPE_ANALYZE:
         pending_generated_output = _get_pending_tabular_generated_output(generated_tabular_outputs)
@@ -5866,6 +6078,9 @@ def _maybe_create_workflow_generated_file_output(
     assistant_content,
     function_results=None,
     existing_outputs=None,
+    analysis_result=None,
+    analysis_producer=None,
+    analysis_contexts=None,
 ):
     """Persist a requested workflow CSV, DOCX, or PDF artifact."""
     output_format = get_requested_generated_file_format(user_question)
@@ -5880,6 +6095,7 @@ def _maybe_create_workflow_generated_file_output(
         user_question,
         assistant_content,
         function_results=function_results,
+        **({'analysis_result': analysis_result} if analysis_result is not None else {}),
     )
     if not export_payload:
         return None
@@ -5895,12 +6111,12 @@ def _maybe_create_workflow_generated_file_output(
     settings = get_settings()
     structured_rows = export_payload.get('_structured_rows') or []
     row_batches = []
-    if output_format == 'csv':
+    if output_format == 'csv' and analysis_result is None:
         row_batches = build_tabular_generated_output_row_batches(structured_rows, settings=settings)
     if not generated_file_name:
         return None
 
-    if output_format == 'csv' and should_queue_tabular_generated_output_background(
+    if output_format == 'csv' and analysis_result is None and not analysis_producer and should_queue_tabular_generated_output_background(
         row_count,
         len(row_batches),
         settings,
@@ -5949,8 +6165,11 @@ def _maybe_create_workflow_generated_file_output(
             capability=export_payload.get('capability') or 'file_export',
             output_format=output_format,
             summary=export_payload.get('summary'),
+            **({'analysis_producer': analysis_producer} if analysis_producer else {}),
         )
     except Exception as exc:
+        if analysis_producer:
+            raise
         log_event(
             '[WORKFLOW_GENERATED_FILE_EXPORT] Failed to save generated file artifact',
             {
@@ -5971,6 +6190,10 @@ def _maybe_create_workflow_generated_file_output(
     )
     if not artifact_metadata:
         return None
+    if analysis_producer:
+        artifact_metadata.update(analysis_artifact_metadata(analysis_producer))
+        if analysis_contexts:
+            _bind_analysis_projection_contexts(artifact_metadata, analysis_contexts, analysis_producer)
 
     log_event(
         '[WORKFLOW_GENERATED_FILE_EXPORT] Saved generated file artifact',
@@ -6126,6 +6349,14 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
     group_id = _get_workflow_group_id(workflow)
     generated_analysis_artifacts = list(result.get('generated_analysis_artifacts') or [])
     generated_tabular_outputs = list(result.get('generated_tabular_outputs') or [])
+    saved_analyses = []
+    for summary in result.get('analysis_origin_results') or [result.get('workflow_result') or {}]:
+        descriptor = workflow_saved_analysis_descriptor(
+            summary, workflow,
+            conversation_id=conversation.get('id'), message_id=assistant_message_id,
+        )
+        if descriptor and descriptor not in saved_analyses:
+            saved_analyses.append(descriptor)
     raw_agent_citations = list(result.get('agent_citations') or [])
     xsd_generation_contract = result.get('_xsd_generation_contract')
     generated_file_output = None
@@ -6137,6 +6368,11 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             assistant_content=get_generated_file_export_content(result),
             function_results=raw_agent_citations,
             existing_outputs=generated_analysis_artifacts + generated_tabular_outputs,
+            **({'analysis_result': result} if get_analysis_export_rows(result) is not None else {}),
+            **({
+                'analysis_producer': saved_analyses[-1]['binding'] if saved_analyses else workflow.get('_analysis_producer'),
+                'analysis_contexts': [saved_analysis_context(item) for item in saved_analyses],
+            } if saved_analyses or get_analysis_export_rows(result) is not None else {}),
         )
     if generated_file_output:
         generated_analysis_artifacts.append(generated_file_output)
@@ -6234,6 +6470,12 @@ def _create_assistant_message(conversation, workflow, result, trigger_source, ru
             },
         },
     }
+    if saved_analyses:
+        assistant_doc['metadata'].update({
+            'saved_analysis': saved_analyses[-1],
+            'saved_analyses': saved_analyses,
+            'analysis_result_contexts': [saved_analysis_context(item) for item in saved_analyses],
+        })
     cosmos_messages_container.upsert_item(attach_m365_message_provenance(assistant_doc))
 
     token_usage = result.get('token_usage') if isinstance(result.get('token_usage'), dict) else None
@@ -7910,6 +8152,119 @@ def _get_per_document_fallback_reply(execution_state):
     return 'No response was generated for this document.'
 
 
+def _native_analysis_coverage(results):
+    documents = [document for result in results for document in (result.get('coverage') or {}).get('documents') or []]
+    states = [
+        result.get('execution_status') or (
+            'incomplete' if (result.get('analysis_validation') or {}).get('status') == 'partial'
+            else 'failed' if (result.get('analysis_validation') or {}).get('status') == 'invalid'
+            else 'succeeded'
+        ) for result in results
+    ]
+    status = (
+        'pending' if 'pending' in states else 'failed' if not any(state in {'succeeded', 'incomplete'} for state in states)
+        else 'partial' if any(state != 'succeeded' for state in states) else 'completed'
+    )
+    return {
+        'document_count': len(documents), 'documents': documents,
+        **{
+            field: sum(int((result.get('coverage') or {}).get(field) or 0) for result in results)
+            for field in ('total_windows', 'processed_windows', 'failed_windows', 'total_chunks', 'processed_chunks', 'failed_chunks')
+        },
+        'progress_meta': {
+            'status': status, 'phase': status,
+            'phase_label': {
+                'pending': 'Native work remains pending', 'partial': 'Accepted partial findings',
+                'failed': 'Native results are unavailable', 'completed': 'Analysis complete',
+            }[status],
+        },
+    }
+
+
+def _combine_final_analysis_results(results, reply, coverage):
+    """Join already-final records without another model pass or raw-note fallback."""
+    if not results or any(
+        result.get('analysis_result_version') != 'analyze-final-v1' for result in results
+    ):
+        return None
+    records = {}
+    evidence = []
+    sources = []
+    validations = []
+    for result in results:
+        authoritative = result.get('authoritative_result') or {}
+        if authoritative.get('kind') != 'records' or not isinstance(authoritative.get('value'), list):
+            raise ValueError('Complete final records are unavailable for part of this analysis.')
+        for record in authoritative['value']:
+            record_id = record.get('record_id') if isinstance(record, dict) else None
+            if not record_id:
+                raise ValueError('A final analysis record is missing its identity.')
+            if record_id in records and records[record_id] != record:
+                raise ValueError('Final analysis records have conflicting identities.')
+            records[record_id] = record
+        for item in result.get('analysis_evidence') or []:
+            if item not in evidence:
+                evidence.append(item)
+        for source in result.get('analysis_sources') or result.get('mixed_source_manifest') or result.get('source_manifest') or []:
+            if source not in sources:
+                sources.append(source)
+        validations.append(result.get('analysis_validation') or {'status': 'not_validated'})
+    statuses = {validation.get('status', 'not_validated') for validation in validations}
+    status = next((state for state in ('invalid', 'pending', 'partial') if state in statuses), None)
+    if not status:
+        status = 'valid' if statuses == {'valid'} else 'not_validated'
+    if (coverage.get('progress_meta') or {}).get('status') == 'partial' and status == 'valid':
+        status = 'partial'
+    native_states = [result.get('execution_status') for result in results if result.get('execution_status')]
+    execution = None
+    if native_states:
+        progress_status = (coverage.get('progress_meta') or {}).get('status')
+        execution = {'pending': 'pending', 'partial': 'incomplete', 'failed': 'failed', 'completed': 'succeeded'}.get(progress_status)
+        if progress_status == 'partial':
+            status = 'partial'
+        elif progress_status == 'pending':
+            status = 'partial' if statuses.intersection({'valid', 'partial'}) else 'pending'
+    combined = {
+        'analysis_result_version': 'analyze-final-v1',
+        'analysis_reply': reply,
+        'reply': reply,
+        'authoritative_result': {'kind': 'records', 'value': list(records.values())},
+        'analysis_sources': sources,
+        'source_manifest': sources,
+        'mixed_source_manifest': sources,
+        'analysis_evidence': evidence,
+        'analysis_validation': {
+            'status': status,
+            'source_validations': validations,
+            'limitations': list(dict.fromkeys([
+                'Source-level validation is retained; no additional cross-source reconciliation was performed.',
+                *[limitation for validation in validations for limitation in validation.get('limitations') or []],
+            ])),
+        },
+        'analysis_metrics': {'source_metrics': [result.get('analysis_metrics') or {} for result in results]},
+        'coverage': coverage,
+        'native_result_references': [reference for result in results for reference in result.get('native_result_references') or []],
+    }
+    if execution:
+        combined['execution_status'] = execution
+    if 'total_windows' in coverage:
+        total = int(coverage.get('total_windows') or 0)
+        completed = int(coverage.get('processed_windows') or 0)
+        failed = int(coverage.get('failed_windows') or 0)
+        combined['analysis_validation']['coverage'] = {
+            'assigned_sources': len(sources),
+            'completed_sources': sum(
+                1 for document in coverage.get('documents') or []
+                if int(document.get('total_windows') or 0) > 0
+                and int(document.get('processed_windows') or 0) == int(document.get('total_windows') or 0)
+                and not int(document.get('failed_windows') or 0)
+            ),
+            'assigned_work_units': total, 'completed_work_units': completed,
+            'failed_work_units': failed, 'pending_work_units': max(0, total - completed - failed),
+        }
+    return combined
+
+
 def _combine_per_document_analysis_results(document_results):
     combined_documents = []
     combined_sources = []
@@ -7922,6 +8277,11 @@ def _combine_per_document_analysis_results(document_results):
         'document_count': 0,
         'processed_windows': 0,
         'failed_windows': 0,
+        'total_windows': 0,
+        'total_chunks': 0,
+        'processed_chunks': 0,
+        'failed_chunks': 0,
+        'retries': 0,
         'documents': [],
         'sources': [],
         'status_counts': {},
@@ -7962,6 +8322,8 @@ def _combine_per_document_analysis_results(document_results):
         combined_sources.extend(list(coverage.get('sources') or []))
         combined_coverage['processed_windows'] += int(coverage.get('processed_windows') or 0)
         combined_coverage['failed_windows'] += int(coverage.get('failed_windows') or 0)
+        for field in ('total_windows', 'total_chunks', 'processed_chunks', 'failed_chunks', 'retries'):
+            combined_coverage[field] += int(coverage.get(field) or 0)
         combined_coverage['status_counts'][execution_state] = (
             combined_coverage['status_counts'].get(execution_state, 0) + 1
         )
@@ -8054,6 +8416,12 @@ def _combine_per_document_analysis_results(document_results):
             for index, item in enumerate(document_results or [])
         ],
     }
+    final_result = _combine_final_analysis_results(
+        [section['analysis_result'] for section in full_analysis_sections],
+        combined_reply, combined_coverage,
+    )
+    if final_result is not None:
+        combined_result.update(final_result)
     return {
         'reply': combined_reply,
         'analysis_result': combined_result,
@@ -8087,17 +8455,34 @@ def _execute_raw_model_workflow(workflow, settings, run_id=None, thought_tracker
 
     client, deployment_name, provider = _resolve_model_workflow_client(workflow, settings)
 
-    completion = client.chat.completions.create(
-        model=deployment_name,
-        messages=_build_workflow_chat_messages(
-            workflow.get('task_prompt', ''),
-            url_access_context=url_access_context,
-            apply_generation_guidance=True,
-        ),
+    messages = _build_workflow_chat_messages(
+        workflow.get('task_prompt', ''),
+        url_access_context=url_access_context,
+        apply_generation_guidance=True,
     )
-    reply = ''
-    if getattr(completion, 'choices', None):
-        reply = _extract_message_text(completion.choices[0].message.content)
+    token_usage = _create_token_usage_aggregate()
+    report = {}
+    if workflow.get('_saved_analysis_inputs'):
+        def invoke_saved_report(submitted, stage=None, metadata=None):
+            completion = client.chat.completions.create(model=deployment_name, messages=submitted)
+            _accumulate_token_usage(token_usage, completion)
+            return _extract_message_text(completion.choices[0].message.content) if getattr(completion, 'choices', None) else ''
+
+        report = explain_saved_analysis(
+            workflow['_saved_analysis_inputs'], messages, invoke_saved_report,
+            model=getattr(client, 'model_metadata', None) or deployment_name, provider=provider,
+            cancel_requested=lambda: _is_workflow_run_cancellation_requested(workflow, run_id),
+        )
+        reply = report['reply']
+    else:
+        completion = client.chat.completions.create(model=deployment_name, messages=messages)
+        reply = _extract_message_text(completion.choices[0].message.content) if getattr(completion, 'choices', None) else ''
+        _accumulate_token_usage(token_usage, completion)
+    if workflow.get('_saved_analysis_input_only'):
+        reply += (
+            '\n\n_This explanation uses saved Analyze data. '
+            'The original documents were not independently rechecked._'
+        )
 
     if thought_tracker and run_id:
         _add_workflow_activity_thought(
@@ -8117,6 +8502,8 @@ def _execute_raw_model_workflow(workflow, settings, run_id=None, thought_tracker
         'reply': reply,
         'model_deployment_name': deployment_name,
         'provider': provider,
+        'token_usage': _finalize_token_usage(token_usage),
+        **({'analysis_consumption': report['analysis_consumption']} if report else {}),
     }
 
 
@@ -8428,6 +8815,7 @@ def _execute_document_analysis_workflow(
     cancel_requested=None,
     request_correlation_id=None,
 ):
+    workflow = {**workflow, '_analysis_result_version': 'analyze-final-v1'}
     raise_if_mixed_source_cancelled(
         cancel_requested,
         'manifest',
@@ -8471,6 +8859,15 @@ def _execute_document_analysis_workflow(
         and len(analysis_document_ids) > 1
         and not xsd_generation_contract
     ):
+        if workflow.get('_analysis_checkpoints') is not None:
+            operation_manifest = resolve_analysis_source_manifest(
+                analysis_document_ids, user_id=user_id, conversation_id=conversation_id,
+                doc_scope=analysis_config.get('doc_scope', 'all'),
+                active_group_ids=analysis_config.get('active_group_ids'),
+                active_public_workspace_ids=analysis_config.get('active_public_workspace_id'),
+                cancel_requested=cancel_requested, request_correlation_id=request_correlation_id,
+            )
+            _configure_analysis_checkpoints(workflow, analysis_config, operation_manifest)
         if thought_tracker and run_id:
             _add_workflow_activity_thought(
                 thought_tracker,
@@ -8638,6 +9035,7 @@ def _execute_document_analysis_workflow(
                         cancel_requested=cancel_requested,
                         request_correlation_id=request_correlation_id,
                         suppress_xml_artifact=bool(workflow.get('suppress_generic_generated_output')),
+                        analysis_producer=workflow.get('_analysis_producer'),
                     )
                 except MixedSourceCancellationError:
                     _rollback_mixed_source_generated_outputs(
@@ -8802,6 +9200,7 @@ def _execute_document_analysis_workflow(
             cancel_requested=cancel_requested,
             request_correlation_id=request_correlation_id,
             suppress_xml_artifact=bool(workflow.get('suppress_generic_generated_output')),
+            analysis_producer=workflow.get('_analysis_producer'),
         )
     except MixedSourceCancellationError:
         _rollback_mixed_source_generated_outputs(
@@ -9376,6 +9775,26 @@ def _execute_document_action_workflow(
     return result
 
 
+@contextmanager
+def _saved_analysis_agent_scope(agent, workflow):
+    if not workflow.get('_saved_analysis_input_only'):
+        yield agent
+        return
+    if not isinstance(getattr(agent, 'agent', agent), ChatCompletionAgent):
+        raise WorkflowResultNotReadyError(
+            'The selected agent cannot guarantee saved-data-only reporting with original-source tools disabled. '
+            'Select a local chat agent or a model.'
+        )
+    # Reuse chat's disabled-tool primitive without introducing an import cycle.
+    from route_backend_chats import apply_agent_stream_retry_mode, restore_agent_stream_retry_state
+
+    retry_state = apply_agent_stream_retry_mode(agent, 'disable_tools')
+    try:
+        yield agent
+    finally:
+        restore_agent_stream_retry_state(agent, retry_state)
+
+
 def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None, thought_tracker=None, url_access_context=None):
     _raise_if_workflow_run_cancelled(workflow, run_id)
     user_id = str(workflow.get('user_id') or '').strip()
@@ -9453,7 +9872,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
             requested_name = str(selected_agent.get('name') or '').strip()
             if requested_name:
                 loaded_agent = agent_objs.get(requested_name)
-            if loaded_agent is None and workflow.get('task_runner_override'):
+            if loaded_agent is None and (workflow.get('task_runner_override') or workflow.get('_saved_analysis_input_only')):
                 raise ValueError('The selected task agent is no longer available for workflow execution.')
             if loaded_agent is None:
                 loaded_agent = next(iter(agent_objs.values()))
@@ -9473,24 +9892,60 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 selected_agent=loaded_agent,
             )
 
-            result = _execute_cancelable_workflow_step(
-                workflow,
-                run_id,
-                lambda: asyncio.run(invoke_workflow_agent(loaded_agent, _build_workflow_agent_messages(
-                    workflow.get('task_prompt', ''),
-                    url_access_context=url_access_context,
-                    apply_generation_guidance=True,
-                    conversation_context_system=workflow.get('conversation_context_system_message'),
-                    conversation_context_data=workflow.get('conversation_context_data_message'),
-                ))),
-            )
+            report = {}
+            token_usage_aggregate = _create_token_usage_aggregate()
+            with _saved_analysis_agent_scope(loaded_agent, workflow):
+                if workflow.get('_saved_analysis_inputs'):
+                    def invoke_saved_report(submitted, stage=None, metadata=None):
+                        response = _execute_cancelable_workflow_step(
+                            workflow, run_id, lambda: asyncio.run(invoke_workflow_agent(
+                                loaded_agent, [ChatMessageContent(role=item['role'], content=item['content']) for item in submitted],
+                            )),
+                        )
+                        if not _accumulate_token_usage(token_usage_aggregate, response):
+                            _accumulate_token_usage_summary(token_usage_aggregate, getattr(loaded_agent, 'last_usage', None))
+                        return str(response)
+
+                    base_agent = getattr(loaded_agent, 'agent', loaded_agent)
+                    model_metadata = getattr(getattr(base_agent, 'service', None), 'model_metadata', None)
+                    instructions = getattr(base_agent, 'instructions', None)
+                    report = explain_saved_analysis(
+                        workflow['_saved_analysis_inputs'],
+                        _build_workflow_chat_messages(
+                            workflow.get('task_prompt', ''), apply_generation_guidance=True,
+                            conversation_context_system=workflow.get('conversation_context_system_message'),
+                            conversation_context_data=workflow.get('conversation_context_data_message'),
+                        ),
+                        invoke_saved_report,
+                        model=model_metadata or getattr(base_agent, 'model_metadata', None) or '',
+                        provider=(workflow.get('model_binding_summary') or {}).get('provider'),
+                        budget_messages=[{'role': 'system', 'content': instructions}] if isinstance(instructions, str) else [],
+                        cancel_requested=lambda: _is_workflow_run_cancellation_requested(workflow, run_id),
+                    )
+                    result = report['reply']
+                else:
+                    result = _execute_cancelable_workflow_step(
+                        workflow,
+                        run_id,
+                        lambda: asyncio.run(invoke_workflow_agent(loaded_agent, _build_workflow_agent_messages(
+                            workflow.get('task_prompt', ''),
+                            url_access_context=url_access_context,
+                            apply_generation_guidance=True,
+                            conversation_context_system=workflow.get('conversation_context_system_message'),
+                            conversation_context_data=workflow.get('conversation_context_data_message'),
+                        ))),
+                    )
+                    if not _accumulate_token_usage(token_usage_aggregate, result):
+                        _accumulate_token_usage_summary(token_usage_aggregate, getattr(loaded_agent, 'last_usage', None))
             reply = str(result)
+            if workflow.get('_saved_analysis_input_only'):
+                reply += (
+                    '\n\n_This explanation uses saved Analyze data. '
+                    'The original documents were not independently rechecked._'
+                )
             agent_citations = _build_agent_citations_from_invocations(user_id, conversation_id, execution=loaded_agent)
             if hasattr(loaded_agent, 'budget'):
                 agent_citations.extend(delegation_citations(loaded_agent.budget, loaded_agent.prior_invocation_ids))
-            token_usage_aggregate = _create_token_usage_aggregate()
-            if not _accumulate_token_usage(token_usage_aggregate, result):
-                _accumulate_token_usage_summary(token_usage_aggregate, getattr(loaded_agent, 'last_usage', None))
             if hasattr(loaded_agent, 'budget'):
                 _accumulate_token_usage_summary(token_usage_aggregate, delegation_usage(loaded_agent.budget, loaded_agent.prior_invocation_ids))
             alert_targets = _collect_agent_alert_targets(user_id, conversation_id)
@@ -9518,6 +9973,7 @@ def _execute_agent_workflow(workflow, settings, conversation_id='', run_id=None,
                 'agent_citations': agent_citations,
                 'token_usage': _finalize_token_usage(token_usage_aggregate),
                 'alert_targets': alert_targets,
+                **({'analysis_consumption': report['analysis_consumption']} if report else {}),
             }
         finally:
             if callback_key:
@@ -9826,6 +10282,14 @@ def _execute_workflow_dispatch(
     url_access_context,
     file_sync_result=None,
 ):
+    if execution_workflow.get('_saved_analysis_inputs'):
+        output_format = saved_analysis_format_request(execution_workflow.get('task_prompt'))
+        if output_format:
+            return format_saved_analysis(
+                execution_workflow['_saved_analysis_inputs'], output_format,
+                conversation_id=conversation_id, producer=execution_workflow['_analysis_producer'],
+                cancel_requested=lambda: _is_workflow_run_cancellation_requested(execution_workflow, run_id),
+            )
     document_action = _get_document_action_config(execution_workflow)
     workflow_search_context = None
     if document_action.get('type') == DOCUMENT_ACTION_TYPE_SEARCH:
@@ -9947,6 +10411,11 @@ def _merge_workflow_task_execution_results(task_results):
     ]
     merged_result['task_error_count'] = sum(1 for item in task_results if item.get('status') in {'failed', 'invalid', 'incomplete'})
     merged_result['workflow_outcome'] = workflow_run_outcome(task_results)
+    merged_result['analysis_origin_results'] = [
+        dict((item.get('result') or {})['workflow_result'])
+        for item in successful_results
+        if ((item.get('result') or {}).get('workflow_result') or {}).get('analysis_origin')
+    ]
     merged_result['token_usage'] = _merge_token_usage_summaries([
         item.get('result') or {}
         for item in successful_results
@@ -9970,6 +10439,34 @@ def _merge_workflow_task_execution_results(task_results):
         for item in successful_results
     )
     return merged_result
+
+
+def _prepare_workflow_analysis_checkpoints(workflow, run_id, task_id, actor_user_id, settings):
+    # Resolve the optional work-unit adapter only for an actual Analyze task.
+    from functions_document_analysis_checkpoints import analysis_checkpoints_for_workflow
+
+    def authorize():
+        current = _get_current_workflow_runtime(workflow)
+        run = _get_workflow_run_record(workflow, run_id)
+        if (
+            not current or current.get('id') != workflow.get('id')
+            or not run or run.get('workflow_id') != workflow.get('id')
+            or str(run.get('status') or '').lower() not in {'running', 'queued'}
+        ):
+            raise PermissionError('The workflow analysis attempt is no longer active.')
+        group_id = _get_workflow_group_id(workflow)
+        if group_id:
+            assert_group_role(actor_user_id, group_id, allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'))
+        elif current.get('user_id') != actor_user_id:
+            raise PermissionError('The workflow analysis owner could not be confirmed.')
+        _raise_if_workflow_run_cancelled(workflow, run_id)
+        return True
+
+    checkpoints = analysis_checkpoints_for_workflow(
+        workflow, run_id, task_id, user_id=actor_user_id, authorize=authorize, settings=settings,
+    )
+    checkpoints.prepare()
+    return checkpoints
 
 
 def _execute_workflow_task_sequence(
@@ -10068,11 +10565,22 @@ def _execute_workflow_task_sequence(
         } if completed_task is not None else None
         task_error = ''
         attempt_count = (completed_task.get('attempt_count') or 1) if completed_task is not None else 0
+        analysis_checkpoints = None
         for attempt_index in (() if completed_task is not None else range(retry_count + 1)):
             raise_if_cancelled()
             attempt_count = attempt_index + 1
             task_stage = 'runner'
             try:
+                if task.get('publication') is not None:
+                    task_stage = 'publication'
+                    task_result, consumed_inputs = _execute_workflow_analysis_publication(
+                        workflow, run_id, task, previous_task_id, previous_result_ref,
+                        actor_user_id=actor_user_id,
+                    )
+                    attempt_workflow = {**workflow, 'consumed_inputs': consumed_inputs}
+                    runner_audit = {'requested_mode': 'publication', 'resolved_type': 'publication'}
+                    task_error = ''
+                    break
                 # Built inside the attempt so an invalid task document action fails this
                 # task through the normal retry and error strategy instead of the whole run.
                 resolved_workflow, runner_audit = _resolve_workflow_task_runner(
@@ -10104,13 +10612,16 @@ def _execute_workflow_task_sequence(
                 elif previous_result_ref:
                     previous_input, consumed = load_workflow_task_input(
                         workflow, run_id, previous_task_id, previous_result_ref,
-                        reader_user_id=actor_id,
+                        reader_user_id=actor_id, bounded=True,
+                        allow_partial=_resolve_workflow_task_document_action(
+                            resolved_workflow, task, include_document_action=task_index == 0,
+                        ).get('type') == DOCUMENT_ACTION_TYPE_NONE,
                     )
                     consumed_inputs.append(consumed)
                 attempt_workflow = _build_workflow_task_execution_workflow(
                     resolved_workflow,
                     task,
-                    previous_reply=previous_input,
+                    previous_reply='' if isinstance(previous_input, SavedAnalysisInput) else previous_input,
                     include_document_action=task_index == 0,
                     include_file_sync_context=task_index == 0,
                 )
@@ -10125,6 +10636,29 @@ def _execute_workflow_task_sequence(
                 output_instruction = workflow_output_contract_instruction(task.get('output_contract'))
                 if output_instruction:
                     attempt_workflow['task_prompt'] += f'\n\n{output_instruction}'
+                if isinstance(previous_input, SavedAnalysisInput):
+                    if _get_document_action_config(attempt_workflow).get('type') != DOCUMENT_ACTION_TYPE_NONE:
+                        raise WorkflowResultNotReadyError(
+                            'Use a saved-result reporting task before starting a separate new source analysis. '
+                            'Complete saved records cannot be silently omitted from a document action.'
+                        )
+                    attempt_workflow['_saved_analysis_inputs'] = [previous_input]
+                if (
+                    any(item.get('analysis_result') for item in consumed_inputs)
+                    and _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_NONE
+                ):
+                    attempt_workflow['_saved_analysis_input_only'] = True
+                    attempt_workflow['chat_capabilities_enabled'] = False
+                attempt_workflow['_analysis_producer'] = {
+                    'kind': 'workflow', 'workflow_id': workflow['id'],
+                    'run_id': run_id, 'task_id': task_id,
+                }
+                if _get_document_action_config(attempt_workflow).get('type') == DOCUMENT_ACTION_TYPE_ANALYZE:
+                    if analysis_checkpoints is None:
+                        analysis_checkpoints = _prepare_workflow_analysis_checkpoints(
+                            workflow, run_id, task_id, actor_user_id or workflow.get('user_id'), settings,
+                        )
+                    attempt_workflow['_analysis_checkpoints'] = analysis_checkpoints
                 _save_workflow_task_run_item(
                     workflow,
                     run_id,
@@ -10143,7 +10677,7 @@ def _execute_workflow_task_sequence(
                         conversation_id,
                         run_id,
                         thought_tracker,
-                        url_access_context,
+                        {} if attempt_workflow.get('_saved_analysis_input_only') else url_access_context,
                         file_sync_result=file_sync_result,
                     )
                 raise_if_workflow_context_blocked(attempt_workflow)
@@ -10180,6 +10714,7 @@ def _execute_workflow_task_sequence(
                         ),
                         'input': 'The task input could not be resolved. Review its document action and saved upstream result.',
                         'execution': 'The task could not complete. Review its input, model availability, and run activity.',
+                        'publication': 'The existing artifact could not be published. Review its saved result, format, destination and approval state.',
                     }[task_stage]
                 )
                 if isinstance(safe_error, (WorkflowContextBudgetError, WorkflowResultNotReadyError, WorkflowInputError, AnalysisResultUnavailable)):
@@ -10207,6 +10742,7 @@ def _execute_workflow_task_sequence(
             consumed_inputs = (attempt_workflow or {}).get('consumed_inputs') or []
             result_summary = None
             try:
+                raise_if_cancelled()
                 task_result = attach_workflow_reference_sources(
                     task_result, (attempt_workflow or {}).get('workflow_reference_sources') or [],
                 )
@@ -10225,8 +10761,26 @@ def _execute_workflow_task_sequence(
                     '' if validation['eligible']
                     else f"Output requirements were not met: {', '.join(validation['reason_codes'])}."
                 )
+                persistence_options = {}
+                if analysis_checkpoints is not None:
+                    analysis_checkpoints.validate_sources((envelope.get('analysis_access') or {}).get('sources'))
+
+                    def save_analysis_section(bound_workflow, bound_run, bound_task, section, **_kwargs):
+                        if (
+                            bound_workflow.get('id') != workflow.get('id')
+                            or bound_run != run_id or bound_task != task_id
+                        ):
+                            raise ValueError('The analysis section does not belong to this workflow task.')
+                        analysis_checkpoints.validate_sources((envelope.get('analysis_access') or {}).get('sources'))
+                        return analysis_checkpoints.store._save(
+                            analysis_checkpoints.binding, section, guard_token=analysis_checkpoints.token,
+                            require_analysis_guard=True,
+                        )
+
+                    persistence_options['save_result'] = save_analysis_section
                 manifest, result_ref = persist_workflow_task_result(
                     envelope, workflow=workflow, run_id=run_id, task_id=task_id, settings=settings,
+                    **persistence_options,
                 )
                 result_summary = workflow_result_summary(manifest, result_ref)
                 authorize_workflow_task_result_read(
@@ -10354,6 +10908,84 @@ def _execute_workflow_task_sequence(
             )
 
     return _merge_workflow_task_execution_results(task_results)
+
+
+def _execute_workflow_analysis_publication(
+    workflow, run_id, task, previous_task_id, previous_result_ref, *, actor_user_id=None,
+    result_reader=None, publish=None,
+):
+    """Select only a committed ancestor artifact, before resolving a model or its context."""
+    publication = task.get('publication')
+    if publication is None:
+        return {'reply': '', 'execution_status': 'skipped', 'publication': {'state': 'not_requested'}, 'model_calls': 0}, []
+    # Publication owns normalization and side effects; importing it here keeps ordinary tasks inert.
+    from functions_artifact_publication import publish_workflow_analysis_artifact
+    from functions_personal_workflows import normalize_workflow_publication
+
+    publication = normalize_workflow_publication(publication)
+    if not previous_task_id or not previous_result_ref:
+        raise WorkflowResultNotReadyError('Publication needs an existing saved upstream analysis artifact.')
+    reader = result_reader or authorize_workflow_task_result_read
+    actor = actor_user_id or workflow.get('user_id')
+    pending = [(previous_task_id, previous_result_ref)]
+    seen = set()
+    while pending:
+        producer_task, reference = pending.pop(0)
+        key = (producer_task, reference.get('sha256'))
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(seen) > 256:
+            raise WorkflowResultNotReadyError('The artifact lineage is unavailable.')
+        manifest, _ = reader(
+            workflow, run_id, producer_task, reference, reader_user_id=actor,
+        )
+        matching = [
+            artifact for artifact in manifest.get('artifacts') or []
+            if isinstance(artifact, dict) and (
+                'md' if artifact.get('output_format') == 'markdown' else artifact.get('output_format')
+            ) == publication['artifact_format']
+        ]
+        canonical = [artifact for artifact in matching if artifact.get('capability') == 'analyze']
+        if canonical:
+            matching = canonical
+        if matching:
+            if len(matching) != 1:
+                raise WorkflowResultNotReadyError('Multiple upstream artifacts use that format; publish a combined analysis artifact explicitly.')
+            if (
+                (manifest.get('execution') or {}).get('status') != 'succeeded'
+                or (manifest.get('validation') or {}).get('status') != 'valid'
+            ):
+                raise WorkflowResultNotReadyError('Only a valid, complete saved analysis artifact can be published.')
+            artifact = matching[0]
+            producer = {'kind': 'workflow', **{
+                name: manifest['identity'][name] for name in ('workflow_id', 'run_id', 'task_id')
+            }}
+            result = (publish or publish_workflow_analysis_artifact)(
+                actor, publication=publication,
+                artifact_reference={
+                    'conversation_id': artifact.get('conversation_id'),
+                    'artifact_message_id': artifact.get('artifact_message_id'), 'producer': producer,
+                },
+                request_id=f"workflow-publication:{workflow['id']}:{run_id}:{task['id']}",
+            )
+            state = (result.get('publication') or {}).get('state')
+            if state == 'pending_approval':
+                result['execution_status'] = 'pending'
+            elif state in {'uncertain', 'approval_failed'}:
+                result['execution_status'] = 'blocked'
+            output_name = manifest['authoritative_output']
+            return result, [{
+                'producer': manifest['identity'], 'output_name': output_name,
+                'result_ref': dict(reference), 'output_ref': manifest['outputs'][output_name]['result_ref'],
+                'analysis_result': True,
+            }]
+        for consumed in manifest.get('consumed_inputs') or []:
+            producer = consumed.get('producer') or {}
+            if producer.get('workflow_id') != workflow.get('id') or producer.get('run_id') != run_id:
+                raise WorkflowResultNotReadyError('The upstream artifact lineage does not match this run.')
+            pending.append((producer.get('task_id'), consumed.get('result_ref') or {}))
+    raise WorkflowResultNotReadyError('The requested artifact format is not available in the saved upstream results. No model reconstruction was attempted.')
 
 
 def _get_workflow_conversation_for_alert(run_record):

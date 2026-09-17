@@ -1275,3 +1275,5 @@ feature_surfaces:
   slug: video-indexer-info
 - template: _web_search_foundry_info.html
   slug: web-search-foundry-info
+- template: _workflow_publication_fields.html
+  slug: workflow-publication-fields

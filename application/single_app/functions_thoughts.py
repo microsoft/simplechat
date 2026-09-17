@@ -3,6 +3,7 @@
 import uuid
 import time
 from datetime import datetime, timedelta, timezone
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from config import cosmos_thoughts_container, cosmos_archived_thoughts_container
 from functions_appinsights import log_event
 from functions_settings import get_settings
@@ -136,6 +137,30 @@ def get_thoughts_for_message(conversation_id, message_id, user_id):
     except Exception as e:
         log_event(f"get_thoughts_for_message failed: {e}", level="WARNING")
         return []
+
+
+def delete_thoughts_for_message(conversation_id, message_id, user_id):
+    """Remove a known, authorized message's processing notes without hiding errors."""
+    if not all(isinstance(value, str) and value for value in (conversation_id, message_id, user_id)):
+        raise ValueError("Thought cleanup requires a conversation, message, and owner.")
+    thoughts = cosmos_thoughts_container.query_items(
+        query=(
+            "SELECT c.id, c.conversation_id, c.message_id FROM c "
+            "WHERE c.conversation_id = @conversation_id AND c.message_id = @message_id"
+        ),
+        parameters=[
+            {"name": "@conversation_id", "value": conversation_id},
+            {"name": "@message_id", "value": message_id},
+        ],
+        partition_key=user_id,
+    )
+    for thought in thoughts:
+        if thought.get("conversation_id") != conversation_id or thought.get("message_id") != message_id:
+            raise ValueError("Thought cleanup encountered another message.")
+        try:
+            cosmos_thoughts_container.delete_item(item=thought["id"], partition_key=user_id)
+        except CosmosResourceNotFoundError:
+            continue
 
 
 def get_pending_thoughts(conversation_id, user_id, message_id=None):

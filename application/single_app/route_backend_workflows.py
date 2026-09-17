@@ -97,6 +97,7 @@ from functions_workflow_definitions import WorkflowDefinitionConflict, WorkflowD
 from functions_workflow_editor import get_workflow_editor_options
 from functions_analysis_access import AnalysisResultUnavailable
 from functions_workflow_results import authorize_workflow_run_read, authorize_workflow_task_result_read
+from functions_saved_analysis import sanitize_workflow_analysis_history
 from route_backend_agents import (
     _build_agent_instruction_api_params,
     _create_agent_instruction_client,
@@ -679,6 +680,10 @@ def _resolve_workflow_activity_context(user_id, conversation_id='', workflow_id=
             for action in raw_pending_actions
         ]
 
+    run_record, _, analysis_access_available = sanitize_workflow_analysis_history(workflow, run_record, user_id)
+    if not analysis_access_available:
+        thoughts = []
+        pending_actions = []
     return build_workflow_activity_snapshot(
         run_record=run_record,
         workflow=workflow,
@@ -766,6 +771,10 @@ def _resolve_group_workflow_activity_context(user_id, group_id, conversation_id=
             for action in raw_pending_actions
         ]
 
+    run_record, _, analysis_access_available = sanitize_workflow_analysis_history(workflow, run_record, user_id)
+    if not analysis_access_available:
+        thoughts = []
+        pending_actions = []
     return build_workflow_activity_snapshot(
         run_record=run_record,
         workflow=workflow,
@@ -1105,7 +1114,10 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': 'Run history is unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
-            'runs': runs,
+            'runs': [
+                sanitize_workflow_analysis_history(workflow, run, user_id)[0]
+                for run in runs
+            ],
         })
 
 
@@ -1204,7 +1216,9 @@ def register_route_backend_workflows(bp):
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
-            'items': list_personal_workflow_run_items(run_id, limit=1000),
+            'items': sanitize_workflow_analysis_history(
+                workflow, run_record, user_id, items=list_personal_workflow_run_items(run_id, limit=1000),
+            )[1],
         })
 
 
@@ -1531,7 +1545,10 @@ def register_route_backend_workflows(bp):
             return jsonify({'error': 'Run history is unavailable because source access could not be confirmed.'}), 403
         return jsonify({
             'workflow_id': workflow_id,
-            'runs': runs,
+            'runs': [
+                sanitize_workflow_analysis_history(workflow, run, user_id)[0]
+                for run in runs
+            ],
         })
 
 
@@ -1664,7 +1681,9 @@ def register_route_backend_workflows(bp):
         return jsonify({
             'workflow_id': workflow_id,
             'run_id': run_id,
-            'items': list_group_workflow_run_items(run_id, limit=1000),
+            'items': sanitize_workflow_analysis_history(
+                workflow, run_record, user_id, items=list_group_workflow_run_items(run_id, limit=1000),
+            )[1],
         })
 
 
