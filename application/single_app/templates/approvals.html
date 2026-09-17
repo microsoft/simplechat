@@ -16,6 +16,11 @@
             </div>
 
             <!-- Approvals Controls -->
+            <div class="alert alert-info">
+                Workspace knowledge holds use protected evidence and revision-bound decisions.
+                <a class="alert-link" href="/content-review">Open Content review</a> to review or remediate screened documents,
+                including holds created before new scanning was disabled.
+            </div>
             <div class="row mb-3">
                 <div class="col-md-4">
                     <div class="input-group">
@@ -33,6 +38,7 @@
                 <div class="col-md-3">
                     <select class="form-select" id="approvalTypeFilterSelect">
                         <option value="all">All Types</option>
+                        <option value="content_screening_review">Content Screening Review</option>
                         <option value="take_ownership">Take Ownership</option>
                         <option value="transfer_ownership">Transfer Ownership</option>
                         <option value="delete_documents">Delete Documents</option>
@@ -327,6 +333,7 @@
 <script src="{{ url_for('static', filename='js/m365-pending-actions.js') }}"></script>
 <script src="{{ url_for('static', filename='js/approvals/m365-approvals.js') }}"></script>
 <script src="{{ url_for('static', filename='js/approvals/m365-requests.js') }}"></script>
+<script src="{{ url_for('static', filename='js/content-screening-approvals.js') }}?v={{ config['VERSION'] }}"></script>
 <script>
 // Toast notification helper
 window.showToast = function(message, type = 'info') {
@@ -501,6 +508,9 @@ window.ApprovalManager = {
         if (window.SimpleChatM365ApprovalList.isM365Approval(approval)) {
             return window.SimpleChatM365ApprovalList.renderRow(approval, () => this.loadApprovals(this.currentPage));
         }
+        if (window.ContentScreening.isScreeningApproval(approval)) {
+            return window.ContentScreening.renderScreeningApprovalRow(approval);
+        }
         const tr = document.createElement('tr');
         
         // Status badge
@@ -589,6 +599,10 @@ window.ApprovalManager = {
                 this.loadApprovals(this.currentPage);
                 return;
             }
+            if (window.ContentScreening.isScreeningApproval(approval)) {
+                window.location.assign(window.ContentScreening.screeningApprovalLink(approval));
+                return;
+            }
             
             // Populate modal with approval details
             this.populateApprovalDetails(approval, action);
@@ -605,7 +619,12 @@ window.ApprovalManager = {
     
     // Populate approval modal with details
     populateApprovalDetails: function(approval, action) {
+        if (window.ContentScreening.isScreeningApproval(approval)) {
+            window.ContentScreening.renderScreeningApprovalDetails(approval);
+            return;
+        }
         const modal = document.getElementById('approvalActionModal');
+        delete modal.dataset.screeningReview;
         const modalTitle = modal.querySelector('.modal-title');
         const approveBtn = document.getElementById('approvalApproveBtn');
         const denyBtn = document.getElementById('approvalDenyBtn');
@@ -691,6 +710,7 @@ window.ApprovalManager = {
     // Handle approval
     handleApprove: async function() {
         const modal = document.getElementById('approvalActionModal');
+        if (modal.dataset.screeningReview === "true") return;
         const approvalId = modal.getAttribute('data-approval-id');
         const groupId = modal.getAttribute('data-group-id');
         const comment = document.getElementById('approvalActionComment').value.trim();
@@ -747,6 +767,7 @@ window.ApprovalManager = {
     // Handle denial
     handleDeny: async function() {
         const modal = document.getElementById('approvalActionModal');
+        if (modal.dataset.screeningReview === "true") return;
         const approvalId = modal.getAttribute('data-approval-id');
         const groupId = modal.getAttribute('data-group-id');
         const comment = document.getElementById('approvalActionComment').value.trim();

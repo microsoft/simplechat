@@ -16,11 +16,20 @@ import fitz
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from werkzeug.utils import secure_filename
 
+from content_screening.access import (
+    assert_blob_available,
+    assert_current_request_sources_available,
+    assert_document_available,
+    assert_evidence_available,
+    get_available_blob_reference,
+    read_available_document_bytes,
+)
+from content_screening.contracts import ScreeningError
 from functions_authentication import login_required, user_required, get_current_user_id, get_current_user_info
 from functions_appinsights import log_event
 from functions_artifact_publication import publish_generated_chat_artifact_for_user
 from functions_settings import get_settings, enabled_required
-from functions_documents import get_document_blob_storage_info
+from functions_documents import get_document_blob_storage_info, get_document_record
 from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_visio import render_vsdx_page_preview
 from functions_group import get_user_groups
@@ -76,6 +85,7 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     # unreachable for every caller, including the participant who requested it.
     assert_generated_file_approval_allows_download(user_id, message_item)
     assert_generated_chat_artifact_is_published_for_user(user_id, message_item)
+    assert_evidence_available(message_item, user_id)
     return message_item
 
 
@@ -124,7 +134,7 @@ def _serialize_tabular_preview_table(df_preview):
 
 def _resolve_document_blob_reference(raw_doc):
     """Resolve the persisted blob container and path for the cited document."""
-    container_name, blob_name = get_document_blob_storage_info(raw_doc)
+    _, container_name, blob_name = get_available_blob_reference(raw_doc, purpose="citation")
     if not container_name or not blob_name:
         raise FileNotFoundError("Blob reference is incomplete for this document")
     return container_name, blob_name
@@ -219,6 +229,21 @@ def _log_enhanced_citations_error(message, error, **details):
 
 def register_enhanced_citations_routes(bp):
     """Register enhanced citations routes"""
+
+    @bp.after_request
+    def enforce_screened_citation_response(response):
+        try:
+            assert_current_request_sources_available()
+        except ScreeningError as error:
+            response = jsonify({"error": error.public_message, "error_code": error.code})
+            response.status_code = error.status_code
+        except (PermissionError, LookupError):
+            response = jsonify({"error": "Document not found or access denied."})
+            response.status_code = 404
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers.pop("ETag", None)
+        return response
 
     @bp.route("/api/enhanced_citations/document_metadata", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -493,6 +518,7 @@ def register_enhanced_citations_routes(bp):
             # approver: a plain group User can create a group shared conversation while the
             # approvers are that group's Owner, Admin, and Document Manager roles.
             assert_generated_file_approval_allows_download(user_id, file_msg)
+            assert_evidence_available(file_msg, user_id)
 
             if file_content_source != 'blob':
                 return jsonify({"error": "File is not stored in blob storage"}), 400
@@ -510,12 +536,16 @@ def register_enhanced_citations_routes(bp):
             if not blob_service_client:
                 return jsonify({"error": "Storage not available"}), 500
 
-            blob_client = blob_service_client.get_blob_client(
-                container=blob_container,
-                blob=blob_path
-            )
-            stream = blob_client.download_blob()
-            content = stream.readall()
+            if file_msg.get("workspace_document_id"):
+                active_document, content = read_available_document_bytes(
+                    file_msg["workspace_document_id"], user_id=user_id, purpose="chat_file",
+                )
+                filename = active_document.get("file_name") or filename
+            else:
+                assert_blob_available(blob_container, blob_path, user_id=user_id)
+                blob_client = blob_service_client.get_blob_client(container=blob_container, blob=blob_path)
+                content = blob_client.download_blob().readall()
+                assert_blob_available(blob_container, blob_path, user_id=user_id)
 
             # Determine content type
             content_type, _ = mimetypes.guess_type(filename)
@@ -742,7 +772,7 @@ def register_enhanced_citations_routes(bp):
             blob_props = blob_client.get_blob_properties()
             if blob_props.size > max_blob_size:
                 return jsonify({"error": "File is too large to preview"}), 400
-            data = blob_client.download_blob().readall()
+            raw_doc, data = read_available_document_bytes(raw_doc, user_id=user_id, purpose="preview")
 
             # Read into DataFrame, limiting rows for preview efficiency
             # Read max_rows + 1 so we can detect truncation without loading the full file
@@ -890,7 +920,8 @@ def register_enhanced_citations_routes(bp):
             try:
                 with tempfile.NamedTemporaryFile(suffix=".vsdx", delete=False) as temp_file:
                     temp_path = temp_file.name
-                    blob_client.download_blob().readinto(temp_file)
+                    raw_doc, content = read_available_document_bytes(raw_doc, user_id=user_id, purpose="preview")
+                    temp_file.write(content)
 
                 png_bytes = render_vsdx_page_preview(
                     temp_path,
@@ -915,60 +946,30 @@ def register_enhanced_citations_routes(bp):
             return jsonify({"error": str(error)}), 500
 
 def get_document(user_id, doc_id):
-    """
-    Get document metadata - searches across all enabled workspace types
-    """
-    from functions_documents import get_document as backend_get_document
-    from functions_settings import get_settings
-    
+    """Resolve raw metadata internally, after ordinary object authorization."""
     settings = get_settings()
-    
-    # Try to get document from different workspace types based on what's enabled
-    # Start with personal workspace (most common)
-    if settings.get('enable_user_workspace', False):
+    scopes = []
+    if settings.get("enable_user_workspace", False):
+        scopes.append({})
+    if settings.get("enable_group_workspaces", False):
+        scopes.extend({"group_id": group["id"]} for group in get_user_groups(user_id) if group.get("id"))
+    if settings.get("enable_public_workspaces", False):
+        scopes.extend(
+            {"public_workspace_id": workspace_id}
+            for workspace_id in get_user_visible_public_workspace_ids_from_settings(user_id) or []
+        )
+    for scope in scopes:
+        document = get_document_record(user_id, doc_id, **scope)
+        if not document:
+            continue
         try:
-            doc_response, status_code = backend_get_document(user_id, doc_id)
-            if status_code == 200:
-                return doc_response, status_code
-        except Exception as ex:
-            pass
-    
-    # Try group workspaces if enabled
-    if settings.get('enable_group_workspaces', False):
-        # We need to find which group this document belongs to
-        # This is more complex - we need to search across user's groups
-        try:
-            user_groups = get_user_groups(user_id)
-            for group in user_groups:
-                group_id = group.get('id')
-                if group_id:
-                    try:
-                        doc_response, status_code = backend_get_document(user_id, doc_id, group_id=group_id)
-                        if status_code == 200:
-                            return doc_response, status_code
-                    except Exception as ex:
-                        continue
-        except Exception as ex:
-            pass
-    
-    # Try public workspaces if enabled
-    if settings.get('enable_public_workspaces', False):
-        # We need to find which public workspace this document belongs to
-        # This requires checking user's accessible public workspaces
-        try:
-            accessible_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-            for workspace_id in accessible_workspace_ids:
-                try:
-                    doc_response, status_code = backend_get_document(user_id, doc_id, public_workspace_id=workspace_id)
-                    if status_code == 200:
-                        return doc_response, status_code
-                except Exception as ex:
-                    continue
-        except Exception as ex:
-            pass
-    
-    # If document not found in any workspace
-    return {"error": "Document not found or access denied"}, 404
+            document = assert_document_available(document, user_id=user_id, purpose="citation", **scope)
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except (PermissionError, LookupError):
+            continue
+        return jsonify(document), 200
+    return jsonify({"error": "Document not found or access denied"}), 404
 
 
 def determine_workspace_type_and_container(raw_doc):
@@ -1029,8 +1030,8 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
     blob_name = None
 
     try:
-        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-        blob_name = get_blob_name(raw_doc, workspace_type)
+        raw_doc, container_name, blob_name = get_available_blob_reference(raw_doc, purpose="citation")
+        workspace_type, _ = determine_workspace_type_and_container(raw_doc)
         container_client = blob_service_client.get_container_client(container_name)
 
         _log_enhanced_citations_debug(
@@ -1044,9 +1045,7 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
         )
 
         # Download blob content directly
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        blob_data = blob_client.download_blob()
-        content = blob_data.readall()
+        raw_doc, content = read_available_document_bytes(raw_doc, purpose="citation")
         
         # Determine content type if not provided
         if not content_type:
@@ -1088,7 +1087,7 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
             content_type=content_type,
             headers={
                 'Content-Length': str(len(content)),
-                'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
+                'Cache-Control': 'no-store, private',
                 'Content-Disposition': _build_content_disposition(disposition, raw_doc.get('file_name')),
                 'Accept-Ranges': 'bytes'  # Support range requests for video/audio
             }
@@ -1096,6 +1095,8 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
         
         return response
         
+    except ScreeningError:
+        raise
     except Exception as e:
         _log_enhanced_citations_error(
             "Failed to serve citation content",
@@ -1138,8 +1139,8 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
     blob_name = None
 
     try:
-        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-        blob_name = get_blob_name(raw_doc, workspace_type)
+        raw_doc, container_name, blob_name = get_available_blob_reference(raw_doc, purpose="citation")
+        workspace_type, _ = determine_workspace_type_and_container(raw_doc)
         container_client = blob_service_client.get_container_client(container_name)
 
         _log_enhanced_citations_debug(
@@ -1154,9 +1155,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         )
 
         # Download blob content directly
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        blob_data = blob_client.download_blob()
-        content = blob_data.readall()
+        raw_doc, content = read_available_document_bytes(raw_doc, purpose="citation")
         
         # Create temporary file for PDF processing
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
@@ -1244,7 +1243,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             # Return the extracted PDF
             headers = {
                 'Content-Length': str(len(extracted_content)),
-                'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
+                'Cache-Control': 'no-store, private',
                 'Content-Disposition': _build_content_disposition('inline', raw_doc.get('file_name')),
                 'X-Sub-PDF-Page': str(new_page_number),  # Custom header with page info
                 'Accept-Ranges': 'bytes'

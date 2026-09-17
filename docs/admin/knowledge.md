@@ -116,6 +116,12 @@ The Azure AI Search section belongs to the Search Index tab. Use it with the adj
 
 ## Document Extraction {#extraction}
 
+### Content screening before publication
+
+When [Content Screening]({{ '/admin/security/#content-screening-section' | relative_url }}) is enabled, extracted pages, text, and native table data are staged privately before they become usable knowledge. The required policy applies to the complete document, not just the first batch of chunks.
+
+Screening requires Enhanced Citations and is configured in Security so the policy framework is not tied to one extraction engine. Text that was hard to see in the original can still be inspected after extraction; detecting font color or hidden layers themselves is separate functionality. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}).
+
 ### Document Intelligence {#document-intelligence-section}
 
 Document Intelligence reads PDFs and images. Nothing else in this tab produces searchable

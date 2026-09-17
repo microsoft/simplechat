@@ -3,6 +3,13 @@
 import hashlib
 import logging
 from typing import List, Dict, Any
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_document_available,
+    assert_evidence_available,
+    document_provenance,
+    filter_available_results,
+)
 from config import *
 from functions_content import *
 from functions_embedding_compatibility import (
@@ -312,6 +319,11 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     elif document_id:
         document_ids = [document_id]
 
+    selected_sources = []
+    for selected_document_id in document_ids:
+        selected_document = assert_document_available(selected_document_id, user_id=user_id, purpose="selection")
+        selected_sources.append({PROVENANCE_FIELD: document_provenance(selected_document)})
+
     normalization_changed = False
     try:
         from functions_documents import normalize_document_revision_families
@@ -387,7 +399,10 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             result_count=len(cached_results)
         )
         logger.info("Returning cached search results for query hash %s", query_hash)
-        return cached_results
+        available_cached_results = filter_available_results(cached_results, user_id=user_id, cached=True)
+        assert_evidence_available(selected_sources, user_id=user_id)
+        if len(available_cached_results) == len(cached_results):
+            return available_cached_results
 
     # Cache miss - proceed with search
     query_length, query_hash = _query_log_context(query)
@@ -404,6 +419,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     # Unpack tuple from generate_embedding (returns embedding, token_usage)
     result = generate_embedding(query, purpose="query", profile=embedding_profile)
     if result is None:
+        assert_evidence_available(selected_sources, user_id=user_id)
         return None
 
     # Handle both tuple (new) and single value (backward compatibility)
@@ -413,6 +429,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         query_embedding = result
 
     if query_embedding is None:
+        assert_evidence_available(selected_sources, user_id=user_id)
         return None
 
     search_client_user = CLIENTS['search_client_user']
@@ -597,6 +614,8 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             raise SemanticSearchQuotaExceededError() from search_error
         raise
 
+    results = filter_available_results(results, user_id=user_id)
+
     # Log pre-sort statistics
     if results:
         scores = [r['score'] for r in results]
@@ -677,6 +696,8 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     )
     clear_semantic_search_quota_warning(source="hybrid_search")
 
+    results = filter_available_results(results, user_id=user_id, cached=True)
+    assert_evidence_available(selected_sources, user_id=user_id)
     return results
 
 def extract_search_results(paged_results, top_n):

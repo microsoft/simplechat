@@ -347,6 +347,14 @@ ADMIN_NAV = [
                 ],
             },
             {
+                "id": "content-screening",
+                "label": "Content Screening",
+                "icon": "bi-shield-check",
+                "sections": [
+                    {"id": "content-screening-section", "label": "Content Screening", "icon": "bi-shield-check"},
+                ],
+            },
+            {
                 "id": "content-safety",
                 "label": "Content Safety",
                 "icon": "bi-shield-exclamation",

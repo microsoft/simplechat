@@ -44,13 +44,15 @@ otherwise make this module unimportable without Azure and config -- and ``perfor
 lives in ``route_backend_chats``, importing which at module load would be a circular import --
 so the same lazy pattern is used uniformly rather than only where it is strictly forced.
 
-Version: 0.261.104
+Version: 0.261.113
 """
 
 import json
 import logging
 from copy import deepcopy
 
+from content_screening.access import assert_evidence_available, guard_model_callable
+from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_orchestration_context import build_elicitation_user_request, conversation_reference_messages
 from functions_orchestration_memory import OrchestrationMemoryError
@@ -2123,8 +2125,12 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
                 mode='chat_orchestration',
                 telemetry_settings=settings,
                 request_correlation_id=_ctx(context, 'request_correlation_id', None),
+                user_id=user_id,
             )
             handoff_content = _text(handoff.get('content'))
+        except ScreeningError:
+            failure = build_failure('context_unavailable')
+            return build_step_result(status=STEP_STATUS_FAILED, failure=failure, summary=failure['message'], error=failure['message'])
         except Exception as exc:
             # A handoff that cannot be built must not lose the answer; fall back to notes.
             log_event(
@@ -2149,6 +2155,16 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
     messages.append({'role': 'user', 'content': prompt})
     report = {}
     try:
+        response_sources = [
+            _ctx(context, "execution_manifest", []) or _ctx(context, "source_manifest", []),
+            evidence, citations, [saved_input.manifest for saved_input in saved_inputs],
+        ]
+        assert_evidence_available(response_sources, user_id)
+        guarded_invoke = guard_model_callable(
+            invoke_prompt,
+            response_sources,
+            user_id,
+        )
         if saved_inputs:
             output_format = saved_analysis_format_request(user_message)
             if output_format:
@@ -2158,11 +2174,11 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
                 )
             else:
                 report = explain_saved_analysis(
-                    saved_inputs, messages, invoke_prompt, cancel_requested=cancel_requested,
+                    saved_inputs, messages, guarded_invoke, cancel_requested=cancel_requested,
                 )
             reply = _text(report['reply'])
         else:
-            reply = _text(invoke_prompt(
+            reply = _text(guarded_invoke(
                 messages,
                 stage='orchestration_respond',
                 metadata={
@@ -2171,6 +2187,7 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
                     'complete_saved_analysis_input': False,
                 },
             ))
+        assert_evidence_available(response_sources, user_id)
     except Exception as exc:
         log_event(
             f'{_LOG_PREFIX} respond synthesis failed: {exc}',
@@ -2186,7 +2203,7 @@ def run_respond(step, context, *, settings, user_id, emit, cancel_requested):
                 status=STEP_STATUS_FAILED, summary=failure['message'], message=failure['message'],
                 error=failure['message'], failure=failure,
             )
-        failure = build_failure('context_unavailable') if isinstance(exc, OrchestrationMemoryError) else failure_from_exception(exc, answering=True)
+        failure = build_failure('context_unavailable') if isinstance(exc, (OrchestrationMemoryError, ScreeningError)) else failure_from_exception(exc, answering=True)
         return build_step_result(
             status=STEP_STATUS_FAILED, failure=failure,
             summary=failure['message'], error=failure['message'],

@@ -8,11 +8,13 @@ import socket
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 
-from config import cosmos_m365_execution_runs_container, cosmos_settings_container
+from config import cosmos_m365_execution_runs_container, cosmos_settings_container, exceptions
+from content_screening.jobs import check_due_scan_jobs_once
 from functions_appinsights import log_event
 from functions_control_center import (
     calculate_next_control_center_auto_refresh_run,
@@ -905,6 +907,34 @@ def run_data_management_scheduler_loop(app=None):
         time.sleep(60)
 
 
+def run_content_screening_scheduler_loop(app=None):
+    """Recover completion work even when enrollment of new scans is disabled."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock(
+                'content_screening_scheduler_scan', lease_seconds=300,
+            )
+            if lock_document:
+                with app.app_context() if app is not None else nullcontext():
+                    processed = check_due_scan_jobs_once(max_jobs=2)
+                log_event(
+                    '[CONTENT_SCREENING] Scheduler slice completed.',
+                    extra={'job_count': len(processed)},
+                    debug_only=True,
+                )
+        except Exception as exc:
+            log_event(
+                '[CONTENT_SCREENING] Scheduler slice could not complete.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.ERROR,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+        time.sleep(30)
+
+
 def run_app_maintenance_loop():
     """Run idempotent app maintenance tasks under a distributed lock."""
     while True:
@@ -980,6 +1010,7 @@ def start_background_task_threads(app=None):
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
+        ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
         ('Key Vault secret reminder background task started.', run_key_vault_secret_reminder_loop),
     ]

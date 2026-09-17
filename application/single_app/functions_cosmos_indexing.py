@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from azure.core import MatchConditions
 from azure.cosmos import PartitionKey
 
+import config as app_config
 from config import (
     cosmos_collaboration_messages_container,
     cosmos_collaboration_messages_container_name,
@@ -146,6 +147,25 @@ COSMOS_INDEXING_POLICY_DEFINITIONS = [
         },
     },
 ]
+
+if getattr(app_config, "cosmos_content_screening_container", None) is not None:
+    COSMOS_INDEXING_POLICY_DEFINITIONS.append({
+        'container_name': app_config.cosmos_content_screening_container_name,
+        'container': app_config.cosmos_content_screening_container,
+        'partition_key_path': '/partition_key',
+        'description': 'Paged screening review queues and durable scan-job work items.',
+        'expected_policy': {
+            'compositeIndexes': [
+                _composite_index(('/kind', 'ascending'), ('/scope_key', 'ascending'), ('/sort_key', 'ascending')),
+                _composite_index(('/kind', 'ascending'), ('/actor_id', 'ascending'), ('/sort_key', 'ascending')),
+                _composite_index(('/kind', 'ascending'), ('/status', 'ascending'), ('/sort_key', 'ascending')),
+                _composite_index(
+                    ('/kind', 'ascending'), ('/job_id', 'ascending'),
+                    ('/status', 'ascending'), ('/sort_key', 'ascending'),
+                ),
+            ],
+        },
+    })
 
 
 def _normalize_composite_path(path_definition):

@@ -8,6 +8,7 @@
 // breaks the build.
 
 import type { ReasoningResolution } from './reasoning';
+import type { ContentScreeningSummary } from './contentScreening';
 
 export type Json = Record<string, unknown>;
 
@@ -182,6 +183,7 @@ export interface PromptOption {
 }
 
 export interface WorkspaceDocument {
+    content_screening?: ContentScreeningSummary | null;
     id?: string;
     document_id?: string;
     file_name?: string;

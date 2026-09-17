@@ -143,6 +143,32 @@ remove the reference first.
 
 {% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities tab in Admin Settings." title="Global Identities" %}
 
+## Content Screening {#content-screening}
+
+### Policies and scans {#content-screening-section}
+
+Content screening holds extracted workspace knowledge until its required checks and any human review are complete. Use deterministic PII/pattern/value rules for known data formats and an approved model for contextual criteria such as instructions that try to manipulate source priority.
+
+The feature requires Enhanced Citations and reuses its storage account for private evidence and clean derivatives. Administrators define required baseline rules; workspace managers can add checks without weakening that baseline. It is separate from the Azure AI Content Safety chat-category feature below.
+
+Open **Admin Settings > Security > Content Screening** in either interface. The tab is visible even when Enhanced Citations is off; only activation is blocked by that prerequisite. It does not depend on **Enable Content Safety**.
+
+Use **Save screening policy** to persist rules and model criteria independently of the main Admin Settings save. Enable the policy and add at least one active check before enabling new scans. In V2, change **Screen workspace content before publication**, then use **Save changes**. A rejected or failed write is displayed as an error and is not reported as saved.
+
+Both editors provide **Add literal rule**, **Add regex rule**, and **Add PII rule**, plus the same four **Starter rule pack** choices. Deterministic rules run in code, not through a model. Adding a pack again leaves existing rules and their edits intact.
+
+**Enable AI checks** controls the actual scanner for that policy. Select one **Scanner model**, supply or adapt starter criteria, and choose its page/chunk window. When AI checks are off, those controls are disabled and their saved values are retained. This does not disable AI used independently for extraction, embeddings, or other application features.
+
+The separate **Models workspaces may use** section is a permission list, not additional scanners to execute. It remains editable while baseline AI checks are off. The baseline's saved scanner is automatically permitted; its marked checkbox does not create an additional explicit permission. Workspace managers must enable their own AI check to use a permitted model.
+
+The **Configured screening checks** summary describes the current draft. Workspace summaries include required administrator checks even when local additions are off. An inactive baseline makes workspace additions inactive; disabling future scans never releases an existing document hold.
+
+Added in **0.261.106**; admin discovery and save feedback corrected in **0.261.107**; classic/V2 policy-editor alignment implemented in **0.261.108**, tracked in `application\single_app\config.py`. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) for policy selection, existing-workspace scans, reviewer roles, and remediation limits.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Enable Content Screening | Prevents workspace documents from becoming usable knowledge before inspection and any required review. Existing holds remain enforced if future scanning is disabled. | Off | `enable_content_screening`; requires Enhanced Citations, working storage, and an active policy |
+
 ## Content Safety {#content-safety}
 
 ### Content Safety {#content-safety-section}

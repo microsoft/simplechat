@@ -18,6 +18,7 @@ from functions_ai_connections import AIConnectionError
 import functions_settings
 from functions_settings import *
 from functions_logging import *
+from content_screening.extraction import capture_text_before_chunking
 
 
 def get_settings(*args, **kwargs):
@@ -961,13 +962,15 @@ def extract_word_text(file_path, file_extension=None):
 
     if resolved_extension == '.doc':
         if olefile.isOleFile(file_path):
-            return extract_legacy_doc_text(file_path)
-        return extract_docx_text(file_path)
-
-    if resolved_extension in {'.docx', '.docm'}:
-        return extract_docx_text(file_path)
-
-    raise ValueError(f"Unsupported Word document extension: {resolved_extension}")
+            text = extract_legacy_doc_text(file_path)
+        else:
+            text = extract_docx_text(file_path)
+    elif resolved_extension in {'.docx', '.docm'}:
+        text = extract_docx_text(file_path)
+    else:
+        raise ValueError(f"Unsupported Word document extension: {resolved_extension}")
+    capture_text_before_chunking(text)
+    return text
 
 
 def extract_word_metadata(file_path, file_extension=None):
@@ -1008,6 +1011,7 @@ def parse_authors(author_input):
     return []
 
 def chunk_text(text, chunk_size=2000, overlap=200):
+    capture_text_before_chunking(text)
     try:
         words = text.split()
         chunks = []

@@ -28,6 +28,14 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_
 from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
 
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_blob_available,
+    assert_evidence_available,
+    current_request_source_provenance,
+    guard_chat_service,
+)
+from content_screening.contracts import ScreeningError
 from config import (
     CLIENTS,
     TABULAR_EXTENSIONS,
@@ -3009,6 +3017,7 @@ def _authorize_tabular_export_run_execution(run):
         raise PermissionError('Export conversation no longer exists') from exc
     if str(conversation.get('user_id') or '').strip() != user_id:
         raise PermissionError('Export conversation ownership changed')
+    assert_evidence_available((run or {}).get("screening_sources"), user_id=user_id)
 
     source_authorization = (
         (run or {}).get('source_descriptor')
@@ -3065,6 +3074,11 @@ def _authorize_tabular_export_run_execution(run):
 
     if not authorized:
         raise PermissionError('Export source is no longer authorized')
+    assert_evidence_available(
+        [(run or {}).get("screening_sources"), source_authorization], user_id=user_id,
+    )
+    if container_name and blob_path:
+        assert_blob_available(container_name, blob_path, user_id=user_id, purpose="export")
     return conversation
 
 
@@ -3089,6 +3103,7 @@ def _get_versioned_source_blob_client(source_descriptor):
 
 
 def _revalidate_tabular_source_version_for_publication(run):
+    _authorize_tabular_export_run_execution(run)
     source_descriptor = (
         (run or {}).get('source_descriptor')
         or (run or {}).get('source_authorization')
@@ -3504,9 +3519,10 @@ def _iter_versioned_tabular_source_rows(
     source_format,
     source_chunk_rows,
     resume_source_row,
+    user_id=None,
 ):
     blob_path = str(source_descriptor.get('blob_path') or '').strip()
-    tabular_plugin = TabularProcessingPlugin()
+    tabular_plugin = TabularProcessingPlugin(authorized_user_id=user_id)
 
     if source_format == 'csv':
         source_blob_client = _get_versioned_source_blob_client(source_descriptor)
@@ -3618,6 +3634,7 @@ def _stage_tabular_generated_output_source(run, settings):
         source_format,
         source_chunk_rows,
         resume_source_row,
+        user_id=run.get("user_id"),
     )
 
     for source_row_number, source_row in source_rows:
@@ -7684,9 +7701,33 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
 
 
 
+def _screened_run_public_status(run):
+    if not any(run.get(key) for key in ("source_descriptor", "source_authorization", "screening_sources")):
+        return None
+    try:
+        _authorize_tabular_export_run_execution(run)
+    except (ScreeningError, LookupError, PermissionError) as error:
+        message = error.public_message if isinstance(error, ScreeningError) else "Source content is unavailable."
+        return {
+            "id": run.get("id"), "run_id": run.get("id"),
+            "conversation_id": run.get("conversation_id"),
+            "status": "failed", "status_label": "Source unavailable",
+            "status_detail": message, "last_message": message,
+            "capability": "tabular", "source_available": False,
+            "failure_code": error.code if isinstance(error, ScreeningError) else "source_unavailable",
+            "can_resume": False, "can_cancel": _can_cancel_run(run),
+            "generated_artifact": None, "generated_artifacts": [],
+            "preview_available": False, "background_export": True,
+        }
+    return None
+
+
 def _build_run_public_status(run, settings=None):
     if not isinstance(run, dict):
         return None
+    screened_status = _screened_run_public_status(run)
+    if screened_status is not None:
+        return screened_status
     run = _sync_tabular_generation_contract_fields(run)
 
     batch_count = _safe_int(run.get('batch_count'))
@@ -7931,6 +7972,9 @@ def get_tabular_generated_output_run_status(user_id, run_id):
         )
     except CosmosResourceNotFoundError:
         return None
+    screened_status = _screened_run_public_status(run)
+    if screened_status is not None:
+        return screened_status
     # Legacy completion repair is a bounded, idempotent status-read exception:
     # the partition-authorized run already owns the uploaded artifact, and the
     # missing publication commit is the only mutation performed.
@@ -8178,6 +8222,7 @@ def _raise_if_tabular_export_canceled(run):
     if not claim_matches:
         raise TabularExportLeaseLostError('Background structured export worker lost its claim')
 
+    _authorize_tabular_export_run_execution(run)
     run['_etag'] = current_run.get('_etag')
     return current_run
 
@@ -11059,6 +11104,9 @@ def process_tabular_generated_output_run(run_id, user_id):
                 ),
                 preselected=has_snapshotted_chunk_model,
             )
+            chat_service = guard_chat_service(
+                chat_service, source_validator=lambda: _authorize_tabular_export_run_execution(run),
+            )
         completed_batches = _safe_int(run.get('completed_batches'))
         processed_rows = _safe_int(run.get('processed_rows'))
         batch_count = _safe_int(run.get('batch_count'))
@@ -11492,7 +11540,7 @@ def queue_tabular_generated_output_run(
             )
         source_authorization = {
             field_name: source_descriptor.get(field_name)
-            for field_name in ('source', 'scope_id', 'container', 'blob_path')
+            for field_name in ('source', 'scope_id', 'container', 'blob_path', PROVENANCE_FIELD)
         }
     else:
         for index, batch_rows in enumerate(row_batches or [], start=1):
@@ -11634,6 +11682,7 @@ def queue_tabular_generated_output_run(
         'source_descriptor': source_descriptor or None,
         'batch_budget': model_batch_budget,
         'source_authorization': source_authorization or None,
+        'screening_sources': current_request_source_provenance(),
         'source_staging_complete': not bool(source_descriptor),
         'source_staged_rows': 0 if source_descriptor else staged_row_count,
         'source_staged_batches': 0 if source_descriptor else staged_batch_count,

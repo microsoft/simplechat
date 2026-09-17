@@ -9,6 +9,7 @@ import logging
 import builtins
 import os
 from copy import deepcopy
+from content_screening.access import guard_chat_service
 from agent_execution_context import execution_user_id as get_execution_user_id
 from openai import AsyncOpenAI
 from azure.core.exceptions import AzureError
@@ -2152,7 +2153,7 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             build_agent_model_budget(agent_config, settings),
             provider=agent_config.get("model_provider") or "aoai",
         )
-        kernel.add_service(chat_service)
+        kernel.add_service(guard_chat_service(chat_service))
         log_event(
             f"[SK_LOADER] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
             {
@@ -3318,7 +3319,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 build_agent_model_budget(agent_config, settings),
                                 provider=agent_config.get("model_provider") or "aoai",
                             )
-                            kernel.add_service(chat_service)
+                            kernel.add_service(guard_chat_service(chat_service))
                 except Exception as e:
                     log_event(f"[SK_LOADER] Failed to create or get AzureChatCompletion for agent: {agent_config['name']}: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
             if LoggingChatCompletionAgent and chat_service:
@@ -3426,7 +3427,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 build_agent_model_budget(orchestrator_config, settings),
                                 provider=orchestrator_config.get("model_provider") or "aoai",
                             )
-                            kernel.add_service(chat_service)
+                            kernel.add_service(guard_chat_service(chat_service))
                 if not chat_service:
                     raise RuntimeError(f"[SK Loader] No AzureChatCompletion service available for orchestrator agent '{orchestrator_config['name']}'")
 
@@ -3560,7 +3561,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             api_version=api_version,
                             # default_headers={"Ocp-Apim-Subscription-Key": key}
                     )
-                    kernel.add_service(chat_service)
+                    kernel.add_service(guard_chat_service(chat_service))
                 else:
                     chat_service = AzureChatCompletion(
                             service_id=f"aoai-chat-global",
@@ -3570,7 +3571,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             api_version=api_version,
                             # default_headers={"Ocp-Apim-Subscription-Key": key}
                         )
-                    kernel.add_service(chat_service)
+                    kernel.add_service(guard_chat_service(chat_service))
                 log_event(
                     f"[SK_LOADER] Azure OpenAI chat completion service registered (kernel-only mode)",
                     {

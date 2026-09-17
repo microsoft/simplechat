@@ -8,8 +8,16 @@ group deletions, and document deletions.
 
 import uuid
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+from urllib.parse import quote
+from content_screening.contracts import (
+    ScreeningConflictError,
+    ScreeningError,
+    Subject,
+    hash_payload,
+)
+from content_screening.permissions import can_review_approval, assert_scope_access, reviewer_ids
 from config import cosmos_approvals_container, cosmos_groups_container
 from functions_appinsights import log_event
 from functions_notifications import (
@@ -45,6 +53,7 @@ TYPE_DELETE_USER_DOCUMENTS = "delete_user_documents"
 TYPE_WARN_USER = "warn_user"
 TYPE_SUSPEND_USER = "suspend_user"
 TYPE_BLOCK_USER = "block_user"
+TYPE_CONTENT_SCREENING_REVIEW = "content_screening_review"
 
 USER_TARGETED_APPROVAL_TYPES = {
     TYPE_DELETE_USER_DOCUMENTS,
@@ -68,7 +77,7 @@ PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES = ['approval_request_pending']
 
 def get_approval_roles_for_request_type(request_type: str) -> List[str]:
     """Return role assignments eligible to review the supplied approval type."""
-    if request_type in M365_APPROVAL_TYPES:
+    if request_type in M365_APPROVAL_TYPES or request_type == TYPE_CONTENT_SCREENING_REVIEW:
         return []
     if request_type in SAFETY_USER_APPROVAL_TYPES:
         settings = get_settings()
@@ -108,6 +117,170 @@ def _get_approval_sort_value(approval: Dict[str, Any]) -> str:
     return ''
 
 
+def create_content_screening_approval(scan, actor_id):
+    """Return a review and transient notification acknowledgement, never source data."""
+    subject = Subject.from_dict(scan["subject"])
+    approval_id = f"content-screening-{hash_payload([scan['id'], subject.to_dict()])}"
+    now = datetime.now(timezone.utc).isoformat()
+    approval = {
+        "id": approval_id,
+        "group_id": subject.scope_key,
+        "request_type": TYPE_CONTENT_SCREENING_REVIEW,
+        "status": STATUS_PENDING,
+        "group_name": "Workspace content",
+        "requester_id": actor_id,
+        "requester_email": "",
+        "requester_name": "Content screening",
+        "reason": "Extracted content requires an authorized workspace review.",
+        "created_at": now,
+        "expires_at": None,
+        "ttl": -1,
+        "metadata": {
+            "scan_id": scan["id"],
+            "subject": subject.to_dict(),
+            "review_url": (
+                f"/content-review?scope_type={subject.scope_type}"
+                f"&scope_id={quote(subject.scope_id, safe='')}&scan_id={quote(scan['id'], safe='')}"
+            ),
+        },
+    }
+    try:
+        approval = cosmos_approvals_container.create_item(body=approval)
+    except Exception as error:
+        if getattr(error, "status_code", None) != 409:
+            raise ScreeningError(code="screening_review_store_failed") from error
+        approval = cosmos_approvals_container.read_item(
+            item=approval_id, partition_key=subject.scope_key,
+        )
+        metadata = _get_approval_metadata(approval)
+        if (
+            approval.get("request_type") != TYPE_CONTENT_SCREENING_REVIEW
+            or metadata.get("scan_id") != scan["id"]
+            or metadata.get("subject") != subject.to_dict()
+        ):
+            raise ScreeningConflictError()
+    notifications_complete = False
+    if approval.get("status") == STATUS_PENDING:
+        notifications_complete = _create_content_screening_notifications(approval, subject)
+    return {**approval, "notifications_complete": notifications_complete}
+
+
+def _create_content_screening_notifications(approval, subject):
+    """Acknowledge only persisted personal notices for every current scoped reviewer."""
+    try:
+        recipients = reviewer_ids(subject)
+    except Exception as error:
+        _log_content_screening_notification_failure(error)
+        return False
+    if not isinstance(recipients, (list, tuple)) or not recipients:
+        return False
+    complete = True
+    for user_id in recipients:
+        if not isinstance(user_id, str) or not user_id:
+            complete = False
+            continue
+        try:
+            receipt = create_notification(
+                user_id=user_id,
+                notification_type="approval_request_pending",
+                title="Content review required",
+                message="Workspace content is held until an authorized reviewer makes a decision.",
+                link_url=approval["metadata"]["review_url"],
+                link_context={"scan_id": approval["metadata"]["scan_id"]},
+                metadata={
+                    "approval_id": approval["id"],
+                    "request_type": TYPE_CONTENT_SCREENING_REVIEW,
+                },
+                idempotency_key=f"content-screening-review:{approval['id']}",
+            )
+        except Exception as error:
+            complete = False
+            _log_content_screening_notification_failure(error)
+            continue
+        metadata = _get_approval_metadata(receipt) if isinstance(receipt, dict) else {}
+        context = receipt.get("link_context") if isinstance(receipt, dict) else None
+        if (
+            not isinstance(receipt, dict) or not isinstance(receipt.get("id"), str) or not receipt["id"]
+            or receipt.get("scope") != "personal" or receipt.get("user_id") != user_id
+            or receipt.get("group_id") or receipt.get("public_workspace_id") or receipt.get("assignment")
+            or receipt.get("notification_type") != "approval_request_pending"
+            or metadata.get("approval_id") != approval["id"]
+            or metadata.get("request_type") != TYPE_CONTENT_SCREENING_REVIEW
+            or not isinstance(context, dict) or context.get("scan_id") != approval["metadata"]["scan_id"]
+        ):
+            complete = False
+    return complete
+
+
+def _log_content_screening_notification_failure(error):
+    try:
+        log_event(
+            "[CONTENT_SCREENING] review_notification_failed",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+    except Exception:
+        return
+
+
+def resolve_content_screening_approval(scan, actor_id, action):
+    """Project a completed dedicated review; this never publishes document content."""
+    approval_id = scan.get("approval_id")
+    if not approval_id:
+        return None
+    expected_states = {
+        "approve_with_flags": "approved_with_flags",
+        "approve_clean": "cleared",
+        "reject": "rejected",
+        "delete": "deleted",
+        "remediate": "remediating",
+    }
+    if action not in expected_states or scan.get("state") != expected_states[action]:
+        raise ScreeningConflictError()
+    subject = Subject.from_dict(scan["subject"])
+    assert_scope_access(actor_id, subject.scope_type, subject.scope_id)
+    approval = cosmos_approvals_container.read_item(
+        item=approval_id, partition_key=subject.scope_key,
+    )
+    metadata = _get_approval_metadata(approval)
+    if (
+        approval.get("request_type") != TYPE_CONTENT_SCREENING_REVIEW
+        or metadata.get("scan_id") != scan["id"]
+        or metadata.get("subject") != subject.to_dict()
+    ):
+        raise ScreeningConflictError()
+    if approval.get("status") != STATUS_PENDING:
+        if metadata.get("decision_action") == action:
+            return approval
+        raise ScreeningConflictError()
+    if not approval.get("_etag"):
+        raise ScreeningConflictError()
+    updated = {
+        **approval,
+        "status": STATUS_DENIED if action == "reject" else STATUS_EXECUTED,
+        "approved_by_id": actor_id,
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+        "approval_comment": "Resolved through the dedicated content review workflow.",
+        "ttl": -1,
+        "expires_at": None,
+        "metadata": {**metadata, "decision_action": action},
+    }
+    # Cosmos concurrency is needed only for this dedicated lifecycle, not legacy approvals.
+    from azure.core import MatchConditions
+
+    try:
+        updated = cosmos_approvals_container.replace_item(
+            item=approval_id, body=updated, etag=approval["_etag"],
+            match_condition=MatchConditions.IfNotModified,
+        )
+    except Exception as error:
+        if getattr(error, "status_code", None) in {409, 412}:
+            raise ScreeningConflictError() from error
+        raise ScreeningError(code="screening_review_store_failed") from error
+    _clear_pending_admin_notifications(approval_id, safe_errors=True)
+    return updated
+
+
 def create_approval_request(
     request_type: str,
     group_id: str,
@@ -134,6 +307,8 @@ def create_approval_request(
     """
     if request_type in M365_APPROVAL_TYPES:
         raise ValueError("Microsoft 365 requests must use the subject-owned approval service.")
+    if request_type == TYPE_CONTENT_SCREENING_REVIEW:
+        raise PermissionError("Use the dedicated content review workflow.")
     try:
         # For user document deletion requests, use metadata for display info
         # Initialize group variable for notifications (may be None for non-group operations)
@@ -388,6 +563,9 @@ def approve_request(
                 item=approval_id,
                 partition_key=group_id
             )
+
+        if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
+            raise PermissionError("Use the dedicated content review workflow.")
         
         if is_m365_approval(approval):
             if group_id != approver_id or not is_m365_approval_subject(approval, approver_id):
@@ -492,6 +670,9 @@ def deny_request(
                 item=approval_id,
                 partition_key=group_id
             )
+
+        if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
+            raise PermissionError("Use the dedicated content review workflow.")
         
         if is_m365_approval(approval):
             service = get_m365_approval_service()
@@ -598,9 +779,10 @@ def mark_approval_executed(
             item=approval_id,
             partition_key=group_id
         )
-
         if is_m365_approval(approval):
             raise ValueError("Microsoft 365 approval decisions and execution states are separate.")
+        if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
+            raise PermissionError("Use the dedicated content review workflow.")
         
         # Update execution status
         approval['status'] = STATUS_EXECUTED if success else STATUS_FAILED
@@ -677,6 +859,10 @@ def get_authorized_approval(
     approval = get_approval_by_id(approval_id, group_id)
     if not approval:
         raise LookupError("Approval not found")
+    if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW and (
+        require_approval_rights or require_denial_rights
+    ):
+        raise PermissionError("Use the dedicated content review workflow.")
 
     if require_approval_rights:
         is_authorized = _can_user_approve(approval, user_id, user_roles)
@@ -720,6 +906,8 @@ def auto_deny_expired_approvals() -> int:
                 updated = get_m365_approval_service().expire(approval)
                 if updated['status'] == 'expired':
                     denied_count += 1
+                continue
+            if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
                 continue
             expires_at = datetime.fromisoformat(approval['expires_at'])
             
@@ -787,6 +975,8 @@ def _can_user_view(
         return is_m365_approval_subject(approval, user_id)
     if approval.get('record_kind') in {'m365_user_policy', 'm365_audit'}:
         return False
+    if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
+        return can_review_approval(approval, user_id)
     safe_user_roles = _normalize_user_roles(user_roles)
     metadata = _get_approval_metadata(approval)
 
@@ -855,6 +1045,8 @@ def _can_user_approve(
         return is_m365_approval_subject(approval, user_id)
     if approval.get('record_kind') in {'m365_user_policy', 'm365_audit'}:
         return False
+    if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
+        return can_review_approval(approval, user_id)
     safe_user_roles = _normalize_user_roles(user_roles)
     metadata = _get_approval_metadata(approval)
 
@@ -904,6 +1096,8 @@ def _can_user_deny(
     """
     if is_m365_approval(approval):
         return is_m365_approval_subject(approval, user_id)
+    if approval.get('request_type') == TYPE_CONTENT_SCREENING_REVIEW:
+        return can_review_approval(approval, user_id)
     if approval.get('requester_id') == user_id:
         return True
 
@@ -1089,14 +1283,22 @@ def _create_requester_pending_notification(approval: Dict[str, Any]) -> None:
         debug_print(f"Error notifying requester of pending approval {approval['id']}: {e}")
 
 
-def _clear_pending_admin_notifications(approval_id: str) -> None:
+def _clear_pending_admin_notifications(approval_id: str, *, safe_errors=False) -> None:
     """Remove stale pending-review notifications once an approval is resolved."""
     try:
         delete_notifications_by_metadata(
             metadata_filters={'approval_id': approval_id},
-            notification_types=PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES
+            notification_types=PENDING_APPROVAL_ADMIN_NOTIFICATION_TYPES,
+            **({"safe_errors": True} if safe_errors else {}),
         )
     except Exception as e:
+        if safe_errors:
+            log_event(
+                "[CONTENT_SCREENING] notification_cleanup_failed",
+                extra={"error_type": type(e).__name__},
+                level=logging.WARNING,
+            )
+            return
         log_event("[APPROVALS] Error clearing pending admin notifications", {
             'error': str(e),
             'approval_id': approval_id
@@ -1126,5 +1328,6 @@ def _format_request_type(request_type: str) -> str:
         TYPE_WARN_USER: "Warn User",
         TYPE_SUSPEND_USER: "Suspend User",
         TYPE_BLOCK_USER: "Block User",
+        TYPE_CONTENT_SCREENING_REVIEW: "Content Screening Review",
     }
     return type_labels.get(request_type, request_type)

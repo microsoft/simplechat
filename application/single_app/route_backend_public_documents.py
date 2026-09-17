@@ -3,12 +3,15 @@
 import logging
 from datetime import datetime, timezone
 
+from content_screening.access import register_document_api_guards
+from content_screening.contracts import ScreeningError
 from config import *
 
 from functions_authentication import *
 from functions_settings import *
 from functions_public_workspaces import *
 from functions_documents import *
+from content_screening.service import prepare_document_upload
 from functions_appinsights import log_event
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PUBLIC,
@@ -81,6 +84,7 @@ def register_route_backend_public_documents(bp):
     """
     Provides backend routes for public-workspace–scoped document management
     """
+    register_document_api_guards(bp)
 
     @bp.route('/api/public_documents/upload', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -146,6 +150,13 @@ def register_route_backend_public_documents(bp):
                     percentage_complete=0
                 )
                 executor = current_app.extensions['executor']
+                prepare_document_upload(
+                    document_id=doc_id,
+                    user_id=user_id,
+                    temp_file_path=tmp_path,
+                    original_filename=orig,
+                    public_workspace_id=active_ws,
+                )
                 executor.submit(
                     process_document_upload_background,
                     document_id=doc_id,
@@ -156,7 +167,13 @@ def register_route_backend_public_documents(bp):
                 )
                 processed.append({'id': doc_id, 'filename': orig})
             except Exception as e:
-                errors.append(f'Queue failed for {orig}: {e}')
+                log_event(
+                    "[CONTENT_SCREENING] Workspace upload preparation or queueing failed.",
+                    extra={"document_id": doc_id, "scope": "public", "exception_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                message = e.public_message if isinstance(e, ScreeningError) else "Unable to prepare or queue this upload."
+                errors.append(f"Upload failed for {orig}: {message}")
                 if tmp_path and os.path.exists(tmp_path): os.remove(tmp_path)
 
         status = 200 if processed and not errors else (207 if processed else 400)

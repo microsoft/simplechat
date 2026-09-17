@@ -51,6 +51,8 @@ import { InboundMcpNotice } from '../components/admin/InboundMcpNotice';
 import { KeyVaultReminders } from '../components/admin/KeyVaultReminders';
 import { ModelConnectionsManager } from '../components/admin/ModelConnectionsManager';
 import { ModelPicker } from '../components/admin/ModelPicker';
+import { ScreeningWorkspaceControls } from '../components/screening/ScreeningWorkspaceControls';
+import { ScreeningPolicyEditor } from '../components/screening/ScreeningPolicyEditor';
 import { ResourceIdBuilder } from '../components/admin/ResourceIdBuilder';
 import { ModelSelectionPicker } from '../components/admin/ModelSelectionPicker';
 import { OrchestrationCard } from '../components/admin/OrchestrationCard';
@@ -76,6 +78,7 @@ import {
     fieldSearchText,
     humanizeKey,
     isFieldVisible,
+    isRequirementSatisfied,
     isSectionVisible,
     readFieldValue,
     type AdminField,
@@ -732,6 +735,17 @@ export function AdminSettingsPage() {
 
         if (field.type === 'component') {
             switch (field.component) {
+                case 'content-screening-policy':
+                    return (
+                        <div key={key} data-testid="screening-admin-settings" className="min-w-0 space-y-3">
+                            <GlassButton type="button" variant="subtle" size="sm"
+                                onClick={() => goToSection('enhanced-citations-section')}>
+                                Configure Enhanced Citations
+                            </GlassButton>
+                            <ScreeningPolicyEditor scope={{ scope_type: 'global', scope_id: 'global' }} />
+                            <ScreeningWorkspaceControls scope={{ scope_type: 'global', scope_id: 'global' }} />
+                        </div>
+                    );
                 case 'custom-pages-table':
                     return <CustomPagesTable key={key} help={field.help} />;
                 case 'connection-test':
@@ -913,7 +927,10 @@ export function AdminSettingsPage() {
                 value={value}
                 error={error}
                 warning={warning}
-                disabled={saving}
+                disabled={saving || (
+                    field.key === 'enable_content_screening'
+                    && !asBoolean(value) && !isRequirementSatisfied(field, settings, draft)
+                )}
                 onChange={(next) => {
                     if (field.type === 'switch') {
                         onSwitchChange(field, asBoolean(next));
