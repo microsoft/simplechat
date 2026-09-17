@@ -8,12 +8,23 @@ import { Modal } from '../ui/Modal';
 import { GlassButton, GlassPanel, Toggle } from '../ui/primitives';
 import { Pill } from '../workspace/primitives';
 import { WorkflowDocumentPicker } from './WorkflowDocumentPicker';
+import { WorkflowConditionEditor, WorkflowDecisionFields, WorkflowFlowInputs } from './WorkflowConditionEditor';
+import { WorkflowStructuredList } from './WorkflowStructuredList';
+import {
+    convertToStructuredWorkflow,
+    defaultFlowPredicate,
+    flowUnsupportedReason,
+    isFlowBinding,
+    isLegacyWorkflowBinding,
+    type WorkflowTaskNode,
+} from '../../lib/workflowFlow';
 import {
     createWorkflowTask,
     comparisonActionFromSelection,
     documentActionFromSelection,
     findWorkflowAgent,
     newWorkflowDefinition,
+    normalizeWorkflowDefinition,
     preservedWorkflowFieldLabels,
     safeWorkflowAlias,
     sameWorkflowDefinition,
@@ -41,6 +52,7 @@ import {
     type WorkflowTask,
     type WorkflowTaskRunner,
     type WorkflowReferenceInput,
+    type WorkflowPublication,
 } from '../../lib/workflowEditor';
 
 const inputClass = 'w-full rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-1 placeholder:text-text-3 focus:border-accent focus:outline-none';
@@ -105,6 +117,7 @@ function taskValidationErrors(
     const errors: string[] = [];
     const indexes = new Map(tasks.map((item, position) => [item.id, position]));
     for (const input of task.inputs ?? []) {
+        if (workflow.definition_version === 3 || !isLegacyWorkflowBinding(input)) continue;
         const producer = indexes.get(input.task_id);
         if (producer === undefined) {
             errors.push(`${input.name || 'Input'} points to a missing task.`);
@@ -343,7 +356,7 @@ function TaskInputs({
     onChange: (task: WorkflowTask) => void;
 }) {
     const mode = taskInputMode(task);
-    const inputs = task.inputs ?? [];
+    const inputs = (task.inputs ?? []).filter(isLegacyWorkflowBinding);
     const updateInput = (taskId: string, update: Partial<WorkflowInputBinding>) => {
         onChange({
             ...task,
@@ -904,6 +917,8 @@ function TaskCard({
     onSchemaError,
     durableExecution,
     onNeedsDurable,
+    structuredNode,
+    onStructuredNodeChange,
 }: {
     scope: WorkflowScope;
     task: WorkflowTask;
@@ -911,11 +926,13 @@ function TaskCard({
     workflow: WorkflowDefinition;
     options: WorkflowEditorOptions;
     onChange: (task: WorkflowTask) => void;
-    onMove: (direction: -1 | 1) => void;
-    onRemove: () => void;
+    onMove?: (direction: -1 | 1) => void;
+    onRemove?: () => void;
     onSchemaError: (taskId: string, message: string) => void;
     durableExecution: boolean;
     onNeedsDurable: () => void;
+    structuredNode?: WorkflowTaskNode;
+    onStructuredNodeChange?: (node: WorkflowTaskNode) => void;
 }) {
     const previousTasks = workflow.tasks.slice(0, index);
     const errors = taskValidationErrors(task, index, workflow.tasks, workflow);
@@ -939,7 +956,7 @@ function TaskCard({
                         {runnerLabel(task.runner)} · {taskInputMode(task) === 'auto' ? 'automatic input' : `${task.inputs?.length ?? 0} bound inputs`}
                     </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                {!structuredNode && onMove && onRemove ? <div className="flex flex-wrap gap-2">
                     <GlassButton size="sm" disabled={index === 0} onClick={() => onMove(-1)} aria-label={`Move ${task.name || `Task ${index + 1}`} up`}>
                         <ArrowUp size={14} /> Up
                     </GlassButton>
@@ -949,7 +966,7 @@ function TaskCard({
                     <GlassButton size="sm" variant="danger" disabled={workflow.tasks.length <= 1} onClick={onRemove} aria-label={`Remove ${task.name || `Task ${index + 1}`}`}>
                         <Trash2 size={14} /> Remove
                     </GlassButton>
-                </div>
+                </div> : null}
             </div>
             {errors.length ? (
                 <div role="alert" className="rounded-xl bg-danger-soft p-3 text-sm text-danger">
@@ -982,18 +999,40 @@ function TaskCard({
                     {task.instructions.length.toLocaleString()} / {WORKFLOW_TASK_INSTRUCTIONS_LIMIT.toLocaleString()} characters
                 </span>
             </label>
+            {structuredNode && onStructuredNodeChange ? (
+                <div className="space-y-3">
+                    <Toggle label="Run when" checked={structuredNode.run_when !== undefined}
+                        description="False intentionally skips this task before approval or execution. A skipped task produces no output."
+                        onChange={(checked) => {
+                            const next = { ...structuredNode };
+                            if (checked) next.run_when = defaultFlowPredicate(task.inputs?.[0]?.name ?? '');
+                            else delete next.run_when;
+                            onStructuredNodeChange(next);
+                        }} />
+                    {structuredNode.run_when ? (
+                        <WorkflowConditionEditor workflow={workflow} bindings={(task.inputs ?? []).filter(isFlowBinding)}
+                            value={structuredNode.run_when} label={`Run when for ${task.name}`}
+                            onChange={(condition) => onStructuredNodeChange({ ...structuredNode, run_when: condition })} />
+                    ) : null}
+                </div>
+            ) : null}
             <details className="rounded-xl border border-edge p-3">
                 <summary className="cursor-pointer text-sm font-medium text-text-1">Runner, inputs, references and outputs</summary>
                 <div className="mt-4 space-y-5">
-                    <TaskRunnerFields runner={task.runner} options={options} onChange={(runner) => onChange({ ...task, runner })} />
+                    {structuredNode ? <TaskPublicationFields task={task} onChange={onChange} /> : null}
+                    {!task.publication ? <TaskRunnerFields runner={task.runner} options={options} onChange={(runner) => onChange({ ...task, runner })} /> : null}
                     <TaskApprovalFields
                         task={task}
                         durableExecution={durableExecution}
                         onNeedsDurable={onNeedsDurable}
                         onChange={onChange}
                     />
-                    <DocumentActionFields scope={scope} task={task} onChange={onChange} />
-                    <TaskInputs task={task} previousTasks={previousTasks} onChange={onChange} />
+                    {!task.publication ? <DocumentActionFields scope={scope} task={task} onChange={onChange} /> : null}
+                    {structuredNode ? (
+                        <WorkflowFlowInputs workflow={workflow} nodeId={structuredNode.id}
+                            bindings={(task.inputs ?? []).filter(isFlowBinding)} label={`${task.name} inputs`}
+                            onChange={(inputs) => onChange({ ...task, inputs })} />
+                    ) : <TaskInputs task={task} previousTasks={previousTasks} onChange={onChange} />}
                     <TaskReferences task={task} workflow={workflow} onChange={onChange} />
                     <label className="text-sm text-text-2">
                         Output contract
@@ -1025,6 +1064,12 @@ function TaskCard({
                         </select>
                     </label>
                     {task.output_contract ? (
+                        <>
+                        {structuredNode ? <WorkflowDecisionFields contract={task.output_contract}
+                            onChange={(contract) => {
+                                setSchemaParseError('');
+                                onChange({ ...task, output_contract: contract });
+                            }} /> : null}
                         <OutputContractFields
                             contract={task.output_contract}
                             onChange={(contract) => {
@@ -1033,6 +1078,7 @@ function TaskCard({
                             errors={{ schema: schemaParseError }}
                             onSchemaError={setSchemaParseError}
                         />
+                        </>
                     ) : (
                         <p className="text-xs text-text-3">
                             No output contract is configured. The backend treats this as any
@@ -1042,6 +1088,72 @@ function TaskCard({
                 </div>
             </details>
         </GlassPanel>
+    );
+}
+
+function TaskPublicationFields({ task, onChange }: { task: WorkflowTask; onChange: (task: WorkflowTask) => void }) {
+    const publication = task.publication;
+    const update = (value: WorkflowPublication) => onChange({ ...task, publication: value });
+    return (
+        <div className="space-y-3">
+            <Toggle label="Publish an existing analysis artifact" checked={publication !== undefined}
+                description="Reuse one explicitly bound native Analyze result. No model creates another copy of its content."
+                onChange={(checked) => {
+                    if (checked) onChange({
+                        ...task, publication: { artifact_format: 'md', workspace_scope: 'personal' },
+                        runner: { type: 'inherit' }, document_action: { type: 'none' },
+                        output_contract: { kind: 'json', require_complete_coverage: false, allow_partial: false },
+                    });
+                    else {
+                        const next = { ...task };
+                        delete next.publication;
+                        onChange(next);
+                    }
+                }} />
+            {publication ? (
+                <fieldset className="grid min-w-0 gap-3 rounded-xl border border-edge p-3 sm:grid-cols-2">
+                    <legend className="px-1 text-sm text-text-1">Publication destination</legend>
+                    <label className="text-xs text-text-2">
+                        Existing artifact format
+                        <select className={`${inputClass} mt-1`} aria-label={`Publication format for ${task.name}`}
+                            value={publication.artifact_format} onChange={(event) => update({
+                                ...publication, artifact_format: event.target.value as WorkflowPublication['artifact_format'],
+                            })}>
+                            <option value="md">Markdown</option><option value="csv">CSV</option><option value="json">JSON</option>
+                        </select>
+                    </label>
+                    <label className="text-xs text-text-2">
+                        Destination scope
+                        <select className={`${inputClass} mt-1`} aria-label={`Publication scope for ${task.name}`}
+                            value={publication.workspace_scope} onChange={(event) => {
+                                const scope = event.target.value as WorkflowPublication['workspace_scope'];
+                                update({
+                                    artifact_format: publication.artifact_format, workspace_scope: scope,
+                                    ...(scope === 'group' ? { group_id: '' } : scope === 'public' ? { public_workspace_id: '' } : {}),
+                                });
+                            }}>
+                            <option value="personal">Personal workspace</option><option value="group">Group workspace</option>
+                            <option value="public">Public workspace</option>
+                        </select>
+                    </label>
+                    {publication.workspace_scope !== 'personal' ? (
+                        <label className="text-xs text-text-2 sm:col-span-2">
+                            Destination workspace ID
+                            <input className={`${inputClass} mt-1`} aria-label={`Publication workspace ID for ${task.name}`}
+                                value={publication.workspace_scope === 'group' ? publication.group_id ?? '' : publication.public_workspace_id ?? ''}
+                                onChange={(event) => update({
+                                    ...publication,
+                                    ...(publication.workspace_scope === 'group' ? { group_id: event.target.value } : { public_workspace_id: event.target.value }),
+                                })} />
+                        </label>
+                    ) : null}
+                    <p className="text-xs text-text-3 sm:col-span-2">
+                        Bind exactly one earlier native Analyze output below. The destination is explicit, not your active workspace.
+                        Group/public approval and processing remain separate; queued does not mean indexed and ready.
+                    </p>
+                </fieldset>
+            ) : null}
+        </div>
     );
 }
 
@@ -1070,8 +1182,10 @@ export function WorkflowEditorDialog({
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
     const [confirmClose, setConfirmClose] = useState(false);
+    const [confirmStructured, setConfirmStructured] = useState(false);
     const [schemaFieldErrors, setSchemaFieldErrors] = useState<Record<string, string>>({});
-    const unsupported = draft.definition_version > 2;
+    const unsupportedFlow = flowUnsupportedReason(draft);
+    const unsupported = !(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version) || Boolean(unsupportedFlow);
     const readOnly = unsupported || !options.can_manage;
     const dirty = !sameWorkflowDefinition(baseline, draft) ||
         draft.tasks.some((task) => Boolean(schemaFieldErrors[task.id]));
@@ -1132,7 +1246,7 @@ export function WorkflowEditorDialog({
         setError('');
         try {
             const response = await saveWorkflowDefinition(scope, draft, original);
-            const saved = response.workflow ? workflowForSave(response.workflow, null, scope) : workflowForSave(draft, original, scope);
+            const saved = response.workflow ? normalizeWorkflowDefinition(response.workflow, scope) : workflowForSave(draft, original, scope);
             setBaseline(saved);
             setDraft(saved);
             onSaved(saved);
@@ -1215,6 +1329,7 @@ export function WorkflowEditorDialog({
                             <p>
                                 This workflow uses definition version {draft.definition_version}. V2 can read
                                 it but cannot safely save it without downgrading fields from a newer editor.
+                                {unsupportedFlow ? ` ${unsupportedFlow}` : ''}
                             </p>
                         </div>
                     ) : null}
@@ -1393,8 +1508,11 @@ export function WorkflowEditorDialog({
                                 <Toggle
                                     label="Durable execution"
                                     checked={draft.durable_execution === true}
+                                    disabled={draft.definition_version === 3}
                                     onChange={(checked) => setWorkflow((current) => ({ ...current, durable_execution: checked }))}
-                                    description="Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab."
+                                    description={draft.definition_version === 3
+                                        ? 'Required for structured control flow. Saved decisions and exact execution checkpoints survive waits and restarts.'
+                                        : 'Save checkpoints so queued and interrupted runs can resume instead of depending on this browser tab.'}
                                 />
                                 <Toggle
                                     label="Chat capabilities enabled"
@@ -1418,11 +1536,17 @@ export function WorkflowEditorDialog({
                         <section className="space-y-3 rounded-2xl border border-edge p-4" aria-label="Workflow tasks">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div>
-                                    <h3 className="text-base font-semibold text-text-1">Tasks</h3>
+                                    <h3 className="text-base font-semibold text-text-1">{draft.definition_version === 3 ? 'Structured List' : 'Tasks'}</h3>
                                     <p className="text-xs text-text-3">
                                         Task IDs stay stable while you edit, so explicit input bindings do not change meaning.
                                     </p>
                                 </div>
+                                {draft.definition_version !== 3 ? <div className="flex flex-wrap gap-2">
+                                {options.supported_definition_versions?.includes(3) && !unsupported ? (
+                                    <GlassButton type="button" size="sm" onClick={() => setConfirmStructured(true)}>
+                                        Enable structured control flow
+                                    </GlassButton>
+                                ) : null}
                                 <GlassButton
                                     type="button"
                                     size="sm"
@@ -1435,11 +1559,23 @@ export function WorkflowEditorDialog({
                                 >
                                     <Plus size={14} /> Add task
                                 </GlassButton>
+                                </div> : <Pill tone="accent">Definition v3</Pill>}
                             </div>
                             {draft.tasks.length >= options.max_tasks ? (
                                 <p role="status" className="text-xs text-warn">Maximum task count reached for this scope.</p>
                             ) : null}
-                            {draft.tasks.map((task, index) => (
+                            {draft.definition_version === 3 ? (
+                                <WorkflowStructuredList workflow={draft} options={options} onChange={(next) => setWorkflow(next)}
+                                    renderTask={(task, node, onNodeChange) => (
+                                        <TaskCard key={task.id} scope={scope} task={task}
+                                            index={draft.tasks.findIndex((item) => item.id === task.id)}
+                                            workflow={draft} options={options}
+                                            onChange={(nextTask) => updateTask(task.id, () => nextTask)}
+                                            onSchemaError={onSchemaError} durableExecution={draft.durable_execution === true}
+                                            onNeedsDurable={() => setWorkflow((current) => ({ ...current, durable_execution: true }))}
+                                            structuredNode={node} onStructuredNodeChange={onNodeChange} />
+                                    )} />
+                            ) : draft.tasks.map((task, index) => (
                                 <TaskCard
                                     key={task.id}
                                     scope={scope}
@@ -1459,6 +1595,21 @@ export function WorkflowEditorDialog({
                     </fieldset>
                 </div>
             </Modal>
+            {confirmStructured ? (
+                <ConfirmDialog title="Enable structured control flow?"
+                    description="This explicitly converts the draft to definition version 3 and requires durable execution. Existing task inputs are made explicit. Classic can still run or cancel it, but advanced editing requires V2. Nothing changes until Save workflow."
+                    confirmLabel="Convert draft" cancelLabel="Keep ordered tasks"
+                    onClose={() => setConfirmStructured(false)}
+                    onConfirm={() => {
+                        try {
+                            setWorkflow(convertToStructuredWorkflow(draft, `root-${createWorkflowTask(0).id}`));
+                            setConfirmStructured(false);
+                        } catch (cause: unknown) {
+                            setConfirmStructured(false);
+                            setError(workflowErrorMessage(cause, 'This workflow cannot be converted safely. Choose explicit inputs first.'));
+                        }
+                    }} />
+            ) : null}
             {confirmClose ? (
                 <ConfirmDialog
                     title="Discard unsaved workflow changes?"

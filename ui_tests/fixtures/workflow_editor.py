@@ -1,7 +1,7 @@
 # workflow_editor.py
 """
 Closed API fixtures for the native V2 workflow editor.
-Version: 0.261.111
+Version: 0.261.116
 Implemented in: 0.261.108
 """
 
@@ -99,6 +99,13 @@ def workflow_record(identifier=WORKFLOW_ID, **overrides):
 def editor_options(scope_type="personal", scope_id=None):
     return {
         "definition_version": 2,
+        "supported_definition_versions": [1, 2, 3],
+        "supported_node_kinds": ["task", "if", "route"],
+        "flow_limits": {
+            "max_nodes": 256, "max_depth": 4,
+            "max_predicate_nodes": 100, "max_predicate_depth": 8,
+            "max_executions": 5000, "deadline_seconds": 86400,
+        },
         "can_manage": True,
         "max_tasks": 6,
         "agents": [
@@ -203,7 +210,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             ),
             UNSUPPORTED_WORKFLOW_ID: workflow_record(
                 UNSUPPORTED_WORKFLOW_ID,
-                definition_version=3,
+                definition_version=4,
                 name="Future workflow",
             ),
         }
@@ -434,7 +441,7 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             self._json(route, {"workflows": list(workflows.values())})
             return
         assert isinstance(entry.body, dict), entry
-        assert entry.body.get("definition_version") == 2, entry
+        assert entry.body.get("definition_version") in {2, 3}, entry
         if entry.body.get("runner_type") == "agent":
             assert isinstance(entry.body.get("selected_agent"), dict), entry.body
         for task in entry.body.get("tasks", []):
@@ -452,18 +459,15 @@ class WorkflowEditorFixture(WorkspaceAuthoringFixture):
             # Human-readable fixture revisions are checked above. The structural
             # contract uses the production authored-content revision algorithm.
             validation_payload["definition_revision"] = workflow_definition_revision(existing)
-        validation_payload.pop("durable_execution", None)
-        for task in validation_payload.get("tasks", []):
-            task.pop("approval", None)
         try:
-            normalize_workflow_definition(
+            definition = normalize_workflow_definition(
                 validation_payload, existing, validation_payload["tasks"],
                 user_id=OWNER_ID, group_id=group_id or "",
             )
         except WorkflowDefinitionError as exc:
             self._json(route, {"error": str(exc)}, 400)
             return
-        saved = copy.deepcopy(entry.body)
+        saved = {**copy.deepcopy(entry.body), **definition}
         saved["id"] = identifier
         saved["definition_revision"] = f"revision:{identifier}:{len(self.workflow_writes) + 2}"
         workflows[identifier] = saved

@@ -17,8 +17,11 @@ from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceExist
 from functions_appinsights import log_event
 from functions_workflow_definitions import WORKFLOW_DEFINITION_FIELDS, workflow_definition_revision
 from functions_workflow_execution import DurableWorkflowExecution, WorkflowSuspended, workflow_execution_scope
+from functions_workflow_structured_execution import StructuredWorkflowExecution
+from functions_workflow_flow import compile_workflow_flow
 from functions_workflow_readiness import WorkflowOutputUnavailable, workflow_outputs_ready
 from functions_workflow_result_store import delete_workflow_run_results, load_workflow_task_result, save_workflow_task_result
+from functions_workflow_result_store import load_workflow_runtime_result, save_workflow_runtime_result
 from functions_workflow_runtime_store import (
     WorkflowRuntimeConflict,
     WorkflowRuntimeLease,
@@ -125,6 +128,10 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
     if current.get("durable_execution") is not True:
         raise ValueError("Durable execution is not enabled for this workflow.")
     _authorize_execution(current, actor_user_id, settings)
+    if type(current.get("definition_version", 1)) is not int or current.get("definition_version", 1) not in {1, 2, 3}:
+        raise ValueError("This workflow definition requires a newer execution engine.")
+    if current.get("definition_version") == 3:
+        compile_workflow_flow(current)
     if request_id is not None and not isinstance(request_id, str):
         raise ValueError("A workflow request identifier must be a UUID string.")
     request_id = str(uuid.UUID(request_id)) if request_id is not None else str(uuid.uuid4())
@@ -143,9 +150,13 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
         if existing_control.get("deleted"):
             raise WorkflowRuntimeConflict("tombstoned", "This workflow run was deleted.")
         snapshot_ref = existing_control["snapshot_ref"]
-        snapshot = load_workflow_task_result(current, run_id, "runtime:definition", snapshot_ref)
+        snapshot = store.run_definition() if existing_control.get("schema_version") == 2 else load_workflow_task_result(current, run_id, "runtime:definition", snapshot_ref)
     else:
-        snapshot_ref = save_workflow_task_result(current, run_id, "runtime:definition", snapshot, settings=settings)
+        snapshot_ref = (
+            save_workflow_runtime_result(snapshot, run_id, snapshot, settings=settings)
+            if snapshot.get("definition_version") == 3 else
+            save_workflow_task_result(current, run_id, "runtime:definition", snapshot, settings=settings)
+        )
     control = store.initialize(
         snapshot_ref=snapshot_ref, definition_revision=snapshot["definition_revision"],
         actor_user_id=actor_user_id, request_id=request_id,
@@ -159,6 +170,7 @@ def queue_durable_workflow_run(workflow, *, actor_user_id, trigger_source="manua
         "workspace_type": "group" if current.get("group_id") else "personal",
         "trigger_source": trigger_source, "triggered_by": actor_user_id,
         "durable_execution": True, "status": control["state"], "success": False,
+        "definition_version": snapshot.get("definition_version", 1),
         "started_at": control.get("created_at") or _now(), "completed_at": None,
         "definition_revision": snapshot["definition_revision"],
     }
@@ -189,7 +201,11 @@ def _project_runtime_run(services, workflow, run_id, control, *, result=None, at
     if latest["version"] > control["version"]:
         control, result = latest, None
     if result is None and control.get("completion_ref"):
-        result = load_workflow_task_result(workflow, run_id, "runtime:completion", control["completion_ref"])
+        result = (
+            load_workflow_runtime_result(workflow, run_id, control, control["completion_ref"])
+            if control.get("schema_version") == 2 else
+            load_workflow_task_result(workflow, run_id, "runtime:completion", control["completion_ref"])
+        )
     existing = services["runs"].read_item(item=run_id, partition_key=services["partition"])
     body = {key: value for key, value in existing.items() if not key.startswith("_")}
     if result:
@@ -272,7 +288,9 @@ def decide_workflow_runtime(workflow, run_id, data, *, actor_user_id, resume=Fal
     workflow_runtime_status(workflow, run_id, reader_user_id=actor_user_id)
     store = workflow_runtime_store(workflow, run_id)
     control = store.read()
-    snapshot = load_workflow_task_result(workflow, run_id, "runtime:definition", control["snapshot_ref"])
+    snapshot = store.run_definition() if control.get("schema_version") == 2 else load_workflow_task_result(workflow, run_id, "runtime:definition", control["snapshot_ref"])
+    if snapshot.get("definition_version") == 3:
+        compile_workflow_flow(snapshot)
     current = services["load_workflow"]()
     if not current or workflow_definition_revision(current) != control["definition_revision"]:
         raise WorkflowRuntimeConflict("workflow_definition_changed")
@@ -313,6 +331,7 @@ def continue_durable_workflow_run(workflow, run_id):
     services = _services(workflow)
     store = workflow_runtime_store(workflow, run_id)
     control = store.read()
+    control = store.expire_deadline()
     current = services["load_workflow"]()
     if not current or current.get("active_run_id") != run_id:
         return None
@@ -343,15 +362,18 @@ def continue_durable_workflow_run(workflow, run_id):
                 "choices": ["resume", "cancel"],
             })
             return _project_runtime_run(services, current, run_id, control)
-        snapshot = load_workflow_task_result(current, run_id, "runtime:definition", control["snapshot_ref"])
+        snapshot = store.run_definition() if control.get("schema_version") == 2 else load_workflow_task_result(current, run_id, "runtime:definition", control["snapshot_ref"])
         if workflow_definition_revision(snapshot) != control["definition_revision"]:
             raise WorkflowRuntimeConflict("workflow_definition_changed")
+        if snapshot.get("definition_version") == 3:
+            compile_workflow_flow(snapshot)
         if not snapshot.get("tasks"):
             snapshot["tasks"] = [{
                 "id": "legacy-task", "name": "Workflow task", "type": "instructions",
                 "instructions": snapshot["task_prompt"], "runner": {"type": "inherit"},
             }]
-        execution = DurableWorkflowExecution(store, lease, snapshot, run_id, settings=settings)
+        controller = StructuredWorkflowExecution if snapshot.get("definition_version") == 3 else DurableWorkflowExecution
+        execution = controller(store, lease, snapshot, run_id, settings=settings)
         result = None
         with workflow_execution_scope(execution):
             try:
@@ -361,8 +383,10 @@ def continue_durable_workflow_run(workflow, run_id):
                     actor_user_id=control["actor_user_id"], run_id=run_id,
                 )
                 execution.check()
-                reference = save_workflow_task_result(
-                    snapshot, run_id, "runtime:completion", result, settings=settings,
+                reference = (
+                    save_workflow_runtime_result(snapshot, run_id, result, settings=settings)
+                    if snapshot.get("definition_version") == 3 else
+                    save_workflow_task_result(snapshot, run_id, "runtime:completion", result, settings=settings)
                 )
                 final_state = (result.get("run") or {}).get("status") or "failed"
                 if final_state not in RUNTIME_TERMINAL_STATES:
@@ -394,7 +418,8 @@ def check_durable_workflows_once(limit=20):
             query=(
                 "SELECT TOP @limit * FROM c WHERE c.durable_execution = true "
                 "AND IS_DEFINED(c.active_run_id) AND c.active_run_id != '' "
-                "AND c.status IN ('queued','running','cancelling','waiting_output') ORDER BY c.updated_at ASC"
+                "AND (c.status IN ('queued','running','cancelling','waiting_output') "
+                "OR (c.definition_version = 3 AND c.status IN ('waiting_approval','waiting_recovery'))) ORDER BY c.updated_at ASC"
             ),
             parameters=[{"name": "@limit", "value": limit}],
             enable_cross_partition_query=True,

@@ -51,6 +51,33 @@ draft instead of overwriting another editor's changes.
 See [Explicit workflow data flow](../explanation/features/WORKFLOW_EXPLICIT_DATA_FLOW.md)
 for binding semantics, shared references, and validation outcomes.
 
+## Choose branches and optional work
+
+In **0.261.116**, **Enable structured control flow** explicitly converts a V2
+draft to definition version 3. Existing workflows stay ordered unless you
+choose this conversion; nothing is persisted until **Save workflow**.
+
+Use a JSON output contract with **Structured decision fields** when a task
+must supply a Boolean, number, or enum for a decision. Add **If/else**, bind
+that saved output by name, and choose the field and comparison. Put the
+appropriate tasks in **Then** and **Else**, then configure **Join outputs**
+to give later tasks one explicit result from the selected path.
+
+**Run when** skips a task when its condition is false. A skipped task produces
+no output, so downstream consumers need an optional binding or a required join
+output. **Forward route** may bypass optional work only by selecting a later
+sibling or exiting the current branch to its join. Invalid dependencies are
+shown before saving; moving a block never silently changes its input source.
+
+Declare promised deliverables under **Final outputs**. This prevents a run from
+reporting completion when a selected path did not produce the required result.
+Structured definitions require durable execution and preserve their choices
+across waits and restarts. For each, Repeat until, Collect, and the visual Flow
+editor are not included in this slice.
+
+See [Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md)
+for condition semantics, execution identity, limits, and compatibility.
+
 ## Durable execution and task approval
 
 Starting in **0.261.111**, new V2 workflows enable **Durable execution**.

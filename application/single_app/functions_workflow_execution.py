@@ -65,10 +65,7 @@ def workflow_checkpoint_scope_guard(record):
     execution = current_workflow_execution()
     if execution is not None:
         execution.check()
-        reference = execution.save_result(
-            execution.workflow, execution.run_id, "runtime:run-record",
-            {"run_record": record}, settings=execution.settings,
-        )
+        reference = execution.save_runtime_record(record)
         execution._update(execution.check(), {"run_record_ref": reference})
 
 
@@ -87,6 +84,14 @@ class DurableWorkflowExecution:
 
     def check(self):
         return self.lease.check()
+
+    def unit(self, key):
+        return deepcopy((self.check().get("units") or {}).get(key) or {})
+
+    def save_runtime_record(self, record):
+        return self.save_result(
+            self.workflow, self.run_id, "runtime:run-record", {"run_record": record}, settings=self.settings,
+        )
 
     def _update(self, record, updates):
         return self.store.update(self.lease.token, updates, expected_version=record["version"])

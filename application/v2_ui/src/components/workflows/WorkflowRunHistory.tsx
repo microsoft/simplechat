@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, FileJson, Loader2 } from 'lucide-react';
+import { WorkflowExecutionHistory } from './WorkflowExecutionHistory';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { Pill, RowAction } from '../workspace/primitives';
@@ -11,6 +12,7 @@ import {
     fetchScopedWorkflowRunItems,
     fetchScopedWorkflowRuns,
     fetchWorkflowTaskResult,
+    workflowScopeKey,
     type WorkflowInputOutput,
     type WorkflowRunItem,
     type WorkflowRunResultPage,
@@ -324,7 +326,7 @@ export function WorkflowRunHistory({
         return () => window.clearTimeout(timer);
     }, [refresh, shown]);
 
-    if (loading) {
+    if (loading && !shown.length) {
         return <p role="status" className="px-3 pb-3 text-xs text-text-3">Loading runs…</p>;
     }
     if (error) {
@@ -341,6 +343,9 @@ export function WorkflowRunHistory({
                 const expanded = expandedRunId === runId;
                 const status = String(run.status ?? 'unknown');
                 const validation = validationSummary(run.workflow_validation);
+                const definitionVersion = run.definition_version;
+                const isStructuredRun = definitionVersion === 3;
+                const unsupportedDefinitionVersion = definitionVersion !== undefined && ![1, 2, 3].includes(definitionVersion);
                 return (
                     <li key={runId} className="rounded-xl border border-edge">
                         <div className="flex items-center gap-2 p-2 text-xs text-text-3">
@@ -360,19 +365,30 @@ export function WorkflowRunHistory({
                             <Pill tone={validationTone(run.workflow_validation)}>{validation}</Pill>
                         </p> : null}
                         {expanded ? (
-                            <>
-                                <WorkflowRuntimePanel
-                                    scope={scope}
-                                    workflowId={workflowId}
-                                    runId={runId}
-                                    durable={run.durable_execution === true}
-                                    onRuntimeChanged={() => {
-                                        void refresh();
-                                        onWorkflowRefresh?.();
-                                    }}
-                                />
-                                <RunItems scope={scope} workflowId={workflowId} runId={runId} />
-                            </>
+                            unsupportedDefinitionVersion ? (
+                                <p role="alert" className="px-3 pb-3 text-xs text-warn">
+                                    This run uses workflow definition v{String(definitionVersion)}, which this inspector does not support yet.
+                                </p>
+                            ) : (
+                                <>
+                                    <WorkflowRuntimePanel
+                                        scope={scope}
+                                        workflowId={workflowId}
+                                        runId={runId}
+                                        durable={run.durable_execution === true}
+                                        structuredRun={isStructuredRun}
+                                        onRuntimeChanged={() => {
+                                            void refresh();
+                                            onWorkflowRefresh?.();
+                                        }}
+                                    />
+                                    {isStructuredRun ? (
+                                        <WorkflowExecutionHistory key={`${workflowScopeKey(scope)}:${workflowId}:${runId}`} scope={scope} workflowId={workflowId} runId={runId} />
+                                    ) : (
+                                        <RunItems scope={scope} workflowId={workflowId} runId={runId} />
+                                    )}
+                                </>
+                            )
                         ) : null}
                     </li>
                 );

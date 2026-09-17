@@ -10,6 +10,7 @@ execution leases. The existing runner owns execution and cancellation.
 """
 
 import hashlib
+import json
 import uuid
 from copy import deepcopy
 
@@ -118,7 +119,8 @@ class AnalysisWorkUnitCheckpoints:
         seen = set()
         expected_child = None
         while binding is not None:
-            identity = tuple(sorted(binding.items()))
+            identity = tuple((key, json.dumps(value, sort_keys=True, separators=(',', ':')))
+                             for key, value in sorted(binding.items()))
             if identity in seen or len(seen) >= 128:
                 raise WorkflowResultIntegrityError('Analysis checkpoint retry lineage is invalid.')
             seen.add(identity)
@@ -243,12 +245,23 @@ def analysis_checkpoints_for_workflow(
     attempt_token=None, settings=None, store=None, source_authorizer=None,
     operation_request=None, operation_sources=None,
     recover_running_unit=None,
+    execution_id=None, node_id=None, attempt=None, iteration_path=None,
 ):
-    binding = _identity(workflow, run_id, task_id)
+    selectors = {}
+    if execution_id is not None:
+        selectors = {"execution_id": execution_id, "node_id": node_id, "attempt": attempt,
+                     "iteration_path": [] if iteration_path is None else iteration_path}
+    binding = _identity(workflow, run_id, task_id, **selectors)
+    result_store = store or _configured_result_store(binding, settings=settings, for_write=True)
+    resume_from = _identity(workflow, resume_run_id, task_id) if resume_run_id else None
+    if selectors and attempt > 1:
+        prior_binding = _identity(workflow, run_id, task_id, **{**selectors, "attempt": attempt - 1})
+        if result_store._analysis_guard(prior_binding) is not None:
+            resume_from = prior_binding
     return AnalysisWorkUnitCheckpoints(
-        store or _configured_result_store(binding, settings=settings, for_write=True),
+        result_store,
         binding, user_id=user_id, authorize=authorize, attempt_token=attempt_token,
-        resume_from=_identity(workflow, resume_run_id, task_id) if resume_run_id else None,
+        resume_from=resume_from,
         source_authorizer=source_authorizer,
         operation_request=operation_request, operation_sources=operation_sources,
         recover_running_unit=recover_running_unit,
