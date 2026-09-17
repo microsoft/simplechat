@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type { WorkspaceDocument } from '../../lib/types';
 import { documentStatus } from '../../lib/documentExplorer';
+import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 
 /**
  * File-type icons, keyed by extension.
@@ -239,6 +240,9 @@ export function DocumentStatusBadge({
     document: WorkspaceDocument;
     showProgressBar?: boolean;
 }) {
+    if (Object.prototype.hasOwnProperty.call(document, 'content_screening')) {
+        return <ScreeningStatusBadge summary={document.content_screening ?? null} />;
+    }
     const status = documentStatus(document);
 
     if (status.state === 'ready') {

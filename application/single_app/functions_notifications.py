@@ -12,6 +12,8 @@ Implemented in: 0.234.032
 """
 
 # Imports (grouped after docstring)
+import hashlib
+import json
 import uuid
 from datetime import datetime, timezone
 from azure.cosmos import exceptions
@@ -28,6 +30,7 @@ TTL_60_DAYS = 60 * 24 * 60 * 60  # 60 days in seconds (5184000)
 ASSIGNMENT_NOTIFICATIONS_PARTITION_KEY = 'assignment-notifications'
 WORKFLOW_ALERT_NOTIFICATION_TYPE = 'workflow_priority_alert'
 KEY_VAULT_SECRET_REMINDER_NOTIFICATION_TYPE = 'key_vault_secret_expiring'
+MAX_NOTIFICATION_IDEMPOTENCY_KEY_LENGTH = 512
 WORKFLOW_ALERT_PRIORITY_CONFIG = {
     'info': {
         'icon': 'bi-info-circle',
@@ -209,6 +212,52 @@ def _get_notification_partition_key(notification):
     )
 
 
+def _notification_retry_id(idempotency_key, notification):
+    """Bind an opaque retry key to its scope, audience and notification type."""
+    if (
+        not isinstance(idempotency_key, str) or not idempotency_key.strip()
+        or len(idempotency_key) > MAX_NOTIFICATION_IDEMPOTENCY_KEY_LENGTH
+    ):
+        raise ValueError("The notification retry key is invalid.")
+    identity = {
+        "version": 1,
+        "key": idempotency_key,
+        **{field: notification.get(field) for field in (
+            "scope", "user_id", "group_id", "public_workspace_id", "notification_type", "assignment",
+        )},
+    }
+    encoded = json.dumps(
+        identity, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")
+    return f"notification-{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _log_notification_failure(code, error):
+    """Optional delivery and telemetry failures must never change content state."""
+    try:
+        log_event(
+            f"[CONTENT_SCREENING] {code}",
+            extra={"error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+    except Exception:
+        return
+
+
+def _read_existing_notification(notification):
+    # config.py partitions this container on /user_id, including null for scope notices.
+    existing = cosmos_notifications_container.read_item(
+        item=notification["id"], partition_key=notification.get("user_id"),
+    )
+    if not isinstance(existing, dict) or any(
+        existing.get(field) != notification.get(field) for field in (
+            "id", "scope", "user_id", "group_id", "public_workspace_id", "notification_type", "assignment",
+        )
+    ):
+        raise ValueError("The stored notification does not match the retry identity.")
+    return existing
+
+
 def _get_notification_display_message(notification):
     """Normalize display text and backfill reviewer reasons from metadata when needed."""
     message = str(notification.get('message') or '').strip()
@@ -270,7 +319,7 @@ def _get_notification_type_config(notification):
     )
 
 
-def get_notifications_by_metadata(metadata_filters=None, notification_types=None):
+def get_notifications_by_metadata(metadata_filters=None, notification_types=None, *, safe_errors=False):
     """Fetch notifications matching metadata values and optional types."""
     try:
         query_parts = ["SELECT * FROM c WHERE 1=1"]
@@ -297,16 +346,20 @@ def get_notifications_by_metadata(metadata_filters=None, notification_types=None
             enable_cross_partition_query=True
         ))
     except Exception as e:
+        if safe_errors:
+            _log_notification_failure("notification_lookup_failed", e)
+            return []
         debug_print(f"Error fetching notifications by metadata: {e}")
         return []
 
 
-def delete_notifications_by_metadata(metadata_filters=None, notification_types=None):
+def delete_notifications_by_metadata(metadata_filters=None, notification_types=None, *, safe_errors=False):
     """Delete notifications matching metadata values and optional types."""
     deleted_count = 0
     notifications = get_notifications_by_metadata(
         metadata_filters=metadata_filters,
-        notification_types=notification_types
+        notification_types=notification_types,
+        **({"safe_errors": True} if safe_errors else {}),
     )
 
     for notification in notifications:
@@ -321,6 +374,9 @@ def delete_notifications_by_metadata(metadata_filters=None, notification_types=N
             )
             deleted_count += 1
         except Exception as e:
+            if safe_errors:
+                _log_notification_failure("notification_cleanup_failed", e)
+                continue
             debug_print(
                 f"Error deleting notification {notification.get('id')} by metadata: {e}"
             )
@@ -338,7 +394,9 @@ def create_notification(
     link_url='',
     link_context=None,
     metadata=None,
-    assignment=None
+    assignment=None,
+    notification_id=None,
+    idempotency_key=None
 ):
     """
     Create a notification for personal, group, or public workspace scope.
@@ -361,11 +419,22 @@ def create_notification(
                 'public_workspace_owner_id': 'user789'      # Public workspace owner
             }
             If any role matches or any owner ID matches user's ID, notification is visible.
+        notification_id (str, optional): Server-generated idempotency ID for durable workflows.
+        idempotency_key (str, optional): Nonempty opaque server retry key, at most 512
+            characters. Produces a deterministic ID bound to scope, audience and type.
+            A duplicate create point-reads and returns the existing notification,
+            preserving its original content, timestamp, read and dismissal state.
+            The key itself is never stored or logged. Do not combine with notification_id.
         
     Returns:
-        dict: Created notification document or None on error
+        dict: Created notification, existing notification for a repeated retry key,
+            or None on error. Omitting retry options preserves random-ID behavior.
     """
+    use_retry_key = idempotency_key is not None
+    notification_doc = None
     try:
+        if use_retry_key and notification_id is not None:
+            raise ValueError("Choose one notification retry identifier.")
         # Determine scope and partition key
         scope = 'personal'
         partition_key = user_id
@@ -391,10 +460,13 @@ def create_notification(
         
         # Validate notification type
         if notification_type not in NOTIFICATION_TYPES:
-            debug_print(f"Unknown notification type: {notification_type}")
+            if use_retry_key:
+                _log_notification_failure("notification_type_unrecognized", ValueError())
+            else:
+                debug_print(f"Unknown notification type: {notification_type}")
         
         notification_doc = {
-            'id': str(uuid.uuid4()),
+            'id': notification_id or (None if use_retry_key else str(uuid.uuid4())),
             'user_id': user_id,
             'group_id': group_id,
             'public_workspace_id': public_workspace_id,
@@ -411,18 +483,35 @@ def create_notification(
             'metadata': metadata or {},
             'assignment': assignment or None
         }
+        if use_retry_key:
+            notification_doc['id'] = _notification_retry_id(idempotency_key, notification_doc)
         
         # Create in Cosmos with partition key based on scope
         cosmos_notifications_container.create_item(notification_doc)
         
-        debug_print(
-            f"Notification created: {notification_doc['id']} "
-            f"[{scope}] [{notification_type}] for partition: {partition_key}"
-        )
+        if not use_retry_key:
+            debug_print(
+                f"Notification created: {notification_doc['id']} "
+                f"[{scope}] [{notification_type}] for partition: {partition_key}"
+            )
         
         return notification_doc
         
     except Exception as e:
+        if use_retry_key:
+            if notification_doc and notification_doc.get('id') and getattr(e, 'status_code', None) == 409:
+                try:
+                    return _read_existing_notification(notification_doc)
+                except Exception as read_error:
+                    _log_notification_failure("notification_retry_lookup_failed", read_error)
+                    return None
+            _log_notification_failure("notification_delivery_failed", e)
+            return None
+        if notification_id:
+            if getattr(e, 'status_code', None) == 409:
+                return {'id': notification_id}
+            _log_notification_failure("notification_delivery_failed", e)
+            return None
         debug_print(f"Error creating notification: {e}")
         return None
 

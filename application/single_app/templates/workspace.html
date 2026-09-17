@@ -876,6 +876,9 @@
           <!-- End Metadata Filters -->
 
           <!-- View Controls (List/Grid Toggle) -->
+          {% with content_screening_scope = 'personal' %}
+          {% include "_content_screening_toolbar.html" %}
+          {% endwith %}
           <div class="d-flex justify-content-between align-items-center mb-2">
             <div class="btn-group btn-group-sm" role="group" aria-label="View mode">
               <input type="radio" class="btn-check" name="docs-view-mode" id="docs-view-list" autocomplete="off" checked>

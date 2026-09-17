@@ -11,6 +11,8 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional
 
+from content_screening.access import PROVENANCE_FIELD, assert_evidence_available, guard_model_callable
+from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_document_analysis_results import (
@@ -992,6 +994,7 @@ def _complete_document_analysis(
         f"retries={coverage.get('retries', 0)} | "
         f'final_analysis_reply_chars={len(final_analysis_reply)}'
     )
+    assert_evidence_available(coverage.get('documents', []), user_id, cached=True)
     return {
         'reply': final_reply,
         'analysis_reply': final_analysis_reply,
@@ -1018,6 +1021,7 @@ def _finish_final_document_analysis(
     cancellation_error, check_cancelled = _get_mixed_source_orchestration_helpers()
     check_cancelled = cancel_check or check_cancelled
     check_cancelled(cancel_requested, 'narrative_finalization', request_correlation_id=request_correlation_id)
+    assert_evidence_available(coverage.get('documents', []), user_id, cached=True)
     if checkpoints is not None:
         checkpoints.validate_sources()
     _set_progress_meta(
@@ -1341,6 +1345,15 @@ def run_document_analysis(
         percent_override=1,
     )
     document_runs = []
+    source_evidence = []
+    invoke_prompt = guard_model_callable(invoke_prompt, lambda: source_evidence, user_id)
+    if invoke_prompt_factory is not None:
+        original_invoke_factory = invoke_prompt_factory
+
+        def screened_invoke_factory(metadata):
+            return guard_model_callable(original_invoke_factory(metadata), lambda: source_evidence, user_id)
+
+        invoke_prompt_factory = screened_invoke_factory
     reduction_items = []
     document_analysis_items = []
     raw_analysis_items = []
@@ -1488,6 +1501,7 @@ def run_document_analysis(
                     len(document_payload.get('chunks', [])),
                 )
             metadata = document_payload.get('document') or {}
+            source_evidence.append(metadata)
             document_name = _resolve_document_name(metadata)
             summary = {
                 'document_id': document_id, 'document_name': document_name,
@@ -1504,6 +1518,8 @@ def run_document_analysis(
                 'active_window_number': None, 'active_attempt_number': None,
                 'failed_ranges': [], 'ranges': [],
             }
+            if PROVENANCE_FIELD in metadata:
+                summary[PROVENANCE_FIELD] = metadata[PROVENANCE_FIELD]
             if use_final_records:
                 summary.update({
                     'source': analysis_source, 'source_version': analysis_source['source_version'],
@@ -1705,7 +1721,7 @@ def run_document_analysis(
                         finally:
                             analysis_metrics['durations_ms']['local_consolidation'] += (time.perf_counter() - collection_started) * 1000
                     break
-                except (MixedSourceCancellationError, GeneratorExit) as exc:
+                except (MixedSourceCancellationError, ScreeningError, GeneratorExit) as exc:
                     if use_final_records:
                         _abort_analysis_work(exc, active_windows, analysis_metrics, metrics_lock, work_unit_checkpoints)
                     raise

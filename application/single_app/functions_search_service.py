@@ -12,6 +12,15 @@ from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from openai import AzureOpenAI
 
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_document_available,
+    assert_document_chunks_available,
+    assert_evidence_available,
+    document_provenance,
+    guard_model_callable,
+    public_document_payload,
+)
 from config import (
     CLIENTS,
     cognitive_services_scope,
@@ -136,7 +145,7 @@ def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
 
 
 def _serialize_document(document_item, scope_name):
-    return {
+    payload = {
         "id": document_item.get("id"),
         "file_name": document_item.get("file_name"),
         "title": document_item.get("title"),
@@ -157,6 +166,14 @@ def _serialize_document(document_item, scope_name):
         "conversation_id": document_item.get("conversation_id"),
         "source_type": document_item.get("source_type") or ("chat_upload" if scope_name == "chat" else "workspace_document"),
     }
+    if scope_name != "chat":
+        payload[PROVENANCE_FIELD] = document_provenance(document_item)
+        if "content_screening" in document_item:
+            payload["content_screening"] = public_document_payload(document_item)["content_screening"]
+    elif PROVENANCE_FIELD in document_item:
+        payload[PROVENANCE_FIELD] = document_item[PROVENANCE_FIELD]
+        payload["workspace_document_id"] = document_item.get("workspace_document_id")
+    return payload
 
 
 def _load_chat_upload_blob_text(message_item):
@@ -305,6 +322,7 @@ def _resolve_chat_upload_context(
                         c.filename,
                         c.title,
                         c.version,
+                        c.workspace_document_id,
                         c.metadata.is_user_upload AS is_user_upload,
                         c.metadata.is_generated_chat_artifact AS is_generated_chat_artifact,
                         c.metadata.generated_artifact_capability AS generated_artifact_capability,
@@ -340,7 +358,22 @@ def _resolve_chat_upload_context(
     if role_name not in {"file", "image"} or (role_name == "image" and not is_uploaded_image):
         return None
 
-    comparison_text = _coerce_chat_upload_text(message_item) if include_content else ""
+    linked_document = None
+    if message_item.get("workspace_document_id"):
+        linked_document = assert_document_available(
+            message_item["workspace_document_id"], user_id=user_id, purpose="chat_upload",
+        )
+    comparison_text = ""
+    if include_content and linked_document is not None:
+        linked_chunks = get_ordered_document_chunks(
+            linked_document["id"], user_id=user_id,
+            group_id=linked_document.get("group_id"),
+            public_workspace_id=linked_document.get("public_workspace_id"),
+        )
+        linked_chunks = assert_document_chunks_available(linked_chunks, linked_document, user_id=user_id)
+        comparison_text = "\n\n".join(chunk.get("chunk_text", "") for chunk in linked_chunks)
+    elif include_content:
+        comparison_text = _coerce_chat_upload_text(message_item)
     if include_content and not comparison_text:
         return None
 
@@ -369,6 +402,10 @@ def _resolve_chat_upload_context(
     }
     if include_content:
         resolved_document["comparison_text"] = comparison_text
+    if linked_document is not None:
+        resolved_document["file_name"] = linked_document.get("file_name") or message_title
+        resolved_document["workspace_document_id"] = linked_document["id"]
+        resolved_document[PROVENANCE_FIELD] = document_provenance(linked_document)
     return {
         "scope": "chat",
         "group_id": None,
@@ -385,6 +422,7 @@ def _resolve_personal_document_context(document_id, user_id):
     )
     if not personal_document:
         return None
+    personal_document = assert_document_available(personal_document, user_id=user_id)
     return {
         "scope": "personal",
         "group_id": None,
@@ -401,6 +439,9 @@ def _resolve_group_document_context(document_id, user_id, authorized_group_ids, 
             group_id=group_id,
         )
         if group_document:
+            group_document = assert_document_available(
+                group_document, user_id=user_id, group_id=group_id,
+            )
             context = {
                 "scope": "group",
                 "group_id": group_id,
@@ -425,6 +466,9 @@ def _resolve_public_document_context(
             public_workspace_id=public_workspace_id,
         )
         if public_document:
+            public_document = assert_document_available(
+                public_document, user_id=user_id, public_workspace_id=public_workspace_id,
+            )
             context = {
                 "scope": "public",
                 "group_id": None,
@@ -859,6 +903,17 @@ def get_document_chunks_payload(
     if not document_context:
         raise LookupError("Document not found or access denied")
 
+    source_evidence = document_context.get("document") if PROVENANCE_FIELD in document_context.get("document", {}) else None
+    if document_context.get("scope") != "chat":
+        current_document = assert_document_available(
+            document_context["document"], user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+            purpose="chunks",
+        )
+        document_context["document"] = current_document
+        source_evidence = {PROVENANCE_FIELD: document_provenance(current_document)}
+
     if document_context.get("scope") == "chat":
         chunks = _build_chat_upload_chunks(document_context.get("document", {}).get("comparison_text"))
     else:
@@ -867,6 +922,12 @@ def get_document_chunks_payload(
             user_id=user_id,
             group_id=document_context.get("group_id"),
             public_workspace_id=document_context.get("public_workspace_id"),
+        )
+        chunks = assert_document_chunks_available(
+            chunks, document_context["document"], user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+            expected_chunk_count=document_context["document"].get("num_chunks"),
         )
 
     if not chunks:
@@ -891,6 +952,7 @@ def get_document_chunks_payload(
             raise LookupError(f"Window {resolved_window_number} was not found for this document")
         selected_chunks = selected_window.get("chunks", [])
 
+    assert_evidence_available(source_evidence, user_id)
     return {
         "document": _serialize_document(document_context.get("document"), document_context.get("scope")),
         "scope": document_context.get("scope"),
@@ -1143,6 +1205,9 @@ def summarize_document_content(
         max_value=8,
     )
     file_name = chunk_payload.get('document', {}).get('file_name') or document_id
+    summarize_block = guard_model_callable(
+        _summarize_text_block, chunk_payload.get("document"), user_id,
+    )
 
     stage_records = []
     current_stage_inputs = windows
@@ -1182,7 +1247,7 @@ def summarize_document_content(
             if not source_text.strip():
                 continue
 
-            summary_text = _summarize_text_block(
+            summary_text = summarize_block(
                 gpt_client=gpt_client,
                 model_name=model_name,
                 file_name=file_name,
@@ -1229,6 +1294,7 @@ def summarize_document_content(
         level=logging.INFO,
     )
 
+    assert_evidence_available(chunk_payload.get("document"), user_id)
     return {
         'document': chunk_payload.get('document'),
         'citation_chunk': _build_summary_citation_chunk(chunk_payload.get('chunks')),

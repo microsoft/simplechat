@@ -4,6 +4,7 @@ from typing import Annotated, Any, Dict
 
 from semantic_kernel.functions import kernel_function
 
+from content_screening.contracts import ScreeningError
 from functions_authentication import get_current_user_id
 from functions_agent_document_citations import annotate_document_search_payload
 from functions_search import SEARCH_DEFAULT_TOP_N, SEARCH_MAX_TOP_N, normalize_search_scope, normalize_search_top_n
@@ -163,6 +164,8 @@ class DocumentSearchPlugin(BasePlugin):
                 ),
                 'search_documents',
             )
+        except ScreeningError as error:
+            return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}
         except Exception as e:
             return {'error': str(e)}
 
@@ -201,6 +204,8 @@ class DocumentSearchPlugin(BasePlugin):
                 ),
                 'retrieve_document_chunks',
             )
+        except ScreeningError as error:
+            return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}
         except Exception as e:
             return {'error': str(e)}
 
@@ -243,5 +248,7 @@ class DocumentSearchPlugin(BasePlugin):
                 ),
                 'summarize_document',
             )
+        except ScreeningError as error:
+            return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}
         except Exception as e:
             return {'error': str(e)}

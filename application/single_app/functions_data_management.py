@@ -51,6 +51,7 @@ from config import (
     cosmos_settings_container,
 )
 from functions_appinsights import log_event
+from content_screening.repository import preserve_screening_on_transfer
 from functions_cosmos_throughput import (
     CosmosThroughputError,
     get_container_throughput,
@@ -445,6 +446,7 @@ DATA_MANAGEMENT_MIGRATION_COSMOS_CONTAINERS = {
         {"name": "personal_agents", "container_attr": "cosmos_personal_agents_container", "container_name_attr": "cosmos_personal_agents_container_name", "partition_key_path": "/user_id", "filter_field": "user_id"},
         {"name": "personal_actions", "container_attr": "cosmos_personal_actions_container", "container_name_attr": "cosmos_personal_actions_container_name", "partition_key_path": "/user_id", "filter_field": "user_id"},
         {"name": "personal_prompts", "container_attr": "cosmos_user_prompts_container", "container_name_attr": "cosmos_user_prompts_container_name", "partition_key_path": "/id", "filter_field": "user_id"},
+        {"name": "personal_content_screening", "container_attr": "cosmos_content_screening_container", "container_name_attr": "cosmos_content_screening_container_name", "partition_key_path": "/partition_key", "screening_scope_type": "personal", "documents": True},
     ],
     "groups": [
         {"name": "groups", "container_attr": "cosmos_groups_container", "container_name_attr": "cosmos_groups_container_name", "partition_key_path": "/id", "id_field": "id"},
@@ -453,12 +455,14 @@ DATA_MANAGEMENT_MIGRATION_COSMOS_CONTAINERS = {
         {"name": "group_agents", "container_attr": "cosmos_group_agents_container", "container_name_attr": "cosmos_group_agents_container_name", "partition_key_path": "/group_id", "filter_field": "group_id"},
         {"name": "group_actions", "container_attr": "cosmos_group_actions_container", "container_name_attr": "cosmos_group_actions_container_name", "partition_key_path": "/group_id", "filter_field": "group_id"},
         {"name": "group_prompts", "container_attr": "cosmos_group_prompts_container", "container_name_attr": "cosmos_group_prompts_container_name", "partition_key_path": "/id", "filter_field": "group_id"},
+        {"name": "group_content_screening", "container_attr": "cosmos_content_screening_container", "container_name_attr": "cosmos_content_screening_container_name", "partition_key_path": "/partition_key", "screening_scope_type": "group", "documents": True},
     ],
     "public_workspaces": [
         {"name": "public_workspaces", "container_attr": "cosmos_public_workspaces_container", "container_name_attr": "cosmos_public_workspaces_container_name", "partition_key_path": "/id", "id_field": "id"},
         {"name": "public_documents", "container_attr": "cosmos_public_documents_container", "container_name_attr": "cosmos_public_documents_container_name", "partition_key_path": "/id", "filter_field": "public_workspace_id", "documents": True},
         {"name": "public_workspace_identities", "container_attr": "cosmos_public_workspace_identities_container", "container_name_attr": "cosmos_public_workspace_identities_container_name", "partition_key_path": "/public_workspace_id", "filter_field": "public_workspace_id"},
         {"name": "public_prompts", "container_attr": "cosmos_public_prompts_container", "container_name_attr": "cosmos_public_prompts_container_name", "partition_key_path": "/id", "filter_fields": ["public_id", "public_workspace_id"]},
+        {"name": "public_content_screening", "container_attr": "cosmos_content_screening_container", "container_name_attr": "cosmos_content_screening_container_name", "partition_key_path": "/partition_key", "screening_scope_type": "public", "documents": True},
     ],
 }
 
@@ -475,6 +479,7 @@ DATA_MANAGEMENT_COSMOS_ARTIFACTS = [
     {"name": "personal_documents", "container_attr": "cosmos_user_documents_container", "container_name_attr": "cosmos_user_documents_container_name", "partition_key_path": "/user_id", "category": "documents"},
     {"name": "group_documents", "container_attr": "cosmos_group_documents_container", "container_name_attr": "cosmos_group_documents_container_name", "partition_key_path": "/group_id", "category": "documents"},
     {"name": "public_documents", "container_attr": "cosmos_public_documents_container", "container_name_attr": "cosmos_public_documents_container_name", "partition_key_path": "/public_workspace_id", "category": "documents"},
+    {"name": "content_screening", "container_attr": "cosmos_content_screening_container", "container_name_attr": "cosmos_content_screening_container_name", "partition_key_path": "/partition_key", "category": "documents"},
     {"name": "personal_agents", "container_attr": "cosmos_personal_agents_container", "container_name_attr": "cosmos_personal_agents_container_name", "partition_key_path": "/user_id", "category": "agents"},
     {"name": "personal_actions", "container_attr": "cosmos_personal_actions_container", "container_name_attr": "cosmos_personal_actions_container_name", "partition_key_path": "/user_id", "category": "actions"},
     {"name": "group_agents", "container_attr": "cosmos_group_agents_container", "container_name_attr": "cosmos_group_agents_container_name", "partition_key_path": "/group_id", "category": "agents"},
@@ -3161,6 +3166,14 @@ def _iter_selected_cosmos_records(
             return cleaned_item, _safe_text(item.get("_ts"))
         return cleaned_item
 
+    if container_definition.get("screening_scope_type"):
+        for item in _iter_selected_screening_records(
+            source_container, container_definition["screening_scope_type"], selection,
+            source_cutoff_epoch=source_cutoff_epoch, source_start_epoch=source_start_epoch,
+        ):
+            yield prepare_item(item)
+        return
+
     if mode == "all":
         query = "SELECT * FROM c"
         parameters = []
@@ -3236,6 +3249,35 @@ def _iter_selected_cosmos_records(
                 if item_identity:
                     seen_identities.add(item_identity)
             yield prepare_item(item)
+
+
+def _iter_selected_screening_records(
+    container, scope_type, selection, *, source_cutoff_epoch=None, source_start_epoch=None,
+):
+    """Include scoped manifests and the baseline, never other workspaces' evidence."""
+    parameters = [{"name": "@baseline_scope", "value": "global:global"}]
+    if selection.get("mode") == "all":
+        scope_clause = "STARTSWITH(c.scope_key, @screening_prefix)"
+        parameters.append({"name": "@screening_prefix", "value": f"{scope_type}:"})
+    elif selection.get("mode") == "selected" and selection.get("ids"):
+        scope_clause = "ARRAY_CONTAINS(@screening_scopes, c.scope_key)"
+        parameters.append({
+            "name": "@screening_scopes",
+            "value": [f"{scope_type}:{scope_id}" for scope_id in selection["ids"]],
+        })
+    else:
+        return
+    predicates = [f"({scope_clause} OR c.scope_key = @baseline_scope)"]
+    if source_cutoff_epoch is not None:
+        predicates.append("c._ts <= @source_cutoff_epoch")
+        parameters.append({"name": "@source_cutoff_epoch", "value": source_cutoff_epoch})
+    if source_start_epoch is not None:
+        predicates.append("c._ts >= @source_start_epoch")
+        parameters.append({"name": "@source_start_epoch", "value": source_start_epoch})
+    yield from container.query_items(
+        query=f"SELECT * FROM c WHERE {' AND '.join(predicates)}",
+        parameters=parameters, enable_cross_partition_query=True,
+    )
 
 
 def _build_cosmos_document_identity(document_id, partition_key_value):
@@ -3424,7 +3466,9 @@ def _write_cosmos_migration_record(
     cancel_event=None,
 ):
     """Write one provenance-tagged Cosmos record with bounded transient retries."""
-    writable_document = copy.deepcopy(document)
+    writable_document = preserve_screening_on_transfer(
+        document, operation="migration", previous_document=target_document,
+    )
     add_cosmos_migration_provenance(
         writable_document,
         provenance_context,
@@ -4976,11 +5020,39 @@ def _iter_selected_document_records_for_blob_migration(migration_plan, source_cu
         )
         if not container_definition:
             continue
-        yield from _iter_selected_cosmos_records(
+        for document in _iter_selected_cosmos_records(
             container_definition,
             selection,
             source_cutoff_epoch=source_cutoff_epoch,
-        ) or []
+        ) or []:
+            yield document
+            if "content_screening" in document:
+                yield from _iter_screening_blob_migration_records(document)
+
+
+def _iter_screening_blob_migration_records(document):
+    """Discover only this revision's private artifacts for privileged migration."""
+    # Keep the optional screening adapter out of ordinary blob enumeration.
+    from content_screening.contracts import subject_from_document
+    from content_screening.storage import revision_prefix
+
+    client = _get_source_blob_service_client()
+    if client is None:
+        raise DataManagementSettingsValidationError("Screening artifact storage is unavailable.")
+    container_name = getattr(app_config, "storage_account_content_screening_container_name", "content-screening")
+    container = client.get_container_client(container_name)
+    properties = container.get_container_properties()
+    public_access = properties.get("public_access") if isinstance(properties, dict) else getattr(properties, "public_access", None)
+    if public_access:
+        raise DataManagementSettingsValidationError("Screening artifact storage must be private.")
+    prefix = revision_prefix(subject_from_document(document))
+    for blob in container.list_blobs(name_starts_with=prefix):
+        name = blob.get("name") if isinstance(blob, dict) else getattr(blob, "name", None)
+        if not isinstance(name, str) or not re.fullmatch(
+            f"{re.escape(prefix)}[0-9a-f]{{64}}/[0-9a-f]{{64}}/(manifest|part-[0-9]{{4}})", name,
+        ):
+            raise DataManagementSettingsValidationError("A screening artifact path is invalid.")
+        yield {**document, "blob_container": container_name, "blob_path": name, "archived_blob_path": None}
 
 
 def _get_blob_properties_or_none(blob_client):
@@ -13504,7 +13576,58 @@ def _source_blob_container_names():
         app_config.storage_account_public_documents_container_name,
         app_config.storage_account_personal_chat_container_name,
         app_config.storage_account_group_chat_container_name,
+        getattr(app_config, "storage_account_content_screening_container_name", "content-screening"),
     ]
+
+
+def _can_skip_unused_screening_container(job, source_container_name, source_read_count, error):
+    """Only an absent, provably unused screening namespace is an empty backup."""
+    screening_container_name = getattr(
+        app_config, "storage_account_content_screening_container_name", "content-screening",
+    )
+    status_code = getattr(error, "status_code", None)
+    missing = status_code == 404 or status_code is None and isinstance(error, ResourceNotFoundError)
+    if (
+        source_container_name != screening_container_name or source_read_count
+        or not missing
+    ):
+        return False
+    probes = [
+        (attribute, "IS_DEFINED(c.content_screening)", [])
+        for attribute in (
+            "cosmos_user_documents_container",
+            "cosmos_group_documents_container",
+            "cosmos_public_documents_container",
+        )
+    ]
+    references = " OR ".join(
+        f"(IS_DEFINED(c.{field}) AND NOT IS_NULL(c.{field}))"
+        for field in ("source_ref", "units_ref", "result_ref", "canonical_ref", "evidence_ref")
+    )
+    probes.append((
+        "cosmos_content_screening_container",
+        f"(c.kind = @scan_kind AND (NOT IS_DEFINED(c.state) OR NOT IS_STRING(c.state) OR c.state != @deleted_state)) OR {references}",
+        [{"name": "@scan_kind", "value": "scan"}, {"name": "@deleted_state", "value": "deleted"}],
+    ))
+    for attribute, predicate, parameters in probes:
+        container = getattr(app_config, attribute, None)
+        if container is None:
+            return False
+        _assert_backup_job_lease(job)
+        try:
+            record = next(iter(container.query_items(
+                query=f"SELECT TOP 1 c.id FROM c WHERE {predicate}",
+                parameters=parameters,
+                enable_cross_partition_query=True,
+                max_item_count=1,
+            )), None)
+        except (DataManagementBackupCanceledError, DataManagementBackupLeaseLostError):
+            raise
+        except Exception:
+            return False
+        if record is not None:
+            return False
+    return True
 
 
 def _get_backup_blob_property(properties, field_name, default=None):
@@ -17124,27 +17247,28 @@ def _execute_backup_source_blob_resource(
         raise
     except Exception as exc:
         cancel_event.set()
-        failed_count += 1
-        failure_summary = (
-            _sanitize_data_management_backup_text(str(exc)) or
-            "Source blob enumeration failed."
-        )
-        _record_backup_failure_reason(failure_reason_counts, failure_summary)
-        log_event(
-            "[DATA_MANAGEMENT] Source blob backup enumeration failed.",
-            {
-                "job_id": job.get("id"),
-                "resource": resource_name,
-                "container": source_container_name,
+        if not _can_skip_unused_screening_container(job, source_container_name, source_read_count, exc):
+            failed_count += 1
+            failure_summary = (
+                _sanitize_data_management_backup_text(str(exc)) or
+                "Source blob enumeration failed."
+            )
+            _record_backup_failure_reason(failure_reason_counts, failure_summary)
+            log_event(
+                "[DATA_MANAGEMENT] Source blob backup enumeration failed.",
+                {
+                    "job_id": job.get("id"),
+                    "resource": resource_name,
+                    "container": source_container_name,
+                    "failure_summary": failure_summary,
+                },
+                level=logging.WARNING,
+            )
+            _append_backup_state_summary(state, "failed_items", {
+                "service": "source_blobs",
+                "resource_name": resource_name,
                 "failure_summary": failure_summary,
-            },
-            level=logging.WARNING,
-        )
-        _append_backup_state_summary(state, "failed_items", {
-            "service": "source_blobs",
-            "resource_name": resource_name,
-            "failure_summary": failure_summary,
-        })
+            })
 
     if failed_count:
         log_event(
@@ -17589,11 +17713,36 @@ def _execute_restore_cosmos_resources(job, state, settings, restore_plan, contai
                     result["failed_count"] += 1
                     continue
                 if overwrite:
-                    target_container.upsert_item(record)
+                    previous_document = None
+                    if artifact.get("category") == "documents":
+                        previous_document = _get_target_cosmos_document(
+                            target_container, record, artifact["partition_key_path"],
+                        )
+                        if previous_document is None and artifact["name"] in {
+                            "personal_documents", "group_documents", "public_documents",
+                        } and artifact["partition_key_path"] != "/id":
+                            # Historical backup inventories used scope partition
+                            # paths, while application document containers use /id.
+                            previous_document = _get_target_cosmos_document(target_container, record, "/id")
+                    if "content_screening" in record or (
+                        isinstance(previous_document, dict) and "content_screening" in previous_document
+                    ):
+                        record = preserve_screening_on_transfer(
+                            record, operation="restore", previous_document=previous_document,
+                        )
+                        if previous_document is None:
+                            target_container.create_item(record)
+                        else:
+                            target_container.replace_item(
+                                item=document_id, body=record, etag=previous_document.get("_etag"),
+                                match_condition=MatchConditions.IfNotModified,
+                            )
+                    else:
+                        target_container.upsert_item(preserve_screening_on_transfer(record, operation="restore"))
                     result["updated_count"] += 1
                 else:
                     try:
-                        target_container.create_item(record)
+                        target_container.create_item(preserve_screening_on_transfer(record, operation="restore"))
                         result["created_count"] += 1
                     except Exception as exc:
                         if getattr(exc, "status_code", None) == 409:

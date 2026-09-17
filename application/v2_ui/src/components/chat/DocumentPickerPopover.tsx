@@ -16,6 +16,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { Check, FileText, FolderOpen, Loader2, Search, Tag as TagIcon } from 'lucide-react';
+import { isScreeningAvailable } from '../../lib/contentScreening';
+import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
 import {
     searchContextCandidates,
     type ContextCandidate,
@@ -86,6 +88,7 @@ export function DocumentPickerPopover({
                 groupsEnabled: scope.groupsEnabled,
                 publicEnabled: scope.publicEnabled,
                 signal: controller.signal,
+                includeUnavailable: true,
             })
                 .then((found) => {
                     if (!controller.signal.aborted) {
@@ -206,6 +209,7 @@ export function DocumentPickerPopover({
                         </div>
                         {bucket.items.map((candidate) => {
                             const picked = selectedKeys.has(candidate.key);
+                            const available = !candidate.document || isScreeningAvailable(candidate.document);
                             const Icon =
                                 candidate.kind === 'tag'
                                     ? TagIcon
@@ -217,10 +221,13 @@ export function DocumentPickerPopover({
                                 <button
                                     key={candidate.key}
                                     type="button"
-                                    onClick={() => onToggle(candidate)}
+                                    disabled={!available}
+                                    onClick={() => available && onToggle(candidate)}
                                     aria-pressed={picked}
+                                    title={available ? undefined : 'Held for content review; this source cannot be selected.'}
                                     className={clsx(
                                         'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm',
+                                        'disabled:cursor-not-allowed disabled:opacity-70',
                                         picked
                                             ? 'bg-accent-soft text-accent'
                                             : 'text-text-1 hover:bg-surface-2',
@@ -244,6 +251,9 @@ export function DocumentPickerPopover({
                                                 {candidate.subtitle}
                                             </span>
                                         )}
+                                        {candidate.document && Object.prototype.hasOwnProperty.call(candidate.document, 'content_screening') ? (
+                                            <ScreeningStatusBadge summary={candidate.document.content_screening ?? null} />
+                                        ) : null}
                                     </span>
                                 </button>
                             );

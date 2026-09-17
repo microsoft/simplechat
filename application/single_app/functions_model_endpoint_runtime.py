@@ -164,7 +164,7 @@ def _require_chat_model_for_endpoint(endpoint_config, deployment_name='', model_
             models = deployment_matches or models
         for model in models:
             if model_id:
-                matches = str(model.get('id') or '').strip() == str(model_id).strip()
+                matches = str(model.get('id') or model.get('deploymentName') or '').strip() == str(model_id).strip()
             elif provider == 'custom':
                 matches = bool(deployment_name) and str(deployment_name).strip() == resolve_model_endpoint_request_model(endpoint_config, model)
             else:
@@ -276,9 +276,15 @@ def build_model_endpoint_sync_chat_client(
     settings=None,
     endpoint_config=None,
     identity_context=None,
+    model_id='',
 ):
-    """Create a protocol-aware synchronous chat client for a configured model endpoint."""
-    _require_chat_model_for_endpoint(endpoint_config, deployment_name)
+    """Create a synchronous client using canonical metadata for its wire protocol.
+
+    ``model_id`` disambiguates stored records sharing a deployment alias. The
+    caller's deployment name remains the provider request target; name-only
+    legacy calls retain deployment-based inference.
+    """
+    model = _require_chat_model_for_endpoint(endpoint_config, deployment_name, model_id) or {}
     auth_settings = auth_settings or {}
     extra_headers = build_model_endpoint_identity_headers(
         settings,
@@ -286,8 +292,9 @@ def build_model_endpoint_sync_chat_client(
         identity_context=identity_context,
     )
     normalized_provider = str(provider or 'aoai').strip().lower()
+    model_name = model.get('modelName') or model.get('behavior_name') or deployment_name
     api_type = get_model_endpoint_api_type(endpoint_config) or api_type
-    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, deployment_name, api_type)
+    runtime_protocol = infer_model_endpoint_protocol(normalized_provider, endpoint, model_name, api_type)
     if normalized_provider == 'custom':
         connection = dict((endpoint_config or {}).get('connection') or {})
         connection.update(endpoint=endpoint, api_version=connection.get('api_version') or api_version)
@@ -360,8 +367,12 @@ def build_model_endpoint_sync_chat_client(
     ), runtime_protocol
 
 
-def build_chat_connection_client(binding, settings):
-    """Adapt a resolved chat binding without changing the legacy tuple-returning factory."""
+def build_chat_connection_client(binding, settings, *, strict_credentials=False):
+    """Adapt a chat binding, optionally requiring stored credentials to resolve.
+
+    Strict hydration is opt-in so existing consumers retain legacy Key Vault
+    fallback semantics. Neither mode changes the selected connection or model.
+    """
     # Credential hydration stays at the operation boundary, not in the pure binding module.
     from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 
@@ -373,13 +384,23 @@ def build_chat_connection_client(binding, settings):
     deployment_name = resolve_model_endpoint_request_model(endpoint_config, model)
     if not deployment_name:
         raise AIConnectionError('The selected chat model is missing its request identifier.')
-    _require_chat_model_for_endpoint(endpoint_config, deployment_name)
-    endpoint_config = keyvault_model_endpoint_get_helper(
-        endpoint_config,
-        endpoint_config.get('id') or binding.selection.get('endpoint_id'),
-        scope='global',
-        return_type=SecretReturnType.VALUE,
-    )
+    model_id = binding.selection.get('model_id') or model.get('id') or ''
+    _require_chat_model_for_endpoint(endpoint_config, deployment_name, model_id)
+    try:
+        endpoint_config = keyvault_model_endpoint_get_helper(
+            endpoint_config,
+            endpoint_config.get('id') or binding.selection.get('endpoint_id'),
+            scope='global',
+            return_type=SecretReturnType.VALUE,
+            **({'strict': True} if strict_credentials else {}),
+        )
+    except Exception:
+        if not strict_credentials:
+            raise
+        raise AIConnectionError(
+            'The selected model endpoint credential is unavailable.',
+            'model_configuration_unavailable',
+        ) from None
     connection = endpoint_config.get('connection') or {}
     client, _ = build_model_endpoint_sync_chat_client(
         endpoint_config.get('auth') or {},
@@ -389,6 +410,7 @@ def build_chat_connection_client(binding, settings):
         deployment_name=deployment_name,
         settings=settings,
         endpoint_config=endpoint_config,
+        model_id=model_id,
     )
     return client
 

@@ -52,6 +52,12 @@ Approvals create a checkpoint before sensitive actions execute. Use this page wh
 
 The request status changes in the table. Approved executable requests complete the requested action, while denied requests remain recorded with the decision.
 
+## Review screened document content
+
+Content-screening requests use a dedicated evidence and remediation workflow rather than the generic **Approve & Execute** action. The whole document stays unavailable until its complete scan and required review are resolved.
+
+For this review type, personal owners and group/public workspace Owners, Admins, and DocumentManagers can review their own uploads. That does not change the self-approval rules for other request types. Follow [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) to accept a retained flag, remove precise content, or publish a clean candidate.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

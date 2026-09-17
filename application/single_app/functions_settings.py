@@ -7,6 +7,13 @@ from azure.core import MatchConditions
 from azure.cosmos.exceptions import CosmosAccessConditionFailedError
 
 from config import *
+from content_screening.contracts import (
+    ScreeningCitationsRequiredError,
+    ScreeningConfigurationError,
+    ScreeningConflictError,
+    ScreeningError,
+    ScreeningValidationError,
+)
 from functions_appinsights import log_event
 from functions_ai_connections import (
     AIConnectionError,
@@ -1649,6 +1656,7 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Safety (Content Safety) Settings
         'enable_content_safety': False,
+        'enable_content_screening': False,
         'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
         'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
@@ -2097,14 +2105,56 @@ def get_rate_limit_message(settings=None):
     return build_rate_limit_message(resolved_settings)
 
 
+def validate_content_screening_settings(new_settings, current_settings, *, repository=None):
+    """Validate activation/dependency changes without modifying persisted holds."""
+    if not isinstance(new_settings, dict) or not isinstance(current_settings, dict):
+        raise ScreeningValidationError()
+    if any(key.startswith('content_screening') for key in new_settings):
+        raise ScreeningValidationError()
+    if 'enable_content_screening' in new_settings and type(new_settings['enable_content_screening']) is not bool:
+        raise ScreeningValidationError()
+    merged = {**current_settings, **new_settings}
+    if merged.get('enable_content_screening') is not True:
+        return
+    if merged.get('enable_enhanced_citations') is not True:
+        raise ScreeningCitationsRequiredError()
+    storage_fields = (
+        'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint',
+        'office_docs_key', 'office_docs_authentication_type',
+    )
+    activating = current_settings.get('enable_content_screening') is not True
+    storage_changed = any(
+        field in new_settings and new_settings[field] != current_settings.get(field)
+        for field in storage_fields
+    )
+    if activating or storage_changed or 'enable_content_screening' in new_settings:
+        # Import at the operation boundary; the service itself reads settings.
+        from content_screening.service import validate_screening_configuration
+
+        try:
+            validate_screening_configuration(
+                merged, repository=repository, check_storage=activating or storage_changed,
+                proposed_settings=True,
+            )
+        except ScreeningError:
+            raise
+        except Exception:
+            raise ScreeningConfigurationError() from None
+
+
 def update_settings(new_settings):
+    screening_write = isinstance(new_settings, dict) and 'enable_content_screening' in new_settings
     try:
         # The guard imports storage clients only when a settings write is requested.
         from functions_embedding_compatibility import embedding_settings_write_guard
 
         for attempt in range(3):
             original = cosmos_settings_container.read_item(item="app_settings", partition_key="app_settings")
+            screening_write = screening_write or original.get('enable_content_screening') is True
+            if screening_write and not original.get('_etag'):
+                raise ScreeningConflictError()
             settings_item = copy.deepcopy(original)
+            validate_content_screening_settings(new_settings, settings_item)
             existing_multi_endpoint_enabled = original.get('enable_multi_model_endpoints', False)
             settings_item.update(new_settings)
             normalize_group_workflow_assignment_settings(settings_item)
@@ -2132,10 +2182,26 @@ def update_settings(new_settings):
                 return True
             except CosmosAccessConditionFailedError:
                 if attempt == 2:
+                    if screening_write:
+                        raise ScreeningConflictError() from None
                     raise AIConnectionError("Settings changed concurrently. Reload before saving.", "settings_conflict")
+    except ScreeningError as error:
+        log_event(
+            "[CONTENT_SCREENING] settings_validation_failed",
+            extra={"code": error.code},
+            level=logging.WARNING,
+        )
+        return False
     except AIConnectionError:
         raise
     except Exception as e:
+        if screening_write:
+            log_event(
+                "[CONTENT_SCREENING] settings_write_failed",
+                extra={"error_type": type(e).__name__},
+                level=logging.WARNING,
+            )
+            return False
         log_event(
             "Error updating app settings.",
             extra={
@@ -3512,6 +3578,8 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
+        if k.startswith('content_screening'):
+            continue
         if k in (
             'support_feedback_recipient_email', 'embedding_vector_profile',
             'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
@@ -3578,6 +3646,9 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
     sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
     
     for k, v in full_settings.items():
+        if k.startswith('content_screening'):
+            sanitized[k] = "[REDACTED]"
+            continue
         # Skip keys with sensitive terms
         if any(term in k.lower() for term in sensitive_key_terms):
             sanitized[k] = "[REDACTED]"

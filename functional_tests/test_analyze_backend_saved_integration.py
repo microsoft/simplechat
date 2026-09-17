@@ -1,7 +1,7 @@
 # test_analyze_backend_saved_integration.py
 """
 Behavioral integration tests for Analyze presentation and saved-data chat reuse.
-Version: 0.261.109
+Version: 0.261.113
 Implemented in: 0.261.109
 
 Real adapter, artifact, history, chat route and shared section-reader functions
@@ -17,6 +17,7 @@ import json
 import logging
 import random
 import re
+import sys
 import time
 import uuid
 from copy import deepcopy
@@ -37,6 +38,8 @@ from test_document_analysis_lossless_artifacts import load_module_functions
 from test_saved_analysis_service import ChatSections, read_options, saved, saved_chat
 from test_support.app_stubs import import_app_module
 
+from content_screening import access as screening_access
+from content_screening.contracts import DocumentHeldError, ScreeningError
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "application" / "single_app"
@@ -298,6 +301,22 @@ def chat(saved_chat, monkeypatch):
     fixture = saved_chat
     messages = MessageStore(fixture["message"])
     source_state = fixture["state"]
+
+    def read_screening_document(document_id, user_id, **kwargs):
+        sources = fixture["source_resolver"]([document_id], user_id=user_id)
+        source = next((item for item in sources if item["document_id"] == document_id), None)
+        if not source or source["authorization_status"] != "authorized" or source["scope_id"] != user_id:
+            raise PermissionError("Fixture source access denied.")
+        document = {"id": document_id, "user_id": user_id, "version": source.get("source_version")}
+        if source_state.get("screening_held"):
+            document["content_screening"] = {"state": "pending_review"}
+        return document
+
+    monkeypatch.setattr(screening_access, "_read_authorized_document", read_screening_document)
+    monkeypatch.setitem(
+        sys.modules, "functions_authentication",
+        SimpleNamespace(get_current_user_id=lambda: "owner"),
+    )
     state = {
         "cancelled": False, "cancel_after_model": False, "cancel_after_analyze": False,
         "model_calls": [], "token_logs": [], "analyze_calls": [], "save_failure": False, "rollbacks": 0,
@@ -343,6 +362,13 @@ def chat(saved_chat, monkeypatch):
         "asyncio": asyncio, "json": json, "logging": logging, "random": random, "uuid": uuid,
         "datetime": datetime, "time": time, "g": g, "has_request_context": has_request_context,
         "request": request, "session": session, "jsonify": jsonify,
+        "ScreeningError": ScreeningError,
+        "PROVENANCE_FIELD": screening_access.PROVENANCE_FIELD,
+        "assert_evidence_available": screening_access.assert_evidence_available,
+        "guard_model_callable": screening_access.guard_model_callable,
+        "refresh_workspace_attachment": screening_access.refresh_workspace_attachment,
+        "assert_current_request_sources_available": screening_access.assert_current_request_sources_available,
+        "current_request_source_provenance": screening_access.current_request_source_provenance,
         "get_current_user_id": lambda: "owner", "get_current_user_info": lambda: {"user_id": "owner"},
         "get_settings": lambda: {"conversation_history_limit": 10},
         "log_event": lambda *args, **kwargs: None, "debug_print": lambda *args, **kwargs: None,
@@ -498,6 +524,8 @@ def chat(saved_chat, monkeypatch):
         "execute_document_action_chat_request", "_reauthorize_document_action_finalization",
         "_validate_reauthorized_manifest_finalization", "_build_generated_analysis_metadata",
         "_normalize_generated_analysis_artifact_metadata",
+        "_persist_screened_assistant",
+        "_refresh_workspace_linked_history_message",
     }
     load_functions("route_backend_chats.py", names, namespace)
 
@@ -565,6 +593,40 @@ def test_direct_analyze_saves_real_assistant_identity_and_reloads_all_records(ch
     )
     assert len(json.loads(serialized)["records"]) == 60
     assert "RAW-NOTES" not in serialized
+
+
+def test_direct_analyze_persists_one_assistant_inside_the_merged_guards(chat, monkeypatch):
+    writes = []
+    original = chat.messages.upsert_item
+
+    def upsert(message):
+        if message["role"] == "assistant":
+            writes.append(message["id"])
+        return original(message)
+
+    monkeypatch.setattr(chat.messages, "upsert_item", upsert)
+    response = chat.client.post("/api/chat/document-action", json=analyze_body())
+    assert response.status_code == 200, response.get_json()
+    assert writes == [response.get_json()["message_id"]]
+
+
+def test_direct_analyze_rolls_back_when_screening_blocks_assistant_publication(chat):
+    previous_assistants = {
+        key for key, message in chat.messages.documents.items() if message["role"] == "assistant"
+    }
+
+    def held_source(user_id):
+        assert user_id == "owner"
+        raise DocumentHeldError()
+
+    chat.namespace["assert_current_request_sources_available"] = held_source
+    response = chat.client.post("/api/chat/document-action", json=analyze_body())
+    assert response.status_code == 409, response.get_json()
+    assert response.get_json()["error_code"] == DocumentHeldError().code
+    assert chat.state["rollbacks"] == 1
+    assert {
+        key for key, message in chat.messages.documents.items() if message["role"] == "assistant"
+    } == previous_assistants
 
 
 def test_direct_analyze_save_failure_is_not_a_successful_assistant_message(chat):

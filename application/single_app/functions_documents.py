@@ -7,7 +7,37 @@ import traceback
 import zipfile
 from io import BytesIO
 from flask import make_response
+from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
+from content_screening.contracts import (
+    SCREENING_FIELD,
+    DocumentHeldError,
+    ScreeningConflictError,
+    ScreeningError,
+    ScreeningValidationError,
+    document_is_available,
+    require_document_available,
+    subject_from_document,
+)
+from content_screening.access import (
+    assert_document_available,
+    assert_document_chunks_available,
+    public_document_payload,
+    read_available_document_bytes,
+)
+from content_screening.extraction import (
+    CONTENT_METADATA_FIELDS,
+    current_extraction,
+    is_publication,
+)
+from content_screening.service import (
+    initial_document_marker,
+    prepare_document_deletion,
+    prepare_document_upload,
+    process_screened_upload,
+    queue_metadata_rescan,
+    reprocess_document,
+)
 from config import *
 from functions_appinsights import log_event
 from functions_ai_connections import require_model_capability
@@ -457,6 +487,8 @@ def _build_office_embedded_image_chunks(
                     settings,
                 )
             except Exception as image_error:
+                if current_extraction() is not None:
+                    raise ScreeningError(code="screening_embedded_image_failed") from image_error
                 log_event(
                     f"[OFFICE_EMBEDDED_IMAGES] Failed to analyze {embedded_image.get('name')}: {image_error}",
                     level=logging.WARNING,
@@ -504,6 +536,13 @@ def _build_office_embedded_image_chunks(
                 office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
             )
     except Exception as embedded_image_error:
+        if current_extraction() is not None:
+            log_event(
+                "[CONTENT_SCREENING] Embedded image extraction did not complete.",
+                extra={"error_type": type(embedded_image_error).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code="screening_embedded_image_failed") from embedded_image_error
         log_event(
             f"[OFFICE_EMBEDDED_IMAGES] Embedded image analysis failed for "
             f"{os.path.basename(file_path)}: {embedded_image_error}",
@@ -783,21 +822,9 @@ def _get_document_download_entry(document_item, user_id=None, group_id=None, pub
     if not document_item:
         raise FileNotFoundError('Document not found.')
 
-    container_name, blob_path = get_document_blob_storage_info(
-        document_item,
-        user_id=user_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
+    document_item, file_bytes = read_available_document_bytes(
+        document_item, user_id, group_id, public_workspace_id,
     )
-    if not container_name or not blob_path:
-        raise FileNotFoundError('Document source file is unavailable.')
-
-    blob_service_client = _get_blob_service_client()
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
-    try:
-        file_bytes = blob_client.download_blob().readall()
-    except Exception as exc:
-        raise FileNotFoundError('Document source file was not found in Blob Storage.') from exc
 
     file_name = _sanitize_download_file_name(
         document_item.get('file_name') or document_item.get('title') or document_item.get('id'),
@@ -821,6 +848,8 @@ def build_document_download_response(document_item, user_id=None, group_id=None,
     response = make_response(entry['content'])
     response.headers['Content-Type'] = entry['content_type']
     response.headers['Content-Disposition'] = f'attachment; filename="{entry["file_name"]}"'
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
@@ -1256,7 +1285,27 @@ def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None
 
 
 def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation):
-    persisted_document = cosmos_container.upsert_item(document_item)
+    try:
+        current_document = cosmos_container.read_item(
+            item=document_item["id"], partition_key=document_item["id"],
+        )
+    except CosmosResourceNotFoundError:
+        current_document = None
+    if current_document and SCREENING_FIELD in current_document:
+        expected_etag = document_item.get("_etag")
+        if expected_etag != current_document.get("_etag"):
+            raise ScreeningConflictError()
+        if document_item.get("version") != current_document.get("version"):
+            raise ScreeningConflictError()
+        document_item = {**document_item, SCREENING_FIELD: current_document[SCREENING_FIELD]}
+        persisted_document = cosmos_container.replace_item(
+            item=document_item["id"], body=document_item,
+            etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+        )
+    elif current_document is None and SCREENING_FIELD in document_item:
+        persisted_document = cosmos_container.create_item(document_item)
+    else:
+        persisted_document = cosmos_container.upsert_item(document_item)
     sync_document_access_index_for_document_fail_open(
         persisted_document if isinstance(persisted_document, dict) else document_item,
         operation=operation,
@@ -1639,6 +1688,12 @@ def create_document(file_name, user_id, document_id, num_file_chunks, status, gr
                 "tags": carried_forward.get("tags", [])
             }
 
+        screening_marker = initial_document_marker(document_metadata)
+        if screening_marker is not None:
+            document_metadata[SCREENING_FIELD] = screening_marker
+            document_metadata["status"] = "Content screening pending"
+            document_metadata["user_id"] = user_id
+
         _upsert_document_and_sync_access_index(
             cosmos_container,
             document_metadata,
@@ -1753,6 +1808,15 @@ def save_video_chunk(
     already appended to page_text_content for searchability.
     The chunk_id is built from document_id and the integer second offset to ensure a valid key.
     """
+    capture = current_extraction(document_id)
+    if capture is not None:
+        capture.add_chunk(
+            f"{page_text_content}\n{ocr_chunk_text}".strip(), 0, start_time=start_time,
+        )
+        return {"staged": True, "staged_units": 1, "total_tokens": 0}
+    _require_screening_chunk_write(get_document_metadata(
+        document_id, user_id, group_id, public_workspace_id,
+    ))
     from functions_debug import debug_print
 
     debug_print(f"[VIDEO_CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
@@ -2616,7 +2680,7 @@ def process_video_document(
                 insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
 
             chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
-            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} has no speech; insight text length: {len(chunk_text)}")
 
         debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
         debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
@@ -2645,6 +2709,8 @@ def process_video_document(
             debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} saved successfully")
             total += 1
         except Exception as e:
+            if current_extraction(document_id) is not None:
+                raise ScreeningError(code="screening_video_chunk_failed") from e
             debug_print(f"[VIDEO_INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
             debug_print(f"[VIDEO_INDEXER] Chunk save traceback: {traceback.format_exc()}")
 
@@ -2765,6 +2831,8 @@ def calculate_processing_percentage(doc_metadata):
     return max(final_pct, current_pct)
 
 def update_document(**kwargs):
+    if SCREENING_FIELD in kwargs:
+        raise ScreeningValidationError("Screening state is managed by the review workflow.")
     document_id = kwargs.get('document_id')
     user_id = kwargs.get('user_id')
     group_id = kwargs.get('group_id')
@@ -2863,6 +2931,31 @@ def update_document(**kwargs):
 
 
         existing_document = existing_documents[0]
+        capture = current_extraction(document_id)
+        if capture is not None and getattr(capture, "heartbeat", None) is not None:
+            capture.heartbeat()
+        marker = existing_document.get(SCREENING_FIELD)
+        if marker is not None and not document_is_available(existing_document):
+            requested_status = str(kwargs.get("status") or "").lower()
+            if "complete" in requested_status:
+                kwargs["status"] = "Content review required" if marker.get("review_required") else "Content screening pending"
+            if kwargs.get("percentage_complete") == 100:
+                kwargs["percentage_complete"] = 99
+        content_changed = any(
+            key in kwargs and kwargs[key] is not None and kwargs[key] != existing_document.get(key)
+            for key in CONTENT_METADATA_FIELDS
+        )
+        if (
+            marker is not None and content_changed and capture is None
+            and not is_publication(subject_from_document(existing_document), marker.get("scan_id"))
+        ):
+            metadata_updates = {
+                key: value for key, value in kwargs.items()
+                if key not in {"document_id", "user_id", "group_id", "public_workspace_id"}
+                and value is not None
+            }
+            queue_metadata_rescan(existing_document, metadata_updates, user_id)
+            return
         original_percentage = existing_document.get('percentage_complete', 0) # Store for comparison
 
         # 2. Apply updates from kwargs
@@ -2926,7 +3019,7 @@ def update_document(**kwargs):
         # This happens regardless of 'update_occurred' flag because the *intent* from kwargs might trigger it,
         # even if the main doc update didn't happen (e.g., only percentage changed).
         # However, it's better to only do this if the relevant fields *actually* changed.
-        if update_occurred and updated_fields_requiring_chunk_sync:
+        if update_occurred and updated_fields_requiring_chunk_sync and marker is None:
             try:
                 chunks_to_update = get_all_chunks(
                     document_id,
@@ -3009,6 +3102,16 @@ def update_document(**kwargs):
         #    print(f"Failed to update status to error state for {document_id}: {inner_e}")
         raise # Re-raise the original exception
 
+def _require_screening_chunk_write(metadata):
+    if metadata and SCREENING_FIELD in metadata:
+        marker = metadata.get(SCREENING_FIELD) or {}
+        if (
+            marker.get("state") != "publishing"
+            or not is_publication(subject_from_document(metadata), marker.get("scan_id"))
+        ):
+            raise DocumentHeldError("Screened content must be published through its review workflow.")
+
+
 def save_chunks(page_text_content, page_number, file_name, user_id, document_id, group_id=None, public_workspace_id=None):
     """
     Save a single chunk (one page) at a time:
@@ -3016,6 +3119,10 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
       - Build chunk metadata
       - Upload to Search index
     """
+    capture = current_extraction(document_id)
+    if capture is not None:
+        capture.add_chunk(page_text_content, page_number)
+        return {"staged": True, "staged_units": 1, "total_tokens": 0, "prompt_tokens": 0}
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3072,6 +3179,8 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
     except Exception as e:
         print(f"Error updating document status or retrieving metadata for document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         raise
+
+    _require_screening_chunk_write(metadata)
 
     # Generate embedding
     try:
@@ -3263,6 +3372,11 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
     Returns:
         dict with 'total_tokens', 'prompt_tokens', 'model_deployment_name'
     """
+    capture = current_extraction(document_id)
+    if capture is not None:
+        for chunk in chunks_data:
+            capture.add_chunk(chunk["page_text_content"], chunk["page_number"])
+        return {"staged": True, "staged_units": len(chunks_data), "total_tokens": 0, "prompt_tokens": 0}
     from functions_content import generate_embeddings_batch
 
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -3296,6 +3410,8 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
     except Exception as e:
         log_event(f"[SAVE_CHUNKS_BATCH] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
         raise
+
+    _require_screening_chunk_write(metadata)
 
     # Generate all embeddings in batches
     texts = [c['page_text_content'] for c in chunks_data]
@@ -3469,6 +3585,8 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
             partition_key=document_id
         )
 
+        document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
+
         # Extract keywords and abstract
         keywords = document_item.get('keywords', [])
         abstract = document_item.get('abstract', '')
@@ -3483,6 +3601,8 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
 
         return None
 
+    except ScreeningError:
+        raise
     except Exception as e:
         # Document not found or error reading - return None silently
         # This is expected for documents without metadata
@@ -3520,6 +3640,8 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
             partition_key=document_id
         )
 
+        document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
+
         # Extract keywords and abstract
         keywords = document_item.get('keywords', [])
         abstract = document_item.get('abstract', '')
@@ -3534,6 +3656,8 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
 
         return None
 
+    except ScreeningError:
+        raise
     except Exception as e:
         # Document not found or error reading - return None silently
         # This is expected for documents without metadata
@@ -3547,6 +3671,8 @@ def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+    except ScreeningError:
+        raise
     except Exception as e:
         print(f"Error retrieving chunks for document {document_id}: {e}")
         raise
@@ -3717,6 +3843,8 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
     if not document_item:
         return []
 
+    document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
+
     search_client = _get_search_client(
         group_id=group_id,
         public_workspace_id=public_workspace_id,
@@ -3784,7 +3912,10 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
             str(chunk.get('id') or ''),
         )
     )
-    return ordered_chunks
+    return assert_document_chunks_available(
+        ordered_chunks, document_item, user_id, group_id, public_workspace_id,
+        expected_chunk_count=document_item.get("num_chunks") if max_chunks is None else None,
+    )
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
     try:
@@ -3820,7 +3951,7 @@ def get_documents(user_id, group_id=None, public_workspace_id=None):
             source_query_metrics=source_query_metrics,
             context='functions_documents.get_documents',
         )
-        return jsonify({"documents": current_documents}), 200
+        return jsonify({"documents": [public_document_payload(item) for item in current_documents]}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
@@ -3836,7 +3967,7 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         if not document_record:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        return jsonify(document_record), 200
+        return jsonify(public_document_payload(document_record)), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
@@ -3924,7 +4055,7 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
         if not document_results:
             return jsonify({'error': 'Document version not found'}), 404
 
-        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
+        return jsonify(public_document_payload(_normalize_document_enhanced_citations(document_results[0]))), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
@@ -3937,11 +4068,15 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
     enable_enhanced_citations = settings.get("enable_enhanced_citations", False)
 
     if not enable_enhanced_citations:
+        if SCREENING_FIELD in document_item:
+            raise ScreeningError("Enhanced Citations must be configured to finish deleting this document.")
         return  # No need to proceed if enhanced citations are disabled
 
     try:
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
+            if SCREENING_FIELD in document_item:
+                raise ScreeningError("The storage connection is required to finish deleting this document.")
             print("Warning: Enhanced citations enabled but blob service client not configured.")
             return
 
@@ -3961,6 +4096,13 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
                 print(f"No blob found at {container_name}/{blob_path} to delete")
 
     except Exception as e:
+        if SCREENING_FIELD in document_item:
+            log_event(
+                "[CONTENT_SCREENING] Source deletion failed.",
+                extra={"document_id": document_item.get("id"), "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code="screening_source_delete_failed") from e
         print(f"Error deleting document from blob storage: {str(e)}")
         # Don't raise the exception, as we want the Cosmos DB deletion to proceed
         # even if blob deletion fails
@@ -3987,6 +4129,18 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
             partition_key=document_id
         )
 
+        if is_public_workspace:
+            if document_item.get("public_workspace_id") != public_workspace_id:
+                raise PermissionError("Document access denied.")
+        elif is_group:
+            if document_item.get("group_id") != group_id:
+                raise PermissionError("Document access denied.")
+        elif document_item.get("user_id") != user_id:
+            raise PermissionError("Document access denied.")
+        if SCREENING_FIELD in document_item:
+            prepare_document_deletion(document_item, user_id)
+            document_item = cosmos_container.read_item(item=document_id, partition_key=document_id)
+
         # Log document deletion transaction before deletion
         try:
             from functions_activity_logging import log_document_deletion_transaction
@@ -4008,29 +4162,20 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
                 user_id=user_id,
                 document_id=document_id,
                 workspace_type=workspace_type,
-                file_name=file_name,
+                file_name="Screened document" if SCREENING_FIELD in document_item else file_name,
                 file_type=file_ext,
                 page_count=document_item.get('number_of_pages'),
                 version=document_item.get('version'),
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
-                document_metadata=document_item  # Store full metadata
+                document_metadata=(
+                    {"id": document_id, "version": document_item.get("version"), "screened": True}
+                    if SCREENING_FIELD in document_item else document_item
+                )
             )
         except Exception as log_error:
             print(f"⚠️  Warning: Failed to log document deletion transaction: {log_error}")
             # Don't fail the deletion if logging fails
-
-        if is_public_workspace:
-            if document_item.get('public_workspace_id') != public_workspace_id:
-                raise Exception("Unauthorized access to document")
-        elif is_group:
-            # For group documents, only the owning group can delete (not shared groups)
-            if document_item.get('group_id') != group_id:
-                raise Exception("Unauthorized access to document - only document owning group can delete")
-        else:
-            # For personal documents, only the owner can delete (not shared users)
-            if document_item.get('user_id') != user_id:
-                raise Exception("Unauthorized access to document - only document owner can delete")
 
         # Delete from blob storage
         try:
@@ -4041,14 +4186,28 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
                 public_workspace_id=public_workspace_id,
             )
         except Exception as blob_error:
+            if SCREENING_FIELD in document_item:
+                raise
             # Log the error but continue with Cosmos DB deletion
             print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
 
         # Then delete from Cosmos DB
-        cosmos_container.delete_item(
-            item=document_id,
-            partition_key=document_id
-        )
+        if SCREENING_FIELD in document_item:
+            current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+            if (
+                subject_from_document(current_document) != subject_from_document(document_item)
+                or (current_document.get(SCREENING_FIELD) or {}).get("state") != "deleting"
+            ):
+                raise ScreeningConflictError()
+            cosmos_container.delete_item(
+                item=document_id, partition_key=document_id,
+                etag=current_document["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            cosmos_container.delete_item(
+                item=document_id,
+                partition_key=document_id
+            )
         delete_document_access_index_for_document_fail_open(
             document_item,
             operation='document_deleted',
@@ -4731,6 +4890,9 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     content safety checks.
     """
 
+    screening_document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    if screening_document and SCREENING_FIELD in screening_document:
+        require_document_available(screening_document)
     settings = get_settings()
     enable_user_workspace = settings.get('enable_user_workspace', False)
     enable_group_workspaces = settings.get('enable_group_workspaces', False)
@@ -4838,7 +5000,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Retrieved document items for document {document_id}: {document_items}"
+            content=f"Retrieved {len(document_items)} metadata record(s) for document {document_id}"
         )
     except Exception as e:
         add_file_task_to_file_processing_log(
@@ -5037,6 +5199,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         return meta_data
 
     # --- Step 6: GPT Prompt and JSON Parsing ---
+    if screening_document and SCREENING_FIELD in screening_document:
+        require_document_available(get_document_metadata(document_id, user_id, group_id, public_workspace_id))
     try:
         add_file_task_to_file_processing_log(
             document_id=document_id,
@@ -5067,6 +5231,13 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         )
 
     except Exception as e:
+        if screening_document and SCREENING_FIELD in screening_document:
+            log_event(
+                "[CONTENT_SCREENING] Approved-source metadata generation failed.",
+                extra={"document_id": document_id, "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code="screening_metadata_failed") from e
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
@@ -5075,6 +5246,9 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         print(f"Error processing GPT request for document {document_id}: {e}")
         return meta_data  # Return what we have so far
 
+    if screening_document and SCREENING_FIELD in screening_document:
+        require_document_available(get_document_metadata(document_id, user_id, group_id, public_workspace_id))
+
     if not response:
         return meta_data  # or None, depending on your logic
 
@@ -5082,7 +5256,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"GPT response for document {document_id}: {response_content}"
+        content=f"Received metadata response for document {document_id}, characters={len(response_content or '')}"
     )
 
     # --- Step 7: Clean and parse the GPT JSON output ---
@@ -5098,7 +5272,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Cleaned JSON from GPT response for document {document_id}: {cleaned_str}"
+            content=f"Prepared metadata JSON for document {document_id}, characters={len(cleaned_str)}"
         )
 
         gpt_output = json.loads(cleaned_str)
@@ -5536,6 +5710,11 @@ Format your response as JSON with these keys:
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None, mark_enhanced_citations=True):
     """Uploads the file to Azure Blob Storage."""
 
+    capture = current_extraction(document_id)
+    if capture is not None:
+        update_callback(enhanced_citations=True, status="Source retained privately for content screening")
+        return None
+
     try:
         cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
         current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
@@ -5656,6 +5835,9 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
         with open(temp_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(content)
         words = content.split()
         num_words = len(words)
         num_chunks_estimated = math.ceil(num_words / target_words_per_chunk)
@@ -6418,6 +6600,9 @@ def process_msg(document_id, user_id, temp_file_path, original_filename, enable_
         except Exception as e:
             raise Exception(f"Error extracting text from {original_filename}: {e}")
 
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(text_content, kind="email")
         words = text_content.split()
         if not words:
             raise Exception(f"No text content found in {original_filename}")
@@ -6516,6 +6701,9 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
 
         # Now process the soup object as before
         text_content = soup.get_text(separator=" ", strip=True)
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(text_content, kind="html_text")
 
         # Remainder of the chunking logic stays the same...
         text_splitter = RecursiveCharacterTextSplitter(
@@ -6645,6 +6833,10 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     try:
         with open(temp_file_path, 'r', encoding='utf-8') as f:
             md_content = f.read()
+
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(md_content, kind="markdown")
 
         headers_to_split_on = [
             ("#", "Header 1"),
@@ -7685,6 +7877,10 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             except Exception as e:
                 raise Exception(f"Error extracting content from {chunk_effective_filename} with {engine_label}: {str(e)}")
 
+        capture = current_extraction(document_id)
+        if capture is not None and not is_legacy_doc:
+            capture.add_pages(di_extracted_pages, kind="slide" if is_ppt else "page")
+
         # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
         if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
             enable_multimodal_vision = settings.get('enable_multimodal_vision', False)
@@ -7718,6 +7914,8 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                         update_callback(status="Vision analysis completed (no results)")
 
                 except Exception as e:
+                    if capture is not None:
+                        raise ScreeningError(code="screening_vision_extraction_failed") from e
                     print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
                     traceback.print_exc()
                     # Don't fail the whole process, just update status
@@ -7787,6 +7985,9 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             )
 
             if image_blocks:
+                if capture is not None:
+                    for image_block in image_blocks:
+                        capture.add_supplement(image_block.get("content", ""), kind="figure")
                 final_chunks_to_save, merged_image_count, overflow_image_blocks = (
                     _merge_embedded_images_into_chunks(
                         final_chunks_to_save,
@@ -7980,6 +8181,19 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
 
 def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
     """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
+    document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    if get_settings().get("enable_content_screening") is True or (document and SCREENING_FIELD in document):
+        return reprocess_document(
+            subject_from_document(document), user_id,
+            normalize_document_intelligence_manual_extraction_mode(target_extraction_mode),
+        )
+    return _process_document_reprocess_extraction_background_impl(
+        document_id, user_id, target_extraction_mode,
+        group_id=group_id, public_workspace_id=public_workspace_id,
+    )
+
+
+def _process_document_reprocess_extraction_background_impl(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
@@ -8317,6 +8531,7 @@ def process_audio_document(
 ) -> int:
     """Transcribe an audio file via Azure Speech, splitting >10 min into WAV chunks."""
 
+    capture = current_extraction(document_id)
     settings = get_settings()
     if settings.get("enable_enhanced_citations", False):
         update_callback(status="Uploading audio for enhanced citations…")
@@ -8400,13 +8615,27 @@ def process_audio_document(
                 done = True
 
             def recognized_cb(evt):
+                nonlocal error_occurred
                 try:
                     if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
                         all_results.append(evt.result.text)
-                        print(f"[DEBUG] Recognized: {evt.result.text}")
+                        log_event(
+                            "[CONTENT_SCREENING] Speech segment extracted.",
+                            extra={"document_id": document_id, "characters": len(evt.result.text)},
+                            debug_only=True,
+                        )
                     elif evt.result.reason == speechsdk.ResultReason.NoMatch:
                         print(f"[DEBUG] No speech recognized in segment")
                 except Exception as e:
+                    if capture is not None:
+                        error_occurred = True
+                        capture.failure_code = "screening_transcript_incomplete"
+                        log_event(
+                            "[CONTENT_SCREENING] Speech extraction callback failed.",
+                            extra={"document_id": document_id, "error_type": type(e).__name__},
+                            level=logging.ERROR,
+                        )
+                        return
                     print(f"[ERROR] Error in recognized callback: {e}")
                     # Don't fail on individual recognition errors
 
@@ -8536,6 +8765,8 @@ def process_audio_document(
 
     # 6) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
+    if capture is not None:
+        capture.add_text(full_text, kind="transcript")
     words = full_text.split()
     chunk_settings = get_chunk_size_config(settings)
     chunk_size = chunk_settings.get('transcript', {}).get('value', 400)
@@ -8845,6 +9076,8 @@ def queue_personal_workspace_upload_from_temp_file(
             'original_filename': workspace_file_name,
             'extraction_mode_override': extraction_mode_override,
         }
+        if get_settings().get("enable_content_screening") is True:
+            prepare_document_upload(**task_kwargs)
         if hasattr(executor, 'submit_stored'):
             executor.submit_stored(
                 workspace_document_id,
@@ -8884,7 +9117,11 @@ def queue_personal_workspace_upload_from_temp_file(
             'percentage_complete': 0,
         }
     except Exception:
-        if document_created and not temp_file_queued:
+        cleanup_document = (
+            get_document_metadata(workspace_document_id, user_id)
+            if document_created and not temp_file_queued else None
+        )
+        if cleanup_document and SCREENING_FIELD not in cleanup_document:
             try:
                 cosmos_user_documents_container.delete_item(
                     item=workspace_document_id,
@@ -9001,6 +9238,8 @@ def queue_group_workspace_upload_from_temp_file(
             'original_filename': workspace_file_name,
             'extraction_mode_override': extraction_mode_override,
         }
+        if get_settings().get("enable_content_screening") is True:
+            prepare_document_upload(**task_kwargs)
         if hasattr(executor, 'submit_stored'):
             executor.submit_stored(
                 workspace_document_id,
@@ -9041,7 +9280,11 @@ def queue_group_workspace_upload_from_temp_file(
             'percentage_complete': 0,
         }
     except Exception:
-        if document_created and not temp_file_queued:
+        cleanup_document = (
+            get_document_metadata(workspace_document_id, user_id, group_id=group_id)
+            if document_created and not temp_file_queued else None
+        )
+        if cleanup_document and SCREENING_FIELD not in cleanup_document:
             try:
                 cosmos_group_documents_container.delete_item(
                     item=workspace_document_id,
@@ -9133,6 +9376,41 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
     return "Processing complete"
 
 def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
+    """Keep screened intake private until its complete, revision-bound decision."""
+    document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    if get_settings().get("enable_content_screening") is True or (document and SCREENING_FIELD in document):
+        return process_screened_upload(
+            document_id, user_id, temp_file_path, original_filename,
+            _process_document_upload_background_impl,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+            extraction_mode_override=extraction_mode_override,
+        )
+    return _process_document_upload_background_impl(
+        document_id, user_id, temp_file_path, original_filename,
+        group_id=group_id, public_workspace_id=public_workspace_id,
+        extraction_mode_override=extraction_mode_override,
+    )
+
+
+def _publish_screened_document(document, units, scan, actor_id, *, storage):
+    from content_screening.publication import publish_document
+
+    return publish_document(document, units, scan, actor_id, storage=storage)
+
+
+def _get_screening_source_bytes(document):
+    from content_screening.publication import source_bytes
+
+    return source_bytes(document)
+
+
+def _get_screening_existing_chunks(document):
+    from content_screening.publication import existing_chunks
+
+    return existing_chunks(document)
+
+
+def _process_document_upload_background_impl(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
     """
     Main background task dispatcher for document processing.
     Handles various file types with specific chunking and processing logic.
@@ -9321,6 +9599,11 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         else:
             raise ValueError(f"Unsupported file type for processing: {file_ext}")
 
+
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.completed = True
+            return {"staged_units": capture.staged_count, "indexed_chunks": 0, "scan_id": capture.scan_id}
 
         # --- 2. Final Metadata Extraction and Status Update ---
         metadata_extraction_result = _run_final_metadata_extraction(
@@ -9549,6 +9832,15 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             # Don't fail the document processing if logging fails
 
     except Exception as e:
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.failure_code = getattr(e, "code", "screening_extraction_failed")
+            log_event(
+                "[CONTENT_SCREENING] Private extraction failed.",
+                extra={"document_id": document_id, "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code=capture.failure_code) from e
         error_msg = f"Processing failed: {str(e)}"
         print(f"Error processing {document_id} ({original_filename}): {error_msg}")
         # Attempt to update status to Error

@@ -596,6 +596,9 @@ function renderDocumentsErrorState(message) {
 }
 
 function createDocumentCard(doc) {
+    if (window.ContentScreening?.isHeld(doc)) {
+        return window.ContentScreening.createHeldDocument(doc, { scopeType: "personal", scopeId: "" }, "card");
+    }
     const docId = doc.id;
     const { pct, docStatus, hasError, isComplete } = getDocumentProcessingState(doc);
     const access = getPersonalDocumentAccess(doc);
@@ -741,6 +744,7 @@ function createDocumentCard(doc) {
             </div>
         </div>`;
 
+    window.ContentScreening?.decorateDocument(cardColumn, doc, { scopeType: "personal", scopeId: "" });
     return cardColumn;
 }
 
@@ -769,7 +773,10 @@ window.renderWorkspaceDocumentCardsInto = function(docs, target) {
 };
 
 function renderWorkspaceDocumentView() {
-    const docs = Array.isArray(window.lastFetchedDocs) ? window.lastFetchedDocs : [];
+    const loadedDocs = Array.isArray(window.lastFetchedDocs) ? window.lastFetchedDocs : [];
+    const docs = window.ContentScreening
+        ? window.ContentScreening.filterDocuments(loadedDocs, { scopeType: "personal", scopeId: "" })
+        : loadedDocs;
     const filtersActive = docsSearchTerm || docsClassificationFilter || docsAuthorFilter || docsKeywordsFilter || docsAbstractFilter || docsTagsFilter;
 
     if (!window.hasFetchedUserDocuments && !window.lastFetchedDocsError) {
@@ -935,6 +942,7 @@ async function downloadWorkspaceFile(endpoint, options = {}, fallbackFileName = 
 }
 
 window.downloadDocumentFile = async function(documentId, event) {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable([documentId])) return;
     if (event) {
         event.preventDefault();
         event.stopPropagation();
@@ -953,6 +961,7 @@ window.downloadDocumentFile = async function(documentId, event) {
 };
 
 window.downloadSelectedDocuments = async function() {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable(selectedDocuments)) return;
     if (selectedDocuments.size === 0) {
         return;
     }
@@ -1730,6 +1739,11 @@ function fetchUserDocuments() {
             }
 
             window.lastFetchedDocs = docs;
+            window.ContentScreening?.registerWorkspace({
+                scopeType: "personal", scopeId: "", documents: docs,
+                getSelectedIds: () => Array.from(selectedDocuments),
+                refresh: fetchUserDocuments, render: renderWorkspaceDocumentView
+            });
             window.lastFetchedDocsError = null;
             window.hasFetchedUserDocuments = true;
             personalWorkspaceFileDownloadsEnabled = Boolean(data.file_downloads_enabled);
@@ -1757,6 +1771,10 @@ function fetchUserDocuments() {
 
 function renderDocumentRow(doc) {
     if (!documentsTableBody) return;
+    if (window.ContentScreening?.isHeld(doc)) {
+        documentsTableBody.appendChild(window.ContentScreening.createHeldDocument(doc, { scopeType: "personal", scopeId: "" }));
+        return;
+    }
     const docId = doc.id;
     // Ensure percentage_complete is treated as a number, default to 0 if invalid/null
     const pctString = String(doc.percentage_complete);
@@ -1949,6 +1967,7 @@ function renderDocumentRow(doc) {
         </td>
     `;
     docRow.__docData = doc; // Attach the full doc object for modal use
+    window.ContentScreening?.decorateDocument(docRow, doc, { scopeType: "personal", scopeId: "" });
     documentsTableBody.appendChild(docRow);
 
     // Only add details row if complete and no error
@@ -2412,6 +2431,7 @@ window.onEditDocument = function(docId) {
 
 
 window.onExtractMetadata = function (docId, event) {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable([docId])) return;
     // Check window flag - CORRECTED CHECK
     if (!(window.enable_extract_meta_data === true || window.enable_extract_meta_data === "true")) {
         showToast("Metadata extraction is not enabled.", 'info'); return;
@@ -2535,10 +2555,12 @@ window.removeSelfFromDocument = function(documentId, event) {
 }
 
 window.redirectToChat = function(documentId) {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable([documentId])) return;
     window.location.href = `/chats?search_documents=true&doc_scope=personal&document_id=${documentId}`;
 }
 
 window.chatWithSelected = function() {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable(selectedDocuments)) return;
     const docIds = Array.from(window.selectedDocuments);
     if (docIds.length === 0) return;
     const idsParam = encodeURIComponent(docIds.join(','));
@@ -2635,6 +2657,7 @@ function showSelectedDocumentMetadataExtractionResult(data) {
 }
 
 window.extractSelectedMetadata = async function() {
+    if (window.ContentScreening && !window.ContentScreening.checkUsable(selectedDocuments)) return;
     const documentIds = Array.from(selectedDocuments);
     if (documentIds.length === 0) {
         return;

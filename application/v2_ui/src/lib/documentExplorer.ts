@@ -17,6 +17,7 @@ import type {
     DocumentSortField,
     WorkspaceDocument,
 } from './types';
+import { isScreeningAvailable } from './contentScreening';
 
 /* -------------------------------------------------------------------------- */
 /* Query state                                                                 */
@@ -396,7 +397,7 @@ export function documentDisplayName(document: WorkspaceDocument): {
     primary: string;
     secondary: string | null;
 } {
-    const title = String(document.title ?? '').trim();
+    const title = isScreeningAvailable(document) ? String(document.title ?? '').trim() : '';
     const fileName = String(document.file_name ?? '').trim();
 
     if (title && fileName && title !== fileName) {

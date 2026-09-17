@@ -1,7 +1,7 @@
 # test_analyze_orchestration_saved_integration.py
 """
 Behavioral tests for saved Analyze references through orchestration.
-Version: 0.261.109
+Version: 0.261.113
 Implemented in: 0.261.109
 
 Adapters, collection, section persistence/readers and checkpoint codecs are
@@ -24,6 +24,7 @@ from test_analyze_native_saved_integration import native_run
 from test_orchestration_conversation_context import load_modules
 from test_support.app_stubs import import_app_module
 
+from content_screening import access as screening_access
 
 class Sections:
     def __init__(self):
@@ -78,6 +79,16 @@ def orchestration(monkeypatch):
     def resolve(ids, **kwargs):
         assert ids == ["source-1"]
         return [{**source, "authorization_status": "authorized" if state["allowed"] else "unresolved"}]
+
+    def read_screening_document(document_id, user_id, **kwargs):
+        if user_id != "owner" or document_id != "source-1" or not state["allowed"]:
+            raise PermissionError("Fixture source access denied.")
+        document = {"id": document_id, "user_id": user_id, "version": 1}
+        if state.get("screening_held"):
+            document["content_screening"] = {"state": "pending_review"}
+        return document
+
+    monkeypatch.setattr(screening_access, "_read_authorized_document", read_screening_document)
 
     def authorize_run(user_id, binding):
         assert user_id == "owner"
@@ -187,6 +198,21 @@ def test_orchestration_source_revocation_blocks_whole_saved_answer(orchestration
     assert answer["status"] == "failed"
     assert "unavailable" in answer["summary"].lower()
     assert fixture.state["model_calls"] == []
+    assert "Complete finding" not in json.dumps(answer)
+
+
+@pytest.mark.parametrize("format_only", [False, True])
+def test_orchestration_new_screening_hold_blocks_saved_explanation_and_formatting(orchestration, format_only):
+    fixture = orchestration
+    fixture.context.merge_step_result(analyze(fixture), step_id="analyze-1")
+    fixture.state["screening_held"] = True
+    if format_only:
+        fixture.context.user_message = "Return the saved findings as JSON."
+    answer = respond(fixture)
+    assert answer["status"] == "failed"
+    assert answer["failure"]["code"] == "context_unavailable"
+    assert fixture.state["model_calls"] == []
+    assert not answer.get("artifacts")
     assert "Complete finding" not in json.dumps(answer)
 
 
