@@ -503,7 +503,10 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
             reference, actor_user_id=actor_user_id,
         )
     task_prompt = _normalize_text(
-        workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
+        workflow_data.get('task_prompt') or (
+            workflow_name if definition_fields['definition_version'] == 3
+            else tasks[0].get('instructions') if tasks else ''
+        ),
         'Task prompt',
         required=True,
     )

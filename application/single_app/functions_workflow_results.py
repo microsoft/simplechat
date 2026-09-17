@@ -14,6 +14,8 @@ from functions_workflow_result_store import (
     DEFAULT_MAX_RESULT_SIZE_MB,
     _quota_bytes,
     load_workflow_task_result,
+    load_workflow_node_result,
+    save_workflow_node_result,
     save_workflow_task_result,
 )
 
@@ -159,6 +161,18 @@ def _provenance_references(values):
 
 def build_workflow_task_result(result, *, workflow, run_id, task, attempt_count=1):
     """Capture complete produced data without changing the existing chat reply."""
+    if workflow.get("definition_version") == 3:
+        from functions_workflow_execution import current_workflow_execution
+        from functions_workflow_identity import workflow_node_identity
+
+        execution = current_workflow_execution()
+        if execution is None or execution.node.get("task_id") != task.get("id"):
+            raise ValueError("A v3 task result requires its admitted execution.")
+        selectors = execution.selectors(attempt=attempt_count)
+        return _build_task_result(result, workflow_node_identity(
+            workflow, run_id, selectors["node_id"], selectors["execution_id"], attempt_count,
+            task_id=task["id"], iteration_path=[],
+        ), "workflow-result-v2")
     return _build_task_result(
         result,
         {
@@ -336,9 +350,22 @@ def _build_task_result(result, identity, contract_version):
 
 def authorize_workflow_task_result_read(
     workflow, run_id, task_id, reference, *, reader_user_id=None, manifest=None,
-    load_result=load_workflow_task_result, source_resolver=None,
+    load_result=load_workflow_task_result, source_resolver=None, **selectors,
 ):
     """Recheck contributors of this result and every actually consumed ancestor."""
+    if selectors:
+        from functions_workflow_identity import workflow_node_identity
+        from functions_workflow_node_results import authorize_workflow_node_result_read
+
+        identity = workflow_node_identity(
+            workflow, run_id, selectors.get("node_id"), selectors.get("execution_id"), selectors.get("attempt"),
+            task_id=task_id, iteration_path=selectors.get("iteration_path"),
+        )
+        return authorize_workflow_node_result_read(
+            workflow, run_id, identity, reference, reader_user_id=reader_user_id, manifest=manifest,
+            load_result=load_workflow_node_result if load_result is load_workflow_task_result else load_result,
+            source_resolver=source_resolver,
+        )
     root = manifest if manifest is not None else load_result(workflow, run_id, task_id, reference)
     sources = []
     active = set()
@@ -426,10 +453,24 @@ def authorize_workflow_task_result_read(
 def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result_items=None,
                                 load_result=load_workflow_task_result, source_resolver=None):
     """Guard history/activity with every stored task result, without a UI item cap."""
+    structured_run = False
     if result_items is None:
         # These are already scope-authorized workflow/run reads. Query only task
         # metadata directly so a failed store read cannot become an empty list.
         from config import cosmos_group_workflow_run_items_container, cosmos_personal_workflow_run_items_container
+        if workflow.get("definition_version") == 3:
+            from functions_workflow_runtime_store import WorkflowRuntimeConflict, workflow_runtime_store
+
+            store = workflow_runtime_store(workflow, run_id)
+            try:
+                control = store.read()
+            except WorkflowRuntimeConflict as exc:
+                if exc.code != "not_found":
+                    raise
+                control = None
+            if control and control.get("schema_version") == 2:
+                workflow = store.run_definition()
+                structured_run = True
 
         container = (
             cosmos_group_workflow_run_items_container if workflow.get("group_id")
@@ -448,10 +489,11 @@ def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result
         )
     cache = {}
 
-    def cached_load(bound_workflow, bound_run_id, task_id, reference):
-        key = (bound_run_id, task_id, json.dumps(reference, sort_keys=True))
+    def cached_load(bound_workflow, bound_run_id, task_id, reference, **selectors):
+        key = (bound_run_id, task_id, json.dumps(reference, sort_keys=True), json.dumps(selectors, sort_keys=True))
         if key not in cache:
-            cache[key] = load_result(bound_workflow, bound_run_id, task_id, reference)
+            loader = load_workflow_node_result if selectors and load_result is load_workflow_task_result else load_result
+            cache[key] = loader(bound_workflow, bound_run_id, task_id, reference, **selectors)
         return cache[key]
 
     for item in result_items:
@@ -465,11 +507,22 @@ def authorize_workflow_run_read(workflow, run_id, *, reader_user_id=None, result
         authorize_workflow_task_result_read(
             workflow, run_id, item.get("task_id"), reference,
             reader_user_id=reader_user_id, source_resolver=source_resolver, load_result=cached_load,
+            **({key: item['workflow_result']['producer'][key] for key in ('node_id', 'execution_id', 'iteration_path', 'attempt')}
+               if (item.get('workflow_result') or {}).get('contract_version') == 'workflow-result-v2' else {}),
         )
+    if structured_run:
+        from functions_workflow_execution_history import workflow_execution_history
+
+        cursor = None
+        while True:
+            page = workflow_execution_history(workflow, run_id, reader_user_id=reader_user_id, cursor=cursor, limit=100)
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
 
 
 def _require_completed_result(envelope, *, allow_partial=False):
-    if envelope.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION:
+    if envelope.get("contract_version") not in {WORKFLOW_RESULT_CONTRACT_VERSION, "workflow-result-v2"}:
         raise ValueError("This workflow task result version is not supported.")
     state = (envelope.get("execution") or {}).get("status")
     validation = (envelope.get("validation") or {}).get("status")
@@ -522,14 +575,19 @@ def persist_workflow_task_result(envelope, *, workflow, run_id, task_id, setting
                                  save_result=None):
     """Commit independently readable sections, then their small result manifest."""
     if save_result is None:
-        save_result = save_workflow_task_result
+        save_result = save_workflow_node_result if envelope.get("contract_version") == "workflow-result-v2" else save_workflow_task_result
         if settings is None:
             # Production callers need the actual quota, including paged result sections.
             from functions_settings import get_settings
             settings = get_settings()
+    selectors = {}
+    if envelope.get("contract_version") == "workflow-result-v2":
+        from functions_workflow_node_results import result_selectors
+
+        selectors = result_selectors(envelope["identity"])
     return persist_result_sections(
         envelope,
-        lambda section: save_result(workflow, run_id, task_id, section, settings=settings),
+        lambda section: save_result(workflow, run_id, task_id, section, settings=settings, **selectors),
         max_result_bytes=_quota_bytes(settings or {}),
     )
 
@@ -593,8 +651,15 @@ def persist_result_sections(
     sections["presentation"] = {"kind": "presentation", "value": envelope["presentation"]}
     sections["diagnostics"] = {"kind": "diagnostics", "value": envelope["diagnostics"]}
     manifest["outputs"] = {}
+    if envelope.get("contract_version") == "workflow-result-v2" and len(envelope.get("consumed_inputs") or []) > 100:
+        index = _save_record_pages(envelope, "lineage", envelope["consumed_inputs"], save_section, max_result_bytes)
+        if index:
+            manifest.pop("consumed_inputs", None)
+            manifest["consumed_inputs_index"] = index
     for name, output in sections.items():
-        if output["kind"] in {"records", "evidence"} and envelope.get("analysis_access") and isinstance(output["value"], list):
+        if output["kind"] in {"records", "evidence", "document_results"} and (
+            envelope.get("analysis_access") or envelope.get("contract_version") == "workflow-result-v2"
+        ) and isinstance(output["value"], list):
             paged = _save_record_pages(envelope, name, output["value"], save_section, max_result_bytes, output["kind"])
             if paged is not None:
                 manifest["outputs"][name] = paged
@@ -615,7 +680,7 @@ def persist_result_sections(
 def read_result_records(manifest, name, load_section, *, offset=0, limit=None):
     """Read a complete-record range without loading unrelated record pages."""
     output = (manifest.get("outputs") or {}).get(name)
-    if not isinstance(output, Mapping) or output.get("kind") not in {"records", "evidence"}:
+    if not isinstance(output, Mapping) or output.get("kind") not in {"records", "evidence", "document_results"}:
         raise ValueError("The requested output is not a record collection.")
     if type(offset) is not int or offset < 0 or (limit is not None and (type(limit) is not int or limit < 1)):
         raise ValueError("The record range is invalid.")
@@ -705,7 +770,7 @@ def iter_result_records(manifest, name, load_section):
 def load_workflow_task_input(workflow, run_id, task_id, reference,
                              *, load_result=load_workflow_task_result, reader_user_id=None,
                              source_resolver=None, output_name="authoritative",
-                             allow_partial=False, bounded=False):
+                             allow_partial=False, bounded=False, **selectors):
     """Read one exact final representation and its immutable consumption receipt.
 
     The default selects the producer's authoritative output. Explicit names
@@ -713,6 +778,19 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
     Partial accepted Analyze findings require an explicit reporting opt-in;
     neither that opt-in nor a named output admits pending or invalid results.
     """
+    if selectors:
+        from functions_workflow_identity import workflow_node_identity
+        from functions_workflow_node_results import load_workflow_node_input
+
+        return load_workflow_node_input(
+            workflow, run_id, workflow_node_identity(
+                workflow, run_id, selectors.get("node_id"), selectors.get("execution_id"), selectors.get("attempt"),
+                task_id=task_id, iteration_path=selectors.get("iteration_path"),
+            ), reference, output_name=output_name, allow_partial=allow_partial,
+            reader_user_id=reader_user_id,
+            load_result=load_workflow_node_result if load_result is load_workflow_task_result else load_result,
+            source_resolver=source_resolver,
+        )
     final_kinds = {"text": "text", "records": "records", "json": "json", "documents": "document_results"}
     if not isinstance(output_name, str) or output_name not in {"authoritative", *final_kinds}:
         raise ValueError("The requested workflow output must be an exact final representation.")
@@ -779,7 +857,7 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         )
         output = {
             "contract_version": manifest["contract_version"], "producer": manifest["identity"],
-            "output_name": name, "kind": "records", "value": records,
+            "output_name": name, "kind": output_descriptor["kind"], "value": records,
         }
     else:
         output = load_result(workflow, run_id, task_id, output_ref)
@@ -819,6 +897,10 @@ def workflow_result_summary(envelope, reference):
         "consumed_inputs": _json_copy(envelope.get("consumed_inputs") or []),
         "workflow_validation": _json_copy(envelope.get("workflow_validation") or {}),
     }
+    if envelope.get("contract_version") == "workflow-result-v2":
+        summary["producer"] = _json_copy(envelope["identity"])
+        if envelope.get("consumed_inputs_index"):
+            summary["consumed_input_count"] = envelope["consumed_inputs_index"]["record_count"]
     if envelope.get("analysis_access") or any(
         item.get("analysis_result") for item in envelope.get("consumed_inputs") or []
         if isinstance(item, Mapping)

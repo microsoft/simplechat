@@ -215,9 +215,15 @@ def _normalize_workflow_tasks(
 
     normalized_tasks = []
     seen_task_ids = set()
+    structured = workflow_data.get('definition_version') == 3
     for index, raw_task in enumerate(raw_tasks):
         if not isinstance(raw_task, dict):
             raise ValueError(f'Workflow task {index + 1} is invalid.')
+        if structured and raw_task.keys() - {
+            'id', 'type', 'name', 'instructions', 'order', 'runner', 'document_action', 'inputs',
+            'reference_ids', 'output_contract', 'approval', 'publication',
+        }:
+            raise ValueError('A structured task contains unsupported executable fields.')
 
         task_type = _normalize_text(raw_task.get('type') or 'instructions', 'Task type').lower()
         if task_type != 'instructions':
@@ -235,7 +241,7 @@ def _normalize_workflow_tasks(
         publication = None
         if raw_task.get('publication') is not None:
             publication = normalize_workflow_publication(raw_task['publication'])
-            if index == 0:
+            if index == 0 and not structured:
                 raise ValueError('Add an analysis task before its publication task.')
             publication_action = raw_task.get('document_action')
             if publication_action is not None and (
@@ -253,6 +259,10 @@ def _normalize_workflow_tasks(
             )
 
         raw_runner = raw_task.get('runner') if isinstance(raw_task.get('runner'), dict) else {}
+        if structured and raw_runner.keys() - {
+            'type', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'model_binding_summary',
+        }:
+            raise ValueError('A structured task runner contains unsupported executable fields.')
         runner_type = _normalize_text(raw_runner.get('type') or 'inherit', 'Task runner type').lower()
         if runner_type not in WORKFLOW_TASK_RUNNER_TYPES:
             raise ValueError(f'Workflow task {index + 1} has an unsupported runner type.')
@@ -278,7 +288,7 @@ def _normalize_workflow_tasks(
 
         if callable(task_document_action_normalizer):
             raw_document_action = raw_task.get('document_action')
-            if not isinstance(raw_document_action, dict) and index == 0:
+            if not isinstance(raw_document_action, dict) and index == 0 and not structured:
                 # Workflows saved before per-task documents kept a single workflow-level
                 # action that only ever executed on the first task.
                 raw_document_action = default_document_action
@@ -815,7 +825,10 @@ def save_personal_workflow(user_id, workflow_data, actor_user_id=None):
     for reference in definition_fields.get('reference_inputs', []):
         authorize_workflow_reference({'user_id': user_id}, reference, actor_user_id=modifying_user_id)
     task_prompt = _normalize_text(
-        workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
+        workflow_data.get('task_prompt') or (
+            workflow_name if definition_fields['definition_version'] == 3
+            else tasks[0].get('instructions') if tasks else ''
+        ),
         'Task prompt',
         required=True,
     )
@@ -1103,7 +1116,7 @@ def is_public_workflow_run_item(item):
     private_types = (
         "workflow_result_chunk", "chat_analysis_result_chunk",
         "orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint",
-        "workflow_runtime_control",
+        "workflow_runtime_control", "workflow_runtime_journal",
     )
     return isinstance(item, dict) and not any(
         item.get(field) in private_types for field in ("type", "item_type")
@@ -1113,10 +1126,10 @@ def is_public_workflow_run_item(item):
 WORKFLOW_PUBLIC_RUN_ITEMS_FILTER = (
     'AND (NOT IS_DEFINED(c.type) OR c.type NOT IN '
     '("workflow_result_chunk", "chat_analysis_result_chunk", '
-    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control", "workflow_runtime_journal")) '
     'AND (NOT IS_DEFINED(c.item_type) OR c.item_type NOT IN '
     '("workflow_result_chunk", "chat_analysis_result_chunk", '
-    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control")) '
+    '"orchestration_analysis_result_chunk", "analysis_work_unit_checkpoint", "workflow_runtime_control", "workflow_runtime_journal")) '
 )
 
 

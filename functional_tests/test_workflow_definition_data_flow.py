@@ -1,7 +1,7 @@
 # test_workflow_definition_data_flow.py
 """
 Functional tests for versioned workflow authoring and stable data-flow bindings.
-Version: 0.261.108
+Version: 0.261.116
 Implemented in: 0.261.108
 
 These tests cover stale saves, V1 protection, task ordering, scoped reference
@@ -174,7 +174,7 @@ def test_native_update_does_not_change_an_active_run_definition():
         normalize(payload, existing)
 
 
-@pytest.mark.parametrize("version", [True, 0, 3, "2", None])
+@pytest.mark.parametrize("version", [True, 0, 4, "2", None])
 def test_unsupported_version_never_downgrades(version):
     payload = definition()
     payload["definition_version"] = version

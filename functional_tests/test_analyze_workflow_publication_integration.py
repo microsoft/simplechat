@@ -1,7 +1,7 @@
 # test_analyze_workflow_publication_integration.py
 """
 Analyze -> save -> reload -> explain -> optional publish in one workflow run.
-Version: 0.261.109
+Version: 0.261.116
 Implemented in: 0.261.109
 
 The native adapter, section contract, task sequence, model consumer, artifact
@@ -203,7 +203,7 @@ def test_unknown_publication_acknowledgement_is_explicit_and_not_recreated(seque
 
 def test_native_source_revocation_blocks_saved_report_and_publication(sequence):
     sequence.native.state["allowed"] = False
-    with pytest.raises(RuntimeError, match="input could not be resolved"):
+    with pytest.raises(RuntimeError, match="source access could not be confirmed"):
         execute(sequence)
     assert sequence.model_calls == []
     assert all(not values for values in sequence.publishing.calls.values())

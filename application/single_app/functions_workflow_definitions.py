@@ -19,7 +19,7 @@ WORKFLOW_DEFINITION_FIELDS = (
     "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
     "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
     "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
-    "definition_version", "reference_inputs", "durable_execution",
+    "definition_version", "reference_inputs", "durable_execution", "flow", "limits",
 )
 SCHEMA_KEYWORDS = frozenset({
     "type", "properties", "required", "additionalProperties", "items",
@@ -142,7 +142,7 @@ def normalize_workflow_output_contract(value):
         "kind", "schema", "expected_count", "identity_field", "require_complete_coverage", "allow_partial",
     }, "Output contract")
     kind = contract.get("kind", "any")
-    if kind not in WORKFLOW_OUTPUT_KINDS:
+    if not isinstance(kind, str) or kind not in WORKFLOW_OUTPUT_KINDS:
         raise WorkflowDefinitionError("Choose a supported output kind.")
     normalized = {
         "kind": kind,
@@ -235,13 +235,26 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     existing = existing or {}
     version = payload.get("definition_version", 1)
     stored_version = existing.get("definition_version", 1)
-    if type(version) is not int or version not in {1, WORKFLOW_DEFINITION_VERSION}:
+    if type(version) is not int or version not in {1, 2, 3}:
         raise WorkflowDefinitionConflict("This workflow definition version is not supported by this editor.")
-    if type(stored_version) is not int or stored_version not in {1, WORKFLOW_DEFINITION_VERSION}:
+    if type(stored_version) is not int or stored_version not in {1, 2, 3}:
         raise WorkflowDefinitionConflict("This saved workflow requires a newer editor. Its definition was not changed.")
-    if stored_version == WORKFLOW_DEFINITION_VERSION and version != WORKFLOW_DEFINITION_VERSION:
+    if version == 3:
+        managed_fields = {
+            "id", "definition_revision", "conversation_id", "user_id", "group_id",
+            "url_access_authorized", "url_access_authorized_by", "url_access_authorized_at",
+            "model_binding_summary", "created_at", "created_by", "modified_at", "modified_by",
+            "updated_at", "status", "last_run_started_at", "last_run_at", "last_run_status",
+            "last_run_error", "last_run_response_preview", "last_run_trigger_source", "run_count",
+            "active_run_id", "active_runtime_version", "last_run_id", "next_run_at",
+            "cancellation_requested_at", "cancellation_requested_by", "result_access",
+        }
+        extras = payload.keys() - set(WORKFLOW_DEFINITION_FIELDS) - managed_fields
+        if any(key not in existing or payload[key] != existing[key] for key in extras):
+            raise WorkflowDefinitionError("The structured workflow contains unsupported fields.")
+    if stored_version >= 2 and version < stored_version:
         raise WorkflowDefinitionConflict("This workflow uses advanced data flow. Open it in V2 to edit without losing its configuration.")
-    if version == WORKFLOW_DEFINITION_VERSION and existing:
+    if version >= 2 and existing:
         if payload.get("definition_revision") != workflow_definition_revision(existing):
             raise WorkflowDefinitionConflict("This workflow changed since it was opened. Reload it before saving.")
         if existing.get("active_run_id"):
@@ -249,7 +262,7 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
     raw_tasks = payload.get("tasks", existing.get("tasks", []))
     if len(raw_tasks) != len(tasks):
         raise WorkflowDefinitionError("Task data does not match the normalized task list.")
-    has_flow = "reference_inputs" in payload or payload.get("durable_execution") is True or any(
+    has_flow = "reference_inputs" in payload or "flow" in payload or payload.get("durable_execution") is True or any(
         WORKFLOW_FLOW_TASK_FIELDS.intersection(task) for task in raw_tasks
     )
     if version == 1:
@@ -268,7 +281,10 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
         prepared = dict(task)
         if "output_contract" in raw and raw["output_contract"] is not None:
             prepared["output_contract"] = normalize_workflow_output_contract(raw["output_contract"])
-        if "inputs" in raw and raw["inputs"] is not None:
+        if version == 3:
+            # The structured compiler owns node bindings; legacy predecessor rules do not apply.
+            prepared["inputs"] = raw.get("inputs", [])
+        elif "inputs" in raw and raw["inputs"] is not None:
             prepared["inputs"] = _normalize_bindings(raw["inputs"], earlier)
         if "reference_ids" in raw and raw["reference_ids"] is not None:
             selected_ids = _unique_identifiers(raw["reference_ids"], "Task reference ids")
@@ -286,9 +302,18 @@ def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id
             prepared["approval"] = {"required": required, "message": message.strip()}
         normalized_tasks.append(prepared)
         earlier[prepared["id"]] = prepared
-    return {
-        "definition_version": WORKFLOW_DEFINITION_VERSION,
+    result = {
+        "definition_version": version,
         "reference_inputs": references,
         "durable_execution": durable,
         "tasks": normalized_tasks,
     }
+    if version == 3:
+        # The compiler shares definition helpers, so import at the normalization boundary.
+        from functions_workflow_flow import compile_workflow_flow
+
+        compiled = compile_workflow_flow({**payload, **result})
+        result.update({key: compiled[key] for key in ("flow", "tasks", "limits")})
+    elif any(key in payload for key in ("flow", "limits", "max_executions", "deadline_seconds")):
+        raise WorkflowDefinitionError("Structured flow and run limits require definition version 3.")
+    return result

@@ -72,6 +72,24 @@ Classic workflows remain synchronous unless opted in. Classic can run and cancel
 durable definitions, but V2 provides their approval, checkpoint-resume, and
 memory controls. See [Durable workflow execution](../explanation/features/WORKFLOW_DURABLE_EXECUTION.md).
 
+## Inspect a structured path
+
+For definition-version-3 workflows introduced in **0.261.116**, inspect the
+selected If/else path and each task's skip reason before interpreting a missing
+output as a failure. A false **Run when**, an unselected branch, and a validated
+forward route are intentional skips; they do not create empty successful
+results.
+
+Execution and attempt identities distinguish the exact result and approval
+being inspected. Use the paged execution/decision views rather than treating
+the task name or the latest reply as the producer identity. Result excerpts
+load separately and remain subject to current source permissions.
+
+Required final outputs and selected-path work determine completion. A budget
+or deadline limit cannot be cleared by a normal Resume, and changing source
+data cannot silently choose a different branch. See
+[Structured workflow control flow](../explanation/features/WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

@@ -4,6 +4,11 @@ Implemented in version: **0.261.108**
 
 The application version is tracked in `application/single_app/config.py`.
 
+Version-3 structured control flow was added in **0.261.116**. This page describes
+the retained ordered version-2 contract; v3 uses explicit node bindings and
+selected-path joins instead of an implicit previous-successful-task input.
+See [Structured workflow control flow](WORKFLOW_STRUCTURED_CONTROL_FLOW.md).
+
 ## Overview
 
 An ordered workflow can select the final output of a specific earlier task instead

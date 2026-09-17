@@ -4028,8 +4028,19 @@ function resetWorkflowForm() {
     showWorkflowStep(0);
 }
 
+function workflowNeedsNativeEditor(workflow) {
+    return Boolean(workflow && (
+        (workflow.definition_version !== undefined && workflow.definition_version !== 1)
+        || workflow.flow !== undefined
+    ));
+}
+
 async function openWorkflowModal(workflow = null) {
     if (!workflowModal) {
+        return;
+    }
+    if (workflowNeedsNativeEditor(workflow)) {
+        showToast("This workflow uses advanced data flow. Open V2 to edit it without losing its configuration. Run and Cancel remain available here.", "warning");
         return;
     }
     if (workflowWorkspaceConfig.scope === "group" && !getWorkflowActiveGroupId()) {
