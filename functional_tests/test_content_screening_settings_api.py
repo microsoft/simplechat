@@ -3,6 +3,8 @@
 Functional tests for content screening settings and authenticated API contracts.
 Version: 0.261.122
 Implemented in: 0.261.106
+Embedding settings concurrency and sanitization merge coverage: 0.261.113
+Enabled-empty policies implemented in: 0.261.114
 
 Uses the existing unittest/Flask runners with isolated application service mocks.
 No Azure configuration, credentials, model requests or storage accounts are used.
@@ -17,7 +19,7 @@ import logging
 import sys
 import types
 import unittest
-from contextlib import ExitStack, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from functools import wraps
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -93,6 +95,7 @@ def settings_functions(**overrides):
         "ScreeningError": ScreeningError,
         "ScreeningValidationError": ScreeningValidationError,
         "copy": copy, "logging": logging, "log_event": Mock(),
+        "contextmanager": contextmanager,
         "COSMOS_METADATA_FIELDS": COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": SETTINGS_REVISION_FIELD,
         "AIConnectionError": AIConnectionError,
@@ -134,10 +137,12 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.addCleanup(self.stack.close)
         self.original_validation = service.validate_screening_configuration
         self.validate = self.stack.enter_context(patch.object(service, "validate_screening_configuration"))
+        self.initialize = self.stack.enter_context(patch.object(service, "initialize_screening_policy"))
+        self.embedding_guard = Mock(side_effect=lambda *args, **kwargs: nullcontext())
         self.stack.enter_context(patch.dict(sys.modules, {
             "functions_embedding_compatibility": module(
                 "functions_embedding_compatibility",
-                embedding_settings_write_guard=lambda *_args, **_kwargs: nullcontext(),
+                embedding_settings_write_guard=self.embedding_guard,
             ),
         }))
 
@@ -176,6 +181,7 @@ class ScreeningSettingsTests(unittest.TestCase):
     def test_enable_validates_policy_and_working_storage_before_any_write(self):
         self.assertFalse(self.functions["update_settings"]({"enable_content_screening": True}))
         self.validate.assert_not_called()
+        self.initialize.assert_not_called()
         self.container.replace_item.assert_not_called()
         self.current["enable_enhanced_citations"] = True
         self.validate.side_effect = ScreeningConfigurationError()
@@ -183,6 +189,7 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.assertIs(self.validate.call_args.kwargs["check_storage"], True)
         self.container.replace_item.assert_not_called()
         self.assertIs(self.current["enable_content_screening"], False)
+        self.initialize.assert_not_called()
 
     def test_generic_settings_activation_cannot_bypass_current_model_binding_validation(self):
         self.current["enable_enhanced_citations"] = True
@@ -224,7 +231,6 @@ class ScreeningSettingsTests(unittest.TestCase):
 
     def test_dependency_validation_uses_fresh_settings_after_a_conditional_write_race(self):
         self.current["enable_enhanced_citations"] = True
-
         def activate_screening():
             AppSettingsStore(self.cosmos).write(
                 lambda current: {**current, "enable_content_screening": True},
@@ -234,6 +240,25 @@ class ScreeningSettingsTests(unittest.TestCase):
         self.assertFalse(self.functions["update_settings"]({"enable_enhanced_citations": False}))
         self.assertIs(self.cosmos.document["enable_content_screening"], True)
         self.assertIs(self.cosmos.document["enable_enhanced_citations"], True)
+        self.assertEqual(self.cosmos.writes, 1)
+
+    def test_activation_revalidates_dependencies_after_a_conditional_write_race(self):
+        self.current["enable_enhanced_citations"] = True
+
+        def disable_citations():
+            AppSettingsStore(self.cosmos).write(
+                lambda current: {**current, "enable_enhanced_citations": False},
+            )
+
+        self.cosmos.before_replace = disable_citations
+        self.assertFalse(self.functions["update_settings"]({"enable_content_screening": True}))
+        self.assertEqual(self.container.read_item.call_count, 2)
+        self.assertEqual(self.validate.call_count, 2)
+        self.embedding_guard.assert_called_once()
+        self.container.replace_item.assert_called_once()
+        self.container.upsert_item.assert_not_called()
+        self.assertIs(self.cosmos.document["enable_content_screening"], False)
+        self.assertIs(self.cosmos.document["enable_enhanced_citations"], False)
         self.assertEqual(self.cosmos.writes, 1)
 
     def test_disable_is_not_a_document_release_or_policy_reset(self):

@@ -131,7 +131,7 @@ export function ScreeningPolicyFields({
             <Toggle label={baseline ? 'Baseline policy enabled' : 'Workspace additions enabled'}
                 checked={policy.enabled} disabled={disabled}
                 description={baseline
-                    ? 'Applies required checks to enrolled workspace content. Enrollment is controlled by the separate administrative capability.'
+                    ? 'Applies the checks configured below. An enabled empty policy does not screen new uploads; workspace additions can still supply checks.'
                     : 'Adds checks to the mandatory baseline; disabling additions never disables baseline checks or releases a hold.'}
                 onChange={(enabled) => onChange({ ...policy, enabled })} />
 

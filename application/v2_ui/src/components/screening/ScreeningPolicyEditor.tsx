@@ -15,6 +15,7 @@ import {
 import {
     approvedScreeningChoices,
     editableScreeningPolicy,
+    isScreeningPolicyInitialization,
     screeningCatalogChoices,
     screeningPolicyTemplates,
     screeningPolicySummary,
@@ -31,9 +32,13 @@ import { ScreeningPolicyFields } from './ScreeningPolicyFields';
 function PolicyEditor({
     scope,
     onSaved,
+    configurationVersion = 0,
+    disabled: externallyDisabled = false,
 }: {
     scope: ScreeningScope;
     onSaved?: (response: ScreeningPolicyResponse) => void;
+    configurationVersion?: number;
+    disabled?: boolean;
 }) {
     const catalog = useBootstrapStore((state) => state.data?.catalogs.models);
     const [response, setResponse] = useState<ScreeningPolicyResponse | null>(null);
@@ -49,6 +54,8 @@ function PolicyEditor({
     const [refresh, setRefresh] = useState(0);
     const active = useRef(true);
     const inFlight = useRef(false);
+    const dirty = useRef(false);
+    const previousConfigurationVersion = useRef(configurationVersion);
     const global = scope.scope_type === 'global';
     const configuredModels = useMemo(() => screeningCatalogChoices(catalog ?? []), [catalog]);
     const models = useMemo(
@@ -67,6 +74,8 @@ function PolicyEditor({
 
     useEffect(() => {
         const controller = new AbortController();
+        const preserveDraft = previousConfigurationVersion.current !== configurationVersion;
+        previousConfigurationVersion.current = configurationVersion;
         setLoading(true);
         setError(null);
         setSaved(false);
@@ -74,11 +83,31 @@ function PolicyEditor({
         setSampleResult(null);
         void fetchScreeningPolicy(scope, controller.signal).then((next) => {
             if (controller.signal.aborted) return;
+            if (preserveDraft && dirty.current && policy && response) {
+                const initialized = response.etag === null && isScreeningPolicyInitialization(response.policy, next.policy);
+                if (next.etag !== response.etag && !initialized) {
+                    setError('The saved policy changed while screening settings were saved. Your policy draft has been retained.');
+                    setStale(true);
+                    return;
+                }
+                setResponse(next);
+                if (initialized && policy.enabled === response.policy.enabled) {
+                    setPolicy({ ...policy, enabled: next.policy.enabled });
+                }
+                setStale(false);
+                return;
+            }
             setResponse(next);
             setPolicy(editableScreeningPolicy(next.policy, global));
+            dirty.current = false;
             setStale(false);
         }).catch((failure) => {
             if (controller.signal.aborted) return;
+            if (preserveDraft && !(failure instanceof ApiError && failure.isAuthError)) {
+                setError('Screening settings were saved, but the policy could not be refreshed. Your policy draft has been retained.');
+                setStale(true);
+                return;
+            }
             setResponse(null);
             setPolicy(null);
             setError(screeningErrorMessage(failure));
@@ -86,12 +115,15 @@ function PolicyEditor({
             if (!controller.signal.aborted) setLoading(false);
         });
         return () => controller.abort();
-    }, [scope.scope_type, scope.scope_id, global, refresh]);
+    }, [scope.scope_type, scope.scope_id, global, refresh, configurationVersion]);
 
     async function submit(kind: 'save' | 'test') {
-        if (!policy || !response || inFlight.current || loading || stale) return;
+        if (!policy || !response || inFlight.current || loading || stale || externallyDisabled) return;
         const errors = validateScreeningPolicy(policy, models);
         if (kind === 'test' && !sample.trim()) errors.push('Enter sample content to inspect.');
+        if (kind === 'test' && !policy.rules.some((rule) => rule.enabled) && !policy.ai.enabled) {
+            errors.push('Add an enabled rule or AI check before testing. An empty policy can still be saved.');
+        }
         setValidation(errors);
         if (errors.length) return;
         inFlight.current = true;
@@ -106,6 +138,7 @@ function PolicyEditor({
                 if (!active.current) return;
                 setResponse(next);
                 setPolicy(editableScreeningPolicy(next.policy, global));
+                dirty.current = false;
                 setSaved(true);
                 onSaved?.(next);
             } else {
@@ -128,7 +161,7 @@ function PolicyEditor({
         }
     }
 
-    const disabled = busy || stale || loading;
+    const disabled = externallyDisabled || busy || stale || loading;
     const summary = policy && response ? screeningPolicySummary(policy, global, response.inherited_summary) : null;
     return (
         <section className="min-w-0 space-y-4 py-4" aria-label={global ? 'Global screening policy' : 'Workspace screening policy'}>
@@ -137,18 +170,18 @@ function PolicyEditor({
                     <h3 className="text-base font-semibold text-text-1">{global ? 'Required screening policy' : 'Workspace policy additions'}</h3>
                     <p className="max-w-3xl text-xs leading-relaxed text-text-3">
                         {global
-                            ? 'Define the mandatory checks here, save the policy, then enable new scans using the separate Admin Settings switch.'
+                            ? 'Enabling Content Screening creates an enabled empty baseline if none exists. You can save it empty and add checks later.'
                             : 'These checks add to the required administrator baseline. They cannot remove or weaken its rules.'}
                         {' '}Policy saves are independent of the Admin Settings Save button and do not release held documents.
                     </p>
                 </div>
-                <GlassButton type="button" size="sm" variant="subtle" disabled={loading || busy}
+                <GlassButton type="button" size="sm" variant="subtle" disabled={loading || busy || externallyDisabled}
                     onClick={() => setRefresh((value) => value + 1)}>
                     {stale ? 'Reload current policy' : 'Reload saved policy'}
                 </GlassButton>
             </div>
             {error ? <p className="text-sm text-danger" role="alert">{error}</p> : null}
-            {stale ? <p className="text-sm text-warn" role="alert">The saved policy changed. Reload it before saving or testing again; your draft has not overwritten it.</p> : null}
+            {stale ? <p className="text-sm text-warn" role="alert">Reload the saved policy before saving or testing again; your draft has not overwritten it.</p> : null}
             {validation.length ? <ul className="list-disc space-y-1 pl-5 text-sm text-danger" role="alert">
                 {validation.map((message) => <li key={message}>{message}</li>)}
             </ul> : null}
@@ -164,6 +197,7 @@ function PolicyEditor({
                     </div> : null}
                     <ScreeningPolicyFields policy={policy} templates={templates} models={models}
                         baseline={global} disabled={disabled} onChange={(next) => {
+                            dirty.current = true;
                             setPolicy(next);
                             setSaved(false);
                             setSampleResult(null);
@@ -204,6 +238,8 @@ function PolicyEditor({
 export function ScreeningPolicyEditor(props: {
     scope: ScreeningScope;
     onSaved?: (response: ScreeningPolicyResponse) => void;
+    configurationVersion?: number;
+    disabled?: boolean;
 }) {
     return <PolicyEditor key={`${props.scope.scope_type}:${props.scope.scope_id}`} {...props} />;
 }

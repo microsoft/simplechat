@@ -10,7 +10,7 @@ interrupted publication and lease expiry without network access or wall-clock sl
 
 import ast
 import copy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import importlib.util
 import json
 import logging
@@ -303,6 +303,7 @@ def load_update_settings(store):
     }
     namespace = {
         "copy": copy, "logging": logging,
+        "contextmanager": contextmanager,
         "ScreeningError": type("ScreeningError", (Exception,), {}),
         "COSMOS_METADATA_FIELDS": store_module.COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": store_module.SETTINGS_REVISION_FIELD,

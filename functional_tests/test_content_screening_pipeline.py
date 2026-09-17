@@ -1,8 +1,9 @@
 # test_content_screening_pipeline.py
 """
 Functional integration tests for workspace admission and reviewed publication.
-Version: 0.261.106
+Version: 0.261.114
 Implemented in: 0.261.106
+Enabled-empty upload admission implemented in: 0.261.114
 
 Runs the real durable job, scanner, repository, private storage, TXT extraction,
 and publication services against fake Azure boundaries. No live data is used.
@@ -23,6 +24,7 @@ from pathlib import Path
 import pytest
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
+from flask import Flask, session
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -34,6 +36,7 @@ from content_screening.contracts import (
     SCREENING_FIELD,
     ContentUnit,
     DocumentHeldError,
+    ScreeningChecksRequiredError,
     ScreeningConflictError,
     ScreeningError,
     Subject,
@@ -41,10 +44,12 @@ from content_screening.contracts import (
     hash_payload,
     metadata_fingerprint,
 )
-from content_screening.extraction import current_extraction
+from content_screening.extraction import current_extraction, is_publication
 from content_screening.policies import default_policy
 from content_screening.repository import ScreeningRepository
 from content_screening.storage import ScreeningStorage
+import functions_embedding_compatibility as embedding_compatibility
+from functions_embeddings import EmbeddingVector
 from test_content_screening_persistence import FakeBlob, FakeBlobContainer, FakeBlobService, FakeCosmos, FakeSdkError
 
 
@@ -60,9 +65,9 @@ class AzureLikeBlob(FakeBlob):
         except FakeSdkError as error:
             raise ResourceNotFoundError("Missing test blob") from error
 
-    def upload_blob(self, *args, **kwargs):
+    def upload_blob(self, payload, **kwargs):
         try:
-            return super().upload_blob(*args, **kwargs)
+            return super().upload_blob(payload.read() if hasattr(payload, "read") else payload, **kwargs)
         except FakeSdkError as error:
             if error.status_code == 409:
                 raise ResourceExistsError("Existing test blob") from error
@@ -120,6 +125,11 @@ def pipeline(monkeypatch):
         "enable_extract_meta_data": False, "enable_notifications": False,
         "max_file_size_mb": 16,
     }
+    embedding_profile = types.SimpleNamespace(profile_id="fixture-embedding-profile", dimensions=2, legacy=False)
+    write_profiles = []
+    monkeypatch.setattr(embedding_compatibility, "read_embedding_settings", lambda: settings)
+    monkeypatch.setattr(embedding_compatibility, "active_embedding_profile", lambda value=None: embedding_profile)
+    monkeypatch.setattr(embedding_compatibility, "_runtime_index_metadata", lambda *args: {"provenance": True})
     policy = default_policy()
     policy.update({"enabled": True, "rules": [{
         "id": "restricted", "name": "Restricted", "type": "literal",
@@ -138,8 +148,16 @@ def pipeline(monkeypatch):
     reviews.ensure_review = lambda scan, actor_id, **kwargs: review_requests.append(scan["id"])
     monkeypatch.setitem(sys.modules, "content_screening.reviews", reviews)
     monkeypatch.setitem(sys.modules, "functions_activity_logging", types.SimpleNamespace(
-        log_document_creation_transaction=lambda **kwargs: {"id": kwargs["idempotency_key"]},
-        log_token_usage=lambda **kwargs: {"id": kwargs["idempotency_key"]},
+        log_document_creation_transaction=lambda **kwargs: {"id": kwargs.get("idempotency_key", "upload-log")},
+        log_token_usage=lambda **kwargs: {"id": kwargs.get("idempotency_key", "token-log")},
+    ))
+    monkeypatch.setitem(sys.modules, "functions_notifications", types.SimpleNamespace(
+        create_notification=lambda **kwargs: None,
+        create_group_notification=lambda **kwargs: None,
+        create_public_workspace_notification=lambda **kwargs: None,
+    ))
+    monkeypatch.setitem(sys.modules, "functions_group", types.SimpleNamespace(
+        find_group_by_id=lambda group_id: {"id": group_id, "name": "Synthetic group"},
     ))
 
     def get_metadata(document_id, user_id, group_id=None, public_workspace_id=None):
@@ -162,15 +180,36 @@ def pipeline(monkeypatch):
             capture.heartbeat()
 
     def generate_embedding(text):
-        for item in containers["personal"].documents.values():
+        documents = [item for container in containers.values() for item in container.documents.values()]
+        for item in documents:
             marker = item.get(SCREENING_FIELD) or {}
             if marker.get("state") == "publishing":
                 scan = repository.get_scan(marker["scan_id"])
                 assert scan["coverage_complete"] is True
                 break
         else:
-            raise AssertionError("Embedding ran before complete screening and publication.")
-        return [0.25, 0.75], {"total_tokens": len(text), "model_deployment_name": "test-embedding"}
+            if not documents or any(
+                SCREENING_FIELD in item or service.document_requires_screening(item, settings)
+                for item in documents
+            ):
+                raise AssertionError("Embedding ran before complete screening and publication.")
+        return EmbeddingVector([0.25, 0.75], embedding_profile), {
+            "total_tokens": len(text), "model_deployment_name": "test-embedding",
+        }
+
+    def search_write_slot(container, *, embedding_profile_id):
+        write_profiles.append(embedding_profile_id)
+        return nullcontext()
+
+    def upsert_document(container, document, **kwargs):
+        current = container.read_item(item=document["id"], partition_key=document["id"])
+        return container.replace_item(
+            item=document["id"], body=document, etag=current["_etag"],
+            match_condition=MatchConditions.IfNotModified,
+        )
+
+    for container in containers.values():
+        container.upsert_item = lambda body, target=container: upsert_document(target, body)
 
     def delete_chunks(document_id, **kwargs):
         search.documents = {key: value for key, value in search.documents.items() if value["document_id"] != document_id}
@@ -201,17 +240,44 @@ def pipeline(monkeypatch):
         "ScreeningError": ScreeningError, "get_settings": lambda: settings,
         "get_chunk_size_config": lambda value=None: {"txt": {"value": 3}},
         "get_document_metadata": get_metadata, "update_document": update_document,
+        "document_requires_screening": service.document_requires_screening,
+        "process_screened_upload": service.process_screened_upload,
+        "SCREENING_FIELD": SCREENING_FIELD, "DocumentHeldError": DocumentHeldError,
+        "is_publication": is_publication, "subject_from_document": service.subject_from_document,
+        "cosmos_user_documents_container": containers["personal"],
+        "cosmos_group_documents_container": containers["group"],
+        "cosmos_public_documents_container": containers["public"],
+        "CLIENTS": {key: search for key in ("search_client_user", "search_client_group", "search_client_public")},
+        "get_embedding_safe_chunk_characters": helpers.get_embedding_safe_chunk_characters,
+        "generate_embedding": generate_embedding,
+        "ensure_list": lambda value: value if isinstance(value, list) else [value] if value else [],
+        "debug_print": lambda *args: None,
+        "add_file_task_to_file_processing_log": lambda **kwargs: None,
+        "sync_chat_upload_workspace_attachment_status": lambda *args: None,
+        "_get_documents_container": lambda group_id=None, public_workspace_id=None: containers[
+            "public" if public_workspace_id else "group" if group_id else "personal"
+        ],
+        "_get_document_family_items_from_document": lambda document, **kwargs: [document],
+        "_get_blob_container_name": helpers._get_blob_container_name,
+        "_get_blob_service_client": helpers._get_blob_service_client,
+        "_ensure_blob_container_ready": helpers._ensure_blob_container_ready,
+        "build_current_blob_path": lambda filename, **kwargs: f"current/{filename}",
+        "CURRENT_ALIAS_BLOB_PATH_MODE": "current_alias",
+        "_upsert_document_and_sync_access_index": upsert_document,
         "allowed_file": lambda *args: True,
         "log_event": lambda *args, **kwargs: None,
         "TABULAR_EXTENSIONS": {"csv"}, "IMAGE_EXTENSIONS": {"png"},
         "DOCUMENT_EXTENSIONS": {"pdf", "docx"}, "VIDEO_EXTENSIONS": {"mp4"},
         "AUDIO_EXTENSIONS": {"mp3"}, "VISIO_EXTENSIONS": {"vsdx"},
         "EMAIL_EXTENSIONS": {"msg"},
-        "hold_data_management_search_write_slot": lambda container: nullcontext(),
+        "hold_data_management_search_write_slot": search_write_slot,
+        "prepare_embedding_search_documents": embedding_compatibility.prepare_embedding_search_documents,
         "cosmos_data_management_jobs_container": None,
     }
     functions = {
         "save_chunks", "upload_to_blob", "process_txt", "_process_document_upload_background_impl",
+        "process_document_upload_background",
+        "_require_screening_chunk_write", "_run_final_metadata_extraction", "_resolve_processing_complete_status",
         "_search_indexing_results_succeeded", "_execute_document_search_write",
     }
     tree = ast.parse((APP_ROOT / "functions_documents.py").read_text(encoding="utf-8"))
@@ -219,6 +285,7 @@ def pipeline(monkeypatch):
     assert len(nodes) == len(functions)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP_ROOT / "functions_documents.py"), "exec"), namespace)
     helpers._process_document_upload_background_impl = namespace["_process_document_upload_background_impl"]
+    helpers.process_document_upload_background = namespace["process_document_upload_background"]
     helpers._execute_document_search_write = namespace["_execute_document_search_write"]
     monkeypatch.setitem(sys.modules, "functions_documents", helpers)
     config = types.ModuleType("config")
@@ -232,6 +299,7 @@ def pipeline(monkeypatch):
     return types.SimpleNamespace(
         repository=repository, storage=storage, blobs=blob_service, search=search,
         settings=settings, helpers=helpers, reviews=review_requests,
+        embedding_profile=embedding_profile, write_profiles=write_profiles,
     )
 
 
@@ -276,6 +344,133 @@ def drain_candidate(pipeline, candidate):
     return pipeline.repository.get_scan(candidate["id"])
 
 
+def save_empty_baseline(pipeline, *, disabled_rule=False):
+    baseline = pipeline.repository.get_policy("global", "global")
+    policy = {**default_policy(), "enabled": True}
+    if disabled_rule:
+        policy["rules"] = [{**baseline["policy"]["rules"][0], "enabled": False}]
+    return pipeline.repository.save_policy(
+        "global", "global", policy, "administrator", etag=baseline["_etag"],
+    )
+
+
+@pytest.mark.parametrize("scope_type", ["personal", "group", "public"])
+@pytest.mark.parametrize("disabled_rule", [False, True])
+def test_no_effective_checks_use_normal_uploads_without_markers_or_screening_artifacts(
+    pipeline, tmp_path, scope_type, disabled_rule,
+):
+    save_empty_baseline(pipeline, disabled_rule=disabled_rule)
+    field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[scope_type]
+    document = {
+        "id": "document", field: "owner", "version": 1, "file_name": "document.txt",
+        "is_current_version": True, "num_chunks": 0, "number_of_pages": 0,
+    }
+    assert service.initial_document_marker(document) is None
+    pipeline.repository.document_container(scope_type).create_item(document)
+    source = tmp_path / "document.txt"
+    text = "Ordinary source including PRIVATE_CANARY remains unscreened."
+    source.write_text(text, encoding="utf-8")
+    arguments = {
+        "document_id": "document", "user_id": "owner",
+        "temp_file_path": str(source), "original_filename": source.name,
+        "group_id": "owner" if scope_type == "group" else None,
+        "public_workspace_id": "owner" if scope_type == "public" else None,
+    }
+    assert service.prepare_document_upload(**arguments) is None
+    assert not pipeline.blobs.containers
+    pipeline.helpers.process_document_upload_background(**arguments)
+    persisted = pipeline.repository.read_document(Subject(scope_type, "owner", "document", "1"))
+    assert SCREENING_FIELD not in persisted and document_is_available(persisted)
+    assert persisted["percentage_complete"] == 100
+    assert " ".join(item["chunk_text"] for item in pipeline.search.documents.values()) == text
+    for kind in ("scan", "job", "work_item", "finding"):
+        assert pipeline.repository.query(kind)["items"] == []
+    assert not pipeline.reviews
+
+
+@pytest.mark.parametrize("scope_type", ["personal", "group", "public"])
+def test_empty_baseline_enforces_workspace_checks_on_new_uploads(pipeline, scope_type):
+    baseline = pipeline.repository.get_policy("global", "global")
+    workspace = copy.deepcopy(baseline["policy"])
+    save_empty_baseline(pipeline)
+    pipeline.repository.save_policy(scope_type, "owner", workspace, "owner")
+    field = {"personal": "user_id", "group": "group_id", "public": "public_workspace_id"}[scope_type]
+    document = {"id": "document", field: "owner", "version": 1}
+    marker = service.initial_document_marker(document)
+    assert marker["state"] == "pending_scan"
+    effective = service.get_effective_policy(Subject(scope_type, "owner", "document", "1"))
+    assert {rule["origin"] for rule in effective["rules"]} == {"workspace"}
+    result = engine.inspect_content(
+        Subject(scope_type, "owner", "document", "1"),
+        [ContentUnit("unit", "PRIVATE_CANARY")], effective,
+    )
+    assert result.status == "findings" and result.findings
+
+
+def test_adding_checks_after_empty_activation_enrolls_subsequent_uploads(pipeline):
+    configured = copy.deepcopy(pipeline.repository.get_policy("global", "global")["policy"])
+    blank = save_empty_baseline(pipeline)
+    document = {"id": "earlier", "user_id": "owner", "version": 1}
+    assert service.initial_document_marker(document) is None
+    pipeline.repository.document_container("personal").create_item(document)
+    pipeline.repository.save_policy("global", "global", configured, "administrator", etag=blank["_etag"])
+    assert service.initial_document_marker({**document, "id": "later"})["state"] == "pending_scan"
+    earlier = pipeline.repository.read_document(Subject("personal", "owner", "earlier", "1"))
+    assert SCREENING_FIELD not in earlier
+
+
+def test_clearing_policy_never_bypasses_an_existing_upload_hold_or_release(pipeline, tmp_path):
+    seed(pipeline)
+    result = upload(pipeline, tmp_path, "PRIVATE_CANARY")
+    assert result["state"] == "pending_review"
+    save_empty_baseline(pipeline)
+    subject = Subject("personal", "owner", "document", "1")
+    document = pipeline.repository.read_document(subject)
+    assert service.document_requires_screening(document) is True
+    with pytest.raises(ScreeningChecksRequiredError):
+        service.prepare_document_upload("document", "owner", "unused-path", "document.txt")
+    with pytest.raises(ScreeningChecksRequiredError):
+        service.publish_scan(result["id"], "owner")
+    persisted = pipeline.repository.read_document(subject)
+    assert persisted[SCREENING_FIELD]["scan_id"] == result["id"]
+    assert not document_is_available(persisted) and not pipeline.search.documents
+
+
+def test_manual_workspace_scan_requires_checks_without_creating_a_job_or_hold(pipeline):
+    save_empty_baseline(pipeline)
+    with pytest.raises(ScreeningChecksRequiredError):
+        jobs.create_scan_job("owner", {"scope_type": "personal", "scope_id": "owner"}, repository=pipeline.repository)
+    assert pipeline.repository.query("job")["items"] == []
+    assert pipeline.repository.query("scan")["items"] == []
+
+
+def test_all_workspace_scan_skips_empty_policies_without_holding_documents(pipeline):
+    save_empty_baseline(pipeline)
+    for scope, field in (("personal", "user_id"), ("group", "group_id"), ("public", "public_workspace_id")):
+        pipeline.repository.document_container(scope).create_item({
+            "id": f"document-{scope}", field: "owner", "version": 1, "file_name": "document.txt",
+        })
+    app = Flask(__name__)
+    app.secret_key = "screening-functional-test-only"
+    with app.test_request_context():
+        session["user"] = {"oid": "administrator", "roles": ["Admin"]}
+        job = jobs.create_scan_job(
+            "administrator", {"all_workspaces": True}, is_admin=True, repository=pipeline.repository,
+        )
+    for _ in range(3):
+        result = jobs.run_scan_job(job["id"], repository=pipeline.repository)
+        if result["enumeration"]["complete"]:
+            break
+    assert result["counts"]["skipped"] == 3
+    assert result["counts"]["completed"] == 0
+    assert result["counts"]["retry"] == 0
+    assert all(item["error_code"] == "screening_policy_empty" for item in pipeline.repository.query("work_item")["items"])
+    assert pipeline.repository.query("scan")["items"] == []
+    for scope in ("personal", "group", "public"):
+        document = pipeline.repository.read_document(Subject(scope, "owner", f"document-{scope}", "1"))
+        assert SCREENING_FIELD not in document and document_is_available(document)
+
+
 def test_real_txt_intake_scans_before_embedding_and_releases_exact_source(pipeline, tmp_path):
     seed(pipeline)
     text = "First line of evidence\nSecond line with a complete tail"
@@ -284,10 +479,33 @@ def test_real_txt_intake_scans_before_embedding_and_releases_exact_source(pipeli
     document = pipeline.repository.read_document(Subject("personal", "owner", "document", "1"))
     assert document_is_available(document)
     assert "".join(item["chunk_text"] for item in pipeline.search.documents.values()) == text
+    assert pipeline.write_profiles
+    assert set(pipeline.write_profiles) == {pipeline.embedding_profile.profile_id}
+    assert all(
+        item["embedding_profile_id"] == pipeline.embedding_profile.profile_id
+        for item in pipeline.search.documents.values()
+    )
     assert result["publication"]["metadata_fingerprint"] == metadata_fingerprint(document)
     read, content = access.read_available_document_bytes("document", "owner")
     assert read["content_screening"]["scan_id"] == result["id"]
     assert content.decode("utf-8") == text
+
+
+def test_screened_publication_rejects_an_embedding_profile_change(pipeline, tmp_path, monkeypatch):
+    seed(pipeline)
+    generate = pipeline.helpers.generate_embedding
+
+    def changed_profile(text):
+        result = generate(text)
+        pipeline.embedding_profile.profile_id = "replacement-embedding-profile"
+        return result
+
+    monkeypatch.setattr(pipeline.helpers, "generate_embedding", changed_profile)
+    result = upload(pipeline, tmp_path, "Reviewed source content")
+    assert result["state"] == "publishing"
+    assert pipeline.search.documents == {}
+    document = pipeline.repository.read_document(Subject("personal", "owner", "document", "1"))
+    assert not document_is_available(document)
 
 
 def test_last_line_finding_prevents_all_search_and_original_access(pipeline, tmp_path):

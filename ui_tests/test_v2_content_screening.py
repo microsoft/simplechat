@@ -1,8 +1,9 @@
 # test_v2_content_screening.py
 """
 Production V2 browser regressions for screening-controlled documents and review.
-Version: 0.261.108
+Version: 0.261.114
 Implemented in: 0.261.106
+Empty-policy activation coverage: 0.261.114
 
 Runs the real SPA with the existing closed workspace fixture and its Azure
 Playwright/DefaultAzureCredential connection support or explicit local fallback.
@@ -210,12 +211,10 @@ class ScreeningUiFixture(WorkspaceAuthoringFixture):
             updates = entry.body["settings"]
             if self.reject_settings_save:
                 self._json(route, {"error": "Settings were not saved. Reload the current settings and try again.", "success": False}, 503)
-            elif updates.get("enable_content_screening") is True and not self.policy["enabled"]:
-                self._json(route, {
-                    "error": "Save an enabled screening policy first.",
-                    "field_errors": {"enable_content_screening": "Save an enabled screening policy first."},
-                }, 400)
             else:
+                if updates.get("enable_content_screening") is True and self.policy_etag is None:
+                    self.policy = normalize_policy({**default_policy(), "enabled": True})
+                    self.policy_etag = '"policy-initialized"'
                 self.scan_enabled = updates.get("enable_content_screening", self.scan_enabled)
                 self._json(route, {
                     "success": True, "updated_keys": list(updates), "settings": updates, "warnings": {},
@@ -979,7 +978,7 @@ def test_admin_policy_conflict_requires_reload_before_another_save(screening_ui)
     editor = open_screening_admin(ui)
     editor.get_by_label("Rule name", exact=True).fill("Unsaved local name")
     editor.get_by_role("button", name="Save screening policy", exact=True).click()
-    expect(editor.get_by_text("The saved policy changed.", exact=False)).to_be_visible()
+    expect(editor.get_by_text("Reload the saved policy before saving or testing again;", exact=False)).to_be_visible()
     expect(editor.get_by_role("button", name="Save screening policy", exact=True)).to_be_disabled()
     assert len(ui.policy_writes) == 1
     ui.reject_policy_save = None

@@ -1,5 +1,6 @@
 # functions_settings.py
 
+from contextlib import contextmanager
 from functools import wraps
 import logging
 import threading
@@ -2059,6 +2060,7 @@ def validate_content_screening_settings(new_settings, current_settings, *, repos
             validate_screening_configuration(
                 merged, repository=repository, check_storage=activating or storage_changed,
                 proposed_settings=True,
+                allow_missing_policy=new_settings.get('enable_content_screening') is True,
             )
         except ScreeningError:
             raise
@@ -2097,13 +2099,21 @@ def update_settings(new_settings, *, expected_etag=None):
         # Compatibility checks initialize storage clients only for settings writes.
         from functions_embedding_compatibility import embedding_settings_write_guard
 
-        def guard_embedding_write(current, candidate):
-            return embedding_settings_write_guard(
+        @contextmanager
+        def guard_settings_write(current, candidate):
+            with embedding_settings_write_guard(
                 current, candidate, force_check=EMBEDDING_SELECTION_KEY in updates,
-            )
+            ):
+                if new_settings.get('enable_content_screening') is True:
+                    # First activation is create-only; revalidate a concurrent policy.
+                    from content_screening.service import initialize_screening_policy, validate_screening_configuration
+
+                    initialize_screening_policy()
+                    validate_screening_configuration(candidate, proposed_settings=True)
+                yield
 
         _get_app_settings_store().write(
-            apply_updates, expected_etag=expected_etag, write_guard=guard_embedding_write,
+            apply_updates, expected_etag=expected_etag, write_guard=guard_settings_write,
         )
         log_event(
             "[ASC] App settings updated and published successfully.",
