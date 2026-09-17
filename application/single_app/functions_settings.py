@@ -47,6 +47,12 @@ from functions_model_endpoint_identity_header import (
     normalize_model_endpoint_identity_header_override,
     normalize_model_endpoint_identity_header_value_type,
 )
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_api_type_value,
+    normalize_custom_endpoint_auth_type,
+    normalize_custom_endpoint_url_mode,
+)
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_model_endpoint_types import (
     DEFAULT_ANTHROPIC_VERSION,
@@ -1349,9 +1355,6 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'allow_user_agents': False,
         'allow_user_custom_endpoints': False,
-        'allow_private_custom_model_endpoints': False,
-        'allow_insecure_custom_model_endpoints': False,
-        'custom_model_endpoint_ca_bundle_path': '',
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_user_workflows': False,
@@ -1453,6 +1456,9 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'allow_private_custom_model_endpoints': False,
+        'allow_insecure_custom_model_endpoints': False,
+        'custom_model_endpoint_ca_bundle_path': '',
         'model_endpoint_identity_header_enabled': False,
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -1601,10 +1607,6 @@ def get_settings(use_cosmos=False, include_source=False):
             'model_id': '',
             'provider': ''
         },
-        
-        # Multimodal Vision
-        'enable_multimodal_vision': False,
-        'multimodal_vision_model': '',
         
         'enable_summarize_content_history_for_search': False,
         'number_of_historical_messages_to_summarize': 10,
@@ -2488,6 +2490,8 @@ def normalize_model_endpoint_auth_for_environment(endpoint_copy):
     """Normalize endpoint auth cloud fields that are owned by app environment."""
     if not isinstance(endpoint_copy, dict):
         return False
+    if str(endpoint_copy.get("provider") or "").strip().lower() == "custom":
+        return False
 
     changed = False
     auth = endpoint_copy.get("auth")
@@ -2594,6 +2598,7 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        endpoint_copy.pop("has_bearer_token", None)
         for field_name, value in normalize_model_budget_overrides(endpoint_copy).items():
             if endpoint_copy[field_name] != value:
                 endpoint_copy[field_name] = value
@@ -2606,14 +2611,15 @@ def normalize_model_endpoints(endpoints):
             endpoint_copy["provider"] = provider
             changed = True
         if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
-            api_type = normalize_model_endpoint_api_type(
-                provider,
-                endpoint_copy.get("api_type"),
-            )
+            api_type = normalize_api_type_value(endpoint_copy.get("api_type"))
             if endpoint_copy.get("api_type") != api_type:
                 endpoint_copy["api_type"] = api_type
                 changed = True
             connection = json.loads(json.dumps(connection))
+            url_mode = normalize_custom_endpoint_url_mode(connection.get("url_mode"))
+            if connection.get("url_mode") != url_mode:
+                connection["url_mode"] = url_mode
+                changed = True
             if api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                 if "anthropic_version" in connection:
                     connection.pop("anthropic_version", None)
@@ -2640,6 +2646,14 @@ def normalize_model_endpoints(endpoints):
                         connection.pop(field_name, None)
                         changed = True
             endpoint_copy["connection"] = connection
+            auth = endpoint_copy.get("auth") or {}
+            if not isinstance(auth, dict):
+                raise AIConnectionError("Authentication configuration must be an object.")
+            auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
+            if auth.get("type") != auth_type:
+                auth["type"] = auth_type
+                changed = True
+            endpoint_copy["auth"] = auth
         operation_settings = connection.get("operation_settings")
         if operation_settings is not None:
             if not isinstance(operation_settings, dict):
@@ -2777,6 +2791,14 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
 
     merged = dict(existing_auth)
     for key, value in incoming_auth.items():
+        if key in ("api_key", "client_secret", "bearer_token") and (
+            value in (None, "") or is_admin_settings_redacted_secret(value)
+            or (value == "Stored_In_KeyVault" and existing_auth.get(key))
+        ):
+            continue
+        if key in ("api_key_header", "api_key_prefix", "scope") and value == "":
+            merged[key] = value
+            continue
         if value in (None, ""):
             continue
         merged[key] = value
@@ -2842,7 +2864,7 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True):
     """Keep editable model metadata while stripping stored auth credentials."""
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
@@ -2858,16 +2880,26 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
+        has_bearer_token = bool(auth.get("bearer_token"))
         for secret_field in ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token"):
             auth.pop(secret_field, None)
+        if endpoint_copy.get("provider") == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            public_auth_fields = {
+                "type", "client_id", "token_url", "scope", "api_key_header", "api_key_prefix",
+            }
+            auth = {key: value for key, value in auth.items() if key in public_auth_fields}
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
+        endpoint_copy["has_bearer_token"] = has_bearer_token
         for model in endpoint_copy.get("models") or []:
             if isinstance(model, dict):
                 model["capability_status"] = describe_model_capabilities(
-                    model, endpoint_copy.get("provider")
+                    model, endpoint_copy.get("provider"), endpoint=endpoint,
                 )
+        if not include_connection_details:
+            for field in ("auth", "connection", "management", "identity_header"):
+                endpoint_copy.pop(field, None)
         sanitized.append(endpoint_copy)
 
     return sanitized
@@ -3464,7 +3496,11 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k in {'support_feedback_recipient_email', 'm365_trusted_download_hosts'}:
+        if k in {
+            'support_feedback_recipient_email', 'm365_trusted_download_hosts',
+            'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
+            'client_key_path', 'bearer_token', 'token_url',
+        }:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue
@@ -3473,7 +3509,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
-            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
@@ -3523,7 +3559,7 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
     
     for k, v in full_settings.items():
         # Skip keys with sensitive terms

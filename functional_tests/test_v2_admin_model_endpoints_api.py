@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the V2 admin global model endpoint API.
-Version: 0.261.102
+Version: 0.261.107
 Implemented in: 0.261.059
 
 Global model endpoints were the only scope without per-resource routes. They were
@@ -397,6 +397,7 @@ def _load_persistence_helper():
         "keyvault_model_endpoint_cleanup_helper": fake_cleanup,
         "keyvault_model_endpoint_delete_helper": fake_delete,
         "get_settings": lambda: calls["settings"],
+        "validate_custom_model_endpoints": import_app_module("functions_model_endpoint_validation").validate_custom_model_endpoints,
         "update_settings": fake_update_settings,
         "resolve_default_model_selection": selection_helpers[
             "resolve_default_model_selection"

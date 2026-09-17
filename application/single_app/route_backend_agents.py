@@ -2549,6 +2549,7 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
 
     return sanitize_model_endpoints_for_frontend(
         filter_model_endpoints_by_capability(endpoints, preserve_empty=True),
+        include_connection_details=False,
     )
 
 

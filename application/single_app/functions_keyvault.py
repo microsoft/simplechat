@@ -59,8 +59,9 @@ SQL_PLUGIN_TYPES = {"sql_query", "sql_schema"}
 SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS = {"connection_string", "password"}
 SQL_PLUGIN_SENSITIVE_AUTH_FIELDS = {"client_secret"}
 MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS = {
-    "api_key": {"api_key"},
-    "client_secret": {"service_principal"},
+    "api_key": {"api_key", "key"},
+    "client_secret": {"service_principal", "oauth2_client_credentials"},
+    "bearer_token": {"bearer"},
 }
 AGENT_SENSITIVE_SECRET_FIELDS = [
     {

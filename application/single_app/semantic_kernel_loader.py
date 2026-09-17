@@ -67,6 +67,8 @@ from functions_action_manifest import (
     resolve_action_type,
 )
 from functions_ai_connections import require_model_capability
+from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_authentication import get_current_user_id_or_none
 from semantic_kernel_plugins.plugin_health_checker import PluginHealthChecker, PluginErrorRecovery
 from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
@@ -257,6 +259,8 @@ def resolve_agent_endpoint_token(agent_config):
 def create_model_endpoint_chat_completion_service(agent_config, service_id, settings=None):
     """Create the correct Semantic Kernel chat service for an endpoint-bound agent."""
     if not agent_config.get("endpoint") or not agent_config.get("deployment"):
+        if agent_config.get("model_provider") == "custom":
+            raise ValueError("The selected Custom agent connection or request model is unavailable.")
         return None
 
     provider = str(
@@ -265,7 +269,7 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
     if provider == "custom":
         chat_service, _ = build_semantic_kernel_chat_service_for_model(
             agent_config["deployment"],
-            settings or {},
+            settings if settings is not None else get_settings(),
             service_id=service_id,
             model_context={
                 "provider": provider,
@@ -275,7 +279,10 @@ def create_model_endpoint_chat_completion_service(agent_config, service_id, sett
                 "anthropic_version": agent_config.get("anthropic_version") or "",
                 "auth": agent_config.get("auth") or {},
                 "request_model": agent_config["deployment"],
+                "endpoint_id": agent_config.get("model_endpoint_id") or "",
+                "model_id": agent_config.get("model_id") or "",
             },
+            resolved_model_endpoint=agent_config.get("model_endpoint_config"),
         )
         return chat_service
 
@@ -686,6 +693,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "model": model_cfg,
             "model_budget_model": project_model_budget_metadata(model_cfg),
             "model_budget_endpoint": project_model_budget_metadata(endpoint_cfg),
+            "model_endpoint_config": endpoint_cfg,
         }
 
     def resolve_multi_endpoint_agent_config():
@@ -916,7 +924,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                 deployment = multi_endpoint_config.get("deployment")
                 api_version = multi_endpoint_config.get("api_version")
                 key = auth.get("api_key") or ""
-                if auth_type not in ("api_key", "key"):
+                if auth_type not in ("api_key", "key") and provider != "custom":
                     token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
                 return {
                     "endpoint": endpoint,
@@ -949,6 +957,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                     "model_budget_model": multi_endpoint_config["model_budget_model"],
                     "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
                     "reasoning_effort": agent.get("reasoning_effort"),
+                    "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
                 }
             if global_apim_enabled:
                 g_apim = get_global_apim()
@@ -1002,7 +1011,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         api_version = multi_endpoint_config.get("api_version")
         key = auth.get("api_key") or ""
         token_provider = None
-        if auth_type not in ("api_key", "key"):
+        if auth_type not in ("api_key", "key") and provider != "custom":
             token_provider = build_token_provider(auth, provider=provider, endpoint=endpoint)
         result = {
             "endpoint": endpoint,
@@ -1035,6 +1044,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "model_budget_model": multi_endpoint_config["model_budget_model"],
             "model_budget_endpoint": multi_endpoint_config["model_budget_endpoint"],
             "reasoning_effort": agent.get("reasoning_effort"),
+            "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
         }
         return result
 

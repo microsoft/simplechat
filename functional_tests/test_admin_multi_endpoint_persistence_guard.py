@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for admin multi-endpoint persistence guard.
-Version: 0.250.172
+Version: 0.261.107
 Implemented in: 0.239.199; updated in 0.250.172
 
 This test ensures that once multi-endpoint model management is enabled, admin
@@ -11,6 +11,7 @@ posts, and that the backend save helper enforces the same one-way behavior.
 """
 
 import json
+import logging
 import os
 import sys
 import types
