@@ -1,7 +1,7 @@
 # workflow_results.py
 """
 Isolated workflow result dependencies for existing sequence unit tests.
-Version: 0.261.108
+Version: 0.261.109
 Implemented in: 0.261.106
 """
 
@@ -41,6 +41,7 @@ from functions_workflow_validation import (
     workflow_output_contract_instruction,
     workflow_run_outcome,
 )
+from functions_saved_analysis import SavedAnalysisInput, explain_saved_analysis
 
 
 def workflow_result_helpers():
@@ -72,6 +73,8 @@ def workflow_result_helpers():
         "workflow_output_contract_instruction": workflow_output_contract_instruction,
         "workflow_run_outcome": workflow_run_outcome,
         "WorkflowModelClient": WorkflowModelClient,
+        "SavedAnalysisInput": SavedAnalysisInput,
+        "explain_saved_analysis": explain_saved_analysis,
         "invoke_workflow_agent": invoke_workflow_agent,
         "raise_if_workflow_context_blocked": raise_if_workflow_context_blocked,
         "workflow_context_budget_scope": workflow_context_budget_scope,

@@ -286,7 +286,7 @@ def _build_task_result(result, identity, contract_version):
                 "artifact_message_id", "conversation_id", "file_name", "output_format",
                 "capability", "run_id", "export_run_id", "row_count", "status",
             }}
-            for artifact in artifacts
+            for artifact in artifacts if not artifact.get("reused_analysis_artifact")
         ],
         "coverage": _json_copy(coverage),
         "validation": public_analysis_validation(validation) if analysis.get("analysis_result_version") == "analyze-final-v1" else _json_copy(validation),
@@ -301,7 +301,7 @@ def _build_task_result(result, identity, contract_version):
             },
         },
     }
-    access = analysis["analysis_access"] if "analysis_access" in analysis else result.get("analysis_access")
+    access = analysis.get("analysis_access") or result.get("analysis_access")
     if access is None and analysis.get("analysis_result_version") == "analyze-final-v1":
         sources = (
             analysis.get("analysis_sources") or analysis.get("mixed_source_manifest") or analysis.get("source_manifest")
@@ -323,7 +323,7 @@ def _build_task_result(result, identity, contract_version):
             raise AnalysisResultUnavailable("analysis_source_manifest_missing")
         envelope["analysis_access"] = {"version": ANALYSIS_SOURCE_ACCESS_VERSION, "sources": sources}
         envelope["analysis_origin"] = (
-            analysis.get("analysis_result_version") == "analyze-final-v1"
+            (analysis.get("analysis_result_version") or result.get("analysis_result_version")) == "analyze-final-v1"
             and (result.get("analysis_consumption") or {}).get("mode") != "format_only"
         )
     if result.get("analysis_consumption"):
@@ -487,15 +487,20 @@ def _require_completed_result(envelope, *, allow_partial=False):
     if type(allow_partial) is not bool:
         raise ValueError("Partial-result eligibility must be an explicit boolean.")
     partial = (validation == "partial" or workflow_status == "accepted_partial") and state in {"succeeded", "incomplete"}
+    if state == "succeeded" and validation not in {"invalid", "pending"} and (not partial or allow_partial):
+        return
     if (
-        validation in {"pending", "invalid"}
-        or (partial and not allow_partial)
-        or (state != "succeeded" and not (partial and allow_partial))
+        allow_partial and partial and validation not in {"invalid", "pending"}
+        and state in {"succeeded", "incomplete"}
     ):
-        raise WorkflowResultNotReadyError(
-            "The previous task has no completed authoritative output. Its result and diagnostics "
-            "are retained; a preview or unfinished output cannot replace the required input."
-        )
+        if validation == "partial":
+            require_readable_analysis_result(envelope)
+        return
+    raise WorkflowResultNotReadyError(
+        "The previous task has no completed authoritative output. Its result and diagnostics "
+        "are retained; accepted partial findings require an explicit reporting opt-in, and "
+        "invalid or pending results cannot replace the required input."
+    )
 
 
 def require_readable_analysis_result(manifest):
@@ -503,9 +508,9 @@ def require_readable_analysis_result(manifest):
     state = (manifest.get("execution") or {}).get("status")
     validation = (manifest.get("validation") or {}).get("status")
     if (
-        state not in {"succeeded", "incomplete"}
+        state not in {"succeeded", "incomplete", "pending"}
         or validation in {"pending", "invalid"}
-        or (state == "incomplete" and validation != "partial")
+        or (state in {"incomplete", "pending"} and validation != "partial")
     ):
         raise WorkflowResultNotReadyError(
             "This analysis has no readable accepted result yet. Its native execution state "
@@ -699,14 +704,21 @@ def iter_result_records(manifest, name, load_section):
 
 def load_workflow_task_input(workflow, run_id, task_id, reference,
                              *, load_result=load_workflow_task_result, reader_user_id=None,
-                             source_resolver=None, output_name="authoritative", allow_partial=False):
-    """Read one named final output with source authorization and an exact receipt."""
-    if not isinstance(output_name, str) or output_name not in {
-        "authoritative", "text", "records", "json", "documents",
-    }:
-        raise ValueError("Only a named final output can be used as workflow task input.")
+                             source_resolver=None, bounded=False, output_name="authoritative",
+                             allow_partial=False):
+    """Read one exact final representation and its immutable consumption receipt.
+
+    The default selects the producer's authoritative output. Explicit names
+    select only text/records/json/documents, never presentation or diagnostics.
+    Partial accepted Analyze findings require an explicit reporting opt-in;
+    neither that opt-in nor a named output admits pending or invalid results.
+    """
+    final_kinds = {"text": "text", "records": "records", "json": "json", "documents": "document_results"}
+    if not isinstance(output_name, str) or output_name not in {"authoritative", *final_kinds}:
+        raise ValueError("The requested workflow output must be an exact final representation.")
+    if type(allow_partial) is not bool:
+        raise ValueError("The partial-result reporting option must be a boolean.")
     manifest = load_result(workflow, run_id, task_id, reference)
-    _require_completed_result(manifest, allow_partial=allow_partial)
     identity = manifest.get("identity") or {}
     if (
         identity.get("workflow_id") != str(workflow.get("id") or "")
@@ -718,17 +730,50 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         workflow, run_id, task_id, reference, manifest=manifest,
         reader_user_id=reader_user_id, load_result=load_result, source_resolver=source_resolver,
     )
+    _require_completed_result(manifest, allow_partial=allow_partial)
     name = manifest.get("authoritative_output") if output_name == "authoritative" else output_name
-    if name in {"presentation", "diagnostics", "evidence", "validation"} or name not in (manifest.get("outputs") or {}):
+    if not isinstance(name, str) or name not in final_kinds:
         raise ValueError("The saved task has no authoritative output binding.")
-    output_ref = manifest["outputs"][name]["result_ref"]
+    output_descriptor = (manifest.get("outputs") or {}).get(name)
+    if (
+        not isinstance(output_descriptor, Mapping)
+        or output_descriptor.get("kind") != final_kinds[name]
+        or not isinstance(output_descriptor.get("result_ref"), Mapping)
+    ):
+        raise ValueError("The saved task has no authoritative output binding.")
+    output_ref = output_descriptor["result_ref"]
     consumed = {
         "producer": manifest["identity"], "output_name": name,
         "result_ref": dict(reference), "output_ref": dict(output_ref),
     }
     if access["source_count"]:
         consumed["analysis_result"] = True
-    if manifest["outputs"][name].get("storage_kind") == "record_pages":
+        if bounded and output_name == "authoritative" and not manifest.get("analysis_access"):
+            parents = manifest.get("consumed_inputs") or []
+            if len(parents) != 1:
+                raise WorkflowResultNotReadyError(
+                    "This report has multiple analysis ancestors. Select a saved analysis instead of substituting its report text for records."
+                )
+            parent = parents[0]
+            saved_input, _ = load_workflow_task_input(
+                workflow, run_id, parent["producer"]["task_id"], parent["result_ref"],
+                load_result=load_result, reader_user_id=reader_user_id, source_resolver=source_resolver,
+                bounded=True, allow_partial=allow_partial,
+            )
+            return saved_input, consumed
+        if bounded and manifest.get("analysis_access") and name == manifest.get("authoritative_output"):
+            # Saved analysis depends on this contract; defer the inverse import.
+            from functions_saved_analysis import SavedAnalysisInput
+
+            return SavedAnalysisInput(
+                manifest, lambda ref: load_result(workflow, run_id, task_id, ref), access,
+                {"producer": manifest["identity"], "result_sha256": reference["sha256"]},
+                reauthorize=lambda: authorize_workflow_task_result_read(
+                    workflow, run_id, task_id, reference, reader_user_id=reader_user_id,
+                    load_result=load_result, source_resolver=source_resolver,
+                )[1],
+            ), consumed
+    if output_descriptor.get("storage_kind") == "record_pages":
         records, _ = read_result_records(
             manifest, name, lambda ref: load_result(workflow, run_id, task_id, ref),
         )
@@ -739,10 +784,11 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
     else:
         output = load_result(workflow, run_id, task_id, output_ref)
     if (
-        output.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION
+        not isinstance(output, Mapping)
+        or output.get("contract_version") != WORKFLOW_RESULT_CONTRACT_VERSION
         or output.get("producer") != manifest.get("identity")
         or output.get("output_name") != name
-        or output.get("kind") != manifest["outputs"][name].get("kind")
+        or output.get("kind") != output_descriptor.get("kind")
     ):
         raise ValueError("The saved output does not match its producer's manifest.")
     prompt = json.dumps({
@@ -753,6 +799,9 @@ def load_workflow_task_input(workflow, run_id, task_id, reference,
         "source_snapshot_changed": access["source_snapshot_changed"],
         "kind": output["kind"],
         "value": output["value"],
+        **({
+            "accepted_subset_only": True, "execution": manifest.get("execution") or {},
+        } if (manifest.get("validation") or {}).get("status") == "partial" else {}),
     }, ensure_ascii=False, allow_nan=False)
     return prompt, consumed
 
@@ -776,7 +825,7 @@ def workflow_result_summary(envelope, reference):
     ):
         summary["analysis_result"] = True
         summary["producer"] = _json_copy(envelope["identity"])
-        summary["analysis_origin"] = envelope.get("analysis_origin", bool(envelope.get("analysis_access")))
+        summary["analysis_origin"] = envelope.get("analysis_origin") is True
         summary["record_count"] = envelope.get("record_count")
         summary["source_count"] = len((envelope.get("analysis_access") or {}).get("sources") or [])
     return summary

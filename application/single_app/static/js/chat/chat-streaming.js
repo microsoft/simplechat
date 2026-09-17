@@ -20,6 +20,7 @@ import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
 import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
+import { getAnalysisContextRevision, offerSavedAnalysis } from './chat-analysis-results.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
@@ -577,6 +578,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
         onFinally = null,
         reconnectStatusLabel = 'Reconnecting...',
         persistedUserMessageId = null,
+        analysisContextRevision = getAnalysisContextRevision(),
     } = options;
 
     if (!conversationId) {
@@ -592,6 +594,9 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 reattachable: Boolean(statusData?.reattachable),
                 status: statusData?.status || null,
             });
+            return false;
+        }
+        if (!isConversationCurrentlyActive(conversationId)) {
             return false;
         }
 
@@ -628,6 +633,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel,
                 initialPersistedUserMessageId: persistedUserMessageId,
+                analysisContextRevision,
             },
         );
     } catch (error) {
@@ -647,6 +653,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         reconnectStatusLabel = 'Reconnecting...',
         fallbackAgentInfo = null,
         initialPersistedUserMessageId = null,
+        analysisContextRevision = getAnalysisContextRevision(),
     } = options;
 
     if (currentStreamController) {
@@ -683,6 +690,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateUserMessageId(
                     tempUserMessageId,
                     persistedUserMessageId,
+                    analysisContextRevision,
                     { refreshExpandedMetadata: true }
                 );
             } else {
@@ -875,7 +883,9 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     tempAiMessageId,
                     tempUserMessageId,
                     data,
-                    fallbackAgentInfo
+                    fallbackAgentInfo,
+                    accumulatedContent,
+                    analysisContextRevision,
                 );
                 showDesktopConversationNotification(data);
 
@@ -966,6 +976,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                                     onFinally,
                                     reconnectStatusLabel,
                                     persistedUserMessageId,
+                                    analysisContextRevision,
                                 },
                             );
                             if (recovered) {
@@ -1044,6 +1055,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             onFinally,
                             reconnectStatusLabel,
                             persistedUserMessageId,
+                            analysisContextRevision,
                         },
                     );
                     if (recovered) {
@@ -1157,6 +1169,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
 export async function reattachStreamingConversation(conversationId, options = {}) {
     const { statusLabel = 'Reconnecting...' } = options;
+    const analysisContextRevision = options.analysisContextRevision ?? getAnalysisContextRevision();
 
     if (!conversationId) {
         return false;
@@ -1165,6 +1178,9 @@ export async function reattachStreamingConversation(conversationId, options = {}
     try {
         const statusData = await getStreamingStatus(conversationId);
         if (!statusData?.pending) {
+            return false;
+        }
+        if (!isConversationCurrentlyActive(conversationId)) {
             return false;
         }
 
@@ -1181,6 +1197,7 @@ export async function reattachStreamingConversation(conversationId, options = {}
                 allowRecovery: false,
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel: statusLabel,
+                analysisContextRevision,
             },
         );
     } catch (error) {
@@ -1473,11 +1490,15 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
     }
 }
 
-function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
+function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null, fallbackContent = '', analysisContextRevision = getAnalysisContextRevision()) {
     finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
     notifySuccessfulStreamingCompletion(finalData);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
+    if (finalData.conversation_id && !isConversationCurrentlyActive(finalData.conversation_id)) {
+        removeStreamingPlaceholder(messageId);
+        return;
+    }
 
     removeStreamingStopButton(messageId);
     
@@ -1492,7 +1513,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         showToast(finalData.kernel_fallback_notice, 'warning');
     }
 
-    if (existingFinalMessage) {
+    if (existingFinalMessage && !finalData.metadata?.saved_analysis) {
         renderMessageReasoningAdjustments(existingFinalMessage, getMessageReasoningAdjustments(finalData));
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
         notifyConversationDocumentsMayHaveChanged(
@@ -1501,10 +1522,11 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         );
         return;
     }
+    existingFinalMessage?.remove();
 
     const finalMessageObject = {
         ...finalData,
-        content: finalData.full_content || finalData.content || '',
+        content: finalData.full_content || finalData.content || fallbackContent,
         role: finalData.role || 'assistant',
     };
 
@@ -1539,7 +1561,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     // Create proper message with all metadata using appendMessage
     appendMessage(
         sender,
-        finalData.full_content || '',
+        finalMessageObject.content,
         finalData.model_deployment_name,
         finalData.message_id,
         finalData.augmented,
@@ -1556,6 +1578,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     if (finalData.conversation_id && !window.currentConversationId) {
         window.currentConversationId = finalData.conversation_id;
     }
+    offerSavedAnalysis(finalMessageObject, analysisContextRevision);
     
     const metadataUpdates = {};
     if (finalData.conversation_title !== undefined) {

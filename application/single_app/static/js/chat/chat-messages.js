@@ -25,6 +25,17 @@ import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
 import {
+    applySavedAnalysisContext,
+    disposeSavedAnalysisViews,
+    getAnalysisContextRevision,
+    getSavedAnalysisContext,
+    hydrateSavedAnalysisContext,
+    hydrateSavedAnalysisResult,
+    initializeSavedAnalysis,
+    setSavedAnalysisMasked,
+    syncSavedAnalysisConversation,
+} from './chat-analysis-results.js';
+import {
     getCurrentReasoningEffort,
     isReasoningEffortEnabled,
     getMessageReasoningAdjustments,
@@ -77,6 +88,7 @@ const conversationForkButtonSpinner = document.getElementById('fork-conversation
 let pendingConversationFork = null;
 let conversationForkRequestPending = false;
 let largeTabularRunConfirmationPending = false;
+let messagesLoadRevision = 0;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -2135,6 +2147,13 @@ export function groupGeneratedImageProposalMessages(messages = []) {
 }
 
 export function loadMessages(conversationId) {
+  syncSavedAnalysisConversation();
+  const analysisRevision = getAnalysisContextRevision();
+  const loadRevision = ++messagesLoadRevision;
+  const activeAtRequest = window.currentConversationId;
+  const ownsConversation = () => loadRevision === messagesLoadRevision &&
+    (String(window.currentConversationId || '') === String(conversationId) ||
+      (!activeAtRequest && !window.currentConversationId));
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
@@ -2156,9 +2175,11 @@ export function loadMessages(conversationId) {
       return data;
     })
     .then((data) => {
+      if (!ownsConversation()) return;
       const chatbox = document.getElementById("chatbox");
       if (!chatbox) return;
 
+      disposeSavedAnalysisViews();
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       updateConversationTaskDocumentsFromMessages(Array.isArray(data.messages) ? data.messages : [], conversationId);
@@ -2234,8 +2255,10 @@ export function loadMessages(conversationId) {
           appendMessage("safety", msg.content, null, msg.id, false, [], [], [], null, null);
         }
       });
+      hydrateSavedAnalysisContext(data.messages, conversationId, analysisRevision);
     })
     .catch((error) => {
+      if (!ownsConversation()) return;
       console.error("Error loading messages:", error);
       updateComparisonChatUploadCatalog([]);
       const chatbox = document.getElementById("chatbox");
@@ -2255,6 +2278,7 @@ export function loadMessages(conversationId) {
       }
     })
     .finally(() => {
+      if (!ownsConversation()) return;
       // Check if there's a search highlight to apply
       if (window.searchHighlight && window.searchHighlight.term) {
         const elapsed = Date.now() - window.searchHighlight.timestamp;
@@ -5118,6 +5142,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const message = container?.matches?.('.message')
       ? container
       : container?.closest?.('.message');
+    if (message?.dataset.savedAnalysis === 'true') {
+      return;
+    }
     message?.querySelector('.message-text')?.classList.add('d-none');
     message?.querySelector('.message-footer')?.classList.add('d-none');
   }
@@ -5650,6 +5677,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     generatedOutputsContainer.replaceChildren();
+    if (messageDiv.dataset.savedAnalysisUnavailable === 'true') {
+      generatedOutputsContainer.classList.add('d-none');
+      return;
+    }
     const generatedOutputs = getGeneratedAnalysisArtifacts(fullMessageObject);
     if (!generatedOutputs.length) {
       generatedOutputsContainer.classList.add('d-none');
@@ -5661,6 +5692,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
+    if (messageDiv.dataset.savedAnalysis === 'true' && !generatedOutputsContainer.closest('.saved-analysis-downloads')) {
+      const downloads = document.createElement('details');
+      downloads.className = 'saved-analysis-downloads mt-2';
+      const summary = document.createElement('summary');
+      summary.className = 'small text-muted fw-semibold';
+      summary.textContent = 'Downloads';
+      generatedOutputsContainer.before(downloads);
+      downloads.append(summary, generatedOutputsContainer);
+    }
   }
 
   function hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject = null) {
@@ -5866,7 +5906,7 @@ export function appendMessage(
       blockRevisions: fullMessageObject?.metadata?.block_revisions,
     });
     const htmlContent = renderedAiContent.htmlContent;
-    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions
+    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions && !fullMessageObject?.metadata?.saved_analysis
       ? buildInlineAssistantExportActionsHtml(messageId)
       : '';
 
@@ -6043,6 +6083,7 @@ export function appendMessage(
     chatbox.appendChild(messageDiv); // Append AI message
     renderMessageReasoningAdjustments(messageDiv, getMessageReasoningAdjustments(fullMessageObject));
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
+    hydrateSavedAnalysisResult(messageDiv, fullMessageObject);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
 
@@ -6746,7 +6787,7 @@ export async function sendMessage(turnOptions = {}) {
 
   const largeTabularRunEstimate = estimateLargeTabularRunForPrompt(combinedMessage);
   let largeTabularRunConfirmed = true;
-  if (largeTabularRunEstimate.shouldConfirm) {
+  if (!getSavedAnalysisContext() && largeTabularRunEstimate.shouldConfirm) {
     largeTabularRunConfirmationPending = true;
     try {
       largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
@@ -7338,7 +7379,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     };
   }
 
-  return requestPayload;
+  return applySavedAnalysisContext(requestPayload);
 }
 
 export function buildCollaborativeInvocationTarget(messageData = {}, explicitInvocationTarget = null) {
@@ -7369,6 +7410,8 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'image_generation'
     : hasAgentTarget
     ? 'agent'
+    : messageData.analysis_result_context
+    ? 'saved_analysis'
     : messageData.deep_research_enabled || messageData.source_review_enabled
     ? 'deep_research'
     : messageData.url_access_enabled
@@ -9370,6 +9413,7 @@ function applyMaskedState(messageDiv, metadata = {}) {
   }
 
   const maskedRanges = Array.isArray(nextMetadata.masked_ranges) ? nextMetadata.masked_ranges : [];
+  setSavedAnalysisMasked(messageDiv, nextMetadata);
   if (maskedRanges.length > 0) {
     applyMaskedRangesToMessageText(messageText, maskedRanges);
   }
@@ -9711,6 +9755,9 @@ function executeMessageDeletion(deleteThread = false) {
 }
 
 // Expose functions globally
+initializeSavedAnalysis();
+window.addEventListener('chat:saved-analysis-selected', () => void updateDocumentActionControls());
+
 window.chatMessages = {
   applyMaskedState,
   applySearchHighlight,

@@ -539,12 +539,100 @@ def get_generated_file_export_content(assistant_result: Any) -> str:
     return str(assistant_result.get('reply') or '')
 
 
+def _get_final_analysis_result(assistant_result):
+    if not isinstance(assistant_result, dict):
+        return None
+    analysis_result = assistant_result.get('analysis_result', assistant_result)
+    if (
+        isinstance(analysis_result, dict)
+        and analysis_result.get('analysis_result_version') == 'analyze-final-v1'
+    ):
+        return analysis_result
+    return None
+
+
+def get_assistant_presentation_content(assistant_result: Any) -> str:
+    """Keep a readable Analyze answer separate from its file/data representation."""
+    analysis_result = _get_final_analysis_result(assistant_result)
+    if analysis_result is not None:
+        report = analysis_result.get('analysis_reply')
+        if not isinstance(report, str) or not report.strip():
+            raise ValueError('The analysis report is unavailable.')
+        return report
+    if isinstance(assistant_result, dict):
+        return str(assistant_result.get('reply') or '')
+    return str(assistant_result or '')
+
+
+def get_analysis_export_rows(assistant_result):
+    """Project finalized Analyze records, never diagnostic window rows."""
+    analysis_result = _get_final_analysis_result(assistant_result)
+    if analysis_result is None:
+        return None
+    authoritative = analysis_result.get('authoritative_result')
+    if (
+        not isinstance(authoritative, dict)
+        or authoritative.get('kind') != 'records'
+        or not isinstance(authoritative.get('value'), list)
+    ):
+        raise ValueError('The final analysis records are unavailable.')
+    rows = []
+    for record in authoritative['value']:
+        if not isinstance(record, dict) or not isinstance(record.get('values'), dict):
+            raise ValueError('An analysis record has an invalid public value.')
+        rows.append(dict(record['values']))
+    return rows
+
+
+def build_saved_analysis_export(analysis_result, output_format):
+    """Render an accepted saved dataset without asking a model to reconstruct it."""
+    rows = get_analysis_export_rows(analysis_result)
+    if rows is None:
+        raise ValueError('The saved analysis has no final record representation.')
+    output_format = str(output_format or '').lower()
+    if output_format == 'json':
+        content = serialize_generated_json(rows)
+    elif output_format == 'xml':
+        content = serialize_generated_xml(rows, root_name='Analysis', item_name='Record')
+    elif output_format == 'csv':
+        content = build_assistant_table_csv(rows)
+    elif output_format in {'md', 'docx', 'pdf'}:
+        # The pure final-result renderer does not initialize the native document engine.
+        from functions_document_analysis_results import build_document_analysis_report
+
+        report = build_document_analysis_report(analysis_result)
+        if output_format == 'md':
+            content = report
+        elif output_format == 'docx':
+            # Keep literal accepted values in Word cells, not in Markdown markup.
+            # The report's generated coverage/limitations remain readable prose.
+            overview, _, findings = report.partition('\n## Findings\n')
+            _, coverage_marker, notes = findings.partition('\n## Coverage\n')
+            docx_prose = (
+                overview + '\n\n## Coverage\n' + notes if rows and coverage_marker else report
+            )
+            content = _render_docx_file_export(
+                'Saved analysis', docx_prose, rows, ROW_SOURCE_ASSISTANT,
+                markdown_like=True, rows_heading='Accepted findings',
+            )
+        else:
+            content = _render_pdf_file_export('Saved analysis', report, [], ROW_SOURCE_ASSISTANT)
+    else:
+        raise ValueError('The saved analysis format is unsupported.')
+    return {
+        'file_name': f'saved-analysis.{output_format}', 'file_content': content,
+        'output_format': output_format, 'row_count': len(rows),
+        **({'_report_content': report} if output_format in {'md', 'docx', 'pdf'} else {}),
+    }
+
+
 def build_generated_file_export(
     user_question: str,
     assistant_content: str,
     function_results: Optional[List[Dict[str, Any]]] = None,
     prior_function_results_loader: Optional[Callable[[], Optional[List[Dict[str, Any]]]]] = None,
     pending_output_format: Optional[str] = None,
+    analysis_result: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build a generated file payload from final assistant content and function-result evidence."""
     output_format = get_requested_generated_file_format(user_question) or _normalize_pending_output_format(
@@ -552,6 +640,21 @@ def build_generated_file_export(
     )
     if output_format not in GENERATED_FILE_FORMATS:
         return None
+    if analysis_result is not None:
+        final_analysis = _get_final_analysis_result(analysis_result)
+        if final_analysis is None:
+            raise ValueError('This export requires an accepted final Analyze result.')
+        rows = get_analysis_export_rows(final_analysis)
+        rendered = build_saved_analysis_export(final_analysis, output_format)
+        return _build_generated_file_payload(
+            output_format=output_format,
+            file_content=rendered['file_content'],
+            rows=rows,
+            row_source=ROW_SOURCE_ASSISTANT,
+            assistant_content=rendered.get('_report_content') or '',
+            passthrough_reason_code='analysis_final_records',
+            rows_truncated=False,
+        )
     carried_output_format = (
         output_format if not get_requested_generated_file_format(user_question) else None
     )
@@ -1238,14 +1341,24 @@ def _render_docx_file_export(
     assistant_content: str,
     rows: Sequence[Dict[str, Any]],
     row_source: str,
+    *,
+    markdown_like: bool = False,
+    rows_heading: Optional[str] = None,
 ) -> bytes:
     from docx import Document as DocxDocument
 
     document = DocxDocument()
     document.add_heading(title, level=1)
-    _append_docx_text(document, assistant_content)
+    if markdown_like:
+        # Operations imports saved-result helpers; defer this existing renderer
+        # until authorized file generation rather than creating a module cycle.
+        from functions_simplechat_operations import _append_markdown_like_content_to_docx
+
+        _append_markdown_like_content_to_docx(document, assistant_content)
+    else:
+        _append_docx_text(document, assistant_content)
     if rows:
-        document.add_heading(_build_structured_rows_heading(row_source), level=2)
+        document.add_heading(rows_heading or _build_structured_rows_heading(row_source), level=2)
         _append_docx_table(document, rows)
 
     output_buffer = io.BytesIO()

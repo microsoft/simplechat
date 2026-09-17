@@ -1,7 +1,7 @@
 # test_workflow_task_result_handoff.py
 """
 Functional regression for workflow result production, persistence, and handoff.
-Version: 0.261.108
+Version: 0.261.109
 Implemented in: 0.261.106
 
 Fictional inventory records pass through the production document analysis,
@@ -13,6 +13,7 @@ import ast
 import json
 import logging
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -134,6 +135,7 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
         raise AssertionError("Result consumption must not upload or re-index a workspace document.")
 
     analysis = _load_production_functions(ANALYSIS, {
+        "time": time,
         "log_event": lambda *args, **kwargs: None,
         "debug_print": lambda *args, **kwargs: None,
         "normalize_search_id_list": lambda values: list(values or []),
@@ -190,13 +192,16 @@ def build_inventory_run(record_count=1, note_size=0, *, blob=True):
     runner.update({
         "_result_reads": loaded_refs,
         "_load_result_section": load_section,
+        # These fixtures deliberately exercise the legacy producer contract; modern
+        # work-unit guards are covered by test_analyze_live_write_fences.py.
+        "_prepare_workflow_analysis_checkpoints": lambda *args, **kwargs: None,
         "_raise_if_workflow_run_cancelled": lambda *args, **kwargs: None,
         "_resolve_model_workflow_client": lambda *args, **kwargs: (
             runner["WorkflowModelClient"](client, "gpt-4.1", "aoai"), "gpt-4.1", "aoai",
         ),
         "save_personal_workflow_run_item": store_namespace["save_personal_workflow_run_item"],
         "persist_workflow_task_result": lambda envelope, **kwargs: persist_workflow_task_result(
-            envelope, save_result=save_section, **kwargs,
+            envelope, **{"save_result": save_section, **kwargs},
         ),
         "load_workflow_task_input": lambda workflow, run_id, task_id, reference, **kwargs: load_workflow_task_input(
             workflow, run_id, task_id, reference, load_result=load_section, **kwargs,

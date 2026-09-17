@@ -9,7 +9,7 @@ counts:
   chat_controls: 47
   sub_elements: 3
   app_pages: 28
-  feature_surfaces: 21
+  feature_surfaces: 22
 capabilities:
 - key: enable_agent_template_gallery
   default: true
@@ -1261,3 +1261,5 @@ feature_surfaces:
   slug: video-indexer-info
 - template: _web_search_foundry_info.html
   slug: web-search-foundry-info
+- template: _workflow_publication_fields.html
+  slug: workflow-publication-fields

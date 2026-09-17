@@ -4,6 +4,7 @@
 Version: 0.261.104
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -57,12 +58,19 @@ class OrchestrationModel:
     response_length: int | None = None
     reasoning_effort: str = ''
     source: str = 'legacy'
+    model_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     _answer_selection: dict[str, str] | None = field(default=None, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     reasoning_resolution: dict[str, Any] = field(default_factory=dict, init=False)
     _reasoning_rejected_efforts: set[str] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self):
+        self.model_metadata = deepcopy(self.model_metadata)
+        self.model_metadata.setdefault('deploymentName', self.deployment)
+        if self.behavior_name:
+            self.model_metadata.setdefault('modelName', self.behavior_name)
+        if self.response_length is not None:
+            self.model_metadata['responseLength'] = self.response_length
         self.reasoning_resolution = resolve_model_reasoning_effort(
             self.behavior_name or self.deployment, self.reasoning_effort
         )
@@ -149,15 +157,19 @@ def _resolve_legacy_binding(settings, *, deployment='', reasoning_effort='', sou
 
     client, resolved_deployment = resolve_planner_client(settings)
     deployment = deployment or resolved_deployment
-    behavior_name = ''
+    model = {}
     if not settings.get('enable_gpt_apim'):
-        behavior_name = next((
-            _text(model.get('modelName'))
+        model = next((
+            model
             for model in (settings.get('gpt_model') or {}).get('selected') or []
             if isinstance(model, dict) and _text(model.get('deploymentName')) == deployment
-        ), '')
+        ), {})
+    response_length = model.get('responseLength')
+    if type(response_length) is not int or response_length <= 0:
+        response_length = None
     return OrchestrationModel(
-        client, deployment, behavior_name=behavior_name,
+        client, deployment, behavior_name=_text(model.get('modelName')),
+        response_length=response_length, model_metadata=model,
         reasoning_effort=reasoning_effort,
         source=source, _answer_selection=answer_selection,
     )
@@ -288,6 +300,7 @@ def resolve_orchestration_model(settings, *, user_id, seeds=None, planner=False,
             client, deployment, provider=provider, endpoint_id=selection['model_endpoint_id'],
             model_id=_text(model.get('id')), behavior_name=_text(model.get('modelName')) or deployment,
             response_length=response_length, reasoning_effort=reasoning_effort, source=source,
+            model_metadata=model,
         )
 
     if selection['model_provider'] and selection['model_provider'].lower() != 'aoai':

@@ -43,6 +43,8 @@ from functions_personal_workflows import (
     _normalize_text,
     _normalize_workflow_error_handling,
     _normalize_workflow_tasks,
+    is_public_workflow_run_item,
+    WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
     _strip_cosmos_metadata,
     _utc_now_iso,
     compute_next_run_at,
@@ -768,6 +770,8 @@ def get_group_workflow_run_item(run_id, item_id):
     """Fetch a group workflow run item by id."""
     try:
         item = cosmos_group_workflow_run_items_container.read_item(item=item_id, partition_key=run_id)
+        if not is_public_workflow_run_item(item):
+            return None
         return _strip_cosmos_metadata(item)
     except exceptions.CosmosResourceNotFoundError:
         return None
@@ -788,13 +792,14 @@ def list_group_workflow_run_items(run_id, limit=1000):
             query=(
                 'SELECT * FROM c '
                 'WHERE c.run_id = @run_id '
-                'AND (NOT IS_DEFINED(c.type) OR c.type != "workflow_result_chunk") '
+                + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER +
                 'ORDER BY c.created_at ASC'
             ),
             parameters=[{'name': '@run_id', 'value': run_id}],
             partition_key=run_id,
         ))
-        return [_strip_cosmos_metadata(item) for item in items[:limit]]
+        visible_items = [item for item in items if is_public_workflow_run_item(item)]
+        return [_strip_cosmos_metadata(item) for item in visible_items[:limit]]
     except Exception as exc:
         log_event(
             f'[GROUP_WORKFLOW_STORE] Error fetching workflow run items for {run_id}: {exc}',
@@ -820,11 +825,13 @@ def delete_group_workflow(group_id, workflow_id):
         run_id = run.get('id')
         delete_workflow_run_results(workflow, run_id)
         items = cosmos_group_workflow_run_items_container.query_items(
-            query='SELECT c.id FROM c WHERE c.run_id = @run_id',
+            query='SELECT c.id, c.type, c.item_type FROM c WHERE c.run_id = @run_id ' + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
             parameters=[{'name': '@run_id', 'value': run_id}],
             partition_key=run_id,
         )
         for item in items:
+            if not is_public_workflow_run_item(item):
+                continue
             try:
                 cosmos_group_workflow_run_items_container.delete_item(item=item.get('id'), partition_key=run_id)
             except exceptions.CosmosResourceNotFoundError:
