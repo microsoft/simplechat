@@ -1,7 +1,7 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.109
+Version: 0.261.113
 Implemented in: 0.261.109
 
 Runs the real classic message/stream modules and React MessageList/Composer/store.
@@ -19,7 +19,7 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -83,6 +83,9 @@ class AnalysisApi:
         self.unsafe_values = False
         self.validation_status = None
         self.page_failures = 0
+        self.download_failure = None
+        self.download_filename = "saved-findings.csv"
+        self.long_names = False
 
     def stream(self, route, *, replay=False):
         body = route.request.post_data_json if route.request.post_data else {}
@@ -119,6 +122,8 @@ class AnalysisApi:
                     payload["records"][0]["source"]["file_name"] = "<script>unsafe()</script>.txt"
                 if payload.get("evidence"):
                     payload["evidence"][0]["quote"] = "<img src=x onerror=window.analysisXss=true>"
+            if self.long_names and payload.get("records"):
+                payload["records"][0]["source"]["file_name"] = "Supplier_very_long_document_name_" * 12 + ".txt"
         route.fulfill(status=response.status_code, json=payload)
 
     def handle(self, route):
@@ -210,6 +215,9 @@ class AnalysisApi:
         if path in ("/api/get_conversations", "/api/conversations/feed"):
             route.fulfill(json={"conversations": [], "has_more": False, "next_cursor": None})
             return
+        if path == "/api/v2/orchestration/runs":
+            route.fulfill(json={"runs": []})
+            return
         if path in ("/api/documents", "/api/group_documents", "/api/public_workspace_documents"):
             route.fulfill(json={"documents": [], "total_count": 0})
             return
@@ -217,8 +225,14 @@ class AnalysisApi:
             route.fulfill(json={"tags": []})
             return
         if path == "/api/chat_artifacts/download":
+            if self.download_failure is not None:
+                route.fulfill(status=self.download_failure, json={"error": "PRIVATE_STORAGE_DIAGNOSTIC"})
+                return
             route.fulfill(
-                headers={"Content-Disposition": 'attachment; filename="saved-findings.csv"'},
+                headers={"Content-Disposition": (
+                    'attachment; filename="saved-findings.csv"; '
+                    f"filename*=UTF-8''{quote(self.download_filename, safe='')}"
+                )},
                 content_type="text/csv", body="control,finding\nControl 0,Owner unassigned\n",
             )
             return
@@ -235,13 +249,13 @@ def analysis_ui(request, page, analysis_client, analysis_assets):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.set_viewport_size({"width": 1280, "height": 900})
 
-    def mount(*, history=True, orchestration=False):
+    def mount(*, history=True, orchestration=False, shell=False):
         if renderer == "v2":
             page.goto(f"{ORIGIN}/harness.html")
             page.add_style_tag(url="/assets/chat.css")
             page.wait_for_function("() => Boolean(window.OrchHarness)")
             page.evaluate(
-                """({conversationId, orchestration}) => {
+                """({conversationId, orchestration, shell}) => {
                     const H = window.OrchHarness;
                     H.reset();
                     H.stores.bootstrap.useBootstrapStore.setState({data: {
@@ -257,7 +271,9 @@ def analysis_ui(request, page, analysis_client, analysis_assets):
                         messages: [], streaming: false, streamError: null,
                         analysisResultContext: null, analysisContextChosen: false, analysisContextRevision: 0,
                     });
-                    H.mount('mount-a', 'PromptExperience');
+                    H.mount('mount-a', shell ? 'ChatExperience' : 'PromptExperience', {},
+                        {initialEntries: ['/chat']});
+                    if (!shell) H.mount('mount-b', 'Toaster');
                     const store = () => H.stores.chat.useChatStore.getState();
                     window.analysisUI = {
                         reload: () => store().reloadMessages(),
@@ -271,12 +287,13 @@ def analysis_ui(request, page, analysis_client, analysis_assets):
                         }),
                     };
                 }""",
-                {"conversationId": CONVERSATION, "orchestration": orchestration},
+                {"conversationId": CONVERSATION, "orchestration": orchestration, "shell": shell},
             )
         else:
             page.goto(f"{ORIGIN}/classic.html")
             page.add_style_tag(url="/static/css/bootstrap.min.css")
             page.add_script_tag(url="/static/js/bootstrap/bootstrap.bundle.min.js")
+            page.add_script_tag(url="/static/js/toast.js")
             page.add_script_tag(url="/static/js/chat/marked.min.js")
             page.add_script_tag(url="/static/js/chat/purify.min.js")
             page.evaluate(
@@ -288,6 +305,7 @@ def analysis_ui(request, page, analysis_client, analysis_assets):
                         documentActionCapabilities: {}};
                     window.scrollChatToBottom = () => {};
                     document.getElementById('test-root').innerHTML = `
+                        <div id="toast-container" class="toast-container position-fixed top-0 end-0 p-3"></div>
                         <div id="chat-messages-container"><div id="chatbox"></div></div>
                         <div class="chat-input-container"><div id="normal-input-container">
                             <textarea id="user-input" aria-label="Message"></textarea>
@@ -429,6 +447,75 @@ def test_completion_and_reconnect_keep_answer_and_select_followup(analysis_ui):
     expect(result(ui)).to_be_visible()
     assert context(ui) == expected_context(ui)
     assert len([item for item in ui.api.requests if item["path"].startswith("/api/chat/stream/reattach/")]) == 1
+
+
+@pytest.mark.parametrize("status", [200, 401, 403, 404, 409, 500, 503])
+def test_download_errors_stay_in_chat_and_can_be_retried(analysis_ui, status):
+    ui = analysis_ui
+    ui.api.download_failure = status
+    ui.mount()
+    original_url = ui.page.url
+    downloads = []
+    ui.page.on("download", lambda download: downloads.append(download))
+    ui.page.locator("summary").filter(has_text="Downloads").click()
+    download_button(ui).click()
+    expect(ui.page.get_by_text(
+        "The artifact could not be downloaded. Refresh the conversation and try again.", exact=True,
+    )).to_be_visible()
+    expect(download_button(ui)).to_be_enabled()
+    expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
+    assert ui.page.url == original_url and not downloads
+    assert "PRIVATE_STORAGE_DIAGNOSTIC" not in ui.page.locator("body").inner_text()
+    ui.api.download_failure = None
+    with ui.page.expect_download() as downloaded:
+        download_button(ui).click()
+    assert downloaded.value.suggested_filename == "saved-findings.csv"
+    assert Path(downloaded.value.path()).read_bytes() == b"control,finding\nControl 0,Owner unassigned\n"
+    assert ui.page.url == original_url
+
+
+@pytest.mark.parametrize("analysis_ui", ["v2"], indirect=True)
+@pytest.mark.parametrize("width", [390, 1280])
+def test_analysis_with_expanded_navigation_has_only_local_table_scrolling(analysis_ui, width):
+    ui = analysis_ui
+    ui.page.set_viewport_size({"width": width, "height": 844})
+    ui.api.long_names = True
+    ui.api.message["metadata"]["generated_analysis_artifacts"][0]["file_name"] = (
+        "Supplier_very_long_document_name_" * 12 + ".csv"
+    )
+    ui.mount(shell=True)
+    expect(ui.page.get_by_role("navigation", name="Primary")).to_be_visible()
+    expand = ui.page.get_by_role("button", name="Expand navigation", exact=True)
+    if expand.is_visible():
+        expand.click()
+    expect(ui.page.get_by_role("button", name="Collapse navigation", exact=True)).to_be_visible()
+    dimensions = ui.page.evaluate("({viewport: innerWidth, document: document.documentElement.scrollWidth})")
+    assert dimensions["document"] <= width + 1, dimensions
+    ui.page.get_by_role("button", name="Collapse navigation", exact=True).click()
+    result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
+    result(ui).locator("summary").filter(has_text="Evidence for finding record-0").click()
+    expect(result(ui).get_by_role("blockquote")).to_be_visible()
+    ui.page.locator("summary").filter(has_text="Downloads").click()
+    button = download_button(ui)
+    button.scroll_into_view_if_needed()
+    expect(button).to_be_in_viewport()
+    box = button.bounding_box()
+    assert box and box["x"] >= 0 and box["x"] + box["width"] <= width + 1
+    assert ui.page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    with ui.page.expect_download() as downloaded:
+        button.click()
+    assert Path(downloaded.value.path()).read_bytes() == b"control,finding\nControl 0,Owner unassigned\n"
+
+
+def test_download_prefers_the_server_utf8_filename(analysis_ui):
+    ui = analysis_ui
+    ui.api.download_filename = "R\u00e9sum\u00e9 findings.csv"
+    ui.mount()
+    ui.page.locator("summary").filter(has_text="Downloads").click()
+    with ui.page.expect_download() as downloaded:
+        download_button(ui).click()
+    assert downloaded.value.suggested_filename == ui.api.download_filename
 
 
 def test_saved_explanation_request_bypasses_sources_and_orchestration(analysis_ui):

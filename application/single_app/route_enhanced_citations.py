@@ -3,6 +3,7 @@
 
 from flask import jsonify, request, Response
 from datetime import datetime, timedelta, timezone
+import hashlib
 import logging
 import os
 import tempfile
@@ -14,6 +15,7 @@ from urllib.parse import quote
 import pandas
 import fitz
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 from werkzeug.utils import secure_filename
 
 from content_screening.access import (
@@ -39,6 +41,7 @@ from functions_generated_file_approvals import assert_generated_file_approval_al
 from functions_saved_analysis import authorize_analysis_artifact
 from functions_simplechat_operations import (
     assert_generated_chat_artifact_is_published_for_user,
+    download_blob_content,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, VISIO_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
@@ -203,6 +206,33 @@ def _build_content_disposition(disposition, file_name, fallback='download'):
     normalized_file_name, ascii_file_name = _normalize_response_file_name(file_name, fallback=fallback)
     encoded_file_name = quote(normalized_file_name, safe='')
     return f'{normalized_disposition}; filename="{ascii_file_name}"; filename*=UTF-8\'\'{encoded_file_name}'
+
+
+def _serve_chat_artifact_download(user_id, conversation_id, message_id):
+    """Read an authorized chat artifact, not a workspace document's representation."""
+    artifact = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
+    content = download_blob_content(artifact['blob_container'], artifact['blob_path'])
+    current = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
+    identity_fields = ('id', 'conversation_id', 'blob_container', 'blob_path', 'filename', '_etag')
+    digest = (artifact.get('metadata') or {}).get('generated_artifact_content_sha256')
+    current_digest = (current.get('metadata') or {}).get('generated_artifact_content_sha256')
+    if any(artifact.get(field) != current.get(field) for field in identity_fields) or digest != current_digest:
+        raise LookupError('The artifact changed during download.')
+    if digest and hashlib.sha256(content).hexdigest() != digest:
+        raise LookupError('The artifact content changed.')
+
+    file_name = _resolve_generated_artifact_file_name(current)
+    content_type = {
+        '.csv': 'text/csv; charset=utf-8',
+        '.md': 'text/markdown; charset=utf-8',
+        '.json': 'application/json',
+    }.get(os.path.splitext(file_name)[1].lower()) or mimetypes.guess_type(file_name)[0] or 'application/octet-stream'
+    return Response(content, content_type=content_type, headers={
+        'Content-Length': str(len(content)),
+        'Content-Disposition': _build_content_disposition('attachment', file_name),
+        'Cache-Control': 'private, no-store',
+        'X-Content-Type-Options': 'nosniff',
+    })
 
 
 def _log_enhanced_citations_debug(message, **details):
@@ -646,25 +676,27 @@ def register_enhanced_citations_routes(bp):
             return jsonify({"error": "User not authenticated"}), 401
 
         try:
-            message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
-            return serve_enhanced_citation_content(
-                {
-                    'file_name': _resolve_generated_artifact_file_name(message_item),
-                    'blob_container': message_item.get('blob_container'),
-                    'blob_path': message_item.get('blob_path'),
-                },
-                force_download=True,
+            return _serve_chat_artifact_download(user_id, conversation_id, message_id)
+        except PermissionError:
+            return jsonify({"error": "You no longer have access to this artifact or its sources."}), 403
+        except (LookupError, ResourceNotFoundError):
+            return jsonify({"error": "The artifact content is unavailable. Refresh the conversation and try again."}), 404
+        except ValueError:
+            return jsonify({"error": "Invalid artifact download request."}), 400
+        except (AzureError, RuntimeError) as exc:
+            log_event(
+                "[ENHANCED_CITATIONS] Chat artifact storage is unavailable.",
+                extra={"error_type": type(exc).__name__, "conversation_id": conversation_id, "message_id": message_id},
+                level=logging.ERROR,
             )
-        except PermissionError as exc:
-            debug_print(f"Forbidden chat artifact download attempt: {exc}")
-            return jsonify({"error": "Forbidden"}), 403
-        except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        except Exception as e:
-            debug_print(f"Error serving chat artifact download: {e}")
-            return jsonify({"error": "An internal error has occurred"}), 500
+            return jsonify({"error": "Artifact storage is temporarily unavailable. Please retry the download."}), 503
+        except Exception as exc:
+            log_event(
+                "[ENHANCED_CITATIONS] Chat artifact download failed.",
+                extra={"error_type": type(exc).__name__, "conversation_id": conversation_id, "message_id": message_id},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The artifact could not be downloaded. Please retry."}), 500
 
     @bp.route("/api/chat_artifacts/promote", methods=["POST"])
     @swagger_route(security=get_auth_security())

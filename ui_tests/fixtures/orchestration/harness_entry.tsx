@@ -35,6 +35,12 @@ import { Composer } from '../../../application/v2_ui/src/components/chat/Compose
 import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
 import { ParticipantsPanel } from '../../../application/v2_ui/src/components/chat/ParticipantsPanel';
 import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
+import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
+import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
+
+function ChatExperience() {
+    return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
+}
 
 function PlanEditorExperience() {
     const conversationId = chatStore.useChatStore((state) => state.activeConversationId);
@@ -101,6 +107,7 @@ type ComponentName =
     | 'MessageList'
     | 'Composer'
     | 'PromptExperience'
+    | 'ChatExperience'
     | 'ApprovalPreferenceWorkflow'
     | 'PlanEditorExperience'
     | 'OrchestrationPlanEditorHost'
@@ -118,6 +125,7 @@ const components: Record<ComponentName, (props: any) => ReactElement | null> = {
     MessageList,
     Composer,
     PromptExperience,
+    ChatExperience,
     ApprovalPreferenceWorkflow,
     PlanEditorExperience,
     OrchestrationPlanEditorHost,

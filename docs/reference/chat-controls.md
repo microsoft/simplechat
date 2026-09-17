@@ -30,6 +30,18 @@ and analysis acknowledgements** section. It shows the recorded source, decision,
 effective duration, and approval reference without exposing credentials or
 private profile preferences.
 
+### React V2 navigation on narrow screens
+
+Since **0.261.113**, **Expand navigation** opens the navigation rail above the
+chat on screens narrower than 768 pixels. **Collapse navigation**, Escape, or
+the shaded **Close navigation** backdrop closes it. Choosing a destination or
+conversation also closes the mobile rail. These actions do not change the
+desktop navigation preference.
+
+Conversation drawers overlay the chat below the wide-desktop breakpoint rather
+than leaving the message pane too narrow to read. **Close panel** returns to the
+chat; wide result tables keep their scrolling inside the table.
+
 ### Foundry sign-in requests
 
 From version **0.261.093**, when a called Foundry agent needs delegated sign-in

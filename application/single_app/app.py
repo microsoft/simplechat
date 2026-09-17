@@ -1108,6 +1108,7 @@ def add_security_headers(response):
         if request_origin and request_origin in V2_UI_ALLOWED_ORIGINS:
             response.headers['Access-Control-Allow-Origin'] = request_origin
             response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
             response.headers['Access-Control-Max-Age'] = '600'
