@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for workflow per-document analysis mode.
-Version: 0.241.182
+Version: 0.261.109
 Implemented in: 0.241.182
 
 This test ensures Analyze workflows can persist the Run each document separately
@@ -10,76 +10,55 @@ option, expose the shared UI control, combine per-document execution results,
 and open workflow conversation actions in new tabs.
 """
 
-import importlib
-import os
+import ast
+import copy
 import sys
-import types
 from pathlib import Path
+
+import pytest
+
+from test_document_analysis_lossless_artifacts import load_module_functions
+from test_support.app_stubs import import_app_module
+from test_support.document_analysis import document_analysis_runtime
 from test_support.versioning import assert_app_version_at_least
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT / 'application' / 'single_app'))
+APP_ROOT = REPO_ROOT / 'application' / 'single_app'
 
-if 'olefile' not in sys.modules:
-    sys.modules['olefile'] = types.ModuleType('olefile')
 
-if 'semantic_kernel_plugins.mcp_plugin_factory' not in sys.modules:
-    mcp_plugin_factory_stub = types.ModuleType('semantic_kernel_plugins.mcp_plugin_factory')
-
-    class McpPluginFactory:
-        pass
-
-    mcp_plugin_factory_stub.McpPluginFactory = McpPluginFactory
-    sys.modules['semantic_kernel_plugins.mcp_plugin_factory'] = mcp_plugin_factory_stub
-
-if 'semantic_kernel_plugins.logged_plugin_loader' not in sys.modules:
-    logged_plugin_loader_stub = types.ModuleType('semantic_kernel_plugins.logged_plugin_loader')
-
-    def create_logged_plugin_loader(*args, **kwargs):
-        return None
-
-    logged_plugin_loader_stub.create_logged_plugin_loader = create_logged_plugin_loader
-    sys.modules['semantic_kernel_plugins.logged_plugin_loader'] = logged_plugin_loader_stub
-
-if 'functions_document_analysis' not in sys.modules:
-    document_analysis_stub = types.ModuleType('functions_document_analysis')
-    document_analysis_stub.CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 3
-    document_analysis_stub.WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS = 10
-    def normalize_document_analysis_targets(document_ids=None, max_documents=None, **kwargs):
-        normalized_document_ids = [str(value).strip() for value in (document_ids or []) if str(value).strip()]
-        if max_documents:
-            normalized_document_ids = normalized_document_ids[:max_documents]
-        return {
-            'document_ids': normalized_document_ids,
-            'doc_scope': kwargs.get('doc_scope') or 'all',
-            'active_group_ids': kwargs.get('active_group_ids') or [],
-            'active_public_workspace_id': kwargs.get('active_public_workspace_id') or [],
-            'window_unit': kwargs.get('window_unit') or 'pages',
-            'window_size': kwargs.get('window_size'),
-            'window_percent': kwargs.get('window_percent'),
-            'max_retries_per_window': kwargs.get('max_retries_per_window') or 1,
+def load_document_action_helpers():
+    """Execute the real normalizers without importing the Azure-backed runner."""
+    path = APP_ROOT / 'functions_document_actions.py'
+    tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+    nodes = [node for node in tree.body if isinstance(node, (ast.Assign, ast.FunctionDef))]
+    with document_analysis_runtime({}) as runtime:
+        namespace = {
+            'copy': copy,
+            'CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS': runtime.producer.CHAT_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
+            'WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS': runtime.producer.WORKFLOW_DOCUMENT_ANALYSIS_MAX_DOCUMENTS,
+            'normalize_document_analysis_targets': runtime.producer.normalize_document_analysis_targets,
+            'normalize_analysis_options': runtime.results.normalize_analysis_options,
+            'normalize_search_id_list': runtime.producer.normalize_search_id_list,
         }
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
+    return namespace
 
-    document_analysis_stub.normalize_document_analysis_targets = normalize_document_analysis_targets
-    document_analysis_stub.build_document_analysis_progress_snapshot = lambda coverage=None: dict(coverage or {})
-    document_analysis_stub.run_document_analysis = lambda *args, **kwargs: {}
-    sys.modules['functions_document_analysis'] = document_analysis_stub
 
-if 'functions_search' not in sys.modules:
-    search_stub = types.ModuleType('functions_search')
-    search_stub.normalize_search_id_list = lambda values=None: [str(value).strip() for value in (values or []) if str(value).strip()]
-    sys.modules['functions_search'] = search_stub
-
-if 'functions_search_service' not in sys.modules:
-    search_service_stub = types.ModuleType('functions_search_service')
-    search_service_stub.resolve_document_context = lambda *args, **kwargs: {}
-    sys.modules['functions_search_service'] = search_service_stub
-
-if 'semantic_kernel_loader' not in sys.modules:
-    semantic_kernel_loader_stub = types.ModuleType('semantic_kernel_loader')
-    semantic_kernel_loader_stub.load_user_semantic_kernel = lambda *args, **kwargs: None
-    sys.modules['semantic_kernel_loader'] = semantic_kernel_loader_stub
+def load_workflow_helpers():
+    """Use production combination, attribution, token accounting and artifact deduplication."""
+    mixed = import_app_module('functions_mixed_source_orchestration')
+    results = import_app_module('functions_workflow_results')
+    return load_module_functions(str(APP_ROOT / 'functions_workflow_runner.py'), {
+        'get_workflow_result_text': results.get_workflow_result_text,
+        'deduplicate_mixed_source_references': mixed.deduplicate_mixed_source_references,
+        **{
+            name: getattr(mixed, name) for name in (
+                'EVIDENCE_STATUS_CANCELED', 'EVIDENCE_STATUS_COMPLETED',
+                'EVIDENCE_STATUS_FAILED', 'EVIDENCE_STATUS_PENDING',
+            )
+        },
+    })
 
 
 def _read(relative_path):
@@ -88,28 +67,32 @@ def _read(relative_path):
 
 def test_document_action_analysis_mode_normalization():
     """Document action helpers should normalize and preserve analysis_mode."""
-    document_actions = importlib.import_module('functions_document_actions')
+    document_actions = load_document_action_helpers()
 
-    assert document_actions.normalize_document_action_analysis_mode('per-document') == 'per_document'
-    assert document_actions.normalize_document_action_analysis_mode('individual') == 'per_document'
-    assert document_actions.normalize_document_action_analysis_mode('unexpected') == 'combined'
+    assert document_actions['normalize_document_action_analysis_mode']('per-document') == 'per_document'
+    assert document_actions['normalize_document_action_analysis_mode']('individual') == 'per_document'
+    assert document_actions['normalize_document_action_analysis_mode']('unexpected') == 'combined'
 
-    normalized_action = document_actions.normalize_document_action_config({
+    normalized_action = document_actions['normalize_document_action_config']({
         'type': 'analyze',
         'document_ids': ['doc-a', 'doc-b'],
         'analysis_mode': 'per_document',
     })
     assert normalized_action['analysis_mode'] == 'per_document'
 
-    legacy_analyze = document_actions.build_analyze_config(normalized_action)
+    legacy_analyze = document_actions['build_analyze_config'](normalized_action)
     assert legacy_analyze['analysis_mode'] == 'per_document'
+    normalized_targets = document_actions['normalize_document_analysis_targets'](['doc-a', ' doc-a ', 'doc-b'])
+    assert normalized_targets['document_ids'] == ['doc-a', 'doc-b']
+    with pytest.raises(ValueError, match='supports up to'):
+        document_actions['normalize_document_analysis_targets'](['doc-a', 'doc-b'], max_documents=1)
 
 
 def test_per_document_result_combines_replies_coverage_and_artifacts():
     """Workflow runner should keep individual document outputs inside one combined response."""
-    workflow_runner = importlib.import_module('functions_workflow_runner')
+    workflow_runner = load_workflow_helpers()
 
-    combined = workflow_runner._combine_per_document_analysis_results([
+    combined = workflow_runner['_combine_per_document_analysis_results']([
         {
             'document_id': 'doc-a',
             'result': {

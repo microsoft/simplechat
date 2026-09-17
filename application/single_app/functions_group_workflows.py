@@ -43,13 +43,22 @@ from functions_personal_workflows import (
     _normalize_text,
     _normalize_workflow_error_handling,
     _normalize_workflow_tasks,
+    is_public_workflow_run_item,
+    WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
     _strip_cosmos_metadata,
     _utc_now_iso,
     compute_next_run_at,
     get_workflow_max_tasks,
+    WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
+    is_public_workflow_run_item,
 )
 from functions_settings import get_settings, normalize_model_endpoints
 from functions_workflow_alerts import normalize_workflow_alert_settings
+from functions_workflow_result_store import delete_workflow_run_results
+from functions_workflow_bindings import authorize_workflow_reference
+from functions_workflow_definition_store import save_workflow_definition_record, update_workflow_runtime_record
+from functions_workflow_definitions import normalize_workflow_definition, workflow_definition_for_editor
+from functions_workflow_runtime_store import workflow_runtime_store
 
 
 GROUP_WORKFLOW_MEMBER_ROLES = ("Owner", "Admin", "DocumentManager", "User")
@@ -375,7 +384,7 @@ def get_group_workflows(group_id):
             parameters=[{'name': '@group_id', 'value': group_id}],
             partition_key=group_id,
         ))
-        cleaned = [_strip_cosmos_metadata(item) for item in items]
+        cleaned = [workflow_definition_for_editor(_strip_cosmos_metadata(item)) for item in items]
         cleaned.sort(key=lambda item: item.get('updated_at') or item.get('created_at') or '', reverse=True)
         return cleaned
     except exceptions.CosmosResourceNotFoundError:
@@ -394,7 +403,7 @@ def get_group_workflow(group_id, workflow_id):
     """Fetch a specific group workflow."""
     try:
         workflow = cosmos_group_workflows_container.read_item(item=workflow_id, partition_key=group_id)
-        return _strip_cosmos_metadata(workflow)
+        return workflow_definition_for_editor(_strip_cosmos_metadata(workflow))
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
@@ -483,6 +492,16 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
         ),
         default_document_action=document_action,
     )
+    reference_owner_id = (existing_workflow or {}).get('user_id') or actor_user_id
+    definition_fields = normalize_workflow_definition(
+        workflow_data, existing_workflow, tasks, user_id=reference_owner_id, group_id=group_id,
+    )
+    tasks = definition_fields['tasks']
+    for reference in definition_fields.get('reference_inputs', []):
+        authorize_workflow_reference(
+            {'user_id': reference_owner_id, 'group_id': group_id},
+            reference, actor_user_id=actor_user_id,
+        )
     task_prompt = _normalize_text(
         workflow_data.get('task_prompt') or (tasks[0].get('instructions') if tasks else ''),
         'Task prompt',
@@ -635,7 +654,10 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
     else:
         workflow['next_run_at'] = None
 
-    result = cosmos_group_workflows_container.upsert_item(body=workflow)
+    workflow.update(definition_fields)
+    result = save_workflow_definition_record(
+        cosmos_group_workflows_container, group_id, workflow, existing_workflow,
+    )
     cleaned_result = _strip_cosmos_metadata(result)
     debug_print(f"[GROUP_WORKFLOW_STORE] Saved workflow {cleaned_result.get('id')} for group {group_id}")
     return cleaned_result
@@ -644,13 +666,9 @@ def save_group_workflow(group_id, workflow_data, actor_user_id, user_info=None):
 def update_group_workflow_runtime_fields(group_id, workflow_id, updates):
     """Apply runtime fields such as status and last-run metadata."""
     updates = updates if isinstance(updates, dict) else {}
-    workflow = get_group_workflow(group_id, workflow_id)
-    if not workflow:
-        raise ValueError('Workflow not found.')
-
-    workflow.update(updates)
-    workflow['updated_at'] = _utc_now_iso()
-    result = cosmos_group_workflows_container.upsert_item(body=workflow)
+    result = update_workflow_runtime_record(
+        cosmos_group_workflows_container, group_id, workflow_id, updates, _utc_now_iso(),
+    )
     return _strip_cosmos_metadata(result)
 
 
@@ -755,6 +773,8 @@ def get_group_workflow_run_item(run_id, item_id):
     """Fetch a group workflow run item by id."""
     try:
         item = cosmos_group_workflow_run_items_container.read_item(item=item_id, partition_key=run_id)
+        if not is_public_workflow_run_item(item):
+            return None
         return _strip_cosmos_metadata(item)
     except exceptions.CosmosResourceNotFoundError:
         return None
@@ -775,12 +795,14 @@ def list_group_workflow_run_items(run_id, limit=1000):
             query=(
                 'SELECT * FROM c '
                 'WHERE c.run_id = @run_id '
+                + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER +
                 'ORDER BY c.created_at ASC'
             ),
             parameters=[{'name': '@run_id', 'value': run_id}],
             partition_key=run_id,
         ))
-        return [_strip_cosmos_metadata(item) for item in items[:limit]]
+        visible_items = [item for item in items if is_public_workflow_run_item(item)]
+        return [_strip_cosmos_metadata(item) for item in visible_items[:limit]]
     except Exception as exc:
         log_event(
             f'[GROUP_WORKFLOW_STORE] Error fetching workflow run items for {run_id}: {exc}',
@@ -797,31 +819,35 @@ def delete_group_workflow(group_id, workflow_id):
     if not workflow:
         return False
 
-    cosmos_group_workflows_container.delete_item(item=workflow_id, partition_key=group_id)
-
-    runs = list_group_workflow_runs(group_id, workflow_id, limit=500)
+    update_workflow_runtime_record(
+        cosmos_group_workflows_container, group_id, workflow_id,
+        {"deleting": True, "status": "deleting"}, datetime.now(timezone.utc).isoformat(),
+    )
+    runs = cosmos_group_workflow_runs_container.query_items(
+        query='SELECT c.id FROM c WHERE c.group_id = @group_id AND c.workflow_id = @workflow_id',
+        parameters=[{'name': '@group_id', 'value': group_id}, {'name': '@workflow_id', 'value': workflow_id}],
+        partition_key=group_id,
+    )
     for run in runs:
         run_id = run.get('id')
-        for item in list_group_workflow_run_items(run_id, limit=1000):
+        workflow_runtime_store(workflow, run_id).tombstone()
+        delete_workflow_run_results(workflow, run_id)
+        items = cosmos_group_workflow_run_items_container.query_items(
+            query='SELECT c.id, c.type, c.item_type FROM c WHERE c.run_id = @run_id ' + WORKFLOW_PUBLIC_RUN_ITEMS_FILTER,
+            parameters=[{'name': '@run_id', 'value': run_id}],
+            partition_key=run_id,
+        )
+        for item in items:
+            if not is_public_workflow_run_item(item):
+                continue
             try:
                 cosmos_group_workflow_run_items_container.delete_item(item=item.get('id'), partition_key=run_id)
             except exceptions.CosmosResourceNotFoundError:
                 continue
-            except Exception as exc:
-                log_event(
-                    f"[GROUP_WORKFLOW_STORE] Error deleting workflow run item {item.get('id')}: {exc}",
-                    extra={'group_id': group_id, 'workflow_id': workflow_id, 'run_id': run_id},
-                    level=logging.WARNING,
-                )
         try:
             cosmos_group_workflow_runs_container.delete_item(item=run.get('id'), partition_key=group_id)
         except exceptions.CosmosResourceNotFoundError:
             continue
-        except Exception as exc:
-            log_event(
-                f"[GROUP_WORKFLOW_STORE] Error deleting workflow run {run.get('id')}: {exc}",
-                extra={'group_id': group_id, 'workflow_id': workflow_id},
-                level=logging.WARNING,
-            )
 
+    cosmos_group_workflows_container.delete_item(item=workflow_id, partition_key=group_id)
     return True

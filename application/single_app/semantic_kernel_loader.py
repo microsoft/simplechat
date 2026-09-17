@@ -46,6 +46,7 @@ from model_endpoint_clients import (
 )
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_ai_connections import require_model_capability
+from functions_workflow_context import wrap_workflow_chat_service
 from functions_model_endpoint_runtime import build_semantic_kernel_chat_service_for_model
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_authentication import get_current_user_id_or_none
@@ -871,6 +872,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
                     "model_endpoint_id": agent.get("model_endpoint_id", ""),
                     "model_id": agent.get("model_id", ""),
                     "model_provider": provider,
+                    "model_metadata": multi_endpoint_config.get("model") or {},
                     "api_type": multi_endpoint_config.get("api_type"),
                     "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
                 }
@@ -951,6 +953,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             "model_endpoint_id": agent.get("model_endpoint_id", ""),
             "model_id": agent.get("model_id", ""),
             "model_provider": provider,
+            "model_metadata": multi_endpoint_config.get("model") or {},
             "api_type": multi_endpoint_config.get("api_type"),
             "model_endpoint_config": multi_endpoint_config.get("model_endpoint_config"),
         }
@@ -1965,6 +1968,11 @@ def load_single_agent_for_kernel(kernel, agent_cfg, settings, context_obj, redis
             if agent_config.get('max_completion_tokens', -1) > 0:
                 print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
             chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
+        chat_service = wrap_workflow_chat_service(
+            chat_service,
+            agent_config.get("model_metadata") or agent_config.get("deployment"),
+            provider=agent_config.get("model_provider") or "aoai",
+        )
         kernel.add_service(chat_service)
         log_event(
             f"[SK_LOADER] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
@@ -3013,6 +3021,11 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 print(f"[SK_LOADER] Using {orchestrator_config['max_completion_tokens']} max_completion_tokens for {orchestrator_config['name']}")
                             chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(orchestrator_config, settings))
                         if chat_service:
+                            chat_service = wrap_workflow_chat_service(
+                                chat_service,
+                                agent_config.get("model_metadata") or agent_config.get("deployment"),
+                                provider=agent_config.get("model_provider") or "aoai",
+                            )
                             kernel.add_service(chat_service)
                 except Exception as e:
                     log_event(f"[SK_LOADER] Failed to create or get AzureChatCompletion for agent: {agent_config['name']}: {e}", {"error": str(e)}, level=logging.ERROR, exceptionTraceback=True)
@@ -3111,6 +3124,11 @@ def load_semantic_kernel(kernel: Kernel, settings):
                                 print(f"[SK_LOADER] Using {agent_config['max_completion_tokens']} max_completion_tokens for {agent_config['name']}")
                             chat_service = set_prompt_settings_for_agent(chat_service, get_agent_prompt_settings_config(agent_config, settings))
                         if chat_service:
+                            chat_service = wrap_workflow_chat_service(
+                                chat_service,
+                                orchestrator_config.get("model_metadata") or orchestrator_config.get("deployment"),
+                                provider=orchestrator_config.get("model_provider") or "aoai",
+                            )
                             kernel.add_service(chat_service)
                 if not chat_service:
                     raise RuntimeError(f"[SK Loader] No AzureChatCompletion service available for orchestrator agent '{orchestrator_config['name']}'")

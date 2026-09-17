@@ -11,6 +11,57 @@ import type { ReasoningResolution } from './reasoning';
 
 export type Json = Record<string, unknown>;
 
+export interface AnalysisResultContext {
+    conversation_id: string;
+    message_id: string;
+    result_sha256: string;
+}
+
+export type AnalysisValidationStatus = 'valid' | 'partial' | 'invalid' | 'pending' | 'not_validated';
+
+export interface SavedAnalysisDescriptor extends AnalysisResultContext {
+    version: 'analyze-final-v1';
+    record_count: number;
+    source_count: number;
+    validation_status: AnalysisValidationStatus;
+    available?: boolean;
+}
+
+export interface SavedAnalysisRecord {
+    record_id: string;
+    document_id: string;
+    source: { file_name?: string; [key: string]: unknown };
+    values: Json;
+    evidence_refs: string[];
+}
+
+export interface SavedAnalysisEvidence {
+    evidence_id: string;
+    document_id: string;
+    file_name?: string;
+    page_number?: number;
+    start_page?: number;
+    end_page?: number;
+    chunk_id?: string;
+    chunk_sequence?: number;
+    quote?: string;
+    text?: string;
+}
+
+export interface SavedAnalysisPage {
+    records: SavedAnalysisRecord[];
+    total_records: number;
+    offset: number;
+    next_offset: number | null;
+    result_sha256: string;
+    source_count: number;
+    validation: {
+        status: AnalysisValidationStatus;
+        limitations?: unknown;
+        issues?: unknown;
+    };
+}
+
 /** Safe, server-resolved operations for the selected global image model. */
 export interface ImageEditCapability {
     enabled: boolean;
@@ -941,6 +992,7 @@ export interface ChatStreamEvent {
 export interface ChatStreamRequest {
     message: string;
     conversation_id?: string | null;
+    analysis_result_context?: AnalysisResultContext;
     chat_type?: string;
     /**
      * A model is identified by these four fields together, not by the deployment name

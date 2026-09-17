@@ -74,6 +74,13 @@ from functions_settings import *
 from functions_keyvault import SecretReturnType, keyvault_model_endpoint_get_helper
 from functions_simplechat_operations import download_blob_content
 from functions_thoughts import get_thoughts_for_conversation
+from functions_saved_analysis import (
+    analysis_result_contexts,
+    authorize_analysis_artifact,
+    is_saved_analysis_unavailable,
+    load_saved_analysis,
+    sanitize_saved_analysis_messages,
+)
 from foundry_agent_runtime import resolve_authority
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -650,6 +657,7 @@ def _build_export_entry(
 ) -> Dict[str, Any]:
     artifact_payload_map = build_message_artifact_payload_map(raw_messages)
     filtered_messages = _filter_messages_for_export(raw_messages)
+    filtered_messages = sanitize_saved_analysis_messages(filtered_messages, user_id)
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
@@ -673,8 +681,9 @@ def _build_export_entry(
             transcript_index += 1
             message_transcript_index = transcript_index
 
-        thoughts = thoughts_by_message.get(message.get('id'), [])
-        if not thoughts and is_collaboration_conversation(conversation):
+        unavailable_analysis = is_saved_analysis_unavailable(message)
+        thoughts = [] if unavailable_analysis else thoughts_by_message.get(message.get('id'), [])
+        if not unavailable_analysis and not thoughts and is_collaboration_conversation(conversation):
             collaboration_thoughts = get_accessible_collaboration_message_thoughts(
                 conversation,
                 message,
@@ -2177,6 +2186,11 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
 
     if message.get('conversation_id') != conversation_id:
         raise LookupError('Message not found')
+
+    for analysis_context in analysis_result_contexts(message):
+        load_saved_analysis(user_id, analysis_context)
+    if message.get('role') == 'file':
+        authorize_analysis_artifact(user_id, message)
 
     if isinstance(message.get('agent_citations'), list) and any(
         isinstance(citation, dict) and citation.get('artifact_id')

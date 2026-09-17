@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for shared chat history context fix.
-Version: 0.240.053
+Version: 0.261.109
 Implemented in: 0.240.053
 
 This test ensures streaming and non-streaming chat paths share the same
@@ -12,10 +12,12 @@ context remains available for debugging without overloading the thoughts UI.
 """
 
 import ast
+import importlib.util
 import json
 import os
 import sys
 
+from test_support.versioning import assert_app_version_at_least
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROUTE_FILE = os.path.join(ROOT_DIR, "application", "single_app", "route_backend_chats.py")
@@ -27,10 +29,11 @@ FIX_DOC = os.path.join(
     "docs",
     "explanation",
     "fixes",
+    "v0.241.001",
     "CHAT_STREAM_HISTORY_CONTEXT_FIX.md",
 )
 TARGET_FUNCTIONS = {
-    "remove_masked_content",
+    "_sanitize_saved_analysis_history",
     "_format_history_message_ref",
     "_capture_history_refs",
     "_truncate_history_citation_text",
@@ -55,6 +58,15 @@ def read_config_version():
     raise AssertionError("VERSION assignment not found in config.py")
 
 
+def load_history_dependency(module_name):
+    """Read the import-safe production helpers, not bootstrap/config clients."""
+    path = os.path.join(ROOT_DIR, "application", "single_app", f"{module_name}.py")
+    spec = importlib.util.spec_from_file_location(f"history_fixture_{module_name}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_history_helpers():
     source = read_file_text(ROUTE_FILE)
     parsed = ast.parse(source, filename=ROUTE_FILE)
@@ -62,14 +74,23 @@ def load_history_helpers():
         node for node in parsed.body
         if isinstance(node, ast.FunctionDef) and node.name in TARGET_FUNCTIONS
     ]
+    assert {node.name for node in selected_nodes} == TARGET_FUNCTIONS
 
     module = ast.Module(body=selected_nodes, type_ignores=[])
+    masking = load_history_dependency("functions_message_masking")
+    blocks = load_history_dependency("functions_message_block_revisions")
+    context = load_history_dependency("functions_conversation_context")
     namespace = {
         "json": json,
         "filter_assistant_artifact_items": lambda messages: list(messages),
         "build_message_artifact_payload_map": lambda messages: {},
         "hydrate_agent_citations_from_artifacts": lambda messages, artifact_payload_map: list(messages),
         "sort_messages_by_thread": lambda messages: list(messages),
+        "resolve_block_sources_in_content": blocks.resolve_block_sources_in_content,
+        "remove_masked_content": masking.remove_masked_content,
+        "CONVERSATION_CONTEXT_METADATA_TYPE": context.CONVERSATION_CONTEXT_METADATA_TYPE,
+        "CONVERSATION_CONTEXT_FUNCTION_NAME": context.CONVERSATION_CONTEXT_FUNCTION_NAME,
+        "_block_revisions": blocks,
         "debug_print": lambda *args, **kwargs: None,
     }
     exec(compile(module, ROUTE_FILE, "exec"), namespace)
@@ -138,7 +159,7 @@ def test_history_builder_summarizes_older_turns_when_recent_window_is_small():
     assert result["history_messages"][1]["content"] == "please list the locations out in a single table"
     assert len(fake_client.chat.completions.calls) == 1
 
-    summary_prompt = fake_client.chat.completions.calls[0]["messages"][0]["content"]
+    summary_prompt = "\n".join(message["content"] for message in fake_client.chat.completions.calls[0]["messages"])
     assert "There are 10 discrete SharePoint sites." in summary_prompt
     assert "please list the locations out in a single table" not in summary_prompt
 
@@ -200,7 +221,18 @@ def test_streaming_and_non_streaming_paths_share_history_builder():
     print("🔍 Testing shared history builder wiring...")
 
     _, route_source = load_history_helpers()
-    assert route_source.count("history_segments = build_conversation_history_segments(") == 2
+    route_tree = ast.parse(route_source)
+    for route_name in ("chat_api", "chat_stream_api"):
+        routes = [
+            node for node in ast.walk(route_tree)
+            if isinstance(node, ast.FunctionDef) and node.name == route_name
+        ]
+        assert len(routes) == 1, f"Expected the real {route_name} entry point."
+        assert any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "build_conversation_history_segments"
+            for node in ast.walk(routes[0])
+        ), f"{route_name} must use the shared history builder."
     assert "enable_summarize_content_history_beyond_conversation_history_limit = settings.get(" in route_source
     assert "msg.get('content', '').startswith('<Summary of previous conversation context>')" in route_source
 
@@ -363,10 +395,9 @@ def test_history_context_diagnostics_are_exposed_in_backend_and_ui():
 def test_version_and_fix_documentation_alignment():
     print("🔍 Testing version and fix documentation alignment...")
 
-    version = read_config_version()
     fix_doc_content = read_file_text(FIX_DOC)
 
-    assert version == "0.240.053", version
+    assert_app_version_at_least("0.240.053")
     assert "Fixed/Implemented in version: **0.240.053**" in fix_doc_content
     assert "build_conversation_history_segments" in fix_doc_content
     assert "history_context" in fix_doc_content
@@ -377,6 +408,29 @@ def test_version_and_fix_documentation_alignment():
     return True
 
 
+def test_history_builder_resolves_current_block_revisions_with_real_helpers():
+    namespace, _ = load_history_helpers()
+    blocks = namespace["_block_revisions"]
+    original = "graph LR\n    A --> B"
+    replacement = "graph LR\n    A --> C"
+    message = {
+        "id": "revised-answer", "role": "assistant",
+        "content": f"Saved diagram:\n\n```mermaid\n{original}\n```",
+        "timestamp": "2026-09-16T10:00:00", "metadata": {},
+    }
+    blocks.apply_block_revision(
+        message, "mermaid", 0, replacement, blocks.fingerprint_source(original),
+        original_source=original,
+    )
+    result = namespace["build_conversation_history_segments"](
+        all_messages=[message], conversation_history_limit=3,
+        enable_summarize_older_messages=False, gpt_client=None, gpt_model=None,
+    )
+    assert replacement in result["history_messages"][0]["content"]
+    assert original not in result["history_messages"][0]["content"]
+    assert original in message["content"]
+
+
 if __name__ == "__main__":
     tests = [
         test_history_builder_summarizes_older_turns_when_recent_window_is_small,
@@ -385,6 +439,7 @@ if __name__ == "__main__":
         test_history_builder_includes_prior_citation_results_for_follow_ups,
         test_history_context_diagnostics_are_exposed_in_backend_and_ui,
         test_version_and_fix_documentation_alignment,
+        test_history_builder_resolves_current_block_revisions_with_real_helpers,
     ]
 
     results = []

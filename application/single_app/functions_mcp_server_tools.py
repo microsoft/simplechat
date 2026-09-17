@@ -767,6 +767,19 @@ def execute_workflow(auth_context, arguments=None):
             "Workflow not found. Use list_personal_workflows to find the generated workflow id; "
             "workflow display names are not accepted."
         )
+    if workflow.get("durable_execution") is True:
+        # Resolve lazily to avoid the queue/runner/plugin-loader import cycle.
+        from functions_workflow_runtime import queue_durable_workflow_run
+
+        result = queue_durable_workflow_run(
+            workflow, actor_user_id=delegated_user_id, trigger_source="inbound_mcp",
+            invocation_metadata=_build_mcp_workflow_invocation_metadata(auth_context),
+        )
+        return {
+            **_serialize_workflow_execution_result(workflow, result["run"], result["run"].get("success", False)),
+            "accepted": True,
+            "durable_execution": True,
+        }
 
     lock_document = acquire_distributed_task_lock(
         f"workflow_run_{workflow_id}",

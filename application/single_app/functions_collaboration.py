@@ -2223,6 +2223,11 @@ def delete_collaboration_message(conversation_id, message_id, current_user_id):
     if not can_delete_message:
         raise PermissionError('You can only delete your own shared messages')
 
+    # Load Analyze cleanup only on deletion; a mirrored message never deletes its origin.
+    from functions_saved_analysis import cleanup_chat_analysis_messages
+    cleanup_chat_analysis_messages(
+        [message_doc], conversation_id=conversation_id, owner_user_id=sender_user_id or current_user_id,
+    )
     cosmos_collaboration_messages_container.delete_item(
         item=message_id,
         partition_key=conversation_id,
@@ -2584,6 +2589,11 @@ def _cleanup_linked_collaboration_source(
         parameters=[{'name': '@conversation_id', 'value': source_conversation_id}],
         partition_key=source_conversation_id,
     ))
+    # Load Analyze cleanup only on deletion, after proving the linked-source relationship.
+    from functions_saved_analysis import cleanup_chat_analysis_conversation
+    cleanup_chat_analysis_conversation(
+        source_conversation_id, source_conversation.get('user_id'), source_messages,
+    )
 
     if archiving_enabled:
         _archive_collaboration_item(
@@ -2725,6 +2735,11 @@ def _delete_collaboration_conversation_records(
         parameters=[{'name': '@conversation_id', 'value': conversation_id}],
         partition_key=conversation_id,
     ))
+    # Keep the Analyze cleanup dependency local to this deletion path.
+    from functions_saved_analysis import cleanup_chat_analysis_conversation
+    cleanup_chat_analysis_conversation(
+        conversation_id, conversation_doc.get('created_by_user_id'), messages,
+    )
     if not archiving_enabled:
         _delete_blob_backed_collaboration_files(messages)
 

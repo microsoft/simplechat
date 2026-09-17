@@ -1485,6 +1485,7 @@
             <div class="workflow-task-editor border rounded-2 p-3 mb-3" id="workflow-task-editor">
               <label for="workflow-task-name" class="form-label">Task Name</label>
               <input type="text" class="form-control" id="workflow-task-name" maxlength="120" placeholder="e.g., Summarize findings" />
+              {% include "_workflow_publication_fields.html" %}
               <div class="mt-3">
                 <label for="workflow-task-runner-type" class="form-label">Runner</label>
                 <select class="form-select" id="workflow-task-runner-type">
