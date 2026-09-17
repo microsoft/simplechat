@@ -874,7 +874,7 @@ ADMIN_SETTINGS_FIELDS = {
             "help": (
                 "Routes chat through the connections listed below, so several Azure "
                 "OpenAI or Foundry resources can serve models at once. When off, chat "
-                "uses the single classic endpoint instead. Images use AI Connections "
+                "uses the single classic endpoint instead. Images and embeddings use AI Connections "
                 "independently of this switch. Switching this on cannot be undone, "
                 "and carries the classic chat endpoint into AI Connections."
             ),
@@ -885,7 +885,8 @@ ADMIN_SETTINGS_FIELDS = {
             "component": "model-connections-manager",
             "label": "AI Connections",
             "help": (
-                "Each connection is one Azure OpenAI or Foundry resource: where it is, "
+                "Each connection is one Azure OpenAI or Foundry resource, or a custom "
+                "OpenAI-compatible embedding API: where it is, "
                 "how SimpleChat authenticates to it, and which of its deployed models "
                 "may be used."
             ),
@@ -5308,7 +5309,20 @@ ADMIN_SETTINGS_FIELDS = {
     ],
     "embeddings-config": [
         {
+            "key": "embedding_model_selection",
+            "type": "component",
+            "component": "embedding-default-model-selection",
+            "label": "Default embedding model",
+            "help": (
+                "One saved AI Connection serves document ingestion, retrieval and fact memory "
+                "across personal, group and public workspaces, independently of chat and images. "
+                "This selection saves immediately. Switching models, even at the same dimensions, "
+                "can require a controlled rebuild; saving never automatically rebuilds stored vectors."
+            ),
+        },
+        {
             "key": "enable_embedding_apim",
+            "legacy": True,
             "type": "switch",
             "label": "Use APIM instead of direct to Azure OpenAI endpoint",
             "help": (
@@ -5321,6 +5335,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_embedding_endpoint",
+            "legacy": True,
             "type": "text",
             "label": "Azure OpenAI Embedding Endpoint",
             "help": (
@@ -5334,6 +5349,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_embedding_authentication_type",
+            "legacy": True,
             "type": "select",
             "label": "Authentication Type",
             "help": (
@@ -5347,6 +5363,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_embedding_subscription_id",
+            "legacy": True,
             "type": "text",
             "label": "Subscription ID",
             "help": (
@@ -5359,6 +5376,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_embedding_resource_group",
+            "legacy": True,
             "type": "text",
             "label": "Resource Group",
             "help": "The other half of the address the deployment list is fetched from.",
@@ -5367,6 +5385,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_embedding_key",
+            "legacy": True,
             "type": "secret",
             "label": "Azure OpenAI Embedding Key",
             "help": (
@@ -5384,6 +5403,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "embedding_model",
+            "legacy": True,
             "type": "component",
             "component": "embedding-model-selection",
             "label": "Embedding model",
@@ -5396,6 +5416,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_openai_embedding_api_version",
+            "legacy": True,
             "type": "text",
             "label": "Azure OpenAI Embedding API Version",
             "help": (
@@ -5407,6 +5428,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_embedding_endpoint",
+            "legacy": True,
             "type": "text",
             "label": "Azure APIM Endpoint",
             "help": "The API Management address that fronts the embedding deployment.",
@@ -5415,6 +5437,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_embedding_api_version",
+            "legacy": True,
             "type": "text",
             "label": "Azure APIM API Version",
             "help": (
@@ -5426,6 +5449,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_embedding_deployment",
+            "legacy": True,
             "type": "text",
             "label": "Azure APIM Deployment",
             "help": (
@@ -5437,6 +5461,7 @@ ADMIN_SETTINGS_FIELDS = {
         },
         {
             "key": "azure_apim_embedding_subscription_key",
+            "legacy": True,
             "type": "secret",
             "label": "Azure APIM Subscription Key",
             "help": "Leave it blank to keep the stored key.",
@@ -5714,6 +5739,10 @@ LEGACY_FIELDS_WITHOUT_V2_EQUIVALENT = {
 # with the reason it is reasonable for V2 to be ahead. The parity test reads this
 # so a V2-only field is a recorded decision rather than an accident.
 V2_ONLY_FIELDS = {
+    "embedding_model_selection": (
+        "Both interfaces save the global embedding reference through the capability-models API. "
+        "Classic has no named form field that could overwrite the shared binding or bypass compatibility checks."
+    ),
     "image_generation_model_selection": (
         "Both interfaces save this shared reference through the capability-models API. "
         "Classic deliberately has no named form field that could overwrite the saved binding."

@@ -1,8 +1,8 @@
 # classic_ai_connections_admin.py
 """
 Classic admin panes with real local scripts and a closed capability API boundary.
-Version: 0.261.102
-Implemented in: 0.261.102
+Version: 0.261.108
+Implemented in: 0.261.105; embeddings added in 0.261.106
 """
 
 import json
@@ -16,7 +16,7 @@ from v2_admin_settings import ORIGIN, REPO_ROOT
 
 
 class ClassicAIConnectionsFixture(AIConnectionsFixture):
-    """Render the actual Classic image/connection templates without a live Flask app."""
+    """Render the actual Classic image/embedding/connection panes without live services."""
 
     def _markup(self):
         environment = Environment(
@@ -28,6 +28,7 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
             **self.settings,
             "image_gen_model": {"selected": [], "all": []},
             "gpt_model": {"selected": [], "all": []},
+            "embedding_model": self.settings.get("embedding_model", {"selected": [], "all": []}),
             "enable_semantic_kernel": False,
             "azure_openai_gpt_endpoint": "https://legacy.example.test",
         }
@@ -36,6 +37,10 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
         )
         connections = environment.get_template("admin/_panes/model-endpoints.html").render(
             settings=settings, admin_landing_tab="model-endpoints",
+            custom_model_endpoint_api_types=self.custom_api_types,
+        )
+        embeddings = environment.get_template("admin/_panes/embeddings.html").render(
+            settings=settings, admin_landing_tab="embeddings",
         )
         return (
             '<!doctype html><html lang="en"><head><meta charset="UTF-8">'
@@ -50,7 +55,7 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
                 for scope in ("user", "group", "public")
             ) +
             '</div><form id="admin-settings-form">'
-            + connections + image +
+            + connections + image + embeddings +
             '</form><script type="module" src="/static/js/admin/admin_model_endpoints.js"></script>'
             '<script type="module" src="/static/js/admin/admin_settings.js"></script></body></html>'
         )
@@ -76,13 +81,17 @@ class ClassicAIConnectionsFixture(AIConnectionsFixture):
         else:
             super()._route(route)
 
-    def open(self):
+    def open(self, width=1440):
+        self.page.set_viewport_size({"width": width, "height": 1100})
         self.page.add_init_script(
-            "window.modelEndpoints = " + json.dumps(self.endpoints) + ";"
+            "window.modelEndpoints = " + json.dumps([self.editor_endpoint(endpoint) for endpoint in self.endpoints]) + ";"
             "window.defaultModelSelection = " + json.dumps(self.selections["chat"]) + ";"
             "window.enableMultiModelEndpoints = " + json.dumps(self.settings["enable_multi_model_endpoints"]) + ";"
             "window.gptSelected = [{deploymentName: 'legacy-chat'}];"
+            "window.embeddingSelected = " + json.dumps(self.settings.get("embedding_model", {}).get("selected", [])) + ";"
+            "window.embeddingAll = " + json.dumps(self.settings.get("embedding_model", {}).get("all", [])) + ";"
         )
         self.page.goto(f"{ORIGIN}/classic-admin", wait_until="networkidle")
         expect(self.page.locator("#model-endpoints-wrapper")).to_be_visible()
         expect(self.page.get_by_label("Default image model", exact=True)).to_be_enabled()
+        expect(self.page.get_by_label("Default embedding model", exact=True)).to_be_enabled()

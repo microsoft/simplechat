@@ -287,6 +287,23 @@ export function resolveBuiltInPromptVariables(
     return resolved;
 }
 
+/** Keep previews, missing-field checks and sent snapshots on the same substitution rules. */
+export function resolvePromptVariableValues(
+    variables: readonly PromptVariable[],
+    supplied: Record<string, string>,
+    context: PromptResolutionContext,
+): Record<string, string> {
+    const builtIns = resolveBuiltInPromptVariables(context);
+    return Object.fromEntries(variables.map((variable) => {
+        const value = variable.builtIn
+            ? builtIns[variable.key as BuiltInPromptVariable] ?? ''
+            : Object.prototype.hasOwnProperty.call(supplied, variable.key)
+                ? supplied[variable.key]
+                : '';
+        return [variable.key, typeof value === 'string' && value.trim() ? value : variable.defaultValue];
+    }));
+}
+
 /**
  * Substitute values into a prompt.
  *
@@ -323,8 +340,9 @@ export function applyPromptVariables(content: string, values: Record<string, str
                 return whole;
             }
 
-            const supplied = values[promptVariableKey(rawName)];
-            if (supplied !== undefined && supplied !== '') {
+            const key = promptVariableKey(rawName);
+            const supplied = Object.prototype.hasOwnProperty.call(values, key) ? values[key] : undefined;
+            if (typeof supplied === 'string' && supplied !== '') {
                 return supplied;
             }
             return defaultValue || whole;
@@ -338,7 +356,8 @@ export function describeUnfilledVariables(
     values: Record<string, string>,
 ): PromptVariable[] {
     return variables.filter(
-        (variable) => !String(values[variable.key] ?? '').trim() && !variable.defaultValue,
+        (variable) => !(Object.prototype.hasOwnProperty.call(values, variable.key)
+            && String(values[variable.key] ?? '').trim()) && !variable.defaultValue,
     );
 }
 

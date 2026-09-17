@@ -302,14 +302,14 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
             </GlassPanel>
             <div className="grid gap-4 sm:grid-cols-2">
                 <ActionField id="mcp-transport" label="Transport" required error={fieldError('transport')}
-                    help="Personal actions support remote transports only. Local commands and stdio are reserved for admin-managed global actions.">
+                    help="MCP actions support remote transports only. Local commands and stdio are no longer supported, including administrator-managed actions.">
                     <select id="mcp-transport" className={ACTION_INPUT_CLASS} value={transport} disabled={readOnly}
                         onChange={(event) => {
                             const value = event.target.value;
                             if (availableTransports.some((option) => option.value === value)) updateField('transport', value);
                         }}>
                         {!availableTransports.some(({ value }) => value === transport) ? <option value={transport} disabled>
-                            {transport === 'stdio' ? 'Stdio — admin-managed legacy configuration' : `Unavailable transport — ${transport}`}
+                            {transport === 'stdio' ? 'Stdio — no longer supported' : `Unavailable transport — ${transport}`}
                         </option> : null}
                         {availableTransports.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
@@ -327,7 +327,7 @@ export function McpActionConfiguration(props: ActionConnectorProps) {
                 </ActionField>
             </div>
             {transport === 'stdio' ? <div className="alert alert-warning space-y-2 rounded-xl bg-warn-soft p-3 text-sm text-warn">
-                <p>This legacy configuration is preserved for review. Personal workspaces cannot edit or execute a local MCP command. Select a permitted remote transport to reconfigure an owned action.</p>
+                <p>This retired configuration is preserved for review but cannot be executed in any workspace. Select a supported remote transport and endpoint to reconfigure an owned action, or delete it.</p>
                 <dl className="space-y-1 text-xs">
                     <div><dt className="font-medium">Command</dt><dd className="break-all">{connectorText(fields.command) || 'Not specified'}</dd></div>
                     <div><dt className="font-medium">Arguments</dt><dd className="break-all">{connectorStrings(fields.args).join(' ') || 'None'}</dd></div>

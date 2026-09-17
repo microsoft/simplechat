@@ -1,20 +1,22 @@
 ---
 layout: page
 title: "Configure AI connections"
-description: "Configure shared AI resources once, publish compatible models, and choose independent chat and image defaults."
+description: "Configure shared AI resources once and choose independent chat, image, and embedding defaults."
 section: "Guides"
 audience: admin
-version: "0.261.102"
+version: "0.261.108"
 ---
 
 ## What this does
 
-AI Connections keeps a resource's address, authentication, and models together. Chat and
-image generation select models from that shared source instead of keeping separate
+AI Connections keeps a resource's address, authentication, and models together. Chat,
+image generation, and embeddings select models from that shared source instead of keeping separate
 copies of the same endpoint and key. Rotating a shared connection's credential then
-updates the connection used by both tasks.
+updates the connection used by its published tasks.
 
-Implemented in version: **0.261.102**.
+Implemented in version: **0.261.105**.
+Provider-qualified image operations and Custom image connections were implemented
+in version **0.261.107**, tracked in `application/single_app/config.py`.
 [Issue #1436](https://github.com/microsoft/simplechat/issues/1436) tracks the shared
 connection and GPT image-generation changes.
 
@@ -29,16 +31,17 @@ Use a separate connection for an image-only resource, another region, different
 credentials, or an API Management gateway with a different route. It still appears in
 the same manager; you do not have to move images onto your chat resource.
 
-Embeddings, transcription, speech, and other services retain their existing
-configuration. This guide does not migrate them.
+Embeddings joined AI Connections in **0.261.106**. Transcription, speech, and other
+services retain their separate configuration.
 
 ## Before you start
 
 - Sign in with the SimpleChat **Admin** role to manage global connections and defaults.
   This image default is global; personal and group chat connections do not become
   global image choices.
-- Have an existing supported deployment and its actual deployment name, not just the
-  underlying model family name. SimpleChat does not create a deployment for you.
+- For Azure/Foundry, have an existing supported deployment and its actual deployment
+  name, not just the underlying model family name. Direct OpenAI Custom connections
+  instead use the provider's model name. SimpleChat does not provision either.
 - Decide whether requests must go through API Management. Keep its published path,
   authentication convention, and supported operations; do not substitute the backend
   resource URL to make a failing gateway request work.
@@ -78,6 +81,35 @@ If you manually declare support for an internally named model, verify the provid
 operation contract first. Do not mark it image-capable just to make an empty picker
 show a choice.
 
+### Direct OpenAI through Custom
+
+Use the **Custom** connection type and the **OpenAI API** contract for
+`https://api.openai.com/v1`. Enter the credentials and model names on that connection,
+then publish the supported image operation and choose it as the global image default.
+There is no separate image endpoint/key form to keep synchronized.
+
+Known models obtain their image operation from the provider-qualified catalog. For
+an unrecognized model, declare a compatible image API and generation support
+explicitly; editing and masking require separate capabilities. A new GPT version
+does not gain image support just because its name begins with `gpt-`.
+
+An OpenAI-compatible gateway is not automatically the direct OpenAI service. Preserve
+its configured path and provide compatible metadata where its backend cannot be
+identified. Use the Azure OpenAI API contract for Azure endpoints rather than
+mislabeling them as direct OpenAI.
+
+### Endpoint cloud and availability
+
+The endpoint's provider/cloud determines capability information, not where SimpleChat
+is hosted or which authority authenticates the application. A Government-hosted
+installation can use a configured commercial endpoint when organizational policy
+permits it. The catalog does not authorize cross-cloud data transfers.
+
+The reviewed Government model table does not establish availability of GPT Image,
+MAI Image, or FLUX. Such entries are marked unknown rather than given invented
+availability or a blanket Government restriction. Published model capability,
+service access, network policy, and live readiness remain separate requirements.
+
 ## Select task-specific defaults
 
 ### Chat
@@ -98,11 +130,13 @@ It is not a prerequisite for shared image generation.
    chat mode.
 3. Generate a test image using that default before relying on it in production.
 
-There is no second backing-image chooser and no required **Images versus Responses**
-setting. SimpleChat uses model capability metadata and the connection's operation
-configuration to choose the supported API. That does not remove Azure prerequisites:
-where a Responses image tool needs a backing deployment or service default, it must
-be established by verified provider configuration or existing metadata, not guessed.
+Known models select the operation automatically. Azure/Foundry image choices are
+dedicated GPT Image, MAI Image, and supported FLUX deployments. Verified direct OpenAI
+GPT models can invoke the hosted image tool through Custom connections.
+
+Microsoft documents an Azure Responses tool backed by a separate image deployment,
+but SimpleChat deliberately does not offer that Azure orchestration route. There is
+no backing-image chooser or automatic fallback to another service.
 
 Users continue to use the chat **Image** control. The normal chat-model choice does not
 override this global image default, and this release adds no per-chat image-model picker.
@@ -117,7 +151,77 @@ different choices even when their deployment names match.
 An image-only model remains available for its image task without becoming a text
 chat, agent, or workflow model.
 
+### Text embeddings
+
+Use the independent embedding default for document indexing, semantic retrieval,
+fact memory, and the default Embedding Model action. It is global across personal,
+group, and public workspaces; it does not require enabling chat connections.
+
+For Foundry, keep the project endpoint for deployment discovery and configure an
+explicit **embedding inference endpoint**. A project URL containing
+`/api/projects/` does not route embeddings. Current Azure-compatible inference uses
+the resource API base ending in `/openai/v1/`.
+
+For an approved self-hosted service or gateway, choose **Custom** with the OpenAI or
+Azure OpenAI API type and API key/bearer authentication. Enter request model names
+or deployment names according to that API type. Unknown embedding models need
+explicit dimensions and input limits; declaring support is not proof of readiness.
+The older `openai_compatible` embedding-only type remains available for existing
+references and exact base paths. Both forms use the shared Custom network policy
+and DNS-pinned transport; neither can bypass blocked loopback/metadata destinations.
+
+Use the embedding-specific test to confirm that the saved model returns valid
+vectors with the configured dimensions. This incurs an inference request but does
+not change the default, index documents, or prove that a model switch is safe.
+
+Changing models requires an explicit rebuild **even when vector dimensions are
+unchanged**. A new model cannot be activated while existing document or fact-memory
+vectors remain. Clearing the default does not clear this restriction or restore
+legacy settings. See [Change embedding models safely](#change-embedding-models-safely)
+before preparing a switch.
+
+## Change embedding models safely
+
+This release guards model changes but does not provide a bulk re-embedding or
+zero-downtime cutover workflow. Preparing a switch is a separate maintenance task,
+not an effect of saving a default.
+
+1. Preserve source documents, metadata, fact text, and backups. Confirm that every
+   document to be rebuilt has a recoverable source; historical uploads may not.
+2. Upgrade and stop all app workers, ingestion, and fact-memory backfill. Plan for
+   retrieval downtime while vector stores are empty.
+3. Explicitly empty/recreate personal, group, and public search indexes with the
+   intended dimensions. Preserve fact text while removing incompatible fact vectors.
+4. With workers stopped and writer/fence leases expired, reset only
+   `embedding_vectors_written` to `false` on the
+   `data_management_search_write_gate_global` document in the Cosmos
+   `data_management_jobs` container. Leave its other fields intact. If that gate
+   has not been established, use index maintenance before scheduling the reset.
+5. Restart workers and save the new default after schema and empty-store checks pass.
+6. Deliberately reprocess/re-upload documents and backfill facts. Include every
+   workspace scope and video-derived text in the rebuild.
+
+Index deletion and vector removal are administrator-controlled external operations.
+Field maintenance can add missing provenance fields, but cannot resize existing
+vector fields. SimpleChat does not accept a populated external rebuild through an
+unchecked "trust this data" override.
+
+The write-intent ledger prevents a stale empty-store response from approving an
+unsafe switch, so unsuccessful vector writes may also require a deliberate reset.
+An interrupted activation can leave vector operations blocked; reload and
+explicitly save the intended default again rather than deleting the gate.
+
+Activation and index maintenance require Search schema permissions. Normal
+indexing and retrieval do not: legacy data-plane-only access still works, and
+shared profiles use retained schema metadata.
+
 ## What happens during an upgrade
+
+Embedding configuration is imported independently of the image configuration
+described below. The importer retains direct/APIM routes, the active deployment,
+authentication and API version. It does not recreate indexes or regenerate vectors.
+An embedding import failure retains the legacy operation and provides a separate
+recovery notice; a completed image import does not suppress an embedding import.
 
 Startup automatically imports existing direct and APIM image configuration into AI
 Connections, or conservatively reuses a compatible connection. If both routes were
@@ -178,9 +282,10 @@ request uses API Management, confirm the request went through the expected gatew
 Repeat the relevant operation after changing a deployment, credential, or route.
 Generation tests can incur provider charges.
 
-Responses image generation supports whole-image regeneration in SimpleChat, not masked
-editing. Existing direct-image masked editing remains subject to the selected model
-and Images API support.
+Check the intended edit operation too. Direct OpenAI Responses/Images and compatible
+Azure GPT Image profiles can support masks. MAI and eligible FLUX profiles support
+reference-image edits without promising a mask interface. Generation-only models
+offer clearly labeled whole-image regeneration.
 
 ## Troubleshooting
 
@@ -191,7 +296,8 @@ and Images API support.
 | Chat changed but image output still uses the old model | The defaults are independent; change the image default explicitly |
 | A default becomes unavailable | The selected record was deleted, disabled, or made incompatible/unpublished. Choose a valid replacement rather than relying on a fallback |
 | Discovery fails but inference works | The identity lacks management/project read access, or inference-only key authentication is in use. Supply deployment names manually or correct discovery permissions |
-| A GPT model produces no image or the service rejects the tool | Confirm that deployment and resource support the hosted image operation, including any required backend binding, entitlement, and gateway operation. A successful text response is not image readiness |
+| An Azure GPT model is excluded from images | Select a dedicated Azure/Foundry image model. The approved SimpleChat policy excludes Azure GPT orchestration even when an administrator declares image support |
+| A direct OpenAI GPT model produces no image or the service rejects the tool | Confirm the Custom API contract, exact model capability, account access, and gateway operation. A successful text response is not image readiness |
 | Images worked before an import warning | Preserve the legacy values, correct the reported configuration/permissions, and restart to retry |
 | Images fail after clearing a successfully imported default | Clearing was authoritative. Choose a new shared default or disable image generation; legacy values will not be reactivated |
 | An older settings integration reports `409` / `image_catalog_migrated` | The legacy image catalog is no longer authoritative. Use AI Connections or update the integration to `GET`/`PUT /api/v2/admin/capability-models/image_generation`; retrying the old catalog write will not update the default |

@@ -1,7 +1,7 @@
 # test_orchestration_action_runtime.py
 """Functional coverage for isolated multi-function action execution.
 
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.096
 
 Runs the real Semantic Kernel auto-invocation loop and function filters with a
@@ -328,14 +328,23 @@ def test_unavailable_selected_model_does_not_fall_back(runtime, monkeypatch):
     ('global', 'governance_global_endpoints'),
 ])
 def test_selected_model_governance_precedes_secret_hydration(monkeypatch, scope, feature):
+    monkeypatch.syspath_prepend(str(APP_ROOT))
+    endpoint_types = importlib.import_module('functions_model_endpoint_types')
+    ai_connections = importlib.import_module('functions_ai_connections')
     tree = ast.parse((APP_ROOT / 'functions_model_endpoint_runtime.py').read_text(encoding='utf-8'))
     functions = [
         node for node in tree.body if isinstance(node, ast.FunctionDef)
         and node.name in ('_append_model_endpoint_candidate', 'resolve_model_endpoint_from_context')
     ]
-    namespace = {}
+    namespace = {
+        'resolve_model_endpoint_request_model': endpoint_types.resolve_model_endpoint_request_model,
+        'require_model_capability': ai_connections.require_model_capability,
+    }
     exec(compile(ast.Module(body=functions, type_ignores=[]), '<model-resolution>', 'exec'), namespace)
-    endpoint = {'id': 'endpoint', 'provider': 'aoai', 'models': [{'id': 'model', 'deploymentName': 'model'}]}
+    endpoint = {
+        'id': 'endpoint', 'provider': 'aoai',
+        'models': [{'id': 'model', 'deploymentName': 'model', 'supportsChat': True}],
+    }
     settings = {
         'enable_multi_model_endpoints': True,
         'allow_user_custom_endpoints': scope == 'personal',
@@ -382,6 +391,7 @@ def test_selected_model_governance_precedes_secret_hydration(monkeypatch, scope,
 @pytest.mark.parametrize('plugin_type', ['openapi', 'mcp', 'sql_query'])
 def test_single_manifest_loader_preserves_enabled_functions_and_tracks_companions(runtime, plugin_type):
     """Exercise the real loader seam without importing its live connection factories."""
+    action_manifests = importlib.import_module('functions_action_manifest')
     tree = ast.parse((APP_ROOT / 'semantic_kernel_plugins' / 'logged_plugin_loader.py').read_text(encoding='utf-8'))
     loader_class = next(node for node in tree.body if isinstance(node, ast.ClassDef)
                         and node.name == 'LoggedPluginLoader')
@@ -418,6 +428,8 @@ def test_single_manifest_loader_preserves_enabled_functions_and_tracks_companion
         'log_event': lambda *args, **kwargs: None,
         'debug_print': lambda *args, **kwargs: None,
         'get_plugin_logger': lambda: None, 'BasePlugin': Plugin, 'SQLSchemaPlugin': Plugin,
+        'resolve_action_type': action_manifests.resolve_action_type,
+        'get_action_execution_status': action_manifests.get_action_execution_status,
     }
     exec(compile(ast.Module(body=[loader_class], type_ignores=[]), '<single-action-loader>', 'exec'), namespace)
     kernel = Kernel()

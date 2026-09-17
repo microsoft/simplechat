@@ -1,7 +1,7 @@
 # test_v2_workspace_authoring.py
 """
 Real-SPA browser workflows for native V2 My Workspace Agents and Actions.
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.096
 
 Run against a fresh production V2 build with the existing pytest-playwright
@@ -1564,6 +1564,51 @@ def test_mcp_discovery_failure_retry_preserves_credentials_and_unavailable_tools
             "allowed_tool_names": ["legacy-tool", "search"], "mcp_tools": expected_tools,
         },
     }
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_retired_mcp_requires_explicit_remote_reconfiguration(workspace_ui, theme, width, height):
+    """Legacy actions remain reviewable, never silently converted or executable."""
+    ui, page = workspace_ui, workspace_ui.page
+    ui.actions[MCP_ACTION_ID]["endpoint"] = "stdio://legacy-command"
+    ui.actions[MCP_ACTION_ID]["additionalFields"].update({
+        "transport": "stdio", "command": "legacy-command", "args": ["legacy-argument"],
+    })
+    before = copy.deepcopy(ui.actions[MCP_ACTION_ID])
+    ui.open(f"/workspace/actions/{MCP_ACTION_ID}", theme=theme, width=width, height=height)
+    editor_section(page, "Configuration")
+    transport = action_field(page, "Transport")
+    expect(transport).to_have_value("stdio")
+    expect(transport.get_by_role("option", name="Stdio — no longer supported", exact=True)).to_be_disabled()
+    expect(page.get_by_text(
+        "MCP actions support remote transports only. Local commands and stdio are no longer supported, including administrator-managed actions.",
+        exact=True,
+    )).to_be_visible()
+    expect(page.get_by_text("cannot be executed in any workspace", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="Discover MCP tools", exact=True)).to_be_disabled()
+    expect(page.get_by_role("button", name="Test MCP connection", exact=True)).to_be_disabled()
+    expect(action_field(page, "MCP server endpoint")).to_be_disabled()
+    assert_action_save_blocked(ui)
+    assert ui.actions[MCP_ACTION_ID] == before
+    assert not ui.editor_writes
+    assert not any(request.method == "POST" and "/api/plugins/" in request.path for request in ui.requests)
+
+    transport.select_option("streamable_http")
+    endpoint = action_field(page, "MCP server endpoint")
+    expect(endpoint).to_be_enabled()
+    expect(endpoint).to_have_value("stdio://legacy-command")
+    expect(page.get_by_role("button", name="Discover MCP tools", exact=True)).to_be_disabled()
+    endpoint.fill("https://mcp.example.test/reconfigured")
+    expect(page.get_by_role("button", name="Discover MCP tools", exact=True)).to_be_enabled()
+    expect(page.get_by_role("button", name="Test MCP connection", exact=True)).to_be_enabled()
+    expect(page.get_by_text("cannot be executed in any workspace", exact=False)).to_have_count(0)
+    assert ui.actions[MCP_ACTION_ID] == before
+    assert not ui.editor_writes
+    assert save_resource(ui, "action", identifier=MCP_ACTION_ID).status == 200
+    assert ui.actions[MCP_ACTION_ID]["additionalFields"]["transport"] == "streamable_http"
+    assert ui.actions[MCP_ACTION_ID]["endpoint"] == "https://mcp.example.test/reconfigured"
+    assert ui.actions[MCP_ACTION_ID]["auth"] == before["auth"]
+    ui.assert_no_overflow()
 
 
 def test_mcp_reusable_identity_and_explicit_secret_header_removal(workspace_ui):

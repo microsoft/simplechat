@@ -1,8 +1,9 @@
 # test_model_capability_catalog_resolution.py
 """
 Functional tests for the catalog-backed model capability resolver and schema.
-Version: 0.261.035
+Version: 0.261.122
 Implemented in: 0.261.035
+React V2 catalog integration: 0.261.122
 
 The qualitative resolver first shipped in 0.261.014. These tests preserve its
 override, family-isolation, prefix, and fallback behavior while validating the
@@ -70,13 +71,18 @@ class TestModelCapabilityCatalog(unittest.TestCase):
         self.assertEqual(self.catalog["schemaVersion"], 3)
         model_ids = [record["id"] for record in self.catalog["models"]]
         self.assertEqual(len(model_ids), len(set(model_ids)))
-        providers = {record["provider"] for record in self.catalog["models"]}
+        providers = {
+            record["provider"] for record in self.catalog["models"]
+            if "provider" in record
+        }
         self.assertIn("google", providers)
 
     def test_family_does_not_leak_capabilities(self):
         """A family must never give one model a sibling's capabilities."""
         families = {}
         for record in self.catalog["models"]:
+            if "capabilities" not in record:
+                continue  # Reasoning-only records make no qualitative claims.
             families.setdefault(record["family"], []).append(record)
 
         mixed_families = [

@@ -536,6 +536,8 @@ export const assistMessageBlockRevision = (
 /** How a stored image version came about, which the history list shows. */
 export type ImageRevisionOrigin = 'original' | 'ai' | 'prompt' | 'control';
 
+export type ImageRevisionOperation = 'edit' | 'regenerate';
+
 /**
  * One stored version of a generated image.
  *
@@ -554,7 +556,7 @@ export interface ImageRevision {
     author_name?: string;
     timestamp?: string;
     model?: string;
-    /** `edit` changed part of the image; `regenerate` replaced all of it. */
+    /** `edit` used the source image, optionally masked; `regenerate` used only a prompt. */
     method?: 'edit' | 'regenerate' | '';
     size?: string;
     quality?: string;
@@ -601,6 +603,8 @@ export interface ImageRevisionResponse {
 export interface ImageRevisionRequest {
     conversation_id: string;
     origin?: ImageRevisionOrigin;
+    /** Explicitly distinguish a source-image edit from prompt-only whole-image replacement. */
+    operation?: ImageRevisionOperation;
     instruction?: string;
     prompt?: string;
     /** A PNG data URL where transparent pixels mark the region to change. */

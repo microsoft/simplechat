@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for shared app settings and governance cache versioning.
-Version: 0.261.027
+Version: 0.261.106
 Implemented in: 0.242.020
 
 Settings versions are now carried with the shared document. Governance caches
@@ -42,7 +42,7 @@ def test_app_settings_cache_shared_version_contract():
     assert "APP_SETTINGS_SHARED_VERSION_CACHE" not in cache_content
     assert "APP_SETTINGS_CACHE = " not in cache_content
     assert "store.write(normalize_loaded_settings)" in settings_content
-    assert "write(apply_updates, expected_etag=expected_etag)" in settings_content
+    assert "apply_updates, expected_etag=expected_etag, write_guard=guard_embedding_write" in settings_content
     assert 'candidate[SETTINGS_REVISION_FIELD]' in store_content
     assert '"document": dict(stored)' in store_content
 

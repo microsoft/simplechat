@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.096
+Version: 0.261.122
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -9,6 +9,7 @@ and conditional-write code run against scoped in-memory Cosmos/Key Vault seams.
 No application startup, provider invocation, or live Azure resource is required.
 """
 
+import importlib
 import importlib.util
 import json
 import logging
@@ -254,6 +255,12 @@ def environment(monkeypatch):
         modules.append(_load_module(stack, "semantic_kernel_plugins.sql_odbc_utils", r"semantic_kernel_plugins\sql_odbc_utils.py"))
         keyvault = _load_module(stack, "functions_keyvault")
         schema = _load_module(stack, "json_schema_validation")
+        modules.extend([
+            schema,
+            importlib.import_module("functions_action_manifest"),
+            importlib.import_module("functions_m365_operations"),
+            importlib.import_module("functions_legacy_action_management"),
+        ])
         payload = _load_module(stack, "functions_agent_payload")
         health = _load_module(stack, "semantic_kernel_plugins.plugin_health_checker", r"semantic_kernel_plugins\plugin_health_checker.py")
         authoring = _load_module(stack, "functions_workspace_authoring")
@@ -261,7 +268,7 @@ def environment(monkeypatch):
         settings_namespace = {
             "TABULAR_GENERATION_BACKEND_SETTING_KEYS": set(),
             "get_public_workspace_label_context": lambda values: {},
-            "sanitize_model_endpoints_for_frontend": lambda values: [
+            "sanitize_model_endpoints_for_frontend": lambda values, *, include_connection_details=True: [
                 {**deepcopy(value), "auth": {key: item for key, item in value.get("auth", {}).items() if key not in {"api_key", "client_secret"}}}
                 for value in values
             ],
@@ -277,6 +284,7 @@ def environment(monkeypatch):
             "__name__": __name__, "Blueprint": Blueprint, "jsonify": jsonify, "request": request,
             "session": session, "wraps": wraps, "logging": logging, "re": re, "uuid": uuid,
             "get_settings": services.settings_module.get_settings, "log_event": services.appinsights.log_event,
+            "get_graph_base_url": lambda: "https://graph.microsoft.com/v1.0",
             "debug_print": Mock(), "check_user_access_status": Mock(return_value=(True, None)),
             "swagger_route": lambda **kwargs: lambda function: function, "get_auth_security": lambda: [],
             "personal_editor_response": authoring.personal_editor_response,
@@ -339,6 +347,7 @@ def environment(monkeypatch):
         ), None)
         namespace["SecretReturnType"] = keyvault.SecretReturnType
         namespace["ACTION_PERMISSION_ERROR_MESSAGE"] = "Not permitted."
+        namespace["ACTION_VALIDATION_ERROR_MESSAGE"] = "Invalid action configuration."
         execute_functions("functions_authentication.py", {
             "apply_blueprint_auth", "login_required_blueprint", "login_required", "user_required", "get_current_user_id",
         }, namespace)
@@ -351,12 +360,13 @@ def environment(monkeypatch):
             "get_global_agent_settings_for_users",
         }, namespace, blueprint="bpa")
         execute_functions("route_backend_plugins.py", {
-            "_apply_plugin_runtime_defaults", "_validate_action_identity_for_scope", "_reject_non_admin_mcp_stdio",
+            "_apply_plugin_runtime_defaults", "_validate_action_identity_for_scope",
             "_prepare_personal_action_for_editor", "_prepare_personal_action_payload",
             "get_user_plugins", "set_user_plugins", "get_user_plugin", "update_user_plugin", "delete_user_plugin",
             "get_user_plugin_types", "_rehydrate_action_test_secret", "_hydrate_mcp_custom_headers_for_test",
             "_resolve_secret_value_for_action_test", "_load_existing_plugin_for_test",
             "_resolve_action_identity_context", "_resolve_plugin_secret_context",
+            "_action_test_origin", "_action_origin_secret_context", "_handle_mcp_configuration_error",
             "_prepare_action_test_manifest",
             "_flatten_editor_test_fields", "_prepare_editor_sql_test_data", "_prepare_editor_yamcs_test_data",
             "_is_personal_editor_test_request", "_assert_personal_editor_test_access",
@@ -409,6 +419,10 @@ def action_payload(kind="openapi"):
 def configured_action_payload(environment, kind):
     record = action_payload(kind)
     if kind == "agent":
+        return record
+    if kind in environment.namespace["M365_PLUGIN_TYPES"]:
+        record.update(environment.namespace["get_m365_default_config"](kind))
+        record["endpoint"] = ""
         return record
     allowed = environment.schema.get_allowed_auth_types_for_plugin_type(kind)
     auth_type = next(value for value in ("NoAuth", "user", "key", "identity", "username_password", "servicePrincipal", "basic", "connection_string") if value in allowed)
@@ -498,7 +512,7 @@ def test_agent_types_create_edit_and_redact(environment, kind, vault_enabled):
     assert fetched.headers["Cache-Control"] == "no-store"
 
 
-@pytest.mark.parametrize("kind", CURRENT_TYPES)
+@pytest.mark.parametrize("kind", [kind for kind in CURRENT_TYPES if kind != "msgraph"])
 def test_every_action_type_create_edit_reload_delete(environment, kind):
     env = environment
     env.services.add_agent()
@@ -516,6 +530,42 @@ def test_every_action_type_create_edit_reload_delete(environment, kind):
     assert latest["record"]["metadata"]["custom_configuration"] == {"enabled": False, "maximum": 0, "items": []}
     assert env.client.get(f"/api/user/plugins/{resource['record']['id']}?view=editor").get_json() == latest
     assert env.client.delete(f"/api/user/plugins/{resource['record']['id']}?view=editor").status_code == 200
+
+
+@pytest.mark.parametrize("action_type", ["msgraph", "Microsoft Graph", "MSGraphPlugin"])
+def test_editor_cannot_create_retired_graph_actions(environment, action_type):
+    env = environment
+    draft = configured_action_payload(env, "msgraph")
+    draft["type"] = action_type
+    response = env.client.post("/api/user/plugins?view=editor", json=write_payload(draft))
+    assert response.status_code == 400
+    assert not env.services.writes
+    assert not env.services.secret_writes
+
+
+def test_editor_retains_owned_legacy_graph_editing_without_clone_or_type_conversion(environment):
+    env = environment
+    draft = {**configured_action_payload(env, "msgraph"), "id": str(uuid.uuid4())}
+    stored = env.services.add("actions", "personal", "actor", draft)
+    resource = env.helper.editor_resource(stored, "actions")
+    response = patch_record(env, "plugins", resource, {"description": "Still an owned legacy action"})
+    assert response.status_code == 200, response.get_json()
+    latest = response.get_json()
+    writes = len(env.services.writes)
+    clone = env.client.post("/api/user/plugins?view=editor", json=write_payload(latest["record"]))
+    assert clone.status_code == 400
+    assert len(env.services.writes) == writes
+
+    ordinary = create(env, "plugins", action_payload())
+    writes = len(env.services.writes)
+    converted = patch_record(env, "plugins", ordinary, {
+        "type": "msgraph", "endpoint": "", "auth": {"type": "user"},
+    })
+    assert converted.status_code == 400
+    assert len(env.services.writes) == writes
+    assert env.client.delete(f"/api/user/plugins/{stored['id']}?view=editor").status_code == 200
+    restored = env.client.post("/api/user/plugins?view=editor", json=write_payload(latest["record"]))
+    assert restored.status_code == 400
 
 
 @pytest.mark.parametrize("vault_enabled", [False, True])
@@ -1463,6 +1513,13 @@ def test_embedding_editor_root_fields_survive_and_drive_the_existing_runtime(env
         stored, scope_value="actor", scope="user", return_type=env.keyvault.SecretReturnType.VALUE,
     )
     with ExitStack() as stack:
+        stack.enter_context(patch.dict(sys.modules, {
+            "functions_content": module_stub(
+                "functions_content", generate_embedding=Mock(side_effect=AssertionError(
+                    "An explicitly configured action must not use the default embedding connection."
+                )),
+            ),
+        }))
         module = _load_module(stack, "semantic_kernel_plugins.embedding_model_plugin", r"semantic_kernel_plugins\embedding_model_plugin.py")
         response = Mock()
         response.json.return_value = {"data": [{"embedding": [0.25, 0.75]}]}

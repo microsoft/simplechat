@@ -5083,6 +5083,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderEmbeddingModels();
     renderImageModels();
     initializeSharedImageModels();
+    initializeSharedCapabilityModels('embeddings');
 
     updateGptHiddenInput();
     updateEmbeddingHiddenInput();
@@ -5416,32 +5417,32 @@ function renderGPTModels() {
 function renderEmbeddingModels() {
     const listDiv = document.getElementById('embedding_models_list');
     if (!listDiv) return;
-
+    listDiv.replaceChildren();
     if (!embeddingAll || embeddingAll.length === 0) {
-        listDiv.innerHTML = '<p class="text-warning">No embedding models found. Click "Fetch Embedding Models" to populate.</p>';
+        const notice = document.createElement('p');
+        notice.className = 'text-warning';
+        notice.textContent = 'No legacy embedding models found. Fetch models to recover the old configuration.';
+        listDiv.appendChild(notice);
         return;
     }
-
-    let html = '<ul class="list-group">';
-    embeddingAll.forEach(m => {
-        const isSelected = embeddingSelected.some(sel =>
-            sel.deploymentName === m.deploymentName &&
-            sel.modelName === m.modelName
-        );
-        const buttonLabel = isSelected ? 'Selected' : 'Select';
-        const buttonDisabled = isSelected ? 'disabled' : '';
-        html += `
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                <span>${m.deploymentName} (Model: ${m.modelName})</span>
-                <button class="btn btn-sm btn-primary" ${buttonDisabled}
-                    onclick="selectEmbeddingModel('${m.deploymentName}', '${m.modelName}')">
-                    ${buttonLabel}
-                </button>
-            </li>
-        `;
+    const list = document.createElement('ul');
+    list.className = 'list-group';
+    embeddingAll.forEach(model => {
+        const selected = embeddingSelected.some(item => item.deploymentName === model.deploymentName && item.modelName === model.modelName);
+        const row = document.createElement('li');
+        row.className = 'list-group-item d-flex justify-content-between align-items-center';
+        const name = document.createElement('span');
+        name.textContent = `${model.deploymentName} (Model: ${model.modelName || model.deploymentName})`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-primary';
+        button.disabled = selected;
+        button.textContent = selected ? 'Selected' : 'Select';
+        button.addEventListener('click', () => window.selectEmbeddingModel(model.deploymentName, model.modelName));
+        row.append(name, button);
+        list.appendChild(row);
     });
-    html += '</ul>';
-    listDiv.innerHTML = html;
+    listDiv.appendChild(list);
 }
 
 function renderImageModels() {
@@ -5475,19 +5476,46 @@ function renderImageModels() {
     listDiv.appendChild(list);
 }
 
-let sharedImageModels = null;
-let sharedImageBusy = false;
-let sharedImageBindingAuthoritative = document.getElementById('shared-image-model-settings')?.dataset.sharedBindingAuthoritative === 'true';
+const sharedCapabilityStates = {
+    image_generation: {
+        prefix: 'image-generation', kind: 'image', title: 'Image', container: 'shared-image-model-settings',
+        legacy: 'image', testType: 'image', testId: 'test_image_button', resultId: 'test_image_result',
+    },
+    embeddings: {
+        prefix: 'embedding', kind: 'embedding', title: 'Embedding', container: 'shared-embedding-model-settings',
+        legacy: 'embedding', testType: 'embedding', testId: 'test_embedding_button', resultId: 'test_embedding_result',
+    },
+};
+Object.values(sharedCapabilityStates).forEach(state => {
+    const container = document.getElementById(state.container);
+    state.authoritative = container?.dataset.sharedBindingAuthoritative === 'true';
+    state.initialHasSelection = container?.dataset.hasSharedSelection === 'true';
+    state.initialMigration = {
+        status: container?.dataset.migrationStatus || '',
+        message: document.getElementById(`${state.prefix}-migration-notice`)?.textContent || '',
+    };
+    state.data = null;
+    state.busy = false;
+});
 
-function isImageImportFailure(migration) {
+function isCapabilityImportFailure(migration) {
     return migration?.status === 'error' || migration?.status === 'failed';
 }
 
-function canEditLegacyImageSettings() {
-    return !sharedImageBindingAuthoritative && isImageImportFailure(sharedImageModels?.migration);
+function canEditLegacyCapabilitySettings(capability) {
+    const state = sharedCapabilityStates[capability];
+    return !state.authoritative && isCapabilityImportFailure(state.data ? state.data.migration : state.initialMigration);
 }
 
-function setImageNotice(id, message, tone = 'warning') {
+function canEditLegacyImageSettings() {
+    return canEditLegacyCapabilitySettings('image_generation');
+}
+
+function canEditLegacyEmbeddingSettings() {
+    return canEditLegacyCapabilitySettings('embeddings');
+}
+
+function setCapabilityNotice(id, message, tone = 'warning') {
     const element = document.getElementById(id);
     if (!element) return;
     element.className = `alert alert-${tone} mt-2`;
@@ -5495,20 +5523,34 @@ function setImageNotice(id, message, tone = 'warning') {
     element.textContent = message || '';
 }
 
-function sharedImageChoiceIndex() {
-    if (!sharedImageModels) return -1;
-    return sharedImageModels.choices.findIndex(choice =>
-        choice.endpoint_id === sharedImageModels.selection?.endpoint_id &&
-        choice.model_id === sharedImageModels.selection?.model_id
+const setImageNotice = setCapabilityNotice;
+
+function sharedCapabilityChoiceIndex(capability) {
+    const data = sharedCapabilityStates[capability].data;
+    if (!data) return -1;
+    return data.choices.findIndex(choice =>
+        choice.endpoint_id === data.selection?.endpoint_id &&
+        choice.model_id === data.selection?.model_id
     );
 }
 
-function renderSharedImageModels() {
-    const select = document.getElementById('image-generation-default-model');
-    if (!select || !sharedImageModels) return;
-    select.replaceChildren(new Option('No default image model', ''));
+function sharedImageChoiceIndex() {
+    return sharedCapabilityChoiceIndex('image_generation');
+}
+
+function hasConfiguredSharedEmbedding() {
+    const state = sharedCapabilityStates.embeddings;
+    return state.data ? sharedCapabilityChoiceIndex('embeddings') >= 0 : state.initialHasSelection;
+}
+
+function renderSharedCapabilityModels(capability) {
+    const state = sharedCapabilityStates[capability];
+    const { data, prefix, kind, title } = state;
+    const select = document.getElementById(`${prefix}-default-model`);
+    if (!select) return;
+    select.replaceChildren(new Option(data ? `No default ${kind} model` : 'Loading models…', ''));
     const groups = new Map();
-    sharedImageModels.choices.forEach((choice, index) => {
+    (data?.choices || []).forEach((choice, index) => {
         let group = groups.get(choice.endpoint_id);
         if (!group) {
             group = document.createElement('optgroup');
@@ -5521,120 +5563,183 @@ function renderSharedImageModels() {
             ? ` (${choice.deployment_name})` : '';
         group.appendChild(new Option(`${name}${deployment}`, String(index)));
     });
-    const selectedIndex = sharedImageChoiceIndex();
-    const dangling = Boolean(sharedImageModels.selection?.endpoint_id && selectedIndex < 0);
+    const selectedIndex = sharedCapabilityChoiceIndex(capability);
+    const dangling = Boolean(data?.selection?.endpoint_id && selectedIndex < 0);
     if (dangling) {
         const stale = new Option('Saved model — no longer available', 'unavailable');
         stale.disabled = true;
         select.appendChild(stale);
     }
     select.value = dangling ? 'unavailable' : selectedIndex < 0 ? '' : String(selectedIndex);
-    select.disabled = sharedImageBusy;
-    const refresh = document.getElementById('refresh-image-generation-models');
-    if (refresh) refresh.disabled = sharedImageBusy;
-    const test = document.getElementById('test_image_button');
-    if (test) test.disabled = sharedImageBusy || selectedIndex < 0 || !sharedImageModels.enabled;
-    const support = sharedImageModels.choices[selectedIndex]?.capability;
-    const capability = document.getElementById('image-generation-model-capability');
-    if (capability) {
-        capability.textContent = support
-            ? `${support.api === 'images' ? 'Direct image output' : 'Image output through the Responses image tool'} · ${support.source || 'unknown source'}`
+    select.disabled = state.busy || !data;
+    const refresh = document.getElementById(`refresh-${prefix}-models`);
+    if (refresh) refresh.disabled = state.busy;
+    const test = document.getElementById(state.testId);
+    if (test) test.disabled = state.busy || selectedIndex < 0 || !data?.enabled;
+    const selectedChoice = data?.choices[selectedIndex];
+    const support = selectedChoice?.capability;
+    const supportElement = document.getElementById(`${prefix}-model-capability`);
+    if (supportElement) {
+        supportElement.textContent = support
+            ? `${capability === 'embeddings' ? 'Text embeddings' : support.api === 'images' ? 'Direct image output' : 'Image output through the Responses image tool'} · ${support.source || 'unknown source'}`
             : '';
     }
-    const emptyMessage = !sharedImageModels.choices.length
-        ? 'No saved connection publishes a compatible image model. Add or enable one in AI Connections and save the connection first.'
-        : sharedImageModels.enabled && selectedIndex < 0
-          ? 'Choose a default image model before generating images. A cleared selection never restores the legacy model.'
-          : !sharedImageModels.enabled
+    const policyElement = document.getElementById(`${prefix}-model-policy`);
+    if (policyElement) {
+        const policy = selectedChoice?.embedding_policy;
+        const dimensions = policy?.dimensions ?? policy?.default_dimensions;
+        policyElement.textContent = selectedChoice ? [
+            Number.isSafeInteger(dimensions) && dimensions > 0 ? `${dimensions.toLocaleString()} dimensions` : 'Dimensions not configured',
+            Number.isSafeInteger(policy?.max_input_tokens) && policy.max_input_tokens > 0 ? `${policy.max_input_tokens.toLocaleString()} input tokens per text` : 'Input token limit not configured',
+        ].filter(Boolean).join(' · ') : '';
+    }
+    const emptyMessage = !data ? '' : !data.choices.length
+        ? `No saved connection publishes a compatible ${kind} model. Add or enable one in AI Connections and save the connection first.`
+        : data.enabled && selectedIndex < 0
+          ? `Choose a default ${kind} model before ${capability === 'embeddings' ? 'indexing or searching documents' : 'generating images'}. A cleared selection never restores the legacy model.`
+          : !data.enabled
             ? 'Image generation is off. You can configure the default without enabling it. Save the feature switch before testing.'
             : '';
-    setImageNotice('image-generation-model-notice', sharedImageModels.reason || emptyMessage);
-    const migration = sharedImageModels.migration;
-    if (migration?.status === 'complete') sharedImageBindingAuthoritative = true;
-    const recoveryAllowed = canEditLegacyImageSettings();
-    const migrationMessage = isImageImportFailure(migration) && sharedImageBindingAuthoritative
-        ? 'An earlier image import failed. Image configuration now uses AI Connections; legacy settings are retained and cannot be edited here.'
+    setCapabilityNotice(`${prefix}-model-notice`, data?.reason || emptyMessage);
+    setCapabilityNotice(`${prefix}-compatibility-notice`, data?.compatibility?.message || '', 'info');
+    const migration = data ? data.migration : state.initialMigration;
+    if (migration?.status === 'complete') state.authoritative = true;
+    const recoveryAllowed = canEditLegacyCapabilitySettings(capability);
+    const migrationMessage = isCapabilityImportFailure(migration) && state.authoritative
+        ? `An earlier ${kind} import failed. ${title} configuration now uses AI Connections; legacy settings are retained and cannot be edited here.`
         : migration?.message || '';
-    setImageNotice('image-generation-migration-notice', migrationMessage, recoveryAllowed ? 'warning' : 'info');
-    document.getElementById('legacy-image-recovery')?.classList.toggle('d-none', !recoveryAllowed);
-    const legacy = document.getElementById('legacy-image-settings');
-    if (legacy) legacy.disabled = !recoveryAllowed || sharedImageBusy;
+    setCapabilityNotice(`${prefix}-migration-notice`, migrationMessage, recoveryAllowed ? 'warning' : 'info');
+    document.getElementById(`legacy-${state.legacy}-recovery`)?.classList.toggle('d-none', !recoveryAllowed);
+    const legacy = document.getElementById(`legacy-${state.legacy}-settings`);
+    if (legacy) legacy.disabled = !recoveryAllowed || state.busy;
 }
 
-async function readSharedImageResponse(response) {
+function renderSharedImageModels() {
+    renderSharedCapabilityModels('image_generation');
+}
+
+async function readSharedCapabilityResponse(response, capability) {
     const data = await response.json();
+    const { kind } = sharedCapabilityStates[capability];
     if (!response.ok) {
-        throw new Error(typeof data.error === 'string' ? data.error : 'The image default could not be saved.');
+        throw new Error(typeof data.error === 'string' ? data.error : `The ${kind} default could not be saved.`);
     }
-    if (data.capability !== 'image_generation' || !Array.isArray(data.choices) || typeof data.enabled !== 'boolean') {
-        throw new Error('The image model list could not be read. Reload and try again.');
+    if (data.capability !== capability || !Array.isArray(data.choices) || typeof data.enabled !== 'boolean') {
+        throw new Error(`The ${kind} model list could not be read. Reload and try again.`);
     }
     return {
         ...data,
         choices: data.choices.filter(choice => choice && typeof choice.endpoint_id === 'string' &&
-            typeof choice.model_id === 'string' && choice.capability?.supported === true),
+            typeof choice.model_id === 'string' && choice.capability?.supported === true && choice.capability.available !== false),
     };
 }
 
-async function loadSharedImageModels() {
-    if (!document.getElementById('image-generation-default-model') || sharedImageBusy) return;
-    sharedImageBusy = true;
-    renderSharedImageModels();
+async function loadSharedCapabilityModels(capability) {
+    const state = sharedCapabilityStates[capability];
+    if (!document.getElementById(`${state.prefix}-default-model`) || state.busy) return;
+    state.busy = true;
+    setCapabilityNotice(state.resultId, '', 'info');
+    renderSharedCapabilityModels(capability);
     try {
-        sharedImageModels = await readSharedImageResponse(await fetch('/api/v2/admin/capability-models/image_generation'));
-        setImageNotice('image-generation-model-error', '', 'danger');
+        state.data = await readSharedCapabilityResponse(await fetch(`/api/v2/admin/capability-models/${capability}`), capability);
+        setCapabilityNotice(`${state.prefix}-model-error`, '', 'danger');
     } catch (error) {
-        setImageNotice('image-generation-model-error', error.message || 'Image models could not be loaded.', 'danger');
+        setCapabilityNotice(`${state.prefix}-model-error`, error.message || `${state.title} models could not be loaded.`, 'danger');
     } finally {
-        sharedImageBusy = false;
-        renderSharedImageModels();
+        state.busy = false;
+        renderSharedCapabilityModels(capability);
     }
 }
 
-async function saveSharedImageModel(event) {
-    if (!sharedImageModels || sharedImageBusy) return;
-    const choice = event.target.value === '' ? null : sharedImageModels.choices[Number(event.target.value)];
+async function saveSharedCapabilityModel(capability, event) {
+    const state = sharedCapabilityStates[capability];
+    if (!state.data || state.busy) return;
+    const choice = event.target.value === '' ? null : state.data.choices[Number(event.target.value)];
     if (event.target.value !== '' && !choice) return;
     const selection = choice
         ? { endpoint_id: choice.endpoint_id, model_id: choice.model_id, provider: choice.provider }
         : { endpoint_id: '', model_id: '', provider: '' };
-    const previous = sharedImageModels;
-    sharedImageBusy = true;
-    sharedImageModels = { ...sharedImageModels, selection };
-    document.getElementById('image-generation-model-saving')?.classList.remove('d-none');
-    document.getElementById('test_image_result')?.replaceChildren();
-    renderSharedImageModels();
+    const previous = state.data;
+    state.busy = true;
+    state.data = { ...state.data, selection };
+    document.getElementById(`${state.prefix}-model-saving`)?.classList.remove('d-none');
+    setCapabilityNotice(state.resultId, '', 'info');
+    renderSharedCapabilityModels(capability);
     try {
-        sharedImageModels = await readSharedImageResponse(await fetch('/api/v2/admin/capability-models/image_generation', {
+        state.data = await readSharedCapabilityResponse(await fetch(`/api/v2/admin/capability-models/${capability}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ selection }),
-        }));
-        sharedImageBindingAuthoritative = true;
-        setImageNotice('image-generation-model-error', '', 'danger');
+        }), capability);
+        state.authoritative = true;
+        setCapabilityNotice(`${state.prefix}-model-error`, '', 'danger');
     } catch (error) {
-        sharedImageModels = previous;
-        setImageNotice('image-generation-model-error', error.message || 'The image default could not be saved.', 'danger');
+        state.data = previous;
+        setCapabilityNotice(`${state.prefix}-model-error`, error.message || `The ${state.kind} default could not be saved.`, 'danger');
     } finally {
-        sharedImageBusy = false;
-        document.getElementById('image-generation-model-saving')?.classList.add('d-none');
-        renderSharedImageModels();
+        state.busy = false;
+        document.getElementById(`${state.prefix}-model-saving`)?.classList.add('d-none');
+        renderSharedCapabilityModels(capability);
     }
 }
 
-function initializeSharedImageModels() {
-    const select = document.getElementById('image-generation-default-model');
+async function testSharedCapabilityModel(capability) {
+    const state = sharedCapabilityStates[capability];
+    if (state.busy || !state.data || sharedCapabilityChoiceIndex(capability) < 0) return;
+    if (typeof window.hasUnsavedAIConnectionEdits === 'function' && window.hasUnsavedAIConnectionEdits()) {
+        setCapabilityNotice(state.resultId, `Save the connection first. ${state.title} tests only use the saved model and credentials.`);
+        return;
+    }
+    if (capability === 'image_generation' && (!document.getElementById('enable_image_generation')?.checked || !state.data.enabled)) {
+        setCapabilityNotice(state.resultId, 'Enable Image Generation and save settings before testing.');
+        return;
+    }
+    state.busy = true;
+    renderSharedCapabilityModels(capability);
+    setCapabilityNotice(state.resultId, `Testing the saved ${state.kind} model…`, 'info');
+    try {
+        const response = await fetch('/api/v2/admin/settings/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ test_type: state.testType, selection: state.data.selection }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.success !== true) {
+            throw new Error(data.error || `The saved ${state.kind} model did not return a valid result.`);
+        }
+        if (capability === 'embeddings' && (!Number.isSafeInteger(data.dimensions) || data.dimensions <= 0)) {
+            throw new Error('The saved embedding model did not return valid vector dimensions.');
+        }
+        setCapabilityNotice(state.resultId, capability === 'embeddings'
+            ? `The saved embedding model returned ${data.dimensions.toLocaleString()} dimensions. No vectors were stored and the default was not changed.`
+            : 'The saved image model generated an image successfully.', 'success');
+    } catch (error) {
+        setCapabilityNotice(state.resultId, error.message || `${state.title} inference could not be tested.`, 'danger');
+    } finally {
+        state.busy = false;
+        renderSharedCapabilityModels(capability);
+    }
+}
+
+function initializeSharedCapabilityModels(capability) {
+    const state = sharedCapabilityStates[capability];
+    const select = document.getElementById(`${state.prefix}-default-model`);
     if (!select) return;
-    select.addEventListener('change', saveSharedImageModel);
-    document.getElementById('refresh-image-generation-models')?.addEventListener('click', loadSharedImageModels);
+    select.addEventListener('change', event => void saveSharedCapabilityModel(capability, event));
+    document.getElementById(`refresh-${state.prefix}-models`)?.addEventListener('click', () => void loadSharedCapabilityModels(capability));
+    document.getElementById(state.testId)?.addEventListener('click', () => void testSharedCapabilityModel(capability));
     window.addEventListener('simplechat:model-connections-changed', (event) => {
         if (event.detail?.saved) {
-            void loadSharedImageModels();
+            void loadSharedCapabilityModels(capability);
         } else {
-            setImageNotice('image-generation-model-notice', 'Save the connection first, then refresh choices. Only saved connections are offered here.');
+            setCapabilityNotice(`${state.prefix}-model-notice`, 'Save the connection first, then refresh choices. Only saved connections are offered here.');
         }
     });
-    void loadSharedImageModels();
+    void loadSharedCapabilityModels(capability);
+}
+
+function initializeSharedImageModels() {
+    initializeSharedCapabilityModels('image_generation');
 }
 
 const fetchGptBtn = document.getElementById('fetch_gpt_models_btn');
@@ -5695,11 +5800,16 @@ function updateGptHiddenInput() {
 const fetchEmbeddingBtn = document.getElementById('fetch_embedding_models_btn');
 if (fetchEmbeddingBtn) {
     fetchEmbeddingBtn.addEventListener('click', async () => {
+        if (!canEditLegacyEmbeddingSettings()) {
+            setCapabilityNotice('embedding-model-error', 'Legacy embedding configuration is not editable. Choose a shared embedding model instead.', 'danger');
+            return;
+        }
         const listDiv = document.getElementById('embedding_models_list');
-        listDiv.innerHTML = 'Fetching...';
+        listDiv.textContent = 'Fetching...';
         try {
             const resp = await fetch('/api/models/embedding');
             const data = await resp.json();
+            if (!canEditLegacyEmbeddingSettings()) return;
             if (resp.ok && data.models && data.models.length > 0) {
                 // Clear old models and replace with new ones
                 embeddingAll = data.models;
@@ -5713,16 +5823,21 @@ if (fetchEmbeddingBtn) {
                 updateEmbeddingHiddenInput();
                 markFormAsModified();
             } else {
-                listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No embedding models found'}</p>`;
+                listDiv.textContent = data.error || 'No embedding models found.';
             }
         } catch (err) {
-            listDiv.innerHTML = `<p class="text-danger">Error fetching embedding models: ${err.message}</p>`;
+            listDiv.textContent = err.message || 'Embedding models could not be fetched.';
         }
     });
 }
 
 window.selectEmbeddingModel = (deploymentName, modelName) => {
-    embeddingSelected = [{ deploymentName, modelName }];
+    if (!canEditLegacyEmbeddingSettings()) {
+        setCapabilityNotice('embedding-model-error', 'Legacy embedding configuration is not editable. Choose a shared embedding model instead.', 'danger');
+        return;
+    }
+    const model = embeddingAll.find(item => item.deploymentName === deploymentName && item.modelName === modelName);
+    embeddingSelected = [{ ...model, deploymentName, modelName }];
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
     markFormAsModified();    // mark form as modified
@@ -6942,8 +7057,8 @@ function setupToggles() {
     const enableEmbeddingApim = document.getElementById('enable_embedding_apim');
     if (enableEmbeddingApim) {
         enableEmbeddingApim.addEventListener('change', function () {
-            document.getElementById('non_apim_embedding_settings').style.display = this.checked ? 'none' : 'block';
-            document.getElementById('apim_embedding_settings').style.display = this.checked ? 'block' : 'none';
+            document.getElementById('non_apim_embedding_settings')?.classList.toggle('d-none', this.checked);
+            document.getElementById('apim_embedding_settings')?.classList.toggle('d-none', !this.checked);
             markFormAsModified();
         });
     }
@@ -7422,8 +7537,7 @@ function setupToggles() {
     const embeddingAuthType = document.getElementById('azure_openai_embedding_authentication_type');
     if (embeddingAuthType) {
         embeddingAuthType.addEventListener('change', function () {
-            document.getElementById('embedding_key_container').style.display =
-                (this.value === 'key') ? 'block' : 'none';
+            document.getElementById('embedding_key_container')?.classList.toggle('d-none', this.value !== 'key');
             markFormAsModified();
         });
     }
@@ -8005,6 +8119,7 @@ function setupWorkspaceDependencyValidation() {
      * Check if embeddings are properly configured
      */
     function checkEmbeddingConfiguration() {
+        if (sharedCapabilityStates.embeddings.authoritative) return hasConfiguredSharedEmbedding();
         const useApim = document.getElementById('enable_embedding_apim')?.checked || false;
         
         if (useApim) {
@@ -8387,11 +8502,14 @@ function setupTestButtons() {
     }
 
 
-    const testEmbeddingBtn = document.getElementById('test_embedding_button');
+    const testEmbeddingBtn = document.getElementById('test_legacy_embedding_button');
     if (testEmbeddingBtn) {
         testEmbeddingBtn.addEventListener('click', async () => {
-            const resultDiv = document.getElementById('test_embedding_result');
-            resultDiv.innerHTML = 'Testing Embeddings...';
+            if (!canEditLegacyEmbeddingSettings()) {
+                setCapabilityNotice('embedding-model-error', 'Legacy embedding configuration is not editable. Choose a shared embedding model instead.', 'danger');
+                return;
+            }
+            setCapabilityNotice('test_legacy_embedding_result', 'Testing legacy embeddings…', 'info');
 
             const enableApim = document.getElementById('enable_embedding_apim').checked;
 
@@ -8425,48 +8543,14 @@ function setupTestButtons() {
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
+                if (!canEditLegacyEmbeddingSettings()) return;
                 if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    setCapabilityNotice('test_legacy_embedding_result', data.message || 'Legacy embedding connection tested.', 'success');
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Embeddings'}</span>`;
+                    setCapabilityNotice('test_legacy_embedding_result', data.error || 'Legacy embedding connection could not be tested.', 'danger');
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
-            }
-        });
-    }
-
-    const testImageBtn = document.getElementById('test_image_button');
-    if (testImageBtn) {
-        testImageBtn.addEventListener('click', async () => {
-            if (sharedImageBusy || !sharedImageModels || sharedImageChoiceIndex() < 0) return;
-            if (typeof window.hasUnsavedAIConnectionEdits === 'function' && window.hasUnsavedAIConnectionEdits()) {
-                setImageNotice('test_image_result', 'Save the connection first. Image tests only use the saved model and credentials.');
-                return;
-            }
-            if (!document.getElementById('enable_image_generation')?.checked || !sharedImageModels.enabled) {
-                setImageNotice('test_image_result', 'Enable Image Generation and save settings before testing.');
-                return;
-            }
-            sharedImageBusy = true;
-            renderSharedImageModels();
-            setImageNotice('test_image_result', 'Testing the saved image model…', 'info');
-            try {
-                const resp = await fetch('/api/v2/admin/settings/test-connection', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ test_type: 'image', selection: sharedImageModels.selection })
-                });
-                const data = await resp.json();
-                if (!resp.ok || data.success !== true) {
-                    throw new Error(data.error || 'The saved model did not return an image.');
-                }
-                setImageNotice('test_image_result', 'The saved image model generated an image successfully.', 'success');
-            } catch (err) {
-                setImageNotice('test_image_result', err.message || 'Image generation could not be tested.', 'danger');
-            } finally {
-                sharedImageBusy = false;
-                renderSharedImageModels();
+                setCapabilityNotice('test_legacy_embedding_result', err.message || 'Legacy embedding connection could not be tested.', 'danger');
             }
         });
     }
@@ -9867,8 +9951,8 @@ function isFirstTimeSetup() {
     const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
     const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
     
-    if ((workspaceEnabled || groupsEnabled) && 
-        (!embeddingSelected || embeddingSelected.length === 0)) {
+    if ((workspaceEnabled || groupsEnabled) &&
+        (sharedCapabilityStates.embeddings.authoritative ? !hasConfiguredSharedEmbedding() : !embeddingSelected?.length)) {
         return true;
     }
     
@@ -10350,6 +10434,7 @@ function isStepComplete(stepNumber) {
             
         case 5: // Embedding settings (if workspace or groups enabled)
             if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            if (sharedCapabilityStates.embeddings.authoritative) return hasConfiguredSharedEmbedding();
             
             if (!document.getElementById('enable_embedding_apim').checked) {
                 const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
@@ -10891,7 +10976,7 @@ function checkOptionalFeaturesEnabled(stepNumber) {
             
             // For image generation, check if it's properly configured when enabled
             if (imageGenEnabled) {
-                if (sharedImageBindingAuthoritative) {
+                if (sharedCapabilityStates.image_generation.authoritative) {
                     return citationsEnabled || sharedImageChoiceIndex() >= 0;
                 }
                 const imageApim = document.getElementById('enable_image_gen_apim')?.checked;
